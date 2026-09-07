@@ -204,7 +204,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		cfg:    cfg,
 		pool:   pool,
 		router: rt,
-		saver:  saver.New(saver.Config{Enabled: cfg.Saver.Enabled}),
+		saver:  saver.New(saverConfigFrom(&cfg.Saver)),
 		usage:  usageTracker,
 		quota:  quotaTracker,
 		budget: NewByteBudget(cfg.Server.BufferCap),
@@ -331,6 +331,11 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if st.cfg.Saver.Enabled {
 		body, savedTokens = st.saver.ApplyRaw(translat.FmtGemini, body)
 	}
+	body, oerr := s.applyOutputSavers(r.Context(), st, translat.FmtGemini, body, model)
+	if oerr != nil {
+		writeErr(w, translat.FmtGemini, errAPI(502, "compress_failed", oerr.Error()))
+		return
+	}
 	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
 		s.m.noRoute(rerr.Status)
@@ -386,6 +391,11 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if st.cfg.Saver.Enabled {
 		body, savedTokens = st.saver.ApplyRaw(clientFmt, body)
 	}
+	body, oerr := s.applyOutputSavers(r.Context(), st, clientFmt, body, model)
+	if oerr != nil {
+		writeErr(w, clientFmt, errAPI(502, "compress_failed", oerr.Error()))
+		return
+	}
 
 	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
@@ -404,6 +414,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	}
 }
 
+// proxyGemini mirrors proxy() for the Gemini surface.
 // acquireForBody reserves budget for the request's declared content length
 // (plus margin for decoded maps and response handling). Streaming requests
 // also reserve: their request bodies are read fully here. Returns a release
