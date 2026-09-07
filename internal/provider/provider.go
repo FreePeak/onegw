@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -139,19 +140,35 @@ func (d *Def) Base(acct *Account) string {
 	return base
 }
 
-// joinURL appends the kind's API path to a base, avoiding a doubled version
-// segment when the configured base already ends with one.
+// joinURL appends the kind's API path to a base. When the base's last path
+// segment is itself a version segment (…/v1, …/v4 from GLM's /api/paas/v4),
+// the path's version prefix is dropped and the unversioned remainder is
+// appended — so "https://host/v1" + "/v1/chat/completions" and
+// "https://host/api/paas/v4" + "/v1/chat/completions" both yield a single
+// version segment.
 func joinURL(base, path string) string {
-	// path starts with "/v1", "/v1beta" etc. If base already ends with the
-	// same first segment, drop it from path.
-	if i := strings.Index(path[1:], "/"); i >= 0 {
-		first := path[:i+1] // "/v1"
-		if strings.HasSuffix(base, first) {
-			return base + path[len(first):]
+	if seg := lastPathSegment(base); versionRe.MatchString(seg) {
+		rest := path
+		if i := strings.Index(path[1:], "/"); i >= 0 {
+			rest = path[i+1:] // "/chat/completions"
+		} else {
+			rest = ""
 		}
+		return base + rest
 	}
 	return base + path
 }
+
+// lastPathSegment extracts the final path segment of a URL ("" if none).
+func lastPathSegment(base string) string {
+	i := strings.LastIndexByte(base, '/')
+	if i < 0 || strings.HasSuffix(base, "://") {
+		return ""
+	}
+	return base[i+1:]
+}
+
+var versionRe = regexp.MustCompile(`^v\d+$`)
 
 // Account pool: weighted round-robin with cooldown on quota errors
 // ---------------------------------------------------------------------------
