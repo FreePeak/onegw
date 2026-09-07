@@ -52,7 +52,9 @@ type ChatRequest struct {
 
 	StopSequences []string `json:"stop_sequences,omitempty"`
 
-	// Reasoning controls. Effort is "low"|"medium"|"high"; Budget is
+	// Reasoning controls. Effort is a free-form string (OpenAI dialect:
+	// none|minimal|low|medium|high|max; always-thinking upstreams like GLM
+	// accept only low|high|max — see provider AlwaysThinking). Budget is
 	// explicit thinking-token budget. Exactly one may be set.
 	ReasoningEffort string       `json:"reasoning_effort,omitempty"`
 	Thinking        *ThinkingCfg `json:"thinking,omitempty"`

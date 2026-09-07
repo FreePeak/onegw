@@ -63,7 +63,7 @@ buffering, no conversation state.
 ```bash
 go build -o onegw ./cmd/onegw
 cp onegw.toml.example onegw.toml   # add provider keys
-./onegw                            # listens on :8080
+./onegw                            # listens on 127.0.0.1:8080 (loopback only)
 ```
 
 Then point any OpenAI-, Anthropic-, or Gemini-compatible client at the

@@ -3,7 +3,7 @@
 # Gateway client keys: ONEGW_KEYS="key1,key2"
 
 [server]
-listen = ":8080"
+listen = "127.0.0.1:8080"      # loopback-only default; "0.0.0.0:8080" exposes to LAN
 data_dir = "data"              # usage.db lives here; "memory" disables persistence
 max_body_bytes = 33554432      # 32 MiB per-request cap
 buffered_budget_bytes = 50331648 # 48 MiB global buffered-path budget
