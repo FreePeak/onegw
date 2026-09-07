@@ -1,7 +1,14 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (dashboard usage range filter — today / 7 days / 1
-month / all time, default all time, selection persisted in `?range=` so a
+*Last updated: 2026-09-07 (opencode provider kind: OpenCode Zen Go
+subscription integration — `kind = "opencode"`, default base
+`https://opencode.ai/zen/go`, full Go catalog advertised by default
+(muse-spark excluded, Responses-API-only), bearer auth, mandatory
+`x-opencode-session` upstream (client header forwarded when present, else
+stable per-key derived id), multi-key `keys = [...]` account shortcut for
+round-robin + quota cooldown; earlier: dashboard usage range filter — today
+/ 7 days / 1 month / all time, default all time, selection persisted in
+`?range=` so a
 reload keeps it; header totals now include sum (in+out) tokens; earlier:
 saver defects fixed: ApplyRaw's re-encode HTML-escaped <,>,& across untouched
 strings — tag-heavy bodies grew up to +87% (9511→17797 B) while /admin/usage
