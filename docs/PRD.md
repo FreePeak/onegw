@@ -1,6 +1,6 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (initial PRD)*
+*Last updated: 2026-09-07 (M1–M5 landed: gateway, translation, router, saver, usage, bench)*
 
 ## Product
 
@@ -85,42 +85,55 @@ Go http server handles this on ~1 core. Translation paths are the only O(body)
 work and only run on cross-format requests; they stream event-by-event so
 memory is O(event), not O(conversation).
 
-## Routing model
-
-- Model string forms: `provider/model` (direct), `combo-name` (ordered
-  fallback list), `provider-alias/model`.
-- Combo: `[{provider, model, weight?}]`, tried in order; retry on 429/5xx/
-  network error with backoff; per-provider concurrency caps; sticky routing per
-  API key for account pools (round-robin by default).
-- Account = API key + optional base URL override + rate-limit budget.
-
 ## Milestones
 
 | M   | Scope                                                                 | Status |
 | --- | --------------------------------------------------------------------- | ------ |
-| M1  | Core types, OpenAI/Anthropic translation, streaming, 3 provider kinds  | planned |
-| M2  | Router: combos, round-robin, retry/fallback                           | planned |
-| M3  | Token saver filters, usage tracking, SQLite store                     | planned |
-| M4  | Server surfaces (OpenAI/Anthropic/Gemini), auth, admin API, dashboard | planned |
-| M5  | Benchmarks (RSS ≤ 100 MB @ load), smoke test, hardening               | planned |
+| M1  | Core types, OpenAI/Anthropic/Gemini translation, streaming            | done   |
+| M2  | Router: combos, round-robin, retry/fallback                           | done   |
+| M3  | Token saver filters, usage tracking, SQLite store                     | done   |
+| M4  | Server surfaces (OpenAI/Anthropic/Gemini), auth, admin, dashboard     | done   |
+| M5  | Benchmarks (RSS ≤ 100 MB @ load), smoke test, hardening               | done   |
+
+### Verified numbers (bench/memory.sh, mock upstream, macOS arm64)
+
+- Baseline RSS 17 MiB; 30 concurrent 800 KB streaming requests → peak
+  67 MiB, flat across rounds; ~2.3 M tokens relayed per 12 s load window
+  (30 clients) — ~190 K tok/s observed vs ~23 k tok/s needed for 2 B/day.
+- `GOMEMLIMIT=90 MiB` soft limit set at startup; `GODEBUG=madvdontneed=1`
+  used in benchmarks because macOS MADV_FREE overstates RSS.
+- Byte-budget gate: buffered path (body read + saver + translation) holds a
+  4× body-size reservation against a 48 MiB global budget; saturation
+  returns 503 + Retry-After.
+
+## Routing model
+
+- Model string forms: `provider/model` (direct), `combo-name` (ordered
+  fallback list).
+- Combo: `[{provider, model}]`, tried in order; retry on 429/5xx/network
+  error with backoff; non-retryable errors (4xx) fail fast; per-provider
+  concurrency caps; weighted round-robin account pools with quota cooldown.
+- Account = API key + optional base URL override + weight.
 
 ## Key decisions
 
 - **net/http only, no web framework** — fewer deps, predictable memory.
-- **modernc.org/sqlite** (pure Go, no cgo) — cross-compile single binary; fine
-  for one-writer usage rollups. `CGO_ENABLED=0`.
-- **Translation via unified intermediate model**, not string rewriting —
-  correctness over cleverness; streaming re-encoders are separate from body
-  translation and share the same mapping tables.
-- **Passthrough-first**: if client format == upstream format, never parse the
-  body. This is the common case (Claude Code → Anthropic provider) and must
-  cost ~nothing.
-- **Config = single TOML file + env overrides**, hot-reloadable (SIGHUP); no
-  SQLite for config in v1 (keeps store append-only for usage).
+- **modernc.org/sqlite** (pure Go, no cgo) — cross-compile single binary;
+  for one-writer usage rollups; store RSS measured inside the budget in the
+  bench (heap_sys 55 MiB peak with translation+store+streams, i.e. SQLite
+  not the driver). `CGO_ENABLED=0`.
+- **Translation via unified intermediate model** — correctness over
+  cleverness; streaming re-encoders are separate from body translation.
+- **Passthrough-first**: same-format traffic is byte-copied with a bounded
+  usage sniffer (64 KiB rolling window); never parsed.
+- **Byte-budget semaphore (mutex + poll)**, not a token channel — a channel
+  cannot express all-or-nothing multi-unit take without deadlock.
+- **Config = single TOML file + env overrides**; usage state is the only
+  SQLite content. SIGHUP reload is a v2 item.
 
 ## Docs
 
-- `docs/ARCHITECTURE.md` — package detail, translation matrices, memory
-  contract, config reference.
+- `docs/ARCHITECTURE.md` — package detail, memory contract, config reference.
 - `docs/prd-task-tracker.md` — live task tracker (local repo, not GitHub).
-- `bench/` — load generator + RSS measurement harness.
+- `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
+  end-to-end surface tests; `cmd/mockupstream` — fake provider.
