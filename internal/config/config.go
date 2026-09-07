@@ -25,9 +25,14 @@ type Server struct {
 	AccessLog     bool   `toml:"access_log"`
 }
 
-// Auth holds gateway API keys clients authenticate with.
+// Auth holds gateway API keys clients authenticate with. Keys may be
+// defined flat (keys = ["sk-..."], unlimited) or as policy tables
+// ([[auth.keys]] with optional rpm/tpm/models); both shapes share the
+// same TOML path, so the raw form is captured and normalized by
+// (*Auth).decodeKeys in keys.go.
 type Auth struct {
-	Keys []string `toml:"keys"`
+	Raw     *toml.Primitive `toml:"keys"`
+	KeyList []AuthKey       `toml:"-"`
 }
 
 // SaverCfg configures the token saver.
@@ -149,7 +154,13 @@ func (c *Config) Defaults() {
 		}
 	}
 	if keys := os.Getenv("ONEGW_KEYS"); keys != "" {
-		c.Auth.Keys = strings.Split(keys, ",")
+		// Env override replaces the file's keys entirely, as before.
+		c.Auth.Raw = nil
+		for _, k := range strings.Split(keys, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				c.Auth.KeyList = append(c.Auth.KeyList, AuthKey{Key: k})
+			}
+		}
 	}
 }
 
@@ -164,6 +175,9 @@ func (c *Config) FlushEvery() time.Duration {
 
 // Validate checks required invariants.
 func (c *Config) Validate() error {
+	if err := validateKeys(c.Auth.KeyList); err != nil {
+		return err
+	}
 	names := map[string]bool{}
 	for _, p := range c.Providers {
 		if p.Name == "" {
@@ -264,10 +278,14 @@ const maxAliasHops = 8
 // Load reads and validates the TOML file at path.
 func Load(path string) (*Config, error) {
 	var cfg Config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	cfg.Defaults()
+	if err := cfg.Auth.decodeKeys(md); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
