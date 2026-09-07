@@ -120,12 +120,14 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		p := &cfg.Providers[i]
 		kind := provider.Kind(p.Kind)
 		def := &provider.Def{
-			Name:           p.Name,
-			Kind:           kind,
-			BaseURL:        p.BaseURL,
-			MaxConc:        p.MaxConc,
-			ExtraHeaders:   p.ExtraHeader,
-			AlwaysThinking: p.AlwaysThinking,
+			Name:             p.Name,
+			Kind:             kind,
+			BaseURL:          p.BaseURL,
+			MaxConc:          p.MaxConc,
+			ExtraHeaders:     p.ExtraHeader,
+			AlwaysThinking:   p.AlwaysThinking,
+			SearchMaxResults: p.MaxResults,
+			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
@@ -537,6 +539,12 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.cur().cfg
 	for _, p := range cfg.Providers {
+		if p.Kind == "searxng" {
+			// Virtual search surface: any "<name>/<x>" model string
+			// routes to it; advertise the canonical id so agent CLIs
+			// can discover it via /v1/models.
+			add(p.Name + "/query")
+		}
 		for _, m := range p.Models {
 			add(p.Name + "/" + m)
 		}

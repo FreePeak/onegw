@@ -49,7 +49,7 @@ type UsageCfg struct {
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
 	Name        string            `toml:"name"`
-	Kind        string            `toml:"kind"` // openai | anthropic | gemini | opencode
+	Kind        string            `toml:"kind"` // openai | anthropic | gemini | opencode | searxng
 	BaseURL     string            `toml:"base_url"`
 	APIKey      string            `toml:"api_key"` // convenience for single-account
 	Keys        []string          `toml:"keys"`    // multi-key accounts, one account per key
@@ -61,6 +61,16 @@ type ProviderCfg struct {
 	// "/") that reason unconditionally upstream and reject
 	// disable-thinking knobs; see README.
 	AlwaysThinking []string `toml:"always_thinking"`
+
+	// SearXNG virtual provider (kind = "searxng"): web search surfaced as
+	// a chat model. max_results caps how many results are formatted into
+	// the completion; timeout bounds the search call (Go duration). If the
+	// instance requires auth, configure it via extra_headers (SearXNG
+	// accepts X-API-Key or basic auth) — the gateway adds no auth code.
+	// Zero values mean 5 results and a 10s timeout, applied where the
+	// search runs (internal/provider/searxng.go).
+	MaxResults int    `toml:"max_results"`
+	Timeout    string `toml:"timeout"`
 }
 
 // Acct is one provider account.
@@ -189,12 +199,19 @@ func (c *Config) Validate() error {
 		names["provider:"+p.Name] = true
 		switch p.Kind {
 		case "openai", "anthropic", "gemini", "opencode":
+		case "searxng":
+			// Virtual search provider: no upstream credential needed
+			// (public instances are open; private ones auth via
+			// extra_headers), but an instance URL is mandatory.
+			if p.BaseURL == "" {
+				return fmt.Errorf("provider %s (searxng) needs base_url", p.Name)
+			}
 		case "":
 			return fmt.Errorf("provider %s missing kind", p.Name)
 		default:
 			return fmt.Errorf("provider %s unknown kind %q", p.Name, p.Kind)
 		}
-		if len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
+		if p.Kind != "searxng" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
 			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
 		}
 	}
