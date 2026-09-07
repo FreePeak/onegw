@@ -48,9 +48,10 @@ buffering, no conversation state.
   fail fast on other 4xx, per-provider concurrency caps.
 - **Account pools.** Multiple API keys per provider with weighted round-robin
   and quota cooldown.
-- **Token saver.** RTK-style `tool_result` compression (prefix sniffing,
-  idempotent, same-format surgical JSON walk) cuts prompt tokens before they
-  reach the upstream.
+- **Token saver (input + output).** Input side: RTK-style `tool_result`
+  compression (prefix sniffing, idempotent, same-format surgical JSON walk)
+  cuts prompt tokens before they reach the upstream. Output side: system-prompt
+  injection of terse-output directives and an external compress hook (below).
 - **Usage tracking.** Lock-sharded atomic counters flushed to SQLite on a
   timer; per `provider / model / key / day / hour` rollups; admin API and
   built-in dashboard.
@@ -150,6 +151,44 @@ are rewritten instead of forwarded: `reasoning_effort`
 `""/none/minimal/medium` → `low` (`high`/`xhigh`/`max` pass through), and
 disable-thinking knobs are dropped so the upstream default (thinking on)
 applies.
+
+### Output-side token savers
+
+Two optional knobs under `[saver]` (both also need the `enabled` flag):
+
+**Prompt injection** — `[[saver.inject]]` prepends one honest,
+conciseness-demanding directive to the system prompt of matching requests:
+
+```toml
+[[saver.inject]]
+mode = "terse"          # "caveman" (ultra-short), "terse", or "custom"
+# models = ["gpt-5*"]   # path.Match globs; empty matches every model
+# text = "..."          # custom mode only, shipped verbatim
+```
+
+The shipped prompts instruct the model to be maximally concise — no false
+persona claims, no withholding requested content. Injection is idempotent
+(a `onegw-terse-directive` marker is never applied twice), works on all
+three surfaces, survives cross-format translation, and never fails a
+request (bodies it cannot parse pass through untouched).
+
+**External compress** — `[saver.external]` forwards large requests'
+`messages[]` to a Headroom-protocol service and uses its compressed
+response (`POST {url}` with `{"messages":[...]}` → `{"messages":[...]}`):
+
+```toml
+[saver.external]
+enabled = true
+url = "http://127.0.0.1:8819/v1/compress"
+# timeout_ms = 2000    # per-request external-call timeout
+# min_bytes  = 32768   # only bodies at least this large are compressed
+# fail_open  = true    # external errors pass the request through uncompressed
+```
+
+Fail-open semantics: any external failure (HTTP error, timeout, malformed
+response, or a "compressed" payload larger than the original) means the
+request continues with its original messages — a saving optimization must
+never become an outage. Set `fail_open = false` to answer 502 instead.
 
 ## Surfaces
 
