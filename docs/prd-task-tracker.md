@@ -63,6 +63,13 @@ status. Status as of 2026-09-07.
       Anthropic-surface translation, xai grok-4.6 chat, combo fallback.
       commandcode / grok-cli / cursor skipped — custom wire formats, now
       tracked as GitHub issue #12.
+- [x] Dashboard header totals now computed from the same store rows as the
+      table (previously process-lifetime counters — after a restart the
+      header showed 36 reqs while the table summed 109); table window is the
+      viewer's local calendar day (browser timezone), not UTC
+- [x] Zero-drop rolling restart: gateway binds with SO_REUSEPORT and drains
+      in-flight requests on SIGTERM/SIGINT before exit (flushes usage first);
+      future restarts = start new binary alongside, health-check, stop old
 
 ## Open — tracked as GitHub issues
 
