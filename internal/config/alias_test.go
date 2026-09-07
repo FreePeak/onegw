@@ -49,14 +49,16 @@ func TestAliasConfigValid(t *testing.T) {
 
 func TestAliasValidationRejects(t *testing.T) {
 	cases := map[string]string{
-		"unknown provider": `fast = "nope/m1"`,
-		"unknown combo":    `fast = "nope"`,
-		"bare word":        `fast = "justtext"`,
-		"shadow provider":  `p1 = "p2/m2"`,
-		"shadow combo":     `pair = "p1/m1"`,
-		"alias with slash": `"a/b" = "p1/m1"`,
-		"cycle":            "a = \"b\"\nb = \"a\"",
-		"long chain":       "a1 = \"a2\"\na2 = \"a3\"\na3 = \"a4\"\na4 = \"a5\"\na5 = \"a6\"\na6 = \"a7\"\na7 = \"a8\"\na8 = \"a9\"\na9 = \"p1/m1\"",
+		"unknown provider":    `fast = "nope/m1"`,
+		"unknown combo":       `fast = "nope"`,
+		"bare word":           `fast = "justtext"`,
+		"shadow provider":     `p1 = "p2/m2"`,
+		"shadow combo":        `pair = "p1/m1"`,
+		"alias with slash":    `"a/b" = "p1/m1"`,
+		"cycle":               "a = \"b\"\nb = \"a\"",
+		"case-variant dup":    "fast = \"p1/m1\"\nFAST = \"p2/m2\"",
+		"case-variant shadow": `P1 = "p2/m2"`,
+		"long chain":          "a1 = \"a2\"\na2 = \"a3\"\na3 = \"a4\"\na4 = \"a5\"\na5 = \"a6\"\na6 = \"a7\"\na7 = \"a8\"\na8 = \"a9\"\na9 = \"p1/m1\"",
 	}
 	for name, aliases := range cases {
 		p := writeCfg(t, aliasBase+"\n[aliases]\n"+aliases+"\n")
