@@ -153,6 +153,14 @@ func (s *Store) Prune(retentionDays int) (int64, error) {
 	return res.RowsAffected()
 }
 
+// TotalsSince aggregates over a window of days.
+func (s *Store) TotalsSince(days int) (requests, inTok, outTok int64, err error) {
+	from := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+	row := s.db.QueryRow(`SELECT COALESCE(SUM(requests),0), COALESCE(SUM(input_tok),0), COALESCE(SUM(output_tok),0)
+		FROM usage_rollup WHERE day >= ?`, from)
+	return requests, inTok, outTok, row.Scan(&requests, &inTok, &outTok)
+}
+
 // Close closes the DB.
 func (s *Store) Close() error { return s.db.Close() }
 
