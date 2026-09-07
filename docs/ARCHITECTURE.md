@@ -83,3 +83,7 @@ from `ONEGW_ADMIN_PASSWORD`. `data_dir = "memory"` disables persistence.
 Single table `usage_rollup` (day, hour, provider, model, api_key) with
 request/token counters, PRIMARY KEY upsert accumulation, WAL mode, one
 writer. Prune deletes by day cutoff.
+
+`quota_state` (issue #7) persists per-provider quota window counters
+(provider, window, window_start, used_tokens, used_requests) so 5h/daily/
+weekly windows survive restarts; missing rows rebuild from `usage_rollup`.

@@ -41,6 +41,7 @@ const dashboardHTML = `<!doctype html>
   </select>
 </p>
 <p id="totals">usage (since process start): <span class="muted">enter admin password to view</span></p>
+<p id="quota" class="muted"></p>
 <p>
   admin password: <input id="pw" type="password" placeholder="(admin_password from config)" size="28">
   <button onclick="savePw()">save</button> <span id="authstate" class="err"></span>
@@ -149,9 +150,33 @@ async function refresh() {
         '</td><td>' + fmtCompact(b.input) + '</td><td>' + fmtCompact(b.output) + '</td><td>' + fmtCompact(b.cacheRead) + '</td><td>' + fmtCompact(b.saved) + '</td>';
       tb.appendChild(tr);
     }
-  } catch (e) { /* health still shown */ }
+  } catch (e) { /* usage table still shown */ }
+}
+async function quotaRefresh() {
+  try {
+    const qr = await fetch('/admin/quota', { headers: authHeaders() });
+    if (qr.ok) {
+      const q = await qr.json();
+      const bits = (q.providers || []).map(s => {
+        const reset = Math.max(0, Math.round((new Date(s.window_end) - Date.now()) / 1000));
+        const h = Math.floor(reset / 3600), m = Math.floor((reset % 3600) / 60);
+        const cnt = 'reset ' + (h > 0 ? h + 'h' + (m ? m + 'm' : '') : m + 'm');
+        let lim = '';
+        if (s.limit_tokens || s.limit_requests) {
+          const parts = [];
+          if (s.limit_tokens) parts.push(fmtCompact(s.used_tokens) + '/' + fmtCompact(s.limit_tokens) + ' tok');
+          if (s.limit_requests) parts.push(s.used_requests + '/' + s.limit_requests + ' req');
+          lim = ' · ' + parts.join(', ') + (s.exhausted ? ' <b class="err">EXHAUSTED</b>' : '');
+        }
+        return '<b>' + s.provider + '</b> <span class="muted">[' + s.window + ']</span> ' + cnt + lim;
+      });
+      document.getElementById('quota').innerHTML =
+        'quota: ' + (bits.length ? bits.join(' · ') : '<span class="muted">none configured</span>');
+    }
+  } catch (e) { /* quota strip optional */ }
 }
 setInterval(refresh, 3000); refresh();
+setInterval(quotaRefresh, 5000); quotaRefresh();
 </script>
 </body>
 </html>
