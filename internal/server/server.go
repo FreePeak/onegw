@@ -353,12 +353,14 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 	writeErr(w, f, errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly"))
 }
 
-// attempt performs one upstream call and streams the response back,
-// translating or passing through as needed. Usage is recorded.
+// attempt performs one upstream call and returns the response to the
+// client. Streaming replies are piped/translated event-by-event; a
+// non-streaming cross-format reply takes the documented buffered path
+// (parse whole response, translate, answer JSON). Usage is recorded.
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
 	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string) (any, *types.APIError) {
 
-	upstreamFmt := def.Kind.Format()
+	upstreamFmt := def.UpstreamFormat(model)
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
@@ -369,35 +371,65 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	}
 	defer res.Resp.Body.Close()
 
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream; charset=utf-8")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("Connection", "keep-alive")
-	h.Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-	flush := func() {
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-	flush()
-
 	var rec types.Usage
-	if upstreamFmt == clientFmt {
-		sn := usage.NewSniffer(res.Resp.Body, 0)
-		_, _ = io.Copy(w, sn)
-		flush()
-		in, out, cr, cw, rs, seen := sn.Usage()
-		if seen {
-			rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs}
+	if !stream && upstreamFmt != clientFmt {
+		// Buffered cross-format path. The request body already holds a
+		// byte-budget reservation (acquireForBody); the reply is capped at
+		// the same per-request limit so total RSS stays bounded.
+		maxResp := s.cur().cfg.Server.MaxBody
+		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
+		if rerr != nil {
+			return nil, errAPI(502, "upstream_read_failed", rerr.Error())
 		}
+		if int64(len(raw)) > maxResp {
+			return nil, errAPI(502, "upstream_response_too_large", "response exceeds max_body_bytes")
+		}
+		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
+		if derr != nil {
+			return nil, errAPI(502, "response_translate_failed", derr.Error())
+		}
+		out, eerr := translat.EncodeResponse(clientFmt, cr)
+		if eerr != nil {
+			return nil, errAPI(502, "response_encode_failed", eerr.Error())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(out)
+		rec = cr.Usage
 	} else {
-		u, terr := translat.TranslateStream(res.Resp.Body, w, flush, upstreamFmt, clientFmt, model)
-		if terr != nil {
-			return nil, &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
+		h := w.Header()
+		if stream {
+			h.Set("Content-Type", "text/event-stream; charset=utf-8")
+			h.Set("Cache-Control", "no-cache")
+			h.Set("Connection", "keep-alive")
+			h.Set("X-Accel-Buffering", "no")
+		} else {
+			h.Set("Content-Type", "application/json")
 		}
-		rec = u
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		flush := func() {
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		flush()
+
+		if upstreamFmt == clientFmt {
+			sn := usage.NewSniffer(res.Resp.Body, 0)
+			_, _ = io.Copy(w, sn)
+			flush()
+			in, out, cr, cw, rs, seen := sn.Usage()
+			if seen {
+				rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs}
+			}
+		} else {
+			u, terr := translat.TranslateStream(res.Resp.Body, w, flush, upstreamFmt, clientFmt, model)
+			if terr != nil {
+				return nil, &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
+			}
+			rec = u
+		}
 	}
 	rec.UpstreamFormat = string(upstreamFmt)
 	if rec.InputTokens == 0 && rec.OutputTokens == 0 {
@@ -751,6 +783,8 @@ func encodeFor(f translat.Format, u *types.ChatRequest) ([]byte, error) {
 		return translat.EncodeAnthropicRequest(u)
 	case translat.FmtGemini:
 		return translat.EncodeGeminiRequest(u)
+	case translat.FmtResponses:
+		return translat.EncodeResponsesRequest(u)
 	default:
 		return nil, fmt.Errorf("unknown format %s", f)
 	}

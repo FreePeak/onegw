@@ -135,9 +135,10 @@ const maxLine = 4 << 20 // 4 MiB guards against runaway events
 func TranslateStream(body io.Reader, w io.Writer, flush func(), from, to Format, model string) (types.Usage, error) {
 	br := bufio.NewReaderSize(body, 32<<10)
 	enc := newStreamEncoder(to, model)
+	dec, termCheck := newStreamDecoder(from)
 	var usage types.Usage
 	err := readSSE(br, func(ev sseEvent) error {
-		events, derr := decodeStreamEvent(from, ev)
+		events, derr := dec.decode(ev)
 		if derr != nil {
 			return derr
 		}
@@ -157,6 +158,11 @@ func TranslateStream(body io.Reader, w io.Writer, flush func(), from, to Format,
 	if err != nil && err != io.EOF {
 		return usage, err
 	}
+	if termCheck != nil {
+		if terr := termCheck(); terr != nil {
+			return usage, terr
+		}
+	}
 	if ferr := enc.finish(w); ferr != nil {
 		return usage, ferr
 	}
@@ -164,4 +170,33 @@ func TranslateStream(body io.Reader, w io.Writer, flush func(), from, to Format,
 		flush()
 	}
 	return usage, nil
+}
+
+// DecodeResponse parses a non-streaming upstream reply in format f into
+// the unified response. This is the buffered half of the non-streaming
+// cross-format path (the streaming half is TranslateStream).
+func DecodeResponse(f Format, body []byte) (*types.ChatResponse, error) {
+	switch f {
+	case FmtAnthropic:
+		return DecodeAnthropicResponse(body)
+	case FmtGemini:
+		return DecodeGeminiResponse(body)
+	case FmtResponses:
+		return DecodeResponsesResponse(body)
+	default:
+		return DecodeOpenAIResponse(body)
+	}
+}
+
+// EncodeResponse renders a unified response as a non-streaming reply in
+// format f.
+func EncodeResponse(f Format, r *types.ChatResponse) ([]byte, error) {
+	switch f {
+	case FmtAnthropic:
+		return EncodeAnthropicResponse(r)
+	case FmtGemini:
+		return EncodeGeminiResponse(r)
+	default:
+		return EncodeOpenAIResponse(r)
+	}
 }
