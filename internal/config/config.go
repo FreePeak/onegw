@@ -79,6 +79,10 @@ type Config struct {
 	Usage     UsageCfg      `toml:"usage"`
 	Providers []ProviderCfg `toml:"providers"`
 	Combos    []ComboCfg    `toml:"combo"`
+	// Aliases maps a client-facing name to "provider/model", a combo name,
+	// or another alias. Chains resolve iteratively (depth-capped); aliases
+	// never shadow a real provider/model or combo name.
+	Aliases map[string]string `toml:"aliases"`
 }
 
 // Defaults fills zero values with production-safe defaults.
@@ -169,8 +173,54 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	// Aliases: keys must be new names, targets must resolve (transitively,
+	// depth-capped) to a "provider/model" literal or a combo.
+	for alias, target := range c.Aliases {
+		if alias == "" {
+			return fmt.Errorf("alias missing name")
+		}
+		if strings.Contains(alias, "/") {
+			return fmt.Errorf("alias %q must not contain \"/\"", alias)
+		}
+		if names["provider:"+alias] || comboNames[strings.ToLower(alias)] {
+			return fmt.Errorf("alias %q shadows an existing provider or combo", alias)
+		}
+		if _, dup := c.Aliases[alias]; dup {
+			_ = dup // map keys are unique by construction; the dup check is the shadowing one above
+		}
+		seen := map[string]bool{alias: true}
+		cur := target
+		for hop := 0; ; hop++ {
+			if hop >= maxAliasHops {
+				return fmt.Errorf("alias %q: chain longer than %d hops or cyclic", alias, maxAliasHops)
+			}
+			if nxt, ok := c.Aliases[cur]; ok {
+				if seen[cur] {
+					return fmt.Errorf("alias %q: cycle at %q", alias, cur)
+				}
+				seen[cur] = true
+				cur = nxt
+				continue
+			}
+			if comboNames[strings.ToLower(cur)] {
+				break // alias → combo: fine
+			}
+			if !strings.Contains(cur, "/") {
+				return fmt.Errorf("alias %q target %q is neither provider/model, combo, nor alias", alias, cur)
+			}
+			prov := cur[:strings.Index(cur, "/")]
+			if !names["provider:"+prov] {
+				return fmt.Errorf("alias %q references unknown provider %s", alias, prov)
+			}
+			break
+		}
+	}
 	return nil
 }
+
+// maxAliasHops caps alias chain resolution so a cyclic TOML table cannot
+// loop the resolver; one hop is the normal case, chains are a convenience.
+const maxAliasHops = 8
 
 // Load reads and validates the TOML file at path.
 func Load(path string) (*Config, error) {
