@@ -52,6 +52,17 @@ status. Status as of 2026-09-07.
 - [x] joinURL generalized: any `vN` version-suffix base (GLM
       /api/paas/v4) joins without doubled segments; glm route live-verified
 - [x] onegw runs as supervised persistent service (hub-managed) on :8080
+- [x] import9r bearer-token import: OAuth connections whose upstream accepts
+      the token as-is import as single-account providers (`bearerTokenProviders`
+      map: xai → https://api.x.ai, kilocode → https://api.kilo.ai/api/openrouter),
+      per-endpoint models URL, JWT exp parsed → rotate-me comment under 48 h.
+      kilocode (371-model catalog, exp 2031) + xai (12 models, token expires
+      2026-09-07T14:24Z — rotate in 9router and re-import) imported into
+      onegw.toml; `dev2` combo adds kilocode/kilo-auto/free + xai/grok-4.6
+      fallback. Live-verified: kilo free-model chat + SSE stream +
+      Anthropic-surface translation, xai grok-4.6 chat, combo fallback.
+      commandcode / grok-cli / cursor skipped — custom wire formats, now
+      tracked as GitHub issue #12.
 
 ## Open — tracked as GitHub issues
 
@@ -67,6 +78,9 @@ status. Status as of 2026-09-07.
 - [ ] #9 Audio and embeddings surfaces (STT/TTS/embeddings passthrough)
 - [ ] #10 Multi-node usage rollup export
 - [ ] #11 Runtime config surface (dashboard/API writes to config)
+- [ ] #12 Custom wire formats: commandcode (NDJSON), grok-cli (OpenAI
+      Responses), cursor (protobuf)
+- [ ] #13 Web-search provider (SearXNG integration)
 
 Deliberately NOT tracked (PRD non-goals): cloud sync, billing/budgets as an
 enforcement feature, guardrails/MCP/A2A gateways, response caching.
