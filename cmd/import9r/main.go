@@ -3,17 +3,20 @@
 //
 //	onegw-import9r -db ~/.9router/db/data.sqlite -out imported.toml
 //
-// Only API-key connections are imported (OAuth token flows are a v2 onegw
-// feature). For openai-compatible connections the 9router nodeName/prefix
-// becomes the onegw provider name (lowercased); models are discovered from
-// the upstream /models endpoint when reachable. Built-in 9router providers
-// without a per-connection base URL resolve from a known map, else are
-// skipped with a warning. Output includes onegw gateway [auth] keys from
-// 9router's apiKeys table.
+// API-key connections import as accounts under an openai-compatible provider
+// (9router nodeName/prefix becomes the onegw provider name, lowercased);
+// models are discovered from the upstream /models endpoint when reachable.
+// Built-in 9router providers without a per-connection base URL resolve from a
+// known map, else are skipped with a warning. Bearer-token connections whose
+// upstream is in bearerTokenProviders import as single-account providers of
+// the given kind (9router OAuth access tokens are long-lived; refresh is a
+// onegw v2 feature — issue #2). Output includes onegw gateway [auth] keys
+// from 9router's apiKeys table.
 package main
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,6 +39,7 @@ type connRow struct {
 
 type connData struct {
 	APIKey               string `json:"apiKey"`
+	AccessToken          string `json:"accessToken"`
 	TestStatus           string `json:"testStatus"`
 	ProviderSpecificData struct {
 		Prefix  string `json:"prefix"`
@@ -45,17 +49,30 @@ type connData struct {
 	} `json:"providerSpecificData"`
 }
 
+// bearerTokenProviders maps 9router OAuth-connection providers whose upstream
+// accepts the stored access token as a plain bearer key to the onegw kind,
+// base_url, and models endpoint to use. Others (cursor, grok-cli — custom
+// wire formats) are skipped with a warning: onegw v1 speaks
+// OpenAI/Anthropic/Gemini only.
+var bearerTokenProviders = map[string]struct{ kind, baseURL, modelsURL string }{
+	"xai":      {"openai", "https://api.x.ai", "https://api.x.ai/v1/models"},
+	"kilocode": {"openai", "https://api.kilo.ai/api/openrouter", "https://api.kilo.ai/api/gateway/models"},
+}
+
 type account struct {
-	name string
-	key  string
-	ok   bool // testStatus active
+	name    string
+	key     string
+	ok      bool      // testStatus active
+	expires time.Time // bearer-token expiry parsed from JWT, zero if unknown
 }
 
 type group struct {
-	name     string
-	baseURL  string
-	nodeName string
-	accts    []account
+	name      string
+	kind      string
+	baseURL   string
+	modelsURL string
+	nodeName  string
+	accts     []account
 }
 
 // builtinBaseURL resolves 9router built-in providers that store no
@@ -80,7 +97,7 @@ func main() {
 
 	groups := map[string]*group{}
 	rows, err := db.Query(`SELECT provider, name, priority, data FROM providerConnections
-		WHERE authType = 'apikey' AND isActive = 1 ORDER BY provider, priority`)
+		WHERE authType IN ('apikey', 'oauth') AND isActive = 1 ORDER BY provider, priority`)
 	fatal(err)
 	for rows.Next() {
 		var r connRow
@@ -90,6 +107,23 @@ func main() {
 		psd := d.ProviderSpecificData
 		base := psd.BaseURL
 		node := psd.Node
+		if base == "" && d.APIKey == "" && d.AccessToken != "" {
+			// Bearer-token (OAuth) connection: import as a single-account
+			// provider when the upstream is known to accept the token as-is.
+			bt, known := bearerTokenProviders[r.Provider]
+			if !known {
+				fmt.Fprintf(os.Stderr, "skip %s (%s): OAuth token flow not supported by onegw v1 (issue #2)\n", r.Provider, r.Name)
+				continue
+			}
+			groups[r.Provider] = &group{
+				name:      r.Provider,
+				kind:      bt.kind,
+				baseURL:   bt.baseURL,
+				modelsURL: bt.modelsURL,
+				accts:     []account{{name: orDefault(r.Name, "default"), key: d.AccessToken, ok: d.TestStatus == "active", expires: jwtExp(d.AccessToken)}},
+			}
+			continue
+		}
 		if base == "" {
 			known, ok := builtinBaseURL[r.Provider]
 			if !ok {
@@ -102,7 +136,7 @@ func main() {
 		key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(node, ".", "-"), " ", "-"))
 		g := groups[key]
 		if g == nil {
-			g = &group{name: key, baseURL: base, nodeName: node}
+			g = &group{name: key, kind: "openai", baseURL: base, nodeName: node}
 			groups[key] = g
 		}
 		g.accts = append(g.accts, account{name: orDefault(r.Name, "default"), key: d.APIKey, ok: d.TestStatus == "active"})
@@ -139,8 +173,7 @@ func main() {
 	b.WriteString("# --- providers ---\n\n")
 	for _, name := range names {
 		g := groups[name]
-		kind := "openai" // openai-compatible + built-ins all speak OpenAI shape
-		fmt.Fprintf(&b, "[[providers]]\nname = %q\nkind = %q\n", g.name, kind)
+		fmt.Fprintf(&b, "[[providers]]\nname = %q\nkind = %q\n", g.name, g.kind)
 		if g.baseURL != "" {
 			fmt.Fprintf(&b, "base_url = %q\n", strings.TrimRight(g.baseURL, "/"))
 		}
@@ -153,6 +186,9 @@ func main() {
 			note := ""
 			if !a.ok {
 				note = " # 9router marked unavailable (429 backoff)"
+			}
+			if !a.expires.IsZero() && time.Until(a.expires) < 48*time.Hour {
+				note += fmt.Sprintf(" # bearer token expires %s — rotate in 9router, then re-import", a.expires.UTC().Format(time.RFC3339))
 			}
 			fmt.Fprintf(&b, "[[providers.accounts]]\nname = %q\napi_key = %q\n%s\n", a.name, a.key, note)
 		}
@@ -175,7 +211,11 @@ func discoverModels(g *group) []string {
 		return nil
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(g.baseURL, "/")+"/models", nil)
+	modelsURL := g.modelsURL
+	if modelsURL == "" {
+		modelsURL = strings.TrimRight(g.baseURL, "/") + "/models"
+	}
+	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
 	if err != nil {
 		return nil
 	}
@@ -217,6 +257,30 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// jwtExp extracts the exp claim (seconds since epoch) from a JWT payload.
+// Returns the zero time for opaque or undecodable tokens so callers can
+// distinguish "expiry unknown" from a real deadline.
+func jwtExp(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return time.Time{}
+		}
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(int64(claims.Exp), 0)
 }
 
 func fatal(err error) {
