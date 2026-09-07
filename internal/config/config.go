@@ -71,6 +71,15 @@ type ProviderCfg struct {
 	// search runs (internal/provider/searxng.go).
 	MaxResults int    `toml:"max_results"`
 	Timeout    string `toml:"timeout"`
+	// Quota tracking (issue #7): Window "" = off | "5h" | "daily" |
+	// "weekly". QuotaResetAnchor optionally pins the reset grid to an ISO
+	// instant (its time-of-day phases daily resets; its instant phases 5h/
+	// weekly grids); empty = UTC midnight / ISO Monday / first-seen. The
+	// limits cap input+output+reasoning tokens (0 = track only).
+	QuotaWindow        string `toml:"quota_window"`
+	QuotaResetAnchor   string `toml:"quota_reset_anchor"`
+	QuotaLimitTokens   int64  `toml:"quota_limit_tokens"`
+	QuotaLimitRequests int64  `toml:"quota_limit_requests"`
 }
 
 // Acct is one provider account.
@@ -213,6 +222,22 @@ func (c *Config) Validate() error {
 		}
 		if p.Kind != "searxng" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
 			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
+		}
+		switch p.QuotaWindow {
+		case "", "5h", "daily", "weekly":
+		default:
+			return fmt.Errorf("provider %s invalid quota_window %q (want 5h, daily or weekly)", p.Name, p.QuotaWindow)
+		}
+		if p.QuotaResetAnchor != "" {
+			if _, err := time.Parse(time.RFC3339, p.QuotaResetAnchor); err != nil {
+				return fmt.Errorf("provider %s invalid quota_reset_anchor %q: %w", p.Name, p.QuotaResetAnchor, err)
+			}
+		}
+		if p.QuotaWindow == "" && (p.QuotaLimitTokens != 0 || p.QuotaLimitRequests != 0) {
+			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
+		}
+		if p.QuotaLimitTokens < 0 || p.QuotaLimitRequests < 0 {
+			return fmt.Errorf("provider %s quota limits must be >= 0", p.Name)
 		}
 	}
 	comboNames := map[string]bool{}
