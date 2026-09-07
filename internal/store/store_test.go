@@ -60,7 +60,7 @@ func TestTotalsAndPrune(t *testing.T) {
 	s := openTest(t)
 	day := time.Now().UTC().Format("2006-01-02")
 	err := s.FlushBuckets([]usage.Bucket{{
-		Key: usage.Key{Day: day, Hour: "10", Provider: "p", Model: "m", APIKey: "k"},
+		Key:      usage.Key{Day: day, Hour: "10", Provider: "p", Model: "m", APIKey: "k"},
 		Requests: 1, InputTokens: 1000, OutputTokens: 500,
 	}})
 	if err != nil {
@@ -78,7 +78,7 @@ func TestTotalsAndPrune(t *testing.T) {
 	}
 	// Old day prunes.
 	err = s.FlushBuckets([]usage.Bucket{{
-		Key: usage.Key{Day: "2020-01-01", Hour: "00", Provider: "p", Model: "m", APIKey: "k"},
+		Key:      usage.Key{Day: "2020-01-01", Hour: "00", Provider: "p", Model: "m", APIKey: "k"},
 		Requests: 1,
 	}})
 	if err != nil {

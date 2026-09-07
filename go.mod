@@ -2,7 +2,10 @@ module onegw
 
 go 1.25
 
-require modernc.org/sqlite v1.38.0
+require (
+	github.com/BurntSushi/toml v1.5.0
+	modernc.org/sqlite v1.38.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
