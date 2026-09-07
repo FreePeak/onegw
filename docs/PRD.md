@@ -1,7 +1,8 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (finalized: competitive comparison vs LiteLLM and
-9router; open tasks migrated to GitHub issues #1–#11)*
+*Last updated: 2026-09-07 (imported kilocode + xai bearer-token providers
+from 9router; extended cmd/import9r for OAuth bearer connections; custom
+wire-format gaps tracked as #12)*
 
 ## Product
 
@@ -157,11 +158,14 @@ Compared against the two reference gateways ( LiteLLM README + docs,
 - Quota reset-window tracking + per-provider spending limits → #7.
 - Model aliases → #6; per-key rate limits/restrictions → #3; Prometheus
   → #4; audio/embeddings surfaces → #9; streaming request bodies → #8;
-  multi-node rollup export → #10; runtime config writes → #11.
+  multi-node rollup export → #10; runtime config writes → #11; web-search
+  provider → #13.
 - Not pursued (non-goals): cloud sync (9router-only), billing/budget
   enforcement, semantic caching, guardrails/MCP/A2A, runtime dashboard
   config as the primary path (config stays file-based; #11 is optional
-  convenience).
+  convenience), advanced LB strategies beyond round-robin + combos
+  (latency/cost-based routing, session affinity — LiteLLM platform
+  features, not minimal-gateway scope).
 
 ## Routing model
 
@@ -212,21 +216,28 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #7 | Quota reset-window tracking and spending limits             | 9router gap        |
 | #8 | Streaming request bodies (client→upstream)                  | v2 tracker         |
 | #9 | Audio and embeddings surfaces (STT/TTS/embeddings)          | 9router gap        |
-| #10 | Multi-node usage rollup export                             | v2 tracker         |
 | #11 | Runtime config surface (dashboard/API writes)              | LiteLLM gap        |
+| #12 | Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf) | 9router gap |
 
 Snapshot mirror with done-history: `docs/prd-task-tracker.md`.
 
 ## Current status (post-M5)
-
 - **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
   API-key connections as onegw providers (accounts, upstream model discovery,
-  gateway auth keys). Builtin base URLs resolved (GLM), unknown skipped with
-  warning. Real config lives in `onegw.toml` (gitignored).
+  gateway auth keys) and OAuth bearer-token connections whose upstream
+  accepts the token as-is (`bearerTokenProviders`: xai → api.x.ai, kilocode →
+  api.kilo.ai/api/openrouter; per-endpoint models URL). JWT `exp` parsed and
+  surfaced as a rotate-me comment when under 48 h. Custom wire formats
+  (commandcode NDJSON, grok-cli Responses, cursor protobuf) skipped with
+  warning — #12. Real config lives in `onegw.toml` (gitignored).
 - **Live providers**: B.AI (7 accounts, 48 models, round-robin + fallback
-  verified) and GLM (1 account). Fixes that fell out: URL version-segment
-  join (`/v1`, `/api/paas/v4` bases), upstream model rewrite on same-format
-  passthrough, `developer`→`system` role normalization (pi CLI payloads).
+  verified), GLM (1 account), **kilocode** (1 bearer account, 371-model
+  OpenRouter-style catalog incl. `kilo-auto/free`; free-model chat + SSE
+  stream + Anthropic-surface translation verified live) and **xai** (1
+  bearer account, 12 models; `grok-4.6` chat verified live). Fixes that
+  fell out: URL version-segment join (`/v1`, `/api/paas/v4` bases), upstream
+  model rewrite on same-format passthrough, `developer`→`system` role
+  normalization (pi CLI payloads).
 - **pi CLI wired**: `onegw` provider in `~/.pi/agent/models.json` + ONEGW_KEY
   env; full agent loop (read/edit/bash) tested through onegw.
 - **Dashboard**: password-gated persisted rollups (today, aggregated per
