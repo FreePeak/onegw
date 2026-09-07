@@ -124,7 +124,7 @@ func opencodeGw(t *testing.T, up *httptest.Server) *Server {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.Server.DataDir = "memory"
-	cfg.Auth.Keys = []string{"gw-key"}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "gw-key"}}
 	cfg.Providers = []config.ProviderCfg{{
 		Name: "opencode", Kind: "opencode", BaseURL: up.URL,
 		Keys: []string{"oc-k1"}, Models: []string{"grok-4.6", "mimo-v2.5"},
