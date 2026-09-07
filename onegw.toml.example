@@ -57,6 +57,23 @@ api_key = ""                    # fill or use env
 name = "key-2"
 api_key = ""                    # fill or use env
 
+# --- Web search (virtual provider) ------------------------------------------
+
+[[providers]]
+name = "search"
+kind = "searxng"               # SearXNG JSON API at {base_url}/search
+base_url = "http://searx:8080" # required
+max_results = 5                # results formatted into the completion (0 = 5)
+timeout = "10s"                # per-search timeout (0 = 10s)
+# models = ["web"]             # optional extra aliases: model "search/web"
+# If the instance requires auth (SearXNG accepts X-API-Key or basic auth):
+#[providers.extra_headers]
+#X-API-Key = "..."
+
+[[combo]]
+name = "search-or-llm"         # fail-open: search down -> falls to the model
+targets = ["search/query", "openrouter/openai/gpt-5.5"]
+
 # --- Combos (ordered fallback) ----------------------------------------------
 
 [[combo]]

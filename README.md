@@ -102,7 +102,7 @@ env overrides:
 | `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup (90 MiB soft limit, GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
-providers (`kind = "openai" | "anthropic" | "gemini" | "opencode"`, optional
+providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "searxng"`, optional
 `base_url`, models, multiple `[[providers.accounts]]` or the `keys = [...]`
 multi-key shortcut), combos, server limits, saver and usage settings.
 `data_dir = "memory"` disables persistence.
@@ -135,6 +135,8 @@ between the Responses wire and whichever client surface asked — so
 clients, streaming and non-streaming alike. A Responses stream that closes
 without `response.completed` is surfaced as an upstream error, never a
 clean finish.
+
+### Web search (SearXNG)
 
 ### Always-thinking models
 
