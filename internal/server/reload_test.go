@@ -216,6 +216,55 @@ func TestReloadBadConfigNeverApplied(t *testing.T) {
 	}
 }
 
+func TestAliasRoutesThroughHandler(t *testing.T) {
+	up1 := upstreamStub("m1")
+	defer up1.Close()
+
+	cfg1 := makeCfg(t, "key-one", "pw-one", false, providerSpec{name: "p1", up: up1.URL, model: "m1"})
+	cfg1.Aliases = map[string]string{"fast": "p1/m1", "best": "fast"}
+	srv, err := New(cfg1)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Close()
+	h := srv.Handler()
+
+	for _, model := range []string{"fast", "best"} {
+		w := do(t, h, func() *http.Request {
+			r := chatReq(t, model)
+			r.Header.Set("Authorization", "Bearer key-one")
+			return r
+		}())
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "pong from m1") {
+			t.Fatalf("alias %q request failed: code=%d body=%s", model, w.Code, w.Body.String())
+		}
+	}
+
+	// Aliases surface in /v1/models.
+	w := do(t, h, func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		r.Header.Set("Authorization", "Bearer key-one")
+		return r
+	}())
+	if !strings.Contains(w.Body.String(), `"fast"`) {
+		t.Fatalf("alias should be listed in /v1/models: %s", w.Body.String())
+	}
+
+	// Reload with the alias dropped: the name must stop resolving.
+	cfg2 := makeCfg(t, "key-one", "pw-one", false, providerSpec{name: "p1", up: up1.URL, model: "m1"})
+	srv.Reload(cfg2)
+	// After dropping the alias table, "fast" is no longer a named alias:
+	// bare-model pass-through still serves it via the first provider.
+	w = do(t, h, func() *http.Request {
+		r := chatReq(t, "fast")
+		r.Header.Set("Authorization", "Bearer key-one")
+		return r
+	}())
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong from m1") {
+		t.Fatalf("post-drop alias should fall through as bare model: code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestReloadTightensBodyCap(t *testing.T) {
 	up1 := upstreamStub("m1")
 	defer up1.Close()
