@@ -102,9 +102,29 @@ env overrides:
 | `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup (90 MiB soft limit, GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
-providers (`kind = "openai" | "anthropic" | "gemini"`, optional `base_url`,
-models, multiple `[[providers.accounts]]`), combos, server limits, saver and
-usage settings. `data_dir = "memory"` disables persistence.
+providers (`kind = "openai" | "anthropic" | "gemini" | "opencode"`, optional
+`base_url`, models, multiple `[[providers.accounts]]` or the `keys = [...]`
+multi-key shortcut), combos, server limits, saver and usage settings.
+`data_dir = "memory"` disables persistence.
+
+### OpenCode Zen Go subscription
+
+`kind = "opencode"` fronts an [OpenCode](https://opencode.ai/auth) Go
+subscription. `base_url` defaults to `https://opencode.ai/zen/go`; with no
+`models` list the full Go catalog is advertised (GLM, Kimi K2, DeepSeek V4,
+MiMo, MiniMax, Qwen — `muse-spark-*` excluded, it is Responses-API-only).
+Auth is the subscription key(s) as bearer credentials, and the gateway
+always sends an `x-opencode-session` upstream: the client's own session
+header when present, otherwise a stable per-key id (keeps upstream prompt
+caches warm, isolates conversations). Subscription keys round-robin and
+cool on quota errors exactly like any account pool:
+
+```toml
+[[providers]]
+name = "opencode"
+kind = "opencode"
+keys = ["oc-key-1", "oc-key-2"]   # one account per key
+```
 
 ### Always-thinking models
 

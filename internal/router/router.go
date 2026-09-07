@@ -174,8 +174,11 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				return nil
 			}
 			lastErr = err
-			if !err.Retryable() {
+			if !(err.Retryable() || err.RegionLocked()) {
 				return err
+			}
+			if err.RegionLocked() {
+				continue // next attempt: pool skips the parked account
 			}
 			select {
 			case <-ctx.Done():
