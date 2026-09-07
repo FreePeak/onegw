@@ -1,6 +1,8 @@
 # onegw task tracker
 
-Linked from `docs/PRD.md`. Status as of 2026-09-07.
+Linked from `docs/PRD.md`. Durable task record = GitHub issues
+(https://github.com/FreePeak/onegw/issues); this file only mirrors their
+status. Status as of 2026-09-07.
 
 ## Done
 
@@ -30,7 +32,6 @@ Linked from `docs/PRD.md`. Status as of 2026-09-07.
       live flush window; visually verified in a real browser
 - [x] `bench/memory.sh`: 30 concurrent 800 KB streams → 67 MiB peak RSS,
       flat after load; budget gate verified
-
 - [x] `cmd/import9r`: 9router data.sqlite importer — API-key connections →
       onegw TOML (accounts, upstream model discovery, gateway [auth] keys);
       known builtin base URLs resolved, unknown skipped with warning
@@ -40,7 +41,6 @@ Linked from `docs/PRD.md`. Status as of 2026-09-07.
       target); streaming + store rollups verified
 - [x] Dashboard table reads persisted store rollups (source=store), totals
       line live-window; browser-verified against real B.AI traffic
-
 - [x] pi CLI integration: `onegw` provider added to ~/.pi/agent/models.json
       (combos + b-ai models), ONEGW_KEY in ~/.zshrc; full agent loop tested
       (read/edit/bash) against B.AI via onegw
@@ -53,11 +53,20 @@ Linked from `docs/PRD.md`. Status as of 2026-09-07.
       /api/paas/v4) joins without doubled segments; glm route live-verified
 - [x] onegw runs as supervised persistent service (hub-managed) on :8080
 
-## Open (v2 candidates)
+## Open — tracked as GitHub issues
 
-- [ ] SIGHUP hot reload of config
-- [ ] OAuth device flows (Claude Code/Codex/Cursor subscription providers)
-- [ ] Per-key rate limits and model restrictions
-- [ ] Streaming request bodies (client→upstream) without full read
-- [ ] Prometheus metrics endpoint
-- [ ] Multi-node usage rollup export
+- [ ] #1 SIGHUP hot reload of config
+- [ ] #2 OAuth device flows for subscription providers (Claude Code, Codex,
+      Cursor) — biggest gap vs 9router
+- [ ] #3 Per-key rate limits and model restrictions
+- [ ] #4 Prometheus metrics endpoint
+- [ ] #5 Output-side token savers (prompt injection / compression modes)
+- [ ] #6 Model aliases in config
+- [ ] #7 Quota reset-window tracking and per-provider spending limits
+- [ ] #8 Streaming request bodies (client→upstream) without full read
+- [ ] #9 Audio and embeddings surfaces (STT/TTS/embeddings passthrough)
+- [ ] #10 Multi-node usage rollup export
+- [ ] #11 Runtime config surface (dashboard/API writes to config)
+
+Deliberately NOT tracked (PRD non-goals): cloud sync, billing/budgets as an
+enforcement feature, guardrails/MCP/A2A gateways, response caching.

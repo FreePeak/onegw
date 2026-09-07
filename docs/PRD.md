@@ -1,14 +1,16 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (README: SVG logo + badges; repo branding)*
+*Last updated: 2026-09-07 (finalized: competitive comparison vs LiteLLM and
+9router; open tasks migrated to GitHub issues #1–#11)*
 
 ## Product
 
 `onegw` — single-binary LLM gateway in Go, a resource-efficient alternative to
-[9router](https://github.com/decolua/9router) (JS). One process fronts 40+ LLM
-providers behind OpenAI-compatible, Anthropic-compatible, and Gemini-compatible
-HTTP surfaces; routes by `provider/model`, applies fallback chains ("combos"),
-round-robins accounts, and tracks usage/quota. Hard targets:
+[9router](https://github.com/decolua/9router) (JS) and
+[LiteLLM](https://github.com/BerriAI/litellm) (Python). One process fronts
+OpenAI-, Anthropic-, and Gemini-compatible providers behind those same three
+HTTP surfaces; routes by `provider/model`, applies fallback chains
+("combos"), round-robins accounts, and tracks usage/quota. Hard targets:
 
 - **RAM: ≤ 100 MB resident** under sustained load (default Go GC tuning; no
   per-request buffering of streams).
@@ -20,10 +22,14 @@ round-robins accounts, and tracks usage/quota. Hard targets:
 ### Non-goals
 
 - OAuth device flows for subscription providers (Claude Code, Codex, ...) — v1
-  accepts API keys and bearer tokens only. OAuth adapters can slot in later via
-  the same `Provider` interface.
+  accepts API keys and bearer tokens only. OAuth adapters can slot in later
+  via the same `Provider` interface (tracked: #2).
 - Cloud sync, browser extension, electron tray.
-- Billing. Usage tracking is informational (cost estimates only).
+- Billing / spend enforcement. Usage tracking is informational (cost estimates
+  only).
+- Response/semantic caching, guardrails framework, MCP/A2A gateways,
+  realtime/audio endpoints — out of the minimal-gateway scope; revisit only
+  on demand.
 
 ## Architecture (HLD)
 
@@ -49,9 +55,9 @@ same-format passthrough). Packages:
 | `router`   | Model resolution, combo fallback chains, per-account round-robin      |
 | `saver`    | RTK-style tool_result compression filters (prefix sniffing, idempotent)|
 | `usage`    | Lock-sharded atomic counters, batched periodic flush to SQLite        |
-| `store`    | SQLite (config: providers/keys/combos; usage rollups)                 |
+| `store`    | SQLite (usage rollups only — config lives in TOML)                    |
 | `server`   | HTTP surfaces, `/v1/*`, `/v1beta/*`, `/anthropic/*`, admin, dashboard |
-| `auth`     | Bearer-key auth, per-key model restrictions                          |
+| `auth`     | Bearer-key auth, per-key model restrictions (planned, #3)             |
 
 ### Memory strategy (the 100 MB contract)
 
@@ -95,6 +101,10 @@ memory is O(event), not O(conversation).
 | M4  | Server surfaces (OpenAI/Anthropic/Gemini), auth, admin, dashboard     | done   |
 | M5  | Benchmarks (RSS ≤ 100 MB @ load), smoke test, hardening               | done   |
 
+All v1 milestones are complete and live-verified (B.AI traffic, pi CLI agent
+loop, glm/openrouter routes). Post-v1 work is tracked as GitHub issues —
+see [Open work](#open-work).
+
 ### Verified numbers (bench/memory.sh, mock upstream, macOS arm64)
 
 - Baseline RSS 17 MiB; 30 concurrent 800 KB streaming requests → peak
@@ -108,6 +118,51 @@ memory is O(event), not O(conversation).
   4× body-size reservation against a 48 MiB global budget; saturation
   returns 503 + Retry-After.
 
+## Competitive positioning
+
+Compared against the two reference gateways ( LiteLLM README + docs,
+9router README, as of 2026-09-07).
+
+### Landscape
+
+| | **LiteLLM** | **9router** | **onegw** |
+| --- | --- | --- | --- |
+| Runtime | Python + FastAPI; Postgres required for keys, Redis recommended in prod; benchmark spec 4 CPU / 8 GB per instance | Node.js 20 + Next.js 16; SQLite-backed config; no published RAM figures | Single static Go binary (`CGO_ENABLED=0`); optional SQLite for usage only; measured 17 MiB idle → 67 MiB peak |
+| Scope | Platform gateway: SDK + proxy, 100+ providers, teams/budgets/billing, guardrails, MCP + A2A gateways | Localhost "free AI router & token saver": 40+ providers, subscription maximization, dashboard-first config | Minimal personal/team gateway: 3 wire surfaces, any-to-any translation, combos, token saver, usage rollups |
+| Surfaces | OpenAI universal in; Anthropic `/v1/messages` in → any provider; Gemini pass-through only | OpenAI surface (+ Anthropic base URL); Cursor/Kiro/Vertex/Ollama/Responses translations | OpenAI, Anthropic, **and Gemini-native** surfaces in, any-to-any out, per-event SSE re-encoding |
+| Fallback | Model-group fallback chains, latency/cost-based routing, session affinity | 3-tier smart fallback (subscription → cheap → free) + custom combos | Named combos (ordered retry chains), weighted round-robin account pools, quota cooldown |
+| Config | `config.yaml` + DB overlay (`store_model_in_db`), UI writes models at runtime | Dashboard UI → SQLite; no file config | Single TOML file + env overrides; restart (hot reload: #1) |
+| Auth | Virtual keys in Postgres, teams/roles, JWT, SSO (enterprise-gated) | Dashboard-generated keys; enforcement off by default | Static bearer-key list; per-key policy planned (#3) |
+| Token saver | None in OSS | RTK (input) + Caveman/Ponytail (output prompt injection) + Headroom (external compress) | RTK-style input-side `tool_result` compression, bounded sniffer |
+| Observability | Prometheus `/metrics`, Langfuse/LangSmith/etc callbacks, spend logs | Dashboard quota/analytics + reset countdowns | `/admin/health`, `/admin/usage`, embedded dashboard; Prometheus planned (#4) |
+| Backpressure | Docs admit high init/per-request memory growth | Not published | Byte-budget semaphore: 48 MiB global bound, `503 + Retry-After` |
+
+### Where onegw wins
+
+- **Resource envelope**: measured 17 → 67 MiB RSS with no external
+  Postgres/Redis; LiteLLM's own docs specify 4 CPU / 8 GB instances and
+  admit "high memory usage during initialization and per request"; 9router
+  publishes no memory figures and needs Node + PM2/Docker.
+- **Gemini as a first-class translated surface** (LiteLLM: pass-through
+  only; 9router: no Gemini-native client surface).
+- **Memory contract with enforcement** — byte-budget backpressure instead of
+  unbounded per-request growth.
+- **Infra-as-file config** (TOML, reviewable, no DB overlay semantics).
+
+### Gaps accepted or deferred (issue-tracked)
+
+- OAuth subscription providers + token refresh — 9router's core
+  "maximize-the-subscription" pitch; deferred from v1 → #2.
+- Output-side token savers (Caveman/Ponytail/Headroom analogues) → #5.
+- Quota reset-window tracking + per-provider spending limits → #7.
+- Model aliases → #6; per-key rate limits/restrictions → #3; Prometheus
+  → #4; audio/embeddings surfaces → #9; streaming request bodies → #8;
+  multi-node rollup export → #10; runtime config writes → #11.
+- Not pursued (non-goals): cloud sync (9router-only), billing/budget
+  enforcement, semantic caching, guardrails/MCP/A2A, runtime dashboard
+  config as the primary path (config stays file-based; #11 is optional
+  convenience).
+
 ## Routing model
 
 - Model string forms: `provider/model` (direct), `combo-name` (ordered
@@ -116,6 +171,9 @@ memory is O(event), not O(conversation).
   error with backoff; non-retryable errors (4xx) fail fast; per-provider
   concurrency caps; weighted round-robin account pools with quota cooldown.
 - Account = API key + optional base URL override + weight.
+- Provider kinds: `openai`, `anthropic`, `gemini` — arbitrary upstreams via
+  `base_url` override (40+ providers reachable: OpenRouter, GLM, Kimi,
+  DeepSeek, Groq, ...). B.AI, GLM, and OpenRouter routes live-verified.
 
 ## Key decisions
 
@@ -126,34 +184,44 @@ memory is O(event), not O(conversation).
   not the driver). `CGO_ENABLED=0`.
 - **Translation via unified intermediate model** — correctness over
   cleverness; streaming re-encoders are separate from body translation.
+  N+M decoders/encoders instead of N×M pairwise adapters.
 - **Passthrough-first**: same-format traffic is byte-copied with a bounded
-  usage sniffer (64 KiB rolling window); never parsed.
+  usage sniffer (64 KiB rolling window); never parsed. Upstream model is
+  rewritten into the passthrough body so client-side `provider/model`
+  strings don't leak upstream.
 - **Byte-budget semaphore (mutex + poll)**, not a token channel — a channel
   cannot express all-or-nothing multi-unit take without deadlock.
 - **Config = single TOML file + env overrides**; usage state is the only
-  SQLite content. SIGHUP reload is a v2 item.
+  SQLite content. SIGHUP reload: #1.
+- **Migration tooling**: `cmd/import9r` imports 9router's data.sqlite
+  (API-key connections → accounts/keys/combos TOML), lowering the switch
+  cost from 9router.
 
-## Current status (post-M5)
+## Open work
 
-- **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
-  API-key connections as onegw providers (accounts, upstream model discovery,
-  gateway auth keys). Builtin base URLs resolved (GLM), unknown skipped with
-  warning. Real config lives in `onegw.toml` (gitignored).
-- **Live providers**: B.AI (7 accounts, 48 models, round-robin + fallback
-  verified) and GLM (1 account). Fixes that fell out: URL version-segment
-  join (`/v1`, `/api/paas/v4` bases), upstream model rewrite on same-format
-  passthrough, `developer`→`system` role normalization (pi CLI payloads).
-- **pi CLI wired**: `onegw` provider in `~/.pi/agent/models.json` + ONEGW_KEY
-  env; full agent loop (read/edit/bash) tested through onegw.
-- **Dashboard**: password-gated persisted rollups (today, aggregated per
-  provider+model), since-start totals, saver "saved" column, health/mem
-  strip, 401 flow verified in browser.
-- onegw runs as a supervised persistent service on 127.0.0.1:8080.
+All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issues):
+
+| #  | Task                                                        | Source             |
+| -- | ----------------------------------------------------------- | ------------------ |
+| #1 | SIGHUP hot reload of config                                 | v2 tracker         |
+| #2 | OAuth device flows for subscription providers               | 9router gap        |
+| #3 | Per-key rate limits and model restrictions                  | v2 tracker         |
+| #4 | Prometheus metrics endpoint                                 | v2 tracker         |
+| #5 | Output-side token savers (prompt injection / compression)   | 9router gap        |
+| #6 | Model aliases in config                                     | 9router gap        |
+| #7 | Quota reset-window tracking and spending limits             | 9router gap        |
+| #8 | Streaming request bodies (client→upstream)                  | v2 tracker         |
+| #9 | Audio and embeddings surfaces (STT/TTS/embeddings)          | 9router gap        |
+| #10 | Multi-node usage rollup export                             | v2 tracker         |
+| #11 | Runtime config surface (dashboard/API writes)              | LiteLLM gap        |
+
+Snapshot mirror with done-history: `docs/prd-task-tracker.md`.
 
 ## Docs
 
 - `docs/ARCHITECTURE.md` — package detail, memory contract, config reference.
 - `README.md` — project overview, quick start, benchmarks; `LICENSE` (MIT).
-- `docs/prd-task-tracker.md` — live task tracker (local repo, not GitHub).
+- GitHub issues — the durable task record (see Open work above).
+- `docs/prd-task-tracker.md` — historical done-list + issue snapshot mirror.
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.

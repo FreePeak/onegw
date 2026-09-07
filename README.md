@@ -147,7 +147,8 @@ bench/memory.sh        # RSS benchmark with mock upstream
 
 - [`docs/PRD.md`](docs/PRD.md) — product scope, architecture summary, milestones, decisions.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — request pipeline, memory contract, translation matrices, store schema.
-- [`docs/prd-task-tracker.md`](docs/prd-task-tracker.md) — live task tracker.
+- GitHub [issues](https://github.com/FreePeak/onegw/issues) — durable task record.
+- `docs/prd-task-tracker.md` — done-history snapshot mirroring issues.
 
 ## License
 
