@@ -1,6 +1,14 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (security/stability hardening pass: constant-time
+*Last updated: 2026-09-07 (dashboard usage range filter — today / 7 days / 1
+month / all time, default all time, selection persisted in `?range=` so a
+reload keeps it; header totals now include sum (in+out) tokens; earlier:
+internal/saver/loss_profile_test.go — pins the RTK trade with runtime
+evidence: generic path never truncates distinct lines, dedup-before-truncate
+keeps mid-file errors in identical-run logs, truncating filters label the
+elided middle with counts, long-line cuts carry byte markers, pretty JSON
+sniffs onto the truncating path, idempotence + never-grow enforced per
+filter; earlier: security/stability hardening pass: constant-time
 key + admin-password comparison, admin auth moved to the X-Admin-Password
 header only (query strings leak into logs), fail-closed startup/reload on
 non-loopback binds with no auth keys, 30s shutdown drain deadline,
@@ -86,7 +94,7 @@ same-format passthrough). Packages:
 | `translat` | Bidirectional OpenAI ↔ Anthropic ↔ Gemini translation (body + SSE)    |
 | `provider` | Provider interface, registry, per-provider HTTP client, adapters      |
 | `router`   | Model resolution, combo fallback chains, per-account round-robin      |
-| `saver`    | RTK-style tool_result compression filters (prefix sniffing, idempotent)|
+| `saver`    | RTK-style tool_result compression filters (prefix sniffing, idempotent, loss profile test-pinned)|
 | `usage`    | Lock-sharded atomic counters, batched periodic flush to SQLite        |
 | `store`    | SQLite (usage rollups only — config lives in TOML)                    |
 | `server`   | HTTP surfaces, `/v1/*`, `/v1beta/*`, `/anthropic/*`, admin, dashboard |
@@ -311,16 +319,22 @@ the issue):
   normalization (pi CLI payloads).
 - **pi CLI wired**: `onegw` provider in `~/.pi/agent/models.json` + ONEGW_KEY
   env; full agent loop (read/edit/bash) tested through onegw.
-- **Dashboard**: password-gated persisted rollups (today, aggregated per
-  provider+model), since-start totals, saver "saved" column, health/mem
-  strip, live in-flight concurrency gauge (counter incremented across the
-  proxy pipelines, shown as `live` and exposed as `inflight` in
+- **Dashboard**: password-gated persisted rollups with a usage range filter
+  (today / 7 days / 1 month / all time — default all time, selection kept in
+  the `?range=` query so it survives reload), aggregated per provider+model;
+  header totals show reqs, in/out/**sum**/saved tokens; saver "saved" column,
+  health/mem strip, live in-flight concurrency gauge (counter incremented
+  across the proxy pipelines, shown as `live` and exposed as `inflight` in
   `/admin/health`), 401 flow verified in browser.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
   stopped. Deploys remain rolling: pre-build, atomic binary swap, graceful
-  drain via SIGTERM.
+  drain via SIGTERM. Restarts and drains go through the supervisor by name
+  or by explicit PID — never `pkill -f`: the pattern matches the
+  replacement too (identical command lines), and a graceful SIGTERM exit 0
+  is a "deliberate stop" the supervisor intentionally does not autoresume
+  (2026-09-07 outage root cause).
 
 ## Docs
 
