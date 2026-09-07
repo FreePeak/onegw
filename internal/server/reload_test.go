@@ -37,7 +37,9 @@ func makeCfg(t *testing.T, key, adminPW string, saverEnabled bool, provs ...prov
 	cfg := &config.Config{}
 	cfg.Server.DataDir = "memory"
 	cfg.Server.AdminPassword = adminPW
-	cfg.Auth.Keys = []string{key}
+	if key != "" {
+		cfg.Auth.KeyList = []config.AuthKey{{Key: key}}
+	}
 	cfg.Saver.Enabled = saverEnabled
 	for _, pr := range provs {
 		cfg.Providers = append(cfg.Providers, config.ProviderCfg{
