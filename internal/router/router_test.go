@@ -103,6 +103,28 @@ func TestExecuteNoRetryOnBadRequest(t *testing.T) {
 	}
 }
 
+// A region-locked credential must not fail the request when another key of
+// the same provider can serve it: the router retries the same target and
+// the parked account is skipped by the pool.
+func TestExecuteRetriesRegionLocked(t *testing.T) {
+	r := New(newTestPool())
+	res, _ := r.Resolve("p1/m1")
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		if calls == 1 {
+			return nil, &types.APIError{Status: 403, Type: "RegionError", Message: "region"}
+		}
+		return "ok", nil
+	}
+	if err := r.Execute(context.Background(), res, caller, func(a any) {}); err != nil {
+		t.Fatalf("region-locked first attempt must retry, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d, want 2", calls)
+	}
+}
+
 func TestExecuteErrorWhenAllFail(t *testing.T) {
 	r := New(newTestPool())
 	res, _ := r.Resolve("p1/m")

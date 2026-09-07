@@ -112,7 +112,8 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		return fmt.Errorf("refusing to serve %q with no auth keys — set [auth] keys or bind a loopback address", cfg.Server.Listen)
 	}
 	pool := provider.NewPool()
-	for _, p := range cfg.Providers {
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
 		kind := provider.Kind(p.Kind)
 		def := &provider.Def{
 			Name:           p.Name,
@@ -132,6 +133,12 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			def.Accounts = []provider.Account{{Name: "default", APIKey: p.APIKey, BaseURL: p.BaseURL}}
 		}
 		pool.Set(def)
+		// Materialize the kind's default catalog onto the config copy so
+		// routing AND every surface that reads cfg.Providers (models list,
+		// dashboard) agree.
+		if len(p.Models) == 0 {
+			p.Models = provider.DefaultModels(kind)
+		}
 	}
 	rt := router.New(pool)
 	for _, p := range cfg.Providers {
@@ -274,7 +281,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		return
 	}
 	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens)
+		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader))
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
@@ -311,7 +318,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		return
 	}
 	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens)
+		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader))
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtGemini, execErr)
@@ -349,14 +356,14 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 // attempt performs one upstream call and streams the response back,
 // translating or passing through as needed. Usage is recorded.
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
-	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64) (any, *types.APIError) {
+	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string) (any, *types.APIError) {
 
 	upstreamFmt := def.Kind.Format()
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
-	res, apiErr := def.Do(ctx, acct, model, upBody, stream)
+	res, apiErr := def.Do(ctx, acct, model, clientSession, upBody, stream)
 	if apiErr != nil {
 		return nil, apiErr
 	}
