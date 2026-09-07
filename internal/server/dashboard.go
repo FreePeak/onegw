@@ -29,6 +29,7 @@ const dashboardHTML = `<!doctype html>
   · heap <span id="heap" class="muted">-</span> · sys <span id="sys" class="muted">-</span>
   <span id="stamp" class="muted"></span>
 </p>
+<p class="muted">Endpoints: /v1/chat/completions · /v1/messages · /v1beta/models/{m}:generateContent · /v1/models</p>
 <p id="totals">usage (since process start): <span class="muted">enter admin password to view</span></p>
 <p>
   admin password: <input id="pw" type="password" placeholder="(admin_password from config)" size="28">
@@ -38,7 +39,6 @@ const dashboardHTML = `<!doctype html>
   <thead><tr><th>provider</th><th>model</th><th>reqs</th><th>in tok</th><th>out tok</th><th>cache read</th><th>saved</th></tr></thead>
   <tbody></tbody>
 </table>
-<p class="muted">Endpoints: /v1/chat/completions · /v1/messages · /v1beta/models/{m}:generateContent · /v1/models</p>
 <script>
 const pwInput = document.getElementById('pw');
 pwInput.value = localStorage.getItem('onegw_admin') || '';
