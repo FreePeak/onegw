@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +49,7 @@ func TestDoOpencodeHeaders(t *testing.T) {
 	defer srv.Close()
 
 	def := &Def{Name: "opencode", Kind: KindOpenCode, BaseURL: srv.URL, Accounts: []Account{{Name: "k1", APIKey: "oc-test"}}}
-	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.2", "", []byte(`{}`), false)
+	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.2", "", bytes.NewReader([]byte(`{}`)), false)
 	if apiErr != nil {
 		t.Fatalf("Do failed: %+v", apiErr)
 	}
@@ -75,7 +76,7 @@ func TestDoOpencodeClientSessionForwarded(t *testing.T) {
 	defer srv.Close()
 
 	def := &Def{Name: "opencode", Kind: KindOpenCode, BaseURL: srv.URL, Accounts: []Account{{Name: "k1", APIKey: "k"}}}
-	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.2", "ses_from-client", []byte(`{}`), false)
+	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.2", "ses_from-client", bytes.NewReader([]byte(`{}`)), false)
 	if apiErr != nil {
 		t.Fatalf("Do failed: %+v", apiErr)
 	}
@@ -141,7 +142,7 @@ func TestDoOpencodeResponsesPath(t *testing.T) {
 	defer srv.Close()
 
 	def := &Def{Name: "opencode", Kind: KindOpenCode, BaseURL: srv.URL, Accounts: []Account{{Name: "k1", APIKey: "oc"}}}
-	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "grok-4.6", "", []byte(`{"model":"grok-4.6","input":[]}`), false)
+	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "grok-4.6", "", bytes.NewReader([]byte(`{"model":"grok-4.6","input":[]}`)), false)
 	if apiErr != nil {
 		t.Fatalf("Do failed: %+v", apiErr)
 	}
