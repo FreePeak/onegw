@@ -1,6 +1,12 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (dashboard token units: compact formatter gained
+*Last updated: 2026-09-08 (prompt-caching research across eight provider
+families — new [Prompt caching (upstream)](#prompt-caching-upstream) section
+with the per-provider matrix; filed #31-#36. Verdict: the same-format path is
+already cache-friendly — its three body mutations are deterministic and
+idempotent, so the prefix is byte-stable across turns and client cache knobs
+reach upstream untouched — while cross-format translation drops them outright;
+earlier: dashboard token units: compact formatter gained
 a B tier — sums ≥ 1e9 now render `1B`, not `1002.2M`; trailing `.0` trimmed
 across K/M/B; earlier: opencode provider kind: OpenCode Zen Go
 subscription integration — `kind = "opencode"`, default base
@@ -84,9 +90,12 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
 - Cloud sync, browser extension, electron tray.
 - Billing / spend enforcement. Usage tracking is informational (cost estimates
   only).
-- Response/semantic caching, guardrails framework, MCP/A2A gateways,
-  realtime/audio endpoints — out of the minimal-gateway scope; revisit only
-  on demand.
+- Response/semantic caching — storing an answer in the gateway and replaying
+  it instead of calling the upstream — plus guardrails framework, MCP/A2A
+  gateways, realtime/audio endpoints: out of the minimal-gateway scope,
+  revisit only on demand. Distinct from **upstream prompt caching**, which
+  onegw does not implement but must not break: see
+  [Prompt caching (upstream)](#prompt-caching-upstream).
 
 ## Architecture (HLD)
 
@@ -130,8 +139,12 @@ same-format passthrough). Packages:
   response) holds O(body) bytes per request. A global semaphore sized in bytes
   (default 48 MiB) gates that path; streaming/passthrough paths never acquire
   it. Under saturation requests wait, memory stays flat.
-- Sessions are **stateless**: no conversation cache; `session_id` only keys
-  usage rollups. Massive session counts cost nothing.
+- Sessions are **stateless**: no conversation cache; nothing accumulates per
+  session, so massive session counts cost nothing. Note: `session_id` keys
+  nothing today either — `ChatRequest.SessionID` is parsed from `user` /
+  `metadata.user_id` (`openai.go:192`, `anthropic.go:123`) but read nowhere,
+  and rollups key on day/hour/provider/model/api_key. Forwarding it as a
+  cache-affinity hint is open work (#34, #36).
 - `GOGC` default; soft memory limit `GOMEMLIMIT=90MiB` set at startup if
   unset. Allocation-heavy JSON reuse in hot loops.
 - **SQLite RSS is measured, not assumed.** `modernc.org/sqlite` is a generated
@@ -147,6 +160,68 @@ tokens; per-chunk cost is a `bufio` copy + occasional JSON event rewrite —
 Go http server handles this on ~1 core. Translation paths are the only O(body)
 work and only run on cross-format requests; they stream event-by-event so
 memory is O(event), not O(conversation).
+
+### Prompt caching (upstream)
+
+Research 2026-09-07/08: official vendor docs, live probes against the
+configured endpoints, and 9router source. Prompt caching is **upstream-side** —
+onegw stores no response (that stays a non-goal). What onegw controls is
+whether the request bytes and identity fields upstream caches key on survive
+the trip.
+
+**Verdict.** Every configured upstream is `kind = "openai"` (`b-ai`, `glm`,
+`kilocode`, `xai`) plus `opencode`. On that path the body is mutated three
+times — `saver.ApplyRaw` (`server.go:272`), `adaptAlwaysThinking` (`:588`),
+`normalizeRoles` (`:589`) — but all three are deterministic and idempotent
+(pinned by `saver/loss_profile_test.go:222-243`), so the prefix stays
+byte-identical across turns and client-sent `prompt_cache_key` / `session_id` /
+`cache_control` reach upstream untouched (`rewriteModel` rewrites only
+`model`). **The entire cache-loss surface is cross-format translation**, where
+typed structs drop those fields.
+
+| Family | Mechanism | OpenAI-wire knob | Min tok | Write / read |
+| --- | --- | --- | --- | --- |
+| Anthropic | explicit breakpoints (+ top-level automatic) | own compat layer: unsupported | 512–4096 | +25%/+100% write; 10% read |
+| OpenAI | implicit + explicit (GPT-5.6+) | `prompt_cache_key`, `prompt_cache_options` | 1024 / 2048 | 1.25x write (5.6+); 10% read |
+| Gemini / Vertex | implicit auto, **no knob** + `cachedContents` resource | `extra_body.google.cached_content` | 2048–4096 implicit; explicit undocumented | none; 10% read (+storage) |
+| xAI Grok | implicit + sticky routing | `prompt_cache_key`; header `x-grok-conv-id` | undocumented | none; 15–25% read |
+| Zhipu GLM | implicit only | **none** — probe: all knobs 200-and-ignored | undocumented | none; ~19% read |
+| DeepSeek | implicit only | **none** — `cache_control` documented "Ignored" | none documented | none; ~3% read |
+| Qwen / DashScope | implicit + explicit | **`cache_control` works on the OpenAI wire** | 1024 | 125% write / 10% read explicit; 20% implicit |
+| Kimi / Moonshot | implicit | `prompt_cache_key` | 256 | none; 10–20% read |
+| Aggregators | upstream-dependent | OpenRouter `session_id` → 10m sticky (kilo mirrors it: inferred); b-ai ignores all | — | per upstream |
+
+Undocumented cells are genuinely absent from vendor docs — no number is
+substituted. Vendors **silently skip caching below the minimum and return no
+error**, so savings are verified from reported usage, never assumed.
+
+**Working today:** implicit prefix caching end-to-end on the live routes
+(GLM probe: 1528/1529 tokens cached on prefix reuse; b-ai `qwen3.8-flash`:
+0 → 1024 → 1664), and cache-read accounting on passthrough, where `sniff.go`
+recognizes five of the six vendor usage shapes.
+
+**Broken / open:**
+
+- #31 — no cache-inclusive vs cache-exclusive convention, so every translated
+  route mis-reports prompt size; over-reports on the live Anthropic-client ×
+  OpenAI-upstream path, and `usage_rollup.input_tok` is not comparable across
+  providers.
+- #32 — cross-format requests drop `cache_control` / `prompt_cache_key` /
+  `session_id`.
+- #33 — DeepSeek `prompt_cache_hit_tokens` invisible to sniffer and decoders
+  (latent: no direct DeepSeek provider configured today).
+- #36 — `x-grok-conv-id` is never forwarded (`Do()` builds a fresh request),
+  losing xAI's per-server sticky routing on the live `grok-4.6` route.
+- #34 — no anchoring for the families where markers do work (DashScope on the
+  OpenAI wire; Anthropic-native).
+- #35 — `ApplyRaw`'s global all-or-nothing gate is the one non-monotonic
+  mutation and can flip a whole body raw↔compressed, busting the prefix.
+
+**Rules adopted:** never invent a knob for a provider that ignores it; anchor
+**last**, after every body mutation (9router's ordering discipline); never
+strip client markers on same-format passthrough; treat combo fallback hops as
+cold-cache by construction and measure the cost on the existing `cache_read`
+column rather than assuming it.
 
 ## Milestones
 
@@ -191,6 +266,7 @@ Compared against the two reference gateways ( LiteLLM README + docs,
 | Config | `config.yaml` + DB overlay (`store_model_in_db`), UI writes models at runtime | Dashboard UI → SQLite; no file config | Single TOML file + env overrides; restart (hot reload: #1) |
 | Auth | Virtual keys in Postgres, teams/roles, JWT, SSO (enterprise-gated) | Dashboard-generated keys; enforcement off by default | Static bearer-key list; per-key policy planned (#3) |
 | Token saver | None in OSS | RTK (input) + Caveman/Ponytail (output prompt injection) + Headroom (external compress) | RTK-style input-side `tool_result` compression, bounded sniffer |
+| Prompt caching | Response + semantic caching (in-memory/disk/Redis/S3/GCS; Qdrant/Redis/Valkey semantic) — needs an external store; prompt-caching passthrough for 7 provider families | Conversation-state cache (history-hash key, TTL + eviction, per executor) **and** active breakpoint engineering (`anchorClaudeCache`, `prompt_cache_key` injection) | Upstream cache **accounting** only; no gateway-side cache by design; preservation/anchoring gaps tracked as #31-#36 |
 | Observability | Prometheus `/metrics`, Langfuse/LangSmith/etc callbacks, spend logs | Dashboard quota/analytics + reset countdowns | `/admin/health`, `/admin/usage`, embedded dashboard; Prometheus planned (#4) |
 | Backpressure | Docs admit high init/per-request memory growth | Not published | Byte-budget semaphore: 48 MiB global bound, `503 + Retry-After` |
 
@@ -219,11 +295,12 @@ Compared against the two reference gateways ( LiteLLM README + docs,
 - Install/ops friction: no prebuilt releases, manual build, manual
   agent-CLI wiring, no Docker image → #14.
 - Not pursued (non-goals): cloud sync (9router-only), billing/budget
-  enforcement, semantic caching, guardrails/MCP/A2A, runtime dashboard
-  config as the primary path (config stays file-based; #11 is optional
-  convenience), advanced LB strategies beyond round-robin + combos
-  (latency/cost-based routing, session affinity — LiteLLM platform
-  features, not minimal-gateway scope).
+  enforcement, gateway-side response/semantic caching, guardrails/MCP/A2A,
+  runtime dashboard config as the primary path (config stays file-based; #11
+  is optional convenience), advanced LB strategies beyond round-robin + combos
+  (latency/cost-based routing — LiteLLM platform features, not
+  minimal-gateway scope). Cache-affinity *identity* forwarding (#34, #36) is a
+  distinct, stateless concern and is pursued.
 
 ## Routing model
 
@@ -258,6 +335,10 @@ Compared against the two reference gateways ( LiteLLM README + docs,
 - **Migration tooling**: `cmd/import9r` imports 9router's data.sqlite
   (API-key connections → accounts/keys/combos TOML), lowering the switch
   cost from 9router.
+- **Never invent a cache knob.** Providers that ignore a field (GLM, DeepSeek,
+  b-ai — verified by live probe) must not receive it; adding bytes that buy
+  nothing is worse than adding nothing. Anchoring is opt-in per provider and
+  runs after every body mutation.
 
 ## Open work
 
@@ -282,6 +363,12 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
 | #17 | Self-healing thinking-dialect fallback: coerce + retry on thinking-class 400s, learn per (provider, model), combo-advance as last resort | #16 follow-up |
 | #19 | Dashboard console log (9router-style): in-memory log sink + `/admin/logs` endpoints + dashboard console pane | user request |
+| #31 | Fix cache-inclusive/exclusive usage semantics across translation | research 2026-09-08 |
+| #32 | Preserve `cache_control` / `prompt_cache_key` / `session_id` across translation | research 2026-09-08 |
+| #33 | Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests | research 2026-09-08 |
+| #34 | Per-provider cache profiles: breakpoint anchoring, anchor-last ordering | research 2026-09-08 |
+| #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
+| #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
