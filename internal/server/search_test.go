@@ -43,7 +43,7 @@ const searxFixtures = `{"results":[
 	{"url":"https://example.org/x","title":"X","content":"Third fixture result."}
 ]}`
 
-func authed(r *http.Request) *http.Request {
+func withKey(r *http.Request) *http.Request {
 	r.Header.Set("Authorization", "Bearer sk-test")
 	return r
 }
@@ -68,7 +68,7 @@ func searchCfg(t *testing.T, searxBase string, opts func(*config.ProviderCfg)) *
 	}
 	cfg.Server.DataDir = "memory"
 	cfg.Server.AdminPassword = "pw"
-	cfg.Auth.Keys = []string{"sk-test"}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test"}}
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config invalid: %v", err)
@@ -98,7 +98,7 @@ func TestSearchE2ENonStreaming(t *testing.T) {
 	srv := searchCfg(t, up.srv.URL, nil)
 	h := srv.Handler()
 
-	w := do(t, h, authed(chatReqStr(t, "search/query", "what is onegw", false)))
+	w := do(t, h, withKey(chatReqStr(t, "search/query", "what is onegw", false)))
 	if w.Code != 200 {
 		t.Fatalf("code = %d body=%s", w.Code, w.Body.String())
 	}
@@ -143,7 +143,7 @@ func TestSearchE2EStreaming(t *testing.T) {
 	srv := searchCfg(t, up.srv.URL, nil)
 	h := srv.Handler()
 
-	w := do(t, h, authed(chatReqStr(t, "search/query", "gateway docs", true)))
+	w := do(t, h, withKey(chatReqStr(t, "search/query", "gateway docs", true)))
 	if w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
 	}
@@ -214,13 +214,13 @@ func TestSearchE2EComboFallsThroughWhenDown(t *testing.T) {
 	h := srv.Handler()
 
 	// Direct search route: the retryable 503 surfaces to the client.
-	w := do(t, h, authed(chatReqStr(t, "search/query", "anything", false)))
+	w := do(t, h, withKey(chatReqStr(t, "search/query", "anything", false)))
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "search_unavailable") {
 		t.Fatalf("direct down-search: code=%d body=%s, want 503 search_unavailable", w.Code, w.Body.String())
 	}
 
 	// Combo: search falls through to the real provider.
-	w = do(t, h, authed(chatReqStr(t, "withsearch", "anything", false)))
+	w = do(t, h, withKey(chatReqStr(t, "withsearch", "anything", false)))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong from m1") {
 		t.Fatalf("combo fall-through: code=%d body=%s, want pong from real provider", w.Code, w.Body.String())
 	}
@@ -236,7 +236,7 @@ func TestSearchE2ETimeout(t *testing.T) {
 	srv := searchCfg(t, hold.URL, func(p *config.ProviderCfg) { p.Timeout = "100ms" })
 	h := srv.Handler()
 
-	w := do(t, h, authed(chatReqStr(t, "search/query", "slow", false)))
+	w := do(t, h, withKey(chatReqStr(t, "search/query", "slow", false)))
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "search_unavailable") {
 		t.Fatalf("timeout: code=%d body=%s, want 503 search_unavailable", w.Code, w.Body.String())
 	}
@@ -247,7 +247,7 @@ func TestSearchE2EModelsListing(t *testing.T) {
 	srv := searchCfg(t, up.srv.URL, nil)
 	h := srv.Handler()
 
-	w := do(t, h, authed(httptest.NewRequest(http.MethodGet, "/v1/models", nil)))
+	w := do(t, h, withKey(httptest.NewRequest(http.MethodGet, "/v1/models", nil)))
 	if w.Code != 200 {
 		t.Fatalf("code = %d", w.Code)
 	}
