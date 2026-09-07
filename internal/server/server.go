@@ -1,14 +1,5 @@
-// Package server exposes the gateway HTTP surfaces:
-//
-//	POST /v1/chat/completions        (OpenAI)
-//	POST /v1/messages                (Anthropic, same pipeline)
-//	POST /v1beta/models/{m}:generateContent | :streamGenerateContent?alt=sse (Gemini)
-//	GET  /v1/models                  (OpenAI listing)
-//	GET  /admin/health, /admin/usage, / (dashboard)
-//
-// Same-format traffic streams through byte-for-byte (passthrough-first);
-// cross-format traffic translates event-wise; usage is sniffed from a bounded
-// window without buffering bodies.
+// Package server exposes the gateway HTTP surfaces: OpenAI, Anthropic, and
+// Gemini compatibility endpoints plus admin/dashboard.
 package server
 
 import (
@@ -17,9 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
-	"time"
-
 	"onegw/internal/config"
 	"onegw/internal/provider"
 	"onegw/internal/router"
@@ -28,6 +16,9 @@ import (
 	"onegw/internal/translat"
 	"onegw/internal/types"
 	"onegw/internal/usage"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // Server wires the gateway together.
@@ -400,20 +391,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
 }
 
-func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
-	if !s.adminOK(r) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
-		return
-	}
-	snap := s.usage.Snapshot()
-	if snap == nil {
-		snap = []usage.Bucket{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"buckets": snap})
-}
-
 func (s *Server) adminOK(r *http.Request) bool {
 	pw := s.cfg.Server.AdminPassword
 	if pw == "" {
@@ -429,6 +406,43 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(dashboardHTML))
+}
+
+func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOK(r) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	// source=store reads persisted rollups over ?days=N (default 1);
+	// default reads the live since-last-flush window.
+	if r.URL.Query().Get("source") == "store" && s.st != nil {
+		days := 1
+		if v := r.URL.Query().Get("days"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 366 {
+				days = n
+			}
+		}
+		from := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+		to := time.Now().UTC().Format("2006-01-02")
+		rows, err := s.st.QueryRange(from, to)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"store query failed"}`))
+			return
+		}
+		if rows == nil {
+			rows = []store.UsageRow{}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"rows": rows})
+		return
+	}
+	snap := s.usage.Snapshot()
+	if snap == nil {
+		snap = []usage.Bucket{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"buckets": snap})
 }
 
 // prepareUpstreamBody returns the body to send upstream. Same format →

@@ -15,11 +15,11 @@ const shardCount = 16
 
 // Key identifies a rollup bucket.
 type Key struct {
-	Provider string
-	Model    string
-	APIKey   string
-	Day      string // YYYY-MM-DD (UTC)
-	Hour     string // HH (UTC) within Day
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	APIKey   string `json:"api_key"`
+	Day      string `json:"day"`  // YYYY-MM-DD (UTC)
+	Hour     string `json:"hour"` // HH (UTC) within Day
 }
 
 // counters is one shard's fixed-size record.
@@ -51,6 +51,21 @@ type Tracker struct {
 	FlushEvery time.Duration
 }
 
+// Bucket is a flushed rollup.
+type Bucket struct {
+	Key
+	Requests     int64     `json:"requests"`
+	InputTokens  int64     `json:"input"`
+	OutputTokens int64     `json:"output"`
+	CacheRead    int64     `json:"cacheRead"`
+	CacheWrite   int64     `json:"cacheWrite"`
+	Reasoning    int64     `json:"reasoning"`
+	SavedTokens  int64     `json:"saved"`
+	Estimated    bool      `json:"estimated"`
+	FirstSeen    time.Time `json:"firstSeen"`
+	LastSeen     time.Time `json:"lastSeen"`
+}
+
 // liveBucket adds mutable timestamps to counters.
 type liveBucket struct {
 	c         counters
@@ -62,21 +77,6 @@ type liveBucket struct {
 // Sink receives flushed rollups.
 type Sink interface {
 	FlushBuckets([]Bucket) error
-}
-
-// Bucket is a flushed rollup.
-type Bucket struct {
-	Key
-	Requests     int64
-	InputTokens  int64
-	OutputTokens int64
-	CacheRead    int64
-	CacheWrite   int64
-	Reasoning    int64
-	SavedTokens  int64
-	Estimated    bool
-	FirstSeen    time.Time
-	LastSeen     time.Time
 }
 
 // New starts a tracker flushing every interval to sink (nil sink = memory only).
