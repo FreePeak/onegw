@@ -29,11 +29,10 @@ const dashboardHTML = `<!doctype html>
   · heap <span id="heap" class="muted">-</span> · sys <span id="sys" class="muted">-</span>
   <span id="stamp" class="muted"></span>
 </p>
-<p id="totals">totals (since start): <span class="muted">-</span></p>
-<p class="muted">table = persisted rollups (today, UTC), aggregated per provider+model; refreshed every 3s</p>
+<p id="totals">usage (since process start): <span class="muted">enter admin password to view</span></p>
 <p>
   admin password: <input id="pw" type="password" placeholder="(admin_password from config)" size="28">
-  <button onclick="savePw()">save</button> <span id="authstate" class="muted"></span>
+  <button onclick="savePw()">save</button> <span id="authstate" class="err"></span>
 </p>
 <table id="usage">
   <thead><tr><th>provider</th><th>model</th><th>reqs</th><th>in tok</th><th>out tok</th><th>cache read</th><th>saved</th></tr></thead>
@@ -75,7 +74,7 @@ async function refresh() {
     document.getElementById('totals').innerHTML =
       '<b>' + (t.requests || 0) + '</b> reqs · in <b>' + fmtK(t.input || 0) +
       '</b> tok · out <b>' + fmtK(t.output || 0) + '</b> tok · saved <b>' + fmtK(t.saved || 0) +
-      '</b> tok <span class="muted">(since process start; table = today UTC)</span>';
+      '</b> tok <span class="muted">(since process start; table = today UTC per provider+model)</span>';
     // Aggregate persisted hourly rows into provider+model totals.
     const agg = {};
     for (const r of (u.rows || [])) {
