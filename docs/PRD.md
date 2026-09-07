@@ -107,6 +107,10 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
   revisit only on demand. Distinct from **upstream prompt caching**, which
   onegw does not implement but must not break: see
   [Prompt caching (upstream)](#prompt-caching-upstream).
+- Response/semantic caching, guardrails framework, MCP/A2A gateways,
+  realtime/audio endpoints — out of the minimal-gateway scope; revisit only
+  on demand. (Narrow STT/TTS/embeddings passthrough with no translation
+  landed via #9; full audio sessions remain a non-goal.)
 
 ## Architecture (HLD)
 
