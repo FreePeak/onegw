@@ -41,7 +41,8 @@ type Server struct {
 	st    *store.Store
 	start time.Time
 
-	state atomic.Pointer[state]
+	state    atomic.Pointer[state]
+	inflight atomic.Int64 // requests currently live in the gateway pipeline
 }
 
 // cur returns the active state snapshot (non-nil once New has run).
@@ -203,6 +204,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.authorize(w, r) {
 		return
 	}
+	s.inflight.Add(1)
+	defer s.inflight.Add(-1)
 	release, ok := s.acquireForBody(r)
 	if !ok {
 		s.rejectSaturated(w, clientFmt)
@@ -242,6 +245,8 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.authorize(w, r) {
 		return
 	}
+	s.inflight.Add(1)
+	defer s.inflight.Add(-1)
 	release, ok := s.acquireForBody(r)
 	if !ok {
 		s.rejectSaturated(w, translat.FmtGemini)
@@ -443,6 +448,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":        "ok",
 		"uptime_s":      int(time.Since(s.start).Seconds()),
+		"inflight":      s.inflight.Load(),
 		"heap_alloc_mb": m.HeapAlloc >> 20,
 		"heap_sys_mb":   m.HeapSys >> 20,
 		"sys_mb":        m.Sys >> 20,

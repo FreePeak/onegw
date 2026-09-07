@@ -25,7 +25,8 @@ const dashboardHTML = `<!doctype html>
 <body>
 <h1>onegw <span class="ver">v0.1</span> <span class="muted">LLM gateway</span></h1>
 <p>
-  <span id="health">checking…</span> · uptime <span id="uptime" class="muted">-</span>
+  <span id="health">checking…</span> · live <b id="inflight">-</b>
+  · uptime <span id="uptime" class="muted">-</span>
   · heap <span id="heap" class="muted">-</span> · sys <span id="sys" class="muted">-</span>
   <span id="stamp" class="muted"></span>
 </p>
@@ -55,6 +56,7 @@ async function refresh() {
     document.getElementById('health').textContent = 'ok';
     document.getElementById('health').className = '';
     document.getElementById('uptime').textContent = h.uptime_s + 's';
+    document.getElementById('inflight').textContent = h.inflight;
     document.getElementById('heap').textContent = h.heap_alloc_mb + ' MiB';
     document.getElementById('sys').textContent = h.sys_mb + ' MiB';
     document.getElementById('stamp').textContent = '· updated ' + new Date().toLocaleTimeString();
