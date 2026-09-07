@@ -31,6 +31,16 @@ Linked from `docs/PRD.md`. Status as of 2026-09-07.
 - [x] `bench/memory.sh`: 30 concurrent 800 KB streams → 67 MiB peak RSS,
       flat after load; budget gate verified
 
+- [x] `cmd/import9r`: 9router data.sqlite importer — API-key connections →
+      onegw TOML (accounts, upstream model discovery, gateway [auth] keys);
+      known builtin base URLs resolved, unknown skipped with warning
+- [x] B.AI live: 7 imported accounts, URL-join fix (base_url with /v1
+      suffix no longer doubles), body model rewrite on same-format
+      passthrough; combo fallback verified live (req fell through to second
+      target); streaming + store rollups verified
+- [x] Dashboard table reads persisted store rollups (source=store), totals
+      line live-window; browser-verified against real B.AI traffic
+
 ## Open (v2 candidates)
 
 - [ ] SIGHUP hot reload of config
