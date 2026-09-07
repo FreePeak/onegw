@@ -4,8 +4,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+
+	"onegw/internal/translat"
 )
 
 func TestOpencodeSessionDerivation(t *testing.T) {
@@ -84,15 +87,72 @@ func TestDoOpencodeClientSessionForwarded(t *testing.T) {
 
 func TestDefaultModelsOpenCode(t *testing.T) {
 	m := DefaultModels(KindOpenCode)
-	if len(m) == 0 {
-		t.Fatal("opencode kind must advertise the Go catalog by default")
+	if len(m) != 35 {
+		t.Fatalf("catalog = %d models, want the live 35", len(m))
 	}
-	for _, id := range m {
-		if strings.HasPrefix(id, "muse-spark") {
-			t.Fatalf("muse-spark is responses-only and must not be in the chat catalog: %s", id)
+	// Responses-only families are advertised and routed to /v1/responses.
+	for _, id := range []string{"grok-4.5", "grok-4.6", "gpt-5.6-luna", "muse-spark-1.3-contributor"} {
+		if !slices.Contains(m, id) {
+			t.Fatalf("catalog missing %s", id)
 		}
 	}
 	if DefaultModels(KindOpenAI) != nil {
 		t.Fatal("openai kind has no default catalog")
+	}
+}
+
+func TestResponsesOnlyRouting(t *testing.T) {
+	def := &Def{Name: "opencode", Kind: KindOpenCode}
+	for model, wantFmt := range map[string]translat.Format{
+		"grok-4.5":                   translat.FmtResponses,
+		"grok-4.6":                   translat.FmtResponses,
+		"gpt-5.6-luna":               translat.FmtResponses,
+		"muse-spark-1.3-contributor": translat.FmtResponses,
+		"mimo-v2.5":                  translat.FmtOpenAI,
+		"deepseek-v4-flash":          translat.FmtOpenAI,
+	} {
+		if got := def.UpstreamFormat(model); got != wantFmt {
+			t.Fatalf("UpstreamFormat(%s) = %s, want %s", model, got, wantFmt)
+		}
+	}
+	if got := def.Path("chat", "grok-4.5"); got != "/v1/responses" {
+		t.Fatalf("grok path = %s", got)
+	}
+	if got := def.Path("chat", "mimo-v2.5"); got != "/v1/chat/completions" {
+		t.Fatalf("mimo path = %s", got)
+	}
+	// Other kinds never vary per model.
+	oai := &Def{Name: "x", Kind: KindOpenAI}
+	if oai.UpstreamFormat("grok-4.5") != translat.FmtOpenAI {
+		t.Fatal("openai kind must not vary by model")
+	}
+}
+
+// Grok calls must hit /v1/responses with the session header and bearer key.
+func TestDoOpencodeResponsesPath(t *testing.T) {
+	var gotPath, gotAuth, gotSession string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotSession = r.Header.Get("X-Opencode-Session")
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	def := &Def{Name: "opencode", Kind: KindOpenCode, BaseURL: srv.URL, Accounts: []Account{{Name: "k1", APIKey: "oc"}}}
+	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "grok-4.6", "", []byte(`{"model":"grok-4.6","input":[]}`), false)
+	if apiErr != nil {
+		t.Fatalf("Do failed: %+v", apiErr)
+	}
+	defer res.Resp.Body.Close()
+	if gotPath != "/v1/responses" {
+		t.Fatalf("grok path = %q, want /v1/responses", gotPath)
+	}
+	if gotAuth != "Bearer oc" || !strings.HasPrefix(gotSession, "ses_") {
+		t.Fatalf("auth=%q session=%q", gotAuth, gotSession)
+	}
+	if res.Format != translat.FmtResponses {
+		t.Fatalf("CallResult.Format = %s, want responses", res.Format)
 	}
 }
