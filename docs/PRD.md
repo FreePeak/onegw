@@ -1,6 +1,6 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (M1–M5 landed: gateway, translation, router, saver, usage, bench)*
+*Last updated: 2026-09-07 (README: SVG logo + badges; repo branding)*
 
 ## Product
 
