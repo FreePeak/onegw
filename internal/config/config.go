@@ -44,9 +44,10 @@ type UsageCfg struct {
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
 	Name        string            `toml:"name"`
-	Kind        string            `toml:"kind"` // openai | anthropic | gemini
+	Kind        string            `toml:"kind"` // openai | anthropic | gemini | opencode
 	BaseURL     string            `toml:"base_url"`
 	APIKey      string            `toml:"api_key"` // convenience for single-account
+	Keys        []string          `toml:"keys"`    // multi-key accounts, one account per key
 	Accounts    []Acct            `toml:"accounts"`
 	Models      []string          `toml:"models"` // advertised model ids
 	MaxConc     int               `toml:"max_concurrency"`
@@ -114,8 +115,37 @@ func (c *Config) Defaults() {
 	}
 	for i := range c.Providers {
 		p := &c.Providers[i]
-		if key := os.Getenv("ONEGW_PROVIDER_" + strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_")) + "_KEY"); key != "" {
+		envName := "ONEGW_PROVIDER_" + strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_"))
+		if key := os.Getenv(envName + "_KEY"); key != "" {
 			p.APIKey = key
+		}
+		// ONEGW_PROVIDER_<NAME>_KEY2..KEY9 add subscription keys as extra
+		// rotating accounts when the provider defines none in TOML. With a
+		// single _KEY only, the legacy single-account path applies.
+		if len(p.Accounts) == 0 && len(p.Keys) == 0 && p.APIKey != "" {
+			accts := []Acct{{Name: "key-1", APIKey: p.APIKey}}
+			for i := 2; i <= 9; i++ {
+				k := strings.TrimSpace(os.Getenv(fmt.Sprintf("%s_KEY%d", envName, i)))
+				if k == "" {
+					continue
+				}
+				accts = append(accts, Acct{Name: fmt.Sprintf("key-%d", i), APIKey: k})
+			}
+			if len(accts) > 1 {
+				p.Accounts = accts
+			}
+		}
+		// keys = [...] is shorthand for one named account per key; the
+		// account pool round-robins and cools them exactly like explicit
+		// [[providers.accounts]] entries.
+		if len(p.Keys) > 0 {
+			for i, k := range p.Keys {
+				if k = strings.TrimSpace(k); k == "" {
+					continue
+				}
+				p.Accounts = append(p.Accounts, Acct{Name: fmt.Sprintf("key-%d", i+1), APIKey: k})
+			}
+			p.Keys = nil
 		}
 	}
 	if keys := os.Getenv("ONEGW_KEYS"); keys != "" {
@@ -144,14 +174,14 @@ func (c *Config) Validate() error {
 		}
 		names["provider:"+p.Name] = true
 		switch p.Kind {
-		case "openai", "anthropic", "gemini":
+		case "openai", "anthropic", "gemini", "opencode":
 		case "":
 			return fmt.Errorf("provider %s missing kind", p.Name)
 		default:
 			return fmt.Errorf("provider %s unknown kind %q", p.Name, p.Kind)
 		}
-		if len(p.Accounts) == 0 && p.APIKey == "" {
-			return fmt.Errorf("provider %s needs api_key or accounts", p.Name)
+		if len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
+			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
 		}
 	}
 	comboNames := map[string]bool{}

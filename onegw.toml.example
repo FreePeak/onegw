@@ -41,13 +41,20 @@ name = "gemini"
 kind = "gemini"
 models = ["gemini-3-pro", "gemini-3-flash"]
 
+[[providers]]
+name = "opencode"
+kind = "opencode"               # OpenCode Zen Go subscription; base_url defaults
+                                # to https://opencode.ai/zen/go
+# models = [...]                # optional; omitted = full Go catalog
+# always_thinking = ["glm-5.3*"]
+# keys = ["...", "..."]         # one account per key — or use accounts:
 [[providers.accounts]]
-name = "main"
-api_key = ""                   # fill or use env
+name = "key-1"
+api_key = ""                    # fill or use env
 
 [[providers.accounts]]
-name = "main"
-api_key = ""                   # fill or use env
+name = "key-2"
+api_key = ""                    # fill or use env
 
 # --- Combos (ordered fallback) ----------------------------------------------
 

@@ -6,6 +6,8 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -27,7 +29,30 @@ const (
 	KindOpenAI    Kind = "openai"    // OpenAI Chat Completions (also most clones)
 	KindAnthropic Kind = "anthropic" // Anthropic Messages
 	KindGemini    Kind = "gemini"    // Gemini generateContent
+	KindOpenCode  Kind = "opencode"  // OpenCode Zen Go subscription (OpenAI wire)
 )
+
+// OpenCode Zen session header. The gateway always sends one: the client's
+// own x-opencode-session when present (bounded length), else a stable
+// per-key opaque session derived from the credential. This is what keeps
+// upstream prompt caches warm and conversations isolated.
+const OpenCodeSessionHeader = "X-Opencode-Session"
+
+// maxOpenCodeSessionLen bounds the client-supplied session id we forward,
+// mirroring the OpenCode gateway's own limit.
+const maxOpenCodeSessionLen = 256
+
+// opencodeSession returns the session id to send for this upstream call.
+// Precedence: client header (trimmed, length-capped) > per-key derived id
+// (stable across requests so the same credential maps to one upstream
+// session). Never returns "".
+func opencodeSession(clientVal, apiKey string) string {
+	if s := strings.TrimSpace(clientVal); s != "" && len(s) <= maxOpenCodeSessionLen {
+		return s
+	}
+	sum := sha256.Sum256([]byte("opencode-go\x00" + apiKey))
+	return "ses_" + hex.EncodeToString(sum[:16])
+}
 
 // Format returns the wire format a kind speaks.
 func (k Kind) Format() translat.Format {
@@ -155,16 +180,39 @@ func (p *Pool) Names() []string {
 	return append([]string(nil), p.order...)
 }
 
-// DefaultBaseURL gives the stock endpoint for a kind when unset.
 func (k Kind) DefaultBaseURL() string {
 	switch k {
 	case KindAnthropic:
 		return "https://api.anthropic.com"
 	case KindGemini:
 		return "https://generativelanguage.googleapis.com"
+	case KindOpenCode:
+		return "https://opencode.ai/zen/go"
 	default:
 		return "https://api.openai.com"
 	}
+}
+
+// OpenCode Zen Go catalog: model ids served by the subscription's
+// /v1/chat/completions endpoint (verified against the OpenCode Go registry).
+// muse-spark-* is excluded — upstream serves it on the Responses API only,
+// which onegw does not speak.
+var openCodeGoModels = []string{
+	"glm-5.3-flash", "glm-5.2", "glm-5.1",
+	"kimi-k2.7-code", "kimi-k2.6",
+	"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
+	"mimo-v2.5", "mimo-v2.5-pro",
+	"minimax-m3", "minimax-m2.7", "minimax-m2.5",
+	"qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
+}
+
+// DefaultModels returns the stock catalog for kinds with a curated upstream
+// model list; nil = none (the provider advertises only configured models).
+func DefaultModels(k Kind) []string {
+	if k == KindOpenCode {
+		return openCodeGoModels
+	}
+	return nil
 }
 
 // Base resolves the effective base URL for an account, verbatim except for
@@ -334,6 +382,11 @@ func (d *Def) Path(op string) string {
 		}
 		// model + method appended by caller (needs model name)
 		return ""
+	case KindOpenCode:
+		if op == "models" {
+			return "/v1/models"
+		}
+		return "/v1/chat/completions"
 	default:
 		if op == "models" {
 			return "/v1/models"
@@ -343,7 +396,10 @@ func (d *Def) Path(op string) string {
 }
 
 // Do performs one upstream call. body may be nil. The caller owns Resp.Body.
-func (d *Def) Do(ctx context.Context, acct *Account, model string, body []byte, stream bool) (*CallResult, *types.APIError) {
+// clientSession is the value of the client's x-opencode-session header (""
+// when absent); it is only consumed by KindOpenCode, which always sends a
+// session id upstream.
+func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string, body []byte, stream bool) (*CallResult, *types.APIError) {
 	if d.inflight != nil {
 		select {
 		case d.inflight <- struct{}{}:
@@ -378,6 +434,9 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, body []byte, 
 			case KindAnthropic:
 				req.Header.Set("x-api-key", acct.APIKey)
 				req.Header.Set("anthropic-version", "2023-06-01")
+			case KindOpenCode:
+				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientSession, acct.APIKey))
 			default:
 				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 			}
@@ -404,6 +463,11 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, body []byte, 
 		apiErr := decodeUpstreamError(d.Kind, limited, resp.StatusCode)
 		if apiErr.OverQuota() && acct != nil {
 			d.pool.cool(acct, coolDuration(resp.Header.Get("Retry-After")))
+		}
+		if apiErr.RegionLocked() && acct != nil {
+			// The credential is refused by policy, not load: park it long
+			// enough that the pool hands the next attempt a healthy key.
+			d.pool.cool(acct, 5*time.Minute)
 		}
 		return nil, apiErr
 	}
@@ -453,6 +517,9 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		req.Header.Set("anthropic-version", "2023-06-01")
 	case KindGemini:
 		req.Header.Set("x-goog-api-key", acct.APIKey)
+	case KindOpenCode:
+		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.APIKey))
 	default:
 		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 	}
