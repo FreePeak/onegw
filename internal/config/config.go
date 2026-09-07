@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -44,6 +45,12 @@ type SaverCfg struct {
 type UsageCfg struct {
 	FlushInterval string `toml:"flush_interval"` // e.g. "5s" (0 default 5s)
 	RetentionDays int    `toml:"retention_days"` // 0 default 90
+	// ExportURL + ExportPassword turn this instance into a usage shipper:
+	// after each flush, newly flushed buckets are also POSTed as JSONL to
+	// export_url (typically another onegw's /admin/usage/import).
+	// Fire-and-forget: one retry, never blocks the flush loop.
+	ExportURL      string `toml:"export_url"`
+	ExportPassword string `toml:"export_password"`
 }
 
 // ProviderCfg is one upstream provider definition.
@@ -133,6 +140,9 @@ func (c *Config) Defaults() {
 	}
 	if c.Usage.FlushInterval == "" {
 		c.Usage.FlushInterval = "5s"
+	}
+	if c.Usage.ExportPassword == "" {
+		c.Usage.ExportPassword = os.Getenv("ONEGW_EXPORT_PASSWORD")
 	}
 	if c.Usage.RetentionDays == 0 {
 		c.Usage.RetentionDays = 90
@@ -308,6 +318,12 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("alias %q references unknown provider %s", alias, prov)
 			}
 			break
+		}
+	}
+	if u := c.Usage.ExportURL; u != "" {
+		parsed, err := url.Parse(u)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return fmt.Errorf("usage.export_url %q must be an http(s) URL", u)
 		}
 	}
 	return nil
