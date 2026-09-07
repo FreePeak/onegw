@@ -7,6 +7,7 @@ package saver
 import (
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 )
 
 // Config controls filter aggressiveness.
@@ -152,9 +153,13 @@ func collapseLongLines(text string, max int) string {
 	b.Grow(len(text) / 2)
 	for line := range strings.SplitSeq(text, "\n") {
 		if len(line) > max {
-			b.WriteString(line[:max])
+			cut := max
+			for cut > 0 && !utf8.RuneStart(line[cut]) {
+				cut-- // never split a multi-byte rune: CJK, box-drawing, emoji
+			}
+			b.WriteString(line[:cut])
 			b.WriteString("…[+")
-			b.WriteString(itoa(len(line) - max))
+			b.WriteString(itoa(len(line) - cut))
 			b.WriteString("b]")
 		} else {
 			b.WriteString(line)
