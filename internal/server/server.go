@@ -5,9 +5,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"onegw/internal/config"
 	"onegw/internal/provider"
@@ -18,6 +21,7 @@ import (
 	"onegw/internal/types"
 	"onegw/internal/usage"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -72,7 +76,41 @@ func New(cfg *config.Config) (*Server, error) {
 // in as one atomic snapshot: provider pool, router tables, saver, auth
 // keys, admin password, buffered-memory budget, and the usage flush
 // interval.
+
+// loopbackListen reports whether addr binds only loopback interfaces.
+// An empty host (":port"), "0.0.0.0", or "::" is NOT loopback.
+func loopbackListen(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// hasKey reports whether any usable client auth key is configured.
+func hasKey(keys []string) bool {
+	for _, k := range keys {
+		if strings.TrimSpace(k) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// apply (re)builds the mutable parts of the server from cfg and swaps them
+// in as one atomic snapshot.
 func (s *Server) apply(cfg *config.Config, initial bool) error {
+	// Fail closed: a non-loopback listener with no auth keys is an open
+	// proxy over every upstream account quota. Returning before the atomic
+	// swap keeps the previous config live on reload; on startup it refuses
+	// to start.
+	if !loopbackListen(cfg.Server.Listen) && !hasKey(cfg.Auth.Keys) {
+		return fmt.Errorf("refusing to serve %q with no auth keys — set [auth] keys or bind a loopback address", cfg.Server.Listen)
+	}
 	pool := provider.NewPool()
 	for _, p := range cfg.Providers {
 		kind := provider.Kind(p.Kind)
@@ -134,7 +172,9 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 // Reload hot-swaps configuration (SIGHUP). Bad config is rejected by the
 // caller (config.Load) so this always applies a valid one.
 func (s *Server) Reload(cfg *config.Config) {
-	_ = s.apply(cfg, false)
+	if err := s.apply(cfg, false); err != nil {
+		log.Printf("onegw reload rejected: %v", err)
+	}
 }
 
 // Close releases resources.
@@ -375,7 +415,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
 		key = r.Header.Get("x-api-key")
 	}
 	for _, k := range keys {
-		if k != "" && key == k {
+		if k != "" && subtle.ConstantTimeCompare([]byte(key), []byte(k)) == 1 {
 			return true
 		}
 	}
@@ -402,6 +442,7 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				log.Printf("panic serving %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
 				if w.Header().Get("Content-Type") == "" {
 					writeErr(w, translat.FmtOpenAI, errAPI(500, "internal", fmt.Sprintf("panic: %v", rec)))
 				}
@@ -466,7 +507,8 @@ func (s *Server) adminOK(r *http.Request) bool {
 	if pw == "" {
 		return true
 	}
-	return r.URL.Query().Get("password") == pw || r.Header.Get("X-Admin-Password") == pw
+	hpw := r.Header.Get("X-Admin-Password")
+	return subtle.ConstantTimeCompare([]byte(hpw), []byte(pw)) == 1
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
