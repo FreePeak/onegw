@@ -136,6 +136,7 @@ memory is O(event), not O(conversation).
 ## Docs
 
 - `docs/ARCHITECTURE.md` — package detail, memory contract, config reference.
+- `README.md` — project overview, quick start, benchmarks; `LICENSE` (MIT).
 - `docs/prd-task-tracker.md` — live task tracker (local repo, not GitHub).
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
