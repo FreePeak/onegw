@@ -3,6 +3,13 @@
 *Last updated: 2026-09-07 (dashboard usage range filter — today / 7 days / 1
 month / all time, default all time, selection persisted in `?range=` so a
 reload keeps it; header totals now include sum (in+out) tokens; earlier:
+saver defects fixed: ApplyRaw's re-encode HTML-escaped <,>,& across untouched
+strings — tag-heavy bodies grew up to +87% (9511→17797 B) while /admin/usage
+reported savings (now SetEscapeHTML(false), whole-body never-grow gate,
+wire-delta accounting — NOTE: the saved column now reports the true wire
+reduction, so pre-fix historic totals are not comparable); long-line byte-cut
+split multi-byte runes into U+FFFD mojibake (now rune-boundary backoff); both
+pinned by tests verified via mutation checking; earlier:
 internal/saver/loss_profile_test.go — pins the RTK trade with runtime
 evidence: generic path never truncates distinct lines, dedup-before-truncate
 keeps mid-file errors in identical-run logs, truncating filters label the
