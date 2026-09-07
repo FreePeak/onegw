@@ -169,12 +169,20 @@ func (t *Tracker) Totals() (requests, input, output, saved int64) {
 // SetFlushInterval changes the flush cadence without dropping accumulated
 // data: the loop goroutine survives and picks up the new ticker after its
 // current tick. d <= 0 resets to the 30 s default.
+//
+// Safe to call at any time, including after Stop: the notify is a
+// non-blocking send, so a stopped tracker (or a loop currently mid-flush)
+// can never wedge the caller — the next loop iteration just reads the
+// freshest interval. Callers racing Stop lose only the final reset.
 func (t *Tracker) SetFlushInterval(d time.Duration) {
 	if d <= 0 {
 		d = 30 * time.Second
 	}
 	t.flushEvery.Store(int64(d))
-	t.reset <- struct{}{}
+	select {
+	case t.reset <- struct{}{}:
+	default:
+	}
 }
 
 // loop flushes periodically and honors SetFlushInterval resets.
