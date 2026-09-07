@@ -93,7 +93,7 @@ func TestSearchQueryExtraction(t *testing.T) {
 	]}`)
 	srv, queries := searxStub(t, 3, 0)
 	d := searxDef(srv.URL)
-	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", body, false)
+	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", body, false)
 	if apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
@@ -115,7 +115,7 @@ func TestSearchQueryFromPartsContent(t *testing.T) {
 	]}]}`)
 	srv, queries := searxStub(t, 1, 0)
 	d := searxDef(srv.URL)
-	if _, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", body, false); apiErr != nil {
+	if _, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", body, false); apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
 	if q := (*queries)[0]; q != "rust vs zig" {
@@ -125,7 +125,7 @@ func TestSearchQueryFromPartsContent(t *testing.T) {
 
 func TestSearchNoUserMessageIs400(t *testing.T) {
 	d := searxDef("http://127.0.0.1:1")
-	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", []byte(`{"messages":[{"role":"assistant","content":"hi"}]}`), false)
+	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", []byte(`{"messages":[{"role":"assistant","content":"hi"}]}`), false)
 	if apiErr == nil || apiErr.Status != 400 || apiErr.Type != "invalid_request" {
 		t.Fatalf("no user message: got %v, want 400 invalid_request", apiErr)
 	}
@@ -134,7 +134,7 @@ func TestSearchNoUserMessageIs400(t *testing.T) {
 func TestSearchNonStreamingCompletion(t *testing.T) {
 	srv, _ := searxStub(t, 5, 0)
 	d := searxDef(srv.URL)
-	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), false)
+	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false)
 	if apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
@@ -172,7 +172,7 @@ func TestSearchMaxResultsCap(t *testing.T) {
 	srv, _ := searxStub(t, 20, 0)
 	d := searxDef(srv.URL)
 	d.SearchMaxResults = 2
-	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), false)
+	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false)
 	if apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
@@ -187,7 +187,7 @@ func TestSearchMaxResultsCap(t *testing.T) {
 func TestSearchStreamingIsOpenAISSE(t *testing.T) {
 	srv, _ := searxStub(t, 3, 0)
 	d := searxDef(srv.URL)
-	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), true)
+	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), true)
 	if apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
@@ -234,7 +234,7 @@ func TestSearchStreamingIsOpenAISSE(t *testing.T) {
 func TestSearchUpstreamDownIsRetryable503(t *testing.T) {
 	// Nothing listens here → connection refused.
 	d := searxDef("http://127.0.0.1:1")
-	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), false)
+	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false)
 	if apiErr == nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
 		t.Fatalf("down upstream: got %v, want 503 search_unavailable", apiErr)
 	}
@@ -247,7 +247,7 @@ func TestSearchUpstreamErrorIsRetryable503(t *testing.T) {
 	for _, code := range []int{401, 429, 500, 503} {
 		srv, _ := searxStub(t, 0, code)
 		d := searxDef(srv.URL)
-		_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), false)
+		_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false)
 		if apiErr == nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
 			t.Fatalf("upstream %d: got %v, want 503 search_unavailable", code, apiErr)
 		}
@@ -270,7 +270,7 @@ func TestSearchTimeout(t *testing.T) {
 	d := searxDef(hold.URL)
 	d.SearchTimeout = 50 * time.Millisecond
 	start := time.Now()
-	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), false)
+	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false)
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("search timeout did not bound the call")
 	}
@@ -289,7 +289,7 @@ func TestSearchAuthViaExtraHeaders(t *testing.T) {
 	defer srv.Close()
 	d := searxDef(srv.URL)
 	d.ExtraHeaders = map[string]string{"X-API-Key": "sk-test-searxng-key", "Authorization": "Basic dXNlcl90ZXN0OnB3"}
-	if _, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("q"), false); apiErr != nil {
+	if _, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false); apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
 	if gotKey != "sk-test-searxng-key" {
@@ -307,7 +307,7 @@ func TestSearchEmptyResultsContent(t *testing.T) {
 	}))
 	defer srv.Close()
 	d := searxDef(srv.URL)
-	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", chatBody("lonely query"), false)
+	res, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("lonely query"), false)
 	if apiErr != nil {
 		t.Fatalf("Do: %v", apiErr)
 	}
@@ -364,4 +364,51 @@ func TestCapBytesDoesNotSplitRune(t *testing.T) {
 	if got != want {
 		t.Fatalf("cut = %q, want %q", got, want)
 	}
+}
+
+func TestSearchQueryCappedAt1KiB(t *testing.T) {
+	// A >1 KiB last user message must be truncated to the query cap before
+	// it is sent to SearXNG.
+	srv, queries := searxStub(t, 1, 0)
+	d := searxDef(srv.URL)
+	long := strings.Repeat("word ", 400) // 2000 bytes
+	body := []byte(`{"model":"search/q","messages":[{"role":"user","content":` + mustJSONString(long) + `}]}`)
+	if _, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", body, false); apiErr != nil {
+		t.Fatalf("Do: %v", apiErr)
+	}
+	if len(*queries) != 1 {
+		t.Fatalf("search calls = %d, want 1", len(*queries))
+	}
+	q := (*queries)[0]
+	if len(q) > searchQueryCap {
+		t.Fatalf("query sent = %d bytes, want <= %d", len(q), searchQueryCap)
+	}
+	if q != capBytes(strings.Join(strings.Fields(long), " "), searchQueryCap) {
+		t.Fatalf("query not the expected capped prefix: %d bytes", len(q))
+	}
+}
+
+func TestSearchOversizedResponseIsRetryable502(t *testing.T) {
+	// A SearXNG instance answering with more than the 4 MiB response cap
+	// yields truncated JSON → 502 search_bad_response, retryable so combos
+	// still fall through.
+	huge := strings.Repeat(`{"url":"https://x.example","title":"t","content":"`+strings.Repeat("c", 64)+`"},`, 100<<10)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[` + huge + `]}`))
+	}))
+	defer srv.Close()
+	d := searxDef(srv.URL)
+	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", "", chatBody("q"), false)
+	if apiErr == nil || apiErr.Status != 502 || apiErr.Type != "search_bad_response" {
+		t.Fatalf("oversized response: got %v, want 502 search_bad_response", apiErr)
+	}
+	if !apiErr.Retryable() {
+		t.Fatal("oversized-response 502 must be retryable so combos fall through")
+	}
+}
+
+func mustJSONString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
