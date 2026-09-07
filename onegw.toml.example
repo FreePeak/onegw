@@ -15,6 +15,12 @@ enabled = true                 # RTK-style tool_result compression
 [usage]
 flush_interval = "5s"
 retention_days = 90
+# Optional: forward every flushed rollup window to a central onegw (make it
+# the aggregator by pointing export_url at its /admin/usage/import).
+# Fire-and-forget: one retry, never blocks the flush loop, local store is
+# always written first. ONEGW_EXPORT_PASSWORD overrides export_password.
+# export_url = "http://agg-host:8080/admin/usage/import"
+# export_password = "agg-admin-password"
 
 # --- Providers -------------------------------------------------------------
 

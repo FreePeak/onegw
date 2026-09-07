@@ -45,8 +45,9 @@ type state struct {
 
 // Server wires the gateway together.
 type Server struct {
-	st    *store.Store
-	start time.Time
+	st     *store.Store
+	nodeID string
+	start  time.Time
 
 	state    atomic.Pointer[state]
 	inflight atomic.Int64 // requests currently live in the gateway pipeline
@@ -71,7 +72,10 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("open store: %w", err)
 		}
 	}
-	s := &Server{st: st, start: time.Now(), rl: ratelimit.New()}
+	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New()}
+	if st != nil {
+		st.SetNodeID(s.nodeID)
+	}
 	if err := s.apply(cfg, true); err != nil {
 		return nil, err
 	}
@@ -168,7 +172,8 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	if s.st != nil {
 		sink = s.st
 	}
-	usageTracker := usage.New(sink, cfg.FlushEvery())
+	pusher := usage.NewPusher(cfg.Usage.ExportURL, cfg.Usage.ExportPassword, s.nodeID)
+	usageTracker := usage.New(sink, cfg.FlushEvery(), pusher)
 
 	// Quota windows (issue #7): per-provider limits from config; counters
 	// seed from the store and inherit live state across hot reloads.
@@ -246,6 +251,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/completions", s.handleOpenAI)
 	mux.HandleFunc("POST /v1/messages", s.handleAnthropic)
 	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("GET /admin/usage/export", s.handleUsageExport)
+	mux.HandleFunc("POST /admin/usage/import", s.handleUsageImport)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropic)
 	mux.HandleFunc("POST /v1beta/models/", s.handleGemini)
 	mux.HandleFunc("GET /admin/health", s.handleHealth)
