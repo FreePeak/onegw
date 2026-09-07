@@ -25,6 +25,9 @@ Linked from `docs/PRD.md`. Status as of 2026-09-07.
 - [x] `cmd/onegw` binary with GOMEMLIMIT/GC tuning; `cmd/mockupstream`
 - [x] `scripts/smoke.sh`: 8 end-to-end checks green (passthrough, both
       cross-format directions, usage persistence, 404s)
+- [x] Dashboard: auth-aware admin calls (password in localStorage),
+      `Cache-Control: no-store`, cumulative since-start totals alongside the
+      live flush window; visually verified in a real browser
 - [x] `bench/memory.sh`: 30 concurrent 800 KB streams → 67 MiB peak RSS,
       flat after load; budget gate verified
 
