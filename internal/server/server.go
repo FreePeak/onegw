@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -260,7 +261,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter) (any, *types.APIError) {
 
 	upstreamFmt := def.Kind.Format()
-	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body)
+	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model)
 	if err != nil {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
@@ -446,7 +447,11 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		if rows == nil {
 			rows = []store.UsageRow{}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"rows": rows})
+		reqs, in, out, saved := s.usage.Totals()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"rows":    rows,
+			"totals":  map[string]any{"requests": reqs, "input": in, "output": out, "saved": saved},
+		})
 		return
 	}
 	snap := s.usage.Snapshot()
@@ -461,10 +466,11 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // prepareUpstreamBody returns the body to send upstream. Same format →
-// verbatim. Different format → full translate via the unified model.
-func prepareUpstreamBody(upstream, client translat.Format, body []byte) ([]byte, error) {
+// verbatim (with the model field rewritten to the routed upstream model);
+// different format → full translate via the unified model.
+func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string) ([]byte, error) {
 	if upstream == client {
-		return body, nil
+		return rewriteModel(body, upstreamModel)
 	}
 	switch client {
 	case translat.FmtOpenAI:
@@ -472,12 +478,14 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte) ([]byte,
 		if err != nil {
 			return nil, err
 		}
+		u.Model = upstreamModel
 		return encodeFor(upstream, u)
 	case translat.FmtAnthropic:
 		u, err := translat.DecodeAnthropicRequest(body)
 		if err != nil {
 			return nil, err
 		}
+		u.Model = upstreamModel
 		return encodeFor(upstream, u)
 	case translat.FmtGemini:
 		u, err := translat.DecodeGeminiRequest(body)
@@ -486,8 +494,31 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte) ([]byte,
 		}
 		return encodeFor(upstream, u)
 	default:
+		return rewriteModel(body, upstreamModel)
+	}
+}
+
+// rewriteModel surgically replaces the top-level "model" string in a raw
+// JSON body, preserving every other byte of structure (json.Number decode).
+func rewriteModel(body []byte, model string) ([]byte, error) {
+	if model == "" {
 		return body, nil
 	}
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body, nil // not an object; forward verbatim
+	}
+	if cur, _ := root["model"].(string); cur == model || cur == "" {
+		return body, nil
+	}
+	root["model"] = model
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body, nil
+	}
+	return out, nil
 }
 
 func encodeFor(f translat.Format, u *types.ChatRequest) ([]byte, error) {

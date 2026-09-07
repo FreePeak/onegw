@@ -123,15 +123,34 @@ func (k Kind) DefaultBaseURL() string {
 	}
 }
 
-// Base resolves the effective base URL for an account.
+// Base resolves the effective base URL for an account, verbatim except for
+// a trailing slash. Do() joins the API path such that both "https://host"
+// and "https://host/v1" base_url conventions produce the correct endpoint:
+// a base already ending in the kind's version prefix is used as-is.
 func (d *Def) Base(acct *Account) string {
+	base := d.BaseURL
 	if acct != nil && acct.BaseURL != "" {
-		return strings.TrimRight(acct.BaseURL, "/")
+		base = acct.BaseURL
 	}
-	if d.BaseURL != "" {
-		return strings.TrimRight(d.BaseURL, "/")
+	base = strings.TrimRight(base, "/")
+	if base == "" {
+		return d.Kind.DefaultBaseURL()
 	}
-	return d.Kind.DefaultBaseURL()
+	return base
+}
+
+// joinURL appends the kind's API path to a base, avoiding a doubled version
+// segment when the configured base already ends with one.
+func joinURL(base, path string) string {
+	// path starts with "/v1", "/v1beta" etc. If base already ends with the
+	// same first segment, drop it from path.
+	if i := strings.Index(path[1:], "/"); i >= 0 {
+		first := path[:i+1] // "/v1"
+		if strings.HasSuffix(base, first) {
+			return base + path[len(first):]
+		}
+	}
+	return base + path
 }
 
 // Account pool: weighted round-robin with cooldown on quota errors
@@ -281,13 +300,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, body []byte, 
 			method = "streamGenerateContent"
 			qs = "?alt=sse"
 		}
-		url = fmt.Sprintf("%s/v1beta/models/%s:%s%s", base, model, method, qs)
+		url = fmt.Sprintf("%s/models/%s:%s%s", joinURL(base, "/v1beta"), model, method, qs)
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err == nil {
 			req.Header.Set("x-goog-api-key", acct.APIKey)
 		}
 	default:
-		url = base + d.Path("chat")
+		url = joinURL(base, d.Path("chat"))
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err == nil {
 			switch d.Kind {
@@ -358,7 +377,7 @@ func decodeUpstreamError(kind Kind, body []byte, status int) *types.APIError {
 // effort; used by the /v1/models surface for kinds that support it).
 func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, error) {
 	base := d.Base(acct)
-	url := base + d.Path("models")
+	url := joinURL(base, d.Path("models"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, 500, err
