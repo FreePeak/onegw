@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS usage_rollup (
 CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day);
 `
 	_, err := s.db.Exec(ddl)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateQuota() // issue #7 quota window state
 }
 
 // FlushBuckets upserts rollups. Implements usage.Sink.
