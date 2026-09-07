@@ -30,9 +30,15 @@ type Router struct {
 	pool   *provider.Pool
 	models map[string]directRoute // "provider/model" passthrough
 	combos map[string]*Combo
+	// alias chains: chased iteratively inside Resolve under RLock.
+	aliases map[string]string
 	// maxAttempts per target before falling to next (network/5xx).
 	MaxAttempts int
 }
+
+// MaxAliasHops caps alias chain resolution; Validate enforces the same cap
+// on the config side.
+const MaxAliasHops = 8
 
 type directRoute struct {
 	provider string
@@ -44,6 +50,7 @@ func New(pool *provider.Pool) *Router {
 		pool:        pool,
 		models:      map[string]directRoute{},
 		combos:      map[string]*Combo{},
+		aliases:     map[string]string{},
 		MaxAttempts: 2,
 	}
 }
@@ -61,6 +68,21 @@ func (r *Router) SetModels(routes []string) {
 		m[strings.ToLower(route)] = directRoute{provider: prov, model: model}
 	}
 	r.models = m
+}
+
+// SetAliases replaces the alias table (alias → "provider/model", combo
+// name, or another alias). Chains resolve iteratively in Resolve.
+func (r *Router) SetAliases(m map[string]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t := make(map[string]string, len(m))
+	for k, v := range m {
+		if k == "" || v == "" || k == v {
+			continue
+		}
+		t[strings.ToLower(k)] = v
+	}
+	r.aliases = t
 }
 
 // SetCombos replaces the combo table.
@@ -90,9 +112,31 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if c, ok := r.combos[strings.ToLower(model)]; ok {
+	// Aliases first: they name combos or provider/model routes. Chains
+	// resolve iteratively with a hop cap; a cycle just falls through to
+	// the normal lookup (and Validate rejects cycles anyway).
+	lookup := model
+	if _, isCombo := r.combos[strings.ToLower(lookup)]; !isCombo {
+		hops := 0
+		for hops < MaxAliasHops {
+			nxt, ok := r.aliases[strings.ToLower(lookup)]
+			if !ok {
+				break
+			}
+			lookup = nxt
+			hops++
+		}
+		if hops >= MaxAliasHops {
+			// Exhausted the hop cap (Validate rejects cycles upstream
+			// anyway): treat as no alias so the normal lookup answers
+			// with context.
+			lookup = model
+		}
+	}
+	if c, ok := r.combos[strings.ToLower(lookup)]; ok {
 		return &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true}, nil
 	}
+	model = lookup
 	if dr, ok := r.models[strings.ToLower(model)]; ok {
 		return &Resolution{Targets: []Target{{Provider: dr.provider, Model: dr.model}}}, nil
 	}
