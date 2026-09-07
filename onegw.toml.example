@@ -50,6 +50,13 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # quota_reset_anchor = "2026-01-01T00:00:00Z"
 # quota_limit_tokens = 2000000
 # quota_limit_requests = 500
+#
+# Passthrough surfaces: opt this provider into OpenAI-format endpoints served
+# verbatim without translation. Values: "embeddings", "stt" (POST
+# /v1/audio/transcriptions), "tts" (POST /v1/audio/speech). Bodies relay
+# byte-for-byte; only the model selector is rewritten. A provider without
+# the marker answers 404 passthrough_not_supported on those surfaces.
+# passthrough = ["embeddings", "stt", "tts"]
 
 [[providers]]
 name = "anthropic"
