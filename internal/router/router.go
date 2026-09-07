@@ -30,7 +30,7 @@ type Router struct {
 	pool   *provider.Pool
 	models map[string]directRoute // "provider/model" passthrough
 	combos map[string]*Combo
-	// alias chains: alias → first-hop target; each hop re-enters Resolve.
+	// alias chains: chased iteratively inside Resolve under RLock.
 	aliases map[string]string
 	// maxAttempts per target before falling to next (network/5xx).
 	MaxAttempts int

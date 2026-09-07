@@ -140,10 +140,19 @@ func TestAliasChainCapsAtMaxHops(t *testing.T) {
 		last = cur
 	}
 	r.SetAliases(m)
-	// The head of the chain exceeds the hop cap: resolution must not chase
-	// it forever; it 404s (config-side Validate would reject this anyway).
-	if _, err := r.Resolve(last); err != nil {
-		t.Fatalf("head of over-long chain should still resolve as alias, got %v", err)
+	// An over-long chain (Validate would reject it; the router defends in
+	// depth) exhausts the hop cap and falls through to the bare-model
+	// pass-through: the ORIGINAL alias string becomes the model name, not
+	// the chain's terminal target.
+	res, err := r.Resolve(last)
+	if err != nil {
+		t.Fatalf("over-long chain should fall through, not error: %v", err)
+	}
+	if res.Targets[0].Model == "m1" {
+		t.Fatal("over-long chain must NOT resolve to its terminal target — hop cap is not enforced")
+	}
+	if res.Targets[0].Model != last {
+		t.Fatalf("over-long chain should fall back to the original name %q as bare model, got %q", last, res.Targets[0].Model)
 	}
 }
 
