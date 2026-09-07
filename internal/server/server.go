@@ -26,6 +26,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -55,6 +56,13 @@ type Server struct {
 	// reloadable state, so SIGHUP does not reset in-progress windows.
 	rl *ratelimit.Limiter
 	m  *gatewayMetrics
+	// cfgPath is the on-disk TOML file the process started from (set once
+	// by main); it powers the admin config endpoints (masked view, reload,
+	// keys/aliases PATCH).
+	cfgPath atomic.Pointer[string]
+	// cfgMu serializes admin config mutations so concurrent PATCH/reload
+	// read-modify-write cycles on the TOML file stay atomic.
+	cfgMu sync.Mutex
 }
 
 // cur returns the active state snapshot (non-nil once New has run).
@@ -250,6 +258,10 @@ func (s *Server) Close() {
 // Handler builds the HTTP mux.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /admin/config", s.handleAdminConfigGet)
+	mux.HandleFunc("PUT /admin/config/reload", s.handleAdminConfigReload)
+	mux.HandleFunc("PATCH /admin/config/keys", s.handleAdminKeys)
+	mux.HandleFunc("PATCH /admin/config/aliases", s.handleAdminAliases)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAI)
 	mux.HandleFunc("POST /v1/completions", s.handleOpenAI)
 	mux.HandleFunc("POST /v1/messages", s.handleAnthropic)
