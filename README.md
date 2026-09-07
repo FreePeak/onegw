@@ -1,4 +1,23 @@
+<div align="center">
+  <img src="assets/logo.svg" alt="onegw logo" width="140" />
+</div>
+
 # onegw
+
+<div align="center">
+
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![LLM Gateway](https://img.shields.io/badge/llm--gateway-8A2BE2)](https://github.com/FreePeak/onegw)
+[![OpenAI Compatible](https://img.shields.io/badge/OpenAI-compatible-412991?logo=openai&logoColor=white)](#surfaces)
+[![Anthropic Compatible](https://img.shields.io/badge/Anthropic-compatible-191937?logo=anthropic&logoColor=white)](#surfaces)
+[![Gemini Compatible](https://img.shields.io/badge/Gemini-compatible-1C69FF?logo=google&logoColor=white)](#surfaces)
+[![Streaming](https://img.shields.io/badge/SSE-streaming-FF6F61)](#surfaces)
+[![Single Binary](https://img.shields.io/badge/binary-CGO_ENABLED%3D0-3E6259)](#features)
+[![RAM](https://img.shields.io/badge/RSS-%E2%89%A4%20100%20MB-brightgreen)](#benchmarks)
+
+</div>
+
 
 **Single-binary LLM gateway in Go.** One process fronts OpenAI-, Anthropic-, and
 Gemini-compatible providers behind any of those three API surfaces — with
