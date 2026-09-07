@@ -96,6 +96,55 @@ func (r *Router) SetCombos(list []*Combo) {
 	r.combos = m
 }
 
+// KnownModel reports whether model is a name the current route tables can
+// resolve: a configured "provider/model" route, a combo name, an alias
+// (chains followed like Resolve), or a bare model — either advertised in a
+// models table or servable by the bare-model fallback, which Resolve routes
+// to the first configured provider. Consumers of raw client model strings
+// (metrics labels) use it to keep cardinality bounded: unroutable model
+// strings come from unauthenticated client traffic and must not create a
+// new label series per distinct string.
+func (r *Router) KnownModel(model string) bool {
+	if model == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	lookup := model
+	if _, isCombo := r.combos[strings.ToLower(lookup)]; !isCombo {
+		hops := 0
+		for hops < MaxAliasHops {
+			nxt, ok := r.aliases[strings.ToLower(lookup)]
+			if !ok {
+				break
+			}
+			lookup = nxt
+			hops++
+		}
+		if hops >= MaxAliasHops {
+			lookup = model
+		}
+	}
+	if _, ok := r.combos[strings.ToLower(lookup)]; ok {
+		return true
+	}
+	if _, ok := r.models[strings.ToLower(lookup)]; ok {
+		return true
+	}
+	if prov, _, ok := strings.Cut(lookup, "/"); ok {
+		_, exists := r.pool.Get(prov)
+		return exists
+	}
+	// Bare model: advertised in a models table, or the fallback route to
+	// the first configured provider applies.
+	for _, dr := range r.models {
+		if strings.EqualFold(dr.model, lookup) {
+			return true
+		}
+	}
+	return len(r.pool.Names()) > 0
+}
+
 // Resolution is the ordered plan for one model string.
 type Resolution struct {
 	Targets []Target // provider/model pairs, fallback order
