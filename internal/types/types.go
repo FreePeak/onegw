@@ -227,6 +227,15 @@ func (e *APIError) OverQuota() bool {
 		strings.Contains(strings.ToLower(e.Type), "rate_limit")
 }
 
+// RegionLocked reports whether the upstream refused this account's
+// credential for a region/availability policy (e.g. OpenCode Go
+// RegionError: the key's workspace has not opted into the China-hosted
+// route). The account is unusable for the model regardless of retries on
+// the same credential, so callers cool it and rotate to another key.
+func (e *APIError) RegionLocked() bool {
+	return e != nil && e.Status == 403 && strings.Contains(strings.ToLower(e.Type), "region")
+}
+
 // EstimateTokens gives a rough char/4 estimate for text content; used only
 // when upstream usage is missing.
 func (r *ChatRequest) EstimateTokens() int64 {
