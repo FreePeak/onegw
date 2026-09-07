@@ -167,19 +167,45 @@ func TestReloadSwapsProvidersKeysAndAdmin(t *testing.T) {
 		t.Fatal("combo from previous config must not survive a reload that drops its providers")
 	}
 
-	// Admin password rotated.
-	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/usage?password=pw-one", nil)); w.Code != http.StatusUnauthorized {
+	// Admin password rotated. The password travels in the X-Admin-Password
+	// header — query strings leak into access logs and browser history.
+	oldReq := httptest.NewRequest(http.MethodGet, "/admin/usage", nil)
+	oldReq.Header.Set("X-Admin-Password", "pw-one")
+	if w := do(t, h, oldReq); w.Code != http.StatusUnauthorized {
 		t.Fatalf("old admin password should 401, got %d", w.Code)
 	}
-	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/usage?password=pw-two", nil)); w.Code != 200 {
+	newReq := httptest.NewRequest(http.MethodGet, "/admin/usage", nil)
+	newReq.Header.Set("X-Admin-Password", "pw-two")
+	if w := do(t, h, newReq); w.Code != 200 {
 		t.Fatalf("new admin password should pass, got %d", w.Code)
 	}
 	// Health shares the admin gate (it carries the in-flight gauge).
 	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/health", nil)); w.Code != http.StatusUnauthorized {
 		t.Fatalf("health without password should 401, got %d", w.Code)
 	}
-	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/health?password=pw-two", nil)); w.Code != 200 {
+	healthReq := httptest.NewRequest(http.MethodGet, "/admin/health", nil)
+	healthReq.Header.Set("X-Admin-Password", "pw-two")
+	if w := do(t, h, healthReq); w.Code != 200 {
 		t.Fatalf("health with correct password should 200, got %d", w.Code)
+	}
+}
+
+func TestRefusesOpenBindWithoutKeys(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Server.DataDir = "memory"
+	cfg.Server.Listen = "0.0.0.0:8080"
+	if _, err := New(cfg); err == nil {
+		t.Fatal("non-loopback bind with no auth keys must be refused")
+	}
+	// Keys present, non-loopback: allowed.
+	cfg.Auth.Keys = []string{"sk-test"}
+	if _, err := New(cfg); err != nil {
+		t.Fatalf("non-loopback bind with keys should start: %v", err)
+	}
+	// Keys-only-whitespace/empty entries count as no keys.
+	cfg.Auth.Keys = []string{"", "  "}
+	if _, err := New(cfg); err == nil {
+		t.Fatal("blank auth keys must be treated as none")
 	}
 }
 

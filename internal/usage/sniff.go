@@ -35,19 +35,28 @@ type Sniffer struct {
 	rs       int64
 	seen     bool
 	allZeros bool
+	limit    int64
+	scanned  int64
 }
 
 // NewSniffer wraps r. limit caps how many bytes are scanned (0 = unlimited);
 // scanning stops after limit bytes to bound CPU on huge non-stream bodies.
 func NewSniffer(r io.Reader, limit int64) *Sniffer {
-	return &Sniffer{r: r}
+	return &Sniffer{r: r, limit: limit}
 }
 
 // Read implements io.Reader, sniffing while copying.
 func (s *Sniffer) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
-	if n > 0 {
-		s.observe(p[:n])
+	if n > 0 && (s.limit <= 0 || s.scanned < s.limit) {
+		room := n
+		if s.limit > 0 && s.scanned+int64(room) > s.limit {
+			room = int(s.limit - s.scanned)
+		}
+		if room > 0 {
+			s.observe(p[:room])
+			s.scanned += int64(room)
+		}
 	}
 	return n, err
 }

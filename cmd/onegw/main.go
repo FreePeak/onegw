@@ -95,9 +95,11 @@ func main() {
 		for sig := range sigc {
 			if sig != syscall.SIGHUP {
 				log.Printf("onegw draining on %v", sig)
-				if err := httpSrv.Shutdown(context.Background()); err != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				if err := httpSrv.Shutdown(ctx); err != nil {
 					log.Printf("onegw drain: %v", err)
 				}
+				cancel()
 				return
 			}
 			fresh, err := config.Load(path)

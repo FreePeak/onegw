@@ -303,6 +303,11 @@ var client = &http.Client{
 		MaxIdleConnsPerHost: 64,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		// Bound the pre-body phase: a stalled upstream must not hold its
+		// goroutine (and any byte-budget reservation) indefinitely. Body
+		// streaming after headers stays unbounded — streams are long-lived.
+		ResponseHeaderTimeout: 60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 	},
 	Timeout: 0, // streams are long-lived; per-request ctx governs
 }

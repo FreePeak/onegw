@@ -19,7 +19,7 @@ const dashboardHTML = `<!doctype html>
   th:first-child, td:first-child { text-align: left; }
   .muted { opacity: .6; }
   .err { color: #c0392b; }
-  input { font: inherit; padding: 2px 6px; }
+  input, select { font: inherit; padding: 2px 6px; }
   #stamp { font-size: .75rem; opacity: .5; }
 </style>
 </head>
@@ -32,6 +32,14 @@ const dashboardHTML = `<!doctype html>
   <span id="stamp" class="muted"></span>
 </p>
 <p class="muted">Endpoints: /v1/chat/completions · /v1/messages · /v1beta/models/{m}:generateContent · /v1/models</p>
+<p>
+  range: <select id="range" onchange="setRange(this.value)">
+    <option value="today">today</option>
+    <option value="7d">7 days</option>
+    <option value="1m">1 month</option>
+    <option value="all">all time</option>
+  </select>
+</p>
 <p id="totals">usage (since process start): <span class="muted">enter admin password to view</span></p>
 <p>
   admin password: <input id="pw" type="password" placeholder="(admin_password from config)" size="28">
@@ -45,15 +53,33 @@ const dashboardHTML = `<!doctype html>
 const pwInput = document.getElementById('pw');
 pwInput.value = localStorage.getItem('onegw_admin') || '';
 function savePw() { localStorage.setItem('onegw_admin', pwInput.value); refresh(); }
-function authed(url) {
+function authHeaders() {
   const pw = localStorage.getItem('onegw_admin') || '';
-  if (!pw) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'password=' + encodeURIComponent(pw);
+  return pw ? { 'X-Admin-Password': pw } : {};
 }
 function fmtK(n) { return n >= 1000000 ? (n/1000000).toFixed(1) + 'M' : n >= 1000 ? (n/1000).toFixed(1) + 'K' : n; }
+// Range filter: days is the coarse UTC fetch window (server caps < 366),
+// back the exact browser-local day cutoff (-1 = no cutoff). Selection
+// lives in ?range= so it survives a reload; unknown/missing = all time.
+const RANGES = {
+  today: { days: 2, back: 0, label: 'today' },
+  '7d': { days: 8, back: 6, label: '7 days' },
+  '1m': { days: 32, back: 29, label: '1 month' },
+  all: { days: 365, back: -1, label: 'all time' },
+};
+function currentRange() {
+  const q = new URLSearchParams(location.search).get('range');
+  return RANGES[q] ? q : 'all';
+}
+function setRange(r) {
+  const url = new URL(location.href);
+  url.searchParams.set('range', r);
+  history.replaceState(null, '', url);
+  refresh();
+}
 async function refresh() {
   try {
-    const hr = await fetch(authed('/admin/health'));
+    const hr = await fetch('/admin/health', { headers: authHeaders() });
     if (hr.status === 401) {
       document.getElementById('health').textContent = 'unauthorized';
       document.getElementById('health').className = 'err';
@@ -72,20 +98,27 @@ async function refresh() {
     document.getElementById('health').className = 'err';
   }
   try {
-    // days=2 is a coarse UTC fetch wide enough for any timezone; the exact
-    // browser-local day filter happens below (store rows carry UTC day+hour).
-    const resp = await fetch(authed('/admin/usage?source=store&days=2'));
+    const key = currentRange();
+    const range = RANGES[key];
+    document.getElementById('range').value = key;
+    // Coarse UTC fetch wide enough for any timezone; the exact browser-local
+    // cutoff happens below (store rows carry UTC day+hour).
+    const resp = await fetch('/admin/usage?source=store&days=' + range.days, { headers: authHeaders() });
     if (resp.status === 401) {
       document.getElementById('authstate').textContent = 'unauthorized — enter password';
       return;
     }
     document.getElementById('authstate').textContent = '';
     const u = await resp.json();
-    // Keep only rows inside the viewer's local calendar day so the numbers
-    // match the user's timezone, not UTC.
-    const startMs = new Date(); startMs.setHours(0, 0, 0, 0);
-    const win = (u.rows || []).filter(r => Date.UTC(
-      +r.day.slice(0, 4), +r.day.slice(5, 7) - 1, +r.day.slice(8, 10), +(r.hour || 0)) >= startMs.getTime());
+    // Keep rows inside the viewer's local window so the numbers match the
+    // user's timezone, not UTC. back < 0 (all time) skips the cutoff.
+    let cutoff = 0;
+    if (range.back >= 0) {
+      const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - range.back);
+      cutoff = d.getTime();
+    }
+    const win = (u.rows || []).filter(r => !cutoff || Date.UTC(
+      +r.day.slice(0, 4), +r.day.slice(5, 7) - 1, +r.day.slice(8, 10), +(r.hour || 0)) >= cutoff);
     // Totals and the table are computed from the same filtered rows, so the
     // header can never disagree with the table.
     const t = { requests: 0, input: 0, output: 0, saved: 0 };
@@ -95,8 +128,9 @@ async function refresh() {
     }
     document.getElementById('totals').innerHTML =
       '<b>' + t.requests + '</b> reqs · in <b>' + fmtK(t.input) +
-      '</b> tok · out <b>' + fmtK(t.output) + '</b> tok · saved <b>' + fmtK(t.saved) +
-      '</b> tok <span class="muted">(today, your local time; table = same window per provider+model)</span>';
+      '</b> tok · out <b>' + fmtK(t.output) + '</b> tok · sum <b>' + fmtK(t.input + t.output) +
+      '</b> tok · saved <b>' + fmtK(t.saved) +
+      '</b> tok <span class="muted">(' + range.label + ', your local time; table = same window per provider+model)</span>';
     // Aggregate the filtered rows into provider+model totals.
     const agg = {};
     for (const r of win) {

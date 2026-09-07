@@ -47,7 +47,7 @@ GW_PID=$!
 GW_PID=$(pgrep -f "onegw-bench -config" | head -1)
 
 for i in $(seq 1 50); do
-  curl -sf "http://127.0.0.1:$GW_PORT/admin/health?password=bench" >/dev/null 2>&1 && break
+  curl -sf -H "X-Admin-Password: bench" "http://127.0.0.1:$GW_PORT/admin/health" >/dev/null 2>&1 && break
   sleep 0.1
 done
 
@@ -95,7 +95,7 @@ wait $LOAD_PIDS 2>/dev/null || true
 sleep 2
 RSS_END=$(ps -o rss= -p "$GW_PID" 2>/dev/null | tr -d ' ' || echo 0)
 
-GATEWAY_TOKS=$(curl -sf "http://127.0.0.1:$GW_PORT/admin/usage?source=store&days=1&password=bench" 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(r["input"]+r["output"] for r in d.get("rows",[])))' 2>/dev/null || echo 0)
+GATEWAY_TOKS=$(curl -sf -H "X-Admin-Password: bench" "http://127.0.0.1:$GW_PORT/admin/usage?source=store&days=1" 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(r["input"]+r["output"] for r in d.get("rows",[])))' 2>/dev/null || echo 0)
 echo "tokens relayed (gateway-counted): ${GATEWAY_TOKS:-0}"
 echo "max RSS during load: $((MAX_RSS / 1024)) MiB"
 echo "RSS 2s after load:   $((RSS_END / 1024)) MiB"
