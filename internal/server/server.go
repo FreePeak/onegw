@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"onegw/internal/config"
 	"onegw/internal/provider"
+	"onegw/internal/ratelimit"
 	"onegw/internal/router"
 	"onegw/internal/saver"
 	"onegw/internal/store"
@@ -47,6 +48,9 @@ type Server struct {
 
 	state    atomic.Pointer[state]
 	inflight atomic.Int64 // requests currently live in the gateway pipeline
+	// rl holds per-key rate-limit windows. It lives on the Server, not the
+	// reloadable state, so SIGHUP does not reset in-progress windows.
+	rl *ratelimit.Limiter
 }
 
 // cur returns the active state snapshot (non-nil once New has run).
@@ -65,7 +69,7 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("open store: %w", err)
 		}
 	}
-	s := &Server{st: st, start: time.Now()}
+	s := &Server{st: st, start: time.Now(), rl: ratelimit.New()}
 	if err := s.apply(cfg, true); err != nil {
 		return nil, err
 	}
@@ -249,7 +253,8 @@ func (s *Server) handleGemini(w http.ResponseWriter, r *http.Request) {
 // passthrough runs outside it. Saturation returns 503 + Retry-After in the
 // client's wire format.
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt translat.Format) {
-	if !s.authorize(w, r) {
+	ak, ok := s.authorize(w, r)
+	if !ok {
 		return
 	}
 	s.inflight.Add(1)
@@ -268,6 +273,9 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	}
 	model := peekModel(body)
 	stream := peekStream(body)
+	if !s.enforceRateLimits(w, clientFmt, ak) {
+		return
+	}
 
 	st := s.cur()
 	var savedTokens int64
@@ -280,8 +288,11 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		writeErr(w, clientFmt, rerr)
 		return
 	}
+	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
+		return
+	}
 	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader))
+		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
@@ -290,7 +301,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 
 // proxyGemini mirrors proxy() for the Gemini surface.
 func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model string, stream bool) {
-	if !s.authorize(w, r) {
+	ak, ok := s.authorize(w, r)
+	if !ok {
 		return
 	}
 	s.inflight.Add(1)
@@ -307,6 +319,9 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		writeErr(w, translat.FmtGemini, errAPI(413, "body_too_large", err.Error()))
 		return
 	}
+	if !s.enforceRateLimits(w, translat.FmtGemini, ak) {
+		return
+	}
 	st := s.cur()
 	var savedTokens int64
 	if st.cfg.Saver.Enabled {
@@ -317,8 +332,11 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		writeErr(w, translat.FmtGemini, rerr)
 		return
 	}
+	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
+		return
+	}
 	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader))
+		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtGemini, execErr)
@@ -358,8 +376,7 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 // non-streaming cross-format reply takes the documented buffered path
 // (parse whole response, translate, answer JSON). Usage is recorded.
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
-	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string) (any, *types.APIError) {
-
+	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string, ak *config.AuthKey) (any, *types.APIError) {
 	upstreamFmt := def.UpstreamFormat(model)
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
@@ -436,7 +453,12 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		rec.Estimated = true
 		rec.InputTokens = int64(len(body)) / 4
 	}
-	s.cur().usage.Observe(usage.Key{Provider: def.Name, Model: model}, rec, savedTokens)
+	label := ""
+	if ak != nil {
+		label = ak.Label()
+	}
+	s.cur().usage.Observe(usage.Key{Provider: def.Name, Model: model, APIKey: label}, rec, savedTokens)
+	s.observeTPM(ak, rec.InputTokens+rec.OutputTokens)
 	return nil, nil
 }
 
@@ -444,25 +466,28 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 // Helpers
 // ---------------------------------------------------------------------------
 
-func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
-	keys := s.cur().cfg.Auth.Keys
+// authorize authenticates the request and returns the matched key policy.
+// ok=false means the 401 response was written. ak==nil with ok==true is
+// the open gateway (no keys configured).
+func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (*config.AuthKey, bool) {
+	keys := s.cur().cfg.Auth.KeyList
 	if len(keys) == 0 {
-		return true
+		return nil, true
 	}
 	auth := r.Header.Get("Authorization")
 	key := strings.TrimPrefix(auth, "Bearer ")
 	if key == "" {
 		key = r.Header.Get("x-api-key")
 	}
-	for _, k := range keys {
-		if k != "" && subtle.ConstantTimeCompare([]byte(key), []byte(k)) == 1 {
-			return true
+	for i := range keys {
+		if keys[i].Key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(keys[i].Key)) == 1 {
+			return &keys[i], true
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = w.Write([]byte(`{"error":{"type":"authentication_error","message":"invalid api key"}}`))
-	return false
+	return nil, false
 }
 
 func (s *Server) readBody(r *http.Request) ([]byte, error) {
@@ -491,8 +516,9 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
+	if _, ok := s.authorize(w, r); !ok {
 		return
 	}
 	type model struct {
