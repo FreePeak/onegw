@@ -60,20 +60,18 @@ async function refresh() {
     document.getElementById('health').className = 'err';
   }
   try {
-    const resp = await fetch(authed('/admin/usage'));
+    const resp = await fetch(authed('/admin/usage?source=store&days=1'));
     if (resp.status === 401) {
       document.getElementById('authstate').textContent = 'unauthorized — enter password';
       return;
     }
     document.getElementById('authstate').textContent = '';
     const u = await resp.json();
-    const t = u.totals || {};
-    document.getElementById('totals').innerHTML =
-      '<b>' + (t.requests || 0) + '</b> reqs · in <b>' + (t.input || 0) +
-      '</b> tok · out <b>' + (t.output || 0) + '</b> tok · saved <b>' + (t.saved || 0) + '</b> tok';
+    // Table shows persisted store rollups (days=1) so values do not reset
+    // under the refresh interval; totals line keeps the live window.
     const tb = document.querySelector('#usage tbody');
     tb.innerHTML = '';
-    const rows = u.buckets || [];
+    const rows = u.rows || [];
     rows.sort((a, b) => (b.input + b.output) - (a.input + a.output));
     for (const b of rows) {
       const tr = document.createElement('tr');

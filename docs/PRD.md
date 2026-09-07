@@ -98,8 +98,10 @@ memory is O(event), not O(conversation).
 ### Verified numbers (bench/memory.sh, mock upstream, macOS arm64)
 
 - Baseline RSS 17 MiB; 30 concurrent 800 KB streaming requests → peak
-  67 MiB, flat across rounds; ~2.3 M tokens relayed per 12 s load window
-  (30 clients) — ~190 K tok/s observed vs ~23 k tok/s needed for 2 B/day.
+  67 MiB, flat across rounds; 850 K tokens relayed in the 12 s window
+  (~71 K tok/s, ~3× the 23 k tok/s needed for 2 B/day). Mock reports a
+  synthetic 200 tokens/request, so the honest load proof is ~2 100 reqs ×
+  800 KB ≈ 140 MB/s relayed at 67 MiB RSS.
 - `GOMEMLIMIT=90 MiB` soft limit set at startup; `GODEBUG=madvdontneed=1`
   used in benchmarks because macOS MADV_FREE overstates RSS.
 - Byte-budget gate: buffered path (body read + saver + translation) holds a
