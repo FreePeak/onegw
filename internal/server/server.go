@@ -525,16 +525,17 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		// failures here are deterministic and non-retryable — a different
 		// key returns the same oversized body, and retrying translate/encode
 		// failures would only burn paid upstream calls.
-		maxResp := s.cur().cfg.Server.MaxBody
+		st := s.cur() // one snapshot: apply() swaps state atomically on SIGHUP
+		maxResp := st.cfg.Server.MaxBody
 		reserve := res.Resp.ContentLength
 		if reserve < 0 || reserve > maxResp {
 			reserve = maxResp
 		}
-		if err := s.cur().budget.Acquire(ctx, reserve); err != nil {
-			s.cur().budget.Saturated()
+		if err := st.budget.Acquire(ctx, reserve); err != nil {
+			st.budget.Saturated()
 			return errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly")
 		}
-		defer s.cur().budget.Release(reserve)
+		defer st.budget.Release(reserve)
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
 			s.m.upstreamErr(def.Name, model, 502)
