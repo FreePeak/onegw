@@ -1,17 +1,43 @@
 package usage
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"onegw/internal/types"
 )
 
-type memSink struct{ buckets []Bucket }
+// memSink is called from the tracker's background loop goroutine, so it
+// must be safe for concurrent use like the real SQLite sink.
+type memSink struct {
+	mu      sync.Mutex
+	buckets []Bucket
+}
 
 func (m *memSink) FlushBuckets(bs []Bucket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.buckets = append(m.buckets, bs...)
 	return nil
+}
+
+func (m *memSink) len() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.buckets)
+}
+
+func (m *memSink) snapshot() []Bucket {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Bucket(nil), m.buckets...)
+}
+
+func (m *memSink) clear() {
+	m.mu.Lock()
+	m.buckets = nil
+	m.mu.Unlock()
 }
 
 func TestObserveAndFlush(t *testing.T) {
@@ -20,36 +46,37 @@ func TestObserveAndFlush(t *testing.T) {
 	defer tr.Stop()
 
 	k := Key{Provider: "p", Model: "m", APIKey: "k"}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tr.Observe(k, types.Usage{InputTokens: 10, OutputTokens: 4}, 100)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(sink.buckets) > 0 {
+		if sink.len() > 0 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(sink.buckets) != 1 {
-		t.Fatalf("want 1 bucket, got %d", len(sink.buckets))
+	if got := sink.len(); got != 1 {
+		t.Fatalf("want 1 bucket, got %d", got)
 	}
-	b := sink.buckets[0]
+	b := sink.snapshot()[0]
 	if b.Requests != 5 || b.InputTokens != 50 || b.OutputTokens != 20 || b.SavedTokens != 500 {
 		t.Fatalf("bad rollup: %+v", b)
 	}
 	// After flush, counters reset; new observe starts fresh.
-	sink.buckets = nil
+	sink.clear()
 	tr.Observe(k, types.Usage{InputTokens: 1, OutputTokens: 1}, 0)
 	tr.Stop() // final flush
-	if len(sink.buckets) != 1 || sink.buckets[0].Requests != 1 {
-		t.Fatalf("post-reset flush wrong: %+v", sink.buckets)
+	final := sink.snapshot()
+	if len(final) != 1 || final[0].Requests != 1 {
+		t.Fatalf("post-reset flush wrong: %+v", final)
 	}
 }
 
 func TestShardingDistinctKeys(t *testing.T) {
 	tr := New(nil, time.Hour)
 	defer tr.Stop()
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		tr.Observe(Key{Provider: "p", Model: "m", APIKey: string(rune('a' + i%26))},
 			types.Usage{InputTokens: 1, OutputTokens: 1}, 0)
 	}
@@ -61,6 +88,6 @@ func TestShardingDistinctKeys(t *testing.T) {
 
 func TestEmptyKeyFNVStable(t *testing.T) {
 	if fnv32("") == 0 {
-		t.Fatal("empty string hash collides with shard 0 requirement")
+		t.Fatal("fnv32 empty")
 	}
 }

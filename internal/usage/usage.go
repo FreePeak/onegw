@@ -52,9 +52,9 @@ type Tracker struct {
 	stopOnce sync.Once
 	done     sync.WaitGroup
 
-	sink Sink
-
-	FlushEvery time.Duration
+	sink       Sink
+	reset      chan struct{}
+	flushEvery atomic.Int64 // nanoseconds; loop re-arms its ticker on reset
 }
 
 // Bucket is a flushed rollup.
@@ -85,12 +85,18 @@ type Sink interface {
 	FlushBuckets([]Bucket) error
 }
 
-// New starts a tracker flushing every interval to sink (nil sink = memory only).
+// New starts a tracker flushing every interval to sink (nil sink = memory
+// only; flushEvery <= 0 resets to the 30 s default).
 func New(sink Sink, flushEvery time.Duration) *Tracker {
 	if flushEvery <= 0 {
 		flushEvery = 30 * time.Second
 	}
-	t := &Tracker{stop: make(chan struct{}), FlushEvery: flushEvery, sink: sink}
+	t := &Tracker{
+		stop:  make(chan struct{}),
+		reset: make(chan struct{}, 1),
+		sink:  sink,
+	}
+	t.flushEvery.Store(int64(flushEvery))
 	for i := range t.shards {
 		t.shards[i].m = make(map[Key]*liveBucket)
 	}
@@ -160,10 +166,25 @@ func (t *Tracker) Totals() (requests, input, output, saved int64) {
 	return t.totRequests.Load(), t.totInput.Load(), t.totOutput.Load(), t.totSaved.Load()
 }
 
-// loop flushes periodically.
+// SetFlushInterval changes the flush cadence without dropping accumulated
+// data: the loop goroutine survives and picks up the new ticker after its
+// current tick. d <= 0 resets to the 30 s default.
+func (t *Tracker) SetFlushInterval(d time.Duration) {
+	if d <= 0 {
+		d = 30 * time.Second
+	}
+	t.flushEvery.Store(int64(d))
+	t.reset <- struct{}{}
+}
+
+// loop flushes periodically and honors SetFlushInterval resets.
 func (t *Tracker) loop() {
 	defer t.done.Done()
-	tick := time.NewTicker(t.FlushEvery)
+	d := time.Duration(t.flushEvery.Load())
+	if d <= 0 {
+		d = 30 * time.Second
+	}
+	tick := time.NewTicker(d)
 	defer tick.Stop()
 	for {
 		select {
@@ -172,6 +193,8 @@ func (t *Tracker) loop() {
 			return
 		case <-tick.C:
 			t.flushOnce()
+		case <-t.reset:
+			tick.Reset(time.Duration(t.flushEvery.Load()))
 		}
 	}
 }

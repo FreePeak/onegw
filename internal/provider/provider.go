@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -63,8 +64,25 @@ type Def struct {
 	// Headers added to every upstream request (auth handled separately).
 	ExtraHeaders map[string]string `toml:"extra_headers"`
 
+	// AlwaysThinking lists model globs (path.Match syntax; "*" does not
+	// cross "/") whose upstreams reason unconditionally and reject
+	// "disable thinking" knobs (e.g. GLM 1210: use low|high|max). The
+	// server rewrites such requests instead of forwarding them.
+	AlwaysThinking []string `toml:"always_thinking"`
+
 	pool     *accountPool
 	inflight chan struct{}
+}
+
+// AlwaysThinkingModel reports whether the routed upstream model matches one
+// of the provider's always-thinking globs (path.Match syntax).
+func (d *Def) AlwaysThinkingModel(model string) bool {
+	for _, pat := range d.AlwaysThinking {
+		if ok, err := path.Match(pat, model); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Models optionally advertises static model IDs; empty = pass through.
@@ -95,6 +113,31 @@ func (p *Pool) Set(d *Def) {
 		p.order = append(p.order, d.Name)
 	}
 	p.byName[d.Name] = d
+}
+
+// Replace atomically swaps the whole provider set, preserving the given
+// order. In-flight requests that already resolved a *Def keep serving from
+// it; new requests resolve against the new set. Used by SIGHUP hot reload.
+func (p *Pool) Replace(defs []*Def) {
+	byName := make(map[string]*Def, len(defs))
+	order := make([]string, 0, len(defs))
+	for _, d := range defs {
+		if d.pool == nil {
+			d.pool = newAccountPool(d.Accounts)
+		}
+		if d.MaxConc > 0 {
+			d.inflight = make(chan struct{}, d.MaxConc)
+		}
+		if _, dup := byName[d.Name]; dup {
+			continue // Validate rejects duplicates; never clobber on malice
+		}
+		byName[d.Name] = d
+		order = append(order, d.Name)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.byName = byName
+	p.order = order
 }
 
 // Get returns a provider by name.

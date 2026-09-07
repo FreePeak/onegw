@@ -20,32 +20,68 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
-// Server wires the gateway together.
-type Server struct {
+// state bundles everything a hot reload swaps as one atomic snapshot. A
+// request loads it once and runs against it; in-flight requests finish on
+// the old snapshot.
+type state struct {
 	cfg    *config.Config
 	pool   *provider.Pool
 	router *router.Router
 	saver  *saver.Saver
 	usage  *usage.Tracker
-	st     *store.Store
 	budget *ByteBudget
-	start  time.Time
 }
 
-// New builds the server from config.
+// Server wires the gateway together.
+type Server struct {
+	st    *store.Store
+	start time.Time
+
+	state atomic.Pointer[state]
+}
+
+// cur returns the active state snapshot (non-nil once New has run).
+func (s *Server) cur() *state { return s.state.Load() }
+
+// New builds the server from config. The store and its data dir are fixed
+// at process start — moving data_dir needs a restart; everything else is
+// swappable via apply/Reload.
 func New(cfg *config.Config) (*Server, error) {
+	var st *store.Store
+	dataDir := cfg.Server.DataDir
+	if dataDir != "" && dataDir != "memory" {
+		var err error
+		st, err = store.Open(dataDir + "/usage.db")
+		if err != nil {
+			return nil, fmt.Errorf("open store: %w", err)
+		}
+	}
+	s := &Server{st: st, start: time.Now()}
+	if err := s.apply(cfg, true); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// apply (re)builds the mutable parts of the server from cfg and swaps them
+// in as one atomic snapshot: provider pool, router tables, saver, auth
+// keys, admin password, buffered-memory budget, and the usage flush
+// interval.
+func (s *Server) apply(cfg *config.Config, initial bool) error {
 	pool := provider.NewPool()
 	for _, p := range cfg.Providers {
 		kind := provider.Kind(p.Kind)
 		def := &provider.Def{
-			Name:         p.Name,
-			Kind:         kind,
-			BaseURL:      p.BaseURL,
-			MaxConc:      p.MaxConc,
-			ExtraHeaders: p.ExtraHeader,
+			Name:           p.Name,
+			Kind:           kind,
+			BaseURL:        p.BaseURL,
+			MaxConc:        p.MaxConc,
+			ExtraHeaders:   p.ExtraHeader,
+			AlwaysThinking: p.AlwaysThinking,
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
@@ -58,31 +94,9 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 		pool.Set(def)
 	}
-	var st *store.Store
-	dataDir := cfg.Server.DataDir
-	if dataDir != "" && dataDir != "memory" {
-		var err error
-		st, err = store.Open(dataDir + "/usage.db")
-		if err != nil {
-			return nil, fmt.Errorf("open store: %w", err)
-		}
-	}
-	s := &Server{
-		cfg:    cfg,
-		pool:   pool,
-		router: router.New(pool),
-		saver:  saver.New(saver.Config{Enabled: cfg.Saver.Enabled}),
-		st:     st,
-		budget: NewByteBudget(cfg.Server.BufferCap),
-		start:  time.Now(),
-	}
-	var sink usage.Sink
-	if st != nil {
-		sink = st
-	}
-	s.usage = usage.New(sink, cfg.FlushEvery())
+	rt := router.New(pool)
 	for _, p := range cfg.Providers {
-		s.router.SetModels(p.Models)
+		rt.SetModels(p.Models)
 	}
 	var combos []*router.Combo
 	for _, c := range cfg.Combos {
@@ -93,13 +107,40 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets})
 	}
-	s.router.SetCombos(combos)
-	return s, nil
+	rt.SetCombos(combos)
+
+	var sink usage.Sink
+	if s.st != nil {
+		sink = s.st
+	}
+	usageTracker := usage.New(sink, cfg.FlushEvery())
+
+	old := s.state.Load()
+	s.state.Store(&state{
+		cfg:    cfg,
+		pool:   pool,
+		router: rt,
+		saver:  saver.New(saver.Config{Enabled: cfg.Saver.Enabled}),
+		usage:  usageTracker,
+		budget: NewByteBudget(cfg.Server.BufferCap),
+	})
+	if !initial && old != nil {
+		old.usage.Stop() // flushes remaining data to the store, then ends the loop
+	}
+	return nil
+}
+
+// Reload hot-swaps configuration (SIGHUP). Bad config is rejected by the
+// caller (config.Load) so this always applies a valid one.
+func (s *Server) Reload(cfg *config.Config) {
+	_ = s.apply(cfg, false)
 }
 
 // Close releases resources.
 func (s *Server) Close() {
-	s.usage.Stop()
+	if st := s.cur(); st != nil {
+		st.usage.Stop()
+	}
 	if s.st != nil {
 		s.st.Close()
 	}
@@ -177,17 +218,18 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	model := peekModel(body)
 	stream := peekStream(body)
 
+	st := s.cur()
 	var savedTokens int64
-	if s.cfg.Saver.Enabled {
-		body, savedTokens = s.saver.ApplyRaw(clientFmt, body)
+	if st.cfg.Saver.Enabled {
+		body, savedTokens = st.saver.ApplyRaw(clientFmt, body)
 	}
 
-	res, rerr := s.router.Resolve(model)
+	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
 		writeErr(w, clientFmt, rerr)
 		return
 	}
-	execErr := s.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -212,16 +254,17 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		writeErr(w, translat.FmtGemini, errAPI(413, "body_too_large", err.Error()))
 		return
 	}
+	st := s.cur()
 	var savedTokens int64
-	if s.cfg.Saver.Enabled {
-		body, savedTokens = s.saver.ApplyRaw(translat.FmtGemini, body)
+	if st.cfg.Saver.Enabled {
+		body, savedTokens = st.saver.ApplyRaw(translat.FmtGemini, body)
 	}
-	res, rerr := s.router.Resolve(model)
+	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
 		writeErr(w, translat.FmtGemini, rerr)
 		return
 	}
-	execErr := s.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -243,11 +286,12 @@ func (s *Server) acquireForBody(r *http.Request) (func(), bool) {
 	if n > 0 {
 		n += 3*n + 64<<10
 	}
-	if err := s.budget.Acquire(r.Context(), n); err != nil {
-		s.budget.Saturated()
+	st := s.cur()
+	if err := st.budget.Acquire(r.Context(), n); err != nil {
+		st.budget.Saturated()
 		return nil, false
 	}
-	return func() { s.budget.Release(n) }, true
+	return func() { st.budget.Release(n) }, true
 }
 
 // rejectSaturated answers 503 with Retry-After in the client's format.
@@ -262,7 +306,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64) (any, *types.APIError) {
 
 	upstreamFmt := def.Kind.Format()
-	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model)
+	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
@@ -307,7 +351,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		rec.Estimated = true
 		rec.InputTokens = int64(len(body)) / 4
 	}
-	s.usage.Observe(usage.Key{Provider: def.Name, Model: model}, rec, savedTokens)
+	s.cur().usage.Observe(usage.Key{Provider: def.Name, Model: model}, rec, savedTokens)
 	return nil, nil
 }
 
@@ -316,7 +360,8 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 // ---------------------------------------------------------------------------
 
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
-	if len(s.cfg.Auth.Keys) == 0 {
+	keys := s.cur().cfg.Auth.Keys
+	if len(keys) == 0 {
 		return true
 	}
 	auth := r.Header.Get("Authorization")
@@ -324,7 +369,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if key == "" {
 		key = r.Header.Get("x-api-key")
 	}
-	for _, k := range s.cfg.Auth.Keys {
+	for _, k := range keys {
 		if k != "" && key == k {
 			return true
 		}
@@ -336,13 +381,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) readBody(r *http.Request) ([]byte, error) {
-	r.Body = http.MaxBytesReader(nil, r.Body, s.cfg.Server.MaxBody)
+	maxBody := s.cur().cfg.Server.MaxBody
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBody)
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(b)) > s.cfg.Server.MaxBody {
-		return nil, fmt.Errorf("body exceeds %d bytes", s.cfg.Server.MaxBody)
+	if int64(len(b)) > maxBody {
+		return nil, fmt.Errorf("body exceeds %d bytes", maxBody)
 	}
 	return b, nil
 }
@@ -377,12 +423,13 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		seen[id] = true
 		models = append(models, model{ID: id, Object: "model", OwnedBy: "onegw"})
 	}
-	for _, p := range s.cfg.Providers {
+	cfg := s.cur().cfg
+	for _, p := range cfg.Providers {
 		for _, m := range p.Models {
 			add(p.Name + "/" + m)
 		}
 	}
-	for _, c := range s.cfg.Combos {
+	for _, c := range cfg.Combos {
 		add(c.Name)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -404,7 +451,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminOK(r *http.Request) bool {
-	pw := s.cfg.Server.AdminPassword
+	pw := s.cur().cfg.Server.AdminPassword
 	if pw == "" {
 		return true
 	}
@@ -463,27 +510,20 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	snap := s.usage.Snapshot()
-	if snap == nil {
-		snap = []usage.Bucket{}
-	}
-	reqs, in, out, saved := s.usage.Totals()
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"buckets": snap,
-		"totals":  map[string]any{"requests": reqs, "input": in, "output": out, "saved": saved},
-	})
 }
 
 // prepareUpstreamBody returns the body to send upstream. Same format →
 // verbatim (with the model field rewritten to the routed upstream model);
-// different format → full translate via the unified model.
-func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string) ([]byte, error) {
+// different format → full translate via the unified model. def (may be nil
+// in tests) carries always-thinking adaptation for the routed model.
+func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	if upstream == client {
 		var err error
 		body, err = rewriteModel(body, upstreamModel)
 		if err != nil {
 			return nil, err
 		}
+		body = adaptAlwaysThinking(body, upstreamModel, def)
 		return normalizeRoles(body)
 	}
 	switch client {
@@ -570,6 +610,72 @@ func normalizeRoles(body []byte) ([]byte, error) {
 		return body, nil
 	}
 	return out, nil
+}
+
+// coerceEffort maps reasoning_effort values an always-thinking upstream
+// rejects onto the closest accepted one. GLM (error 1210) accepts only
+// low|high|max: "none"/"minimal"/"medium" become "low"; other values pass
+// through unchanged.
+func coerceEffort(effort string) string {
+	switch effort {
+	case "none", "minimal", "medium":
+		return "low"
+	default:
+		return effort
+	}
+}
+
+// adaptAlwaysThinking rewrites disable-thinking knobs out of a raw
+// same-format body when the routed model belongs to an always-thinking
+// provider (def != nil and model matches AlwaysThinking globs). OpenAI
+// dialect: reasoning_effort none|minimal|medium → low (GLM accepts only
+// low|high|max); thinking{type:disabled} and enable_thinking:false are
+// dropped so the upstream default (thinking on) applies. Knobs are never
+// added — only explicit disable requests are rewritten. Returns body
+// unchanged when not applicable.
+func adaptAlwaysThinking(body []byte, model string, def *provider.Def) []byte {
+	if def == nil || !def.AlwaysThinkingModel(model) {
+		return body
+	}
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body // not an object; forward verbatim
+	}
+	changed := false
+	if v, ok := root["reasoning_effort"]; ok {
+		if s, ok := v.(string); ok {
+			if c := coerceEffort(s); c != s {
+				root["reasoning_effort"] = c
+				changed = true
+			}
+		}
+	}
+	for _, key := range []string{"thinking", "enable_thinking"} {
+		if v, ok := root[key]; ok {
+			switch tv := v.(type) {
+			case map[string]any:
+				if t, _ := tv["type"].(string); t == "disabled" {
+					delete(root, key)
+					changed = true
+				}
+			case bool:
+				if !tv {
+					delete(root, key)
+					changed = true
+				}
+			}
+		}
+	}
+	if !changed {
+		return body
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 func encodeFor(f translat.Format, u *types.ChatRequest) ([]byte, error) {

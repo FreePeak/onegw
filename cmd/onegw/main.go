@@ -85,15 +85,29 @@ func main() {
 	log.Printf("onegw listening on %s (data: %s, budget: %d MiB)",
 		cfg.Server.Listen, cfg.Server.DataDir, cfg.Server.BufferCap>>20)
 
-	// SIGTERM/SIGINT stop accepting new connections and drain in-flight
-	// requests before exit; deferred srv.Close() flushes the usage tracker.
+	// Signal loop: SIGTERM/SIGINT drain in-flight requests and exit;
+	// SIGHUP hot-reloads the config — providers, combos, auth keys, saver
+	// toggle, admin password, body cap, flush interval. A bad file is
+	// rejected and the previous config keeps serving.
 	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
-		s := <-sigc
-		log.Printf("onegw draining on %v", s)
-		if err := httpSrv.Shutdown(context.Background()); err != nil {
-			log.Printf("onegw drain: %v", err)
+		for sig := range sigc {
+			if sig != syscall.SIGHUP {
+				log.Printf("onegw draining on %v", sig)
+				if err := httpSrv.Shutdown(context.Background()); err != nil {
+					log.Printf("onegw drain: %v", err)
+				}
+				return
+			}
+			fresh, err := config.Load(path)
+			if err != nil {
+				log.Printf("onegw reload rejected (%s): %v", path, err)
+				continue
+			}
+			srv.Reload(fresh)
+			log.Printf("onegw config reloaded: %d providers, %d combos, %d auth keys",
+				len(fresh.Providers), len(fresh.Combos), len(fresh.Auth.Keys))
 		}
 	}()
 
