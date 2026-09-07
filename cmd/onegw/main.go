@@ -109,7 +109,7 @@ func main() {
 			}
 			srv.Reload(fresh)
 			log.Printf("onegw config reloaded: %d providers, %d combos, %d auth keys",
-				len(fresh.Providers), len(fresh.Combos), len(fresh.Auth.Keys))
+				len(fresh.Providers), len(fresh.Combos), len(fresh.Auth.KeyList))
 		}
 	}()
 
