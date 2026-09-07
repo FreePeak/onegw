@@ -84,34 +84,21 @@ func TestAdaptAlwaysThinking(t *testing.T) {
 	// Supported values pass through untouched.
 	body = []byte(`{"model":"m","reasoning_effort":"high","messages":[]}`)
 	out, _ = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "glm-5.3-flash", def)
-	decodeField(t, out, "reasoning_effort", "high")
+	assertField(t, out, "reasoning_effort", "high")
 
 	// No knob present → nothing added.
 	body = []byte(`{"model":"m","messages":[]}`)
 	out, _ = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "glm-5.3-flash", def)
-	decodeField(t, out, "reasoning_effort", "")
+	assertField(t, out, "reasoning_effort", "")
 
 	// Non-matching model → untouched (OpenAI accepts "none").
 	body = []byte(`{"model":"m","reasoning_effort":"none","messages":[]}`)
 	out, _ = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "gpt-5.4-mini", def)
-	decodeField(t, out, "reasoning_effort", "none")
+	assertField(t, out, "reasoning_effort", "none")
 
 	// nil def (never configured) → untouched.
 	out, _ = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "glm-5.3-flash", nil)
-	decodeField(t, out, "reasoning_effort", "none")
-}
-
-// decodeField decodes out as JSON and asserts field equals want.
-func decodeField(t *testing.T, out []byte, field, want string) {
-	t.Helper()
-	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatalf("bad JSON: %v: %s", err, out)
-	}
-	got, _ := m[field].(string)
-	if got != want {
-		t.Errorf("%s = %q, want %q: %s", field, got, want, out)
-	}
+	assertField(t, out, "reasoning_effort", "none")
 }
 
 func TestAdaptAlwaysThinkingPreservesNumbers(t *testing.T) {

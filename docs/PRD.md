@@ -238,7 +238,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #8 | Streaming request bodies (client→upstream)                  | v2 tracker         |
 | #9 | Audio and embeddings surfaces (STT/TTS/embeddings)          | 9router gap        |
 | #10 | Multi-node usage rollup export                            | v2 candidate       |
-| #16 | Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family) | production hit |
+| ~~#16~~ | ~~Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family)~~ — **done 2026-09-07**; per-provider `always_thinking` globs + same-format effort coercion/drop, knob documented in README + onegw.toml.example, regression tests (commit 40977cf) | production hit |
 | #11 | Runtime config surface (dashboard/API writes)              | LiteLLM gap        |
 | #12 | Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf) | 9router gap |
 | #13 | Web-search provider (SearXNG integration)                 | v2 candidate       |
