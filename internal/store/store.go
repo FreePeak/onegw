@@ -18,6 +18,10 @@ type Store struct {
 	db   *sql.DB
 	mu   sync.Mutex // serialize writers (modernc sqlite prefers 1 writer)
 	path string
+	// nodeID attributes rows written by FlushBuckets to this instance
+	// (usage transfer: export/import across instances). Set once at
+	// startup via SetNodeID, before any flush can run.
+	nodeID string
 }
 
 // Open creates/opens the database at path and applies pragmas.
@@ -44,6 +48,7 @@ CREATE TABLE IF NOT EXISTS usage_rollup (
 	provider    TEXT NOT NULL,
 	model       TEXT NOT NULL,
 	api_key     TEXT NOT NULL,
+	node_id     TEXT NOT NULL DEFAULT '',
 	requests    INTEGER NOT NULL DEFAULT 0,
 	input_tok   INTEGER NOT NULL DEFAULT 0,
 	output_tok  INTEGER NOT NULL DEFAULT 0,
@@ -54,12 +59,75 @@ CREATE TABLE IF NOT EXISTS usage_rollup (
 	estimated   INTEGER NOT NULL DEFAULT 0,
 	first_seen  TEXT,
 	last_seen   TEXT,
-	PRIMARY KEY (day, hour, provider, model, api_key)
+	PRIMARY KEY (day, hour, provider, model, api_key, node_id)
 );
 CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day);
 `
-	_, err := s.db.Exec(ddl)
+	if _, err := s.db.Exec(ddl); err != nil {
+		return err
+	}
+	// Older schemas keyed on (day, hour, provider, model, api_key) without
+	// node_id: rebuild onto the node-sharded key, keeping every counter.
+	col, err := s.db.Query(`PRAGMA table_info(usage_rollup)`)
 	if err != nil {
+		return err
+	}
+	var hasNode bool
+	for col.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt any
+		if err := col.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			col.Close()
+			return err
+		}
+		if name == "node_id" {
+			hasNode = true
+		}
+	}
+	if err := col.Err(); err != nil {
+		return err
+	}
+	col.Close()
+	if hasNode {
+		return s.migrateQuota() // already sharded; still ensure quota state
+	}
+	const rebuild = `
+BEGIN IMMEDIATE;
+ALTER TABLE usage_rollup RENAME TO usage_rollup_old;
+CREATE TABLE usage_rollup (
+	day         TEXT NOT NULL,
+	hour        TEXT NOT NULL,
+	provider    TEXT NOT NULL,
+	model       TEXT NOT NULL,
+	api_key     TEXT NOT NULL,
+	node_id     TEXT NOT NULL DEFAULT '',
+	requests    INTEGER NOT NULL DEFAULT 0,
+	input_tok   INTEGER NOT NULL DEFAULT 0,
+	output_tok  INTEGER NOT NULL DEFAULT 0,
+	cache_read  INTEGER NOT NULL DEFAULT 0,
+	cache_write INTEGER NOT NULL DEFAULT 0,
+	reasoning   INTEGER NOT NULL DEFAULT 0,
+	saved_tok   INTEGER NOT NULL DEFAULT 0,
+	estimated   INTEGER NOT NULL DEFAULT 0,
+	first_seen  TEXT,
+	last_seen   TEXT,
+	PRIMARY KEY (day, hour, provider, model, api_key, node_id)
+);
+INSERT INTO usage_rollup
+	(day, hour, provider, model, api_key, node_id, requests, input_tok, output_tok, cache_read, cache_write, reasoning, saved_tok, estimated, first_seen, last_seen)
+SELECT day, hour, provider, model, api_key, '', requests, input_tok, output_tok, cache_read, cache_write, reasoning, saved_tok, estimated, first_seen, last_seen
+FROM usage_rollup_old;
+DROP TABLE usage_rollup_old;
+COMMIT;`
+	_, err = s.db.Exec(rebuild)
+	if err != nil {
+		return err
+	}
+	// The rebuild dropped the old table together with its index; recreate
+	// it on the sharded table.
+	if _, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day)`); err != nil {
 		return err
 	}
 	return s.migrateQuota() // issue #7 quota window state
@@ -74,9 +142,9 @@ func (s *Store) FlushBuckets(buckets []usage.Bucket) error {
 		return err
 	}
 	stmt, err := tx.Prepare(`INSERT INTO usage_rollup
-		(day, hour, provider, model, api_key, requests, input_tok, output_tok, cache_read, cache_write, reasoning, saved_tok, estimated, first_seen, last_seen)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(day, hour, provider, model, api_key) DO UPDATE SET
+		(day, hour, provider, model, api_key, node_id, requests, input_tok, output_tok, cache_read, cache_write, reasoning, saved_tok, estimated, first_seen, last_seen)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(day, hour, provider, model, api_key, node_id) DO UPDATE SET
 			requests = requests + excluded.requests,
 			input_tok = input_tok + excluded.input_tok,
 			output_tok = output_tok + excluded.output_tok,
@@ -98,7 +166,7 @@ func (s *Store) FlushBuckets(buckets []usage.Bucket) error {
 		if b.Estimated {
 			est = 1
 		}
-		if _, err := stmt.Exec(b.Day, b.Hour, b.Provider, b.Model, b.APIKey,
+		if _, err := stmt.Exec(b.Day, b.Hour, b.Provider, b.Model, b.APIKey, s.nodeID,
 			b.Requests, b.InputTokens, b.OutputTokens, b.CacheRead, b.CacheWrite,
 			b.Reasoning, b.SavedTokens, est,
 			fmtTime(b.FirstSeen), fmtTime(b.LastSeen)); err != nil {

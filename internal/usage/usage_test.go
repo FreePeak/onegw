@@ -42,7 +42,7 @@ func (m *memSink) clear() {
 
 func TestObserveAndFlush(t *testing.T) {
 	sink := &memSink{}
-	tr := New(sink, 30*time.Millisecond)
+	tr := New(sink, 30*time.Millisecond, nil)
 	defer tr.Stop()
 
 	k := Key{Provider: "p", Model: "m", APIKey: "k"}
@@ -74,7 +74,7 @@ func TestObserveAndFlush(t *testing.T) {
 }
 
 func TestShardingDistinctKeys(t *testing.T) {
-	tr := New(nil, time.Hour)
+	tr := New(nil, time.Hour, nil)
 	defer tr.Stop()
 	for i := range 1000 {
 		tr.Observe(Key{Provider: "p", Model: "m", APIKey: string(rune('a' + i%26))},
