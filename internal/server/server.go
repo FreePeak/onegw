@@ -177,8 +177,9 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	model := peekModel(body)
 	stream := peekStream(body)
 
+	var savedTokens int64
 	if s.cfg.Saver.Enabled {
-		body, _ = s.saver.ApplyRaw(clientFmt, body)
+		body, savedTokens = s.saver.ApplyRaw(clientFmt, body)
 	}
 
 	res, rerr := s.router.Resolve(model)
@@ -186,9 +187,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		writeErr(w, clientFmt, rerr)
 		return
 	}
-
 	execErr := s.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w)
+		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
@@ -212,8 +212,9 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		writeErr(w, translat.FmtGemini, errAPI(413, "body_too_large", err.Error()))
 		return
 	}
+	var savedTokens int64
 	if s.cfg.Saver.Enabled {
-		body, _ = s.saver.ApplyRaw(translat.FmtGemini, body)
+		body, savedTokens = s.saver.ApplyRaw(translat.FmtGemini, body)
 	}
 	res, rerr := s.router.Resolve(model)
 	if rerr != nil {
@@ -221,7 +222,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		return
 	}
 	execErr := s.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w)
+		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtGemini, execErr)
@@ -258,7 +259,7 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 // attempt performs one upstream call and streams the response back,
 // translating or passing through as needed. Usage is recorded.
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
-	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter) (any, *types.APIError) {
+	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64) (any, *types.APIError) {
 
 	upstreamFmt := def.Kind.Format()
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model)
@@ -306,7 +307,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		rec.Estimated = true
 		rec.InputTokens = int64(len(body)) / 4
 	}
-	s.usage.Observe(usage.Key{Provider: def.Name, Model: model}, rec, 0)
+	s.usage.Observe(usage.Key{Provider: def.Name, Model: model}, rec, savedTokens)
 	return nil, nil
 }
 
@@ -449,8 +450,8 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		reqs, in, out, saved := s.usage.Totals()
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"rows":    rows,
-			"totals":  map[string]any{"requests": reqs, "input": in, "output": out, "saved": saved},
+			"rows":   rows,
+			"totals": map[string]any{"requests": reqs, "input": in, "output": out, "saved": saved},
 		})
 		return
 	}
@@ -470,7 +471,12 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 // different format → full translate via the unified model.
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string) ([]byte, error) {
 	if upstream == client {
-		return rewriteModel(body, upstreamModel)
+		var err error
+		body, err = rewriteModel(body, upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+		return normalizeRoles(body)
 	}
 	switch client {
 	case translat.FmtOpenAI:
@@ -514,6 +520,43 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 		return body, nil
 	}
 	root["model"] = model
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body, nil
+	}
+	return out, nil
+}
+
+// normalizeRoles maps OpenAI "developer" role messages to "system" for
+// upstreams that predate the role (B.AI and friends reject "developer").
+// Some clients also refuse `store: false`; it is dropped when present.
+func normalizeRoles(body []byte) ([]byte, error) {
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body, nil
+	}
+	changed := false
+	if msgs, ok := root["messages"].([]any); ok {
+		for _, mv := range msgs {
+			m, ok := mv.(map[string]any)
+			if !ok {
+				continue
+			}
+			if m["role"] == "developer" {
+				m["role"] = "system"
+				changed = true
+			}
+		}
+	}
+	if _, ok := root["store"]; ok {
+		delete(root, "store")
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
 	out, err := json.Marshal(root)
 	if err != nil {
 		return body, nil
