@@ -97,3 +97,7 @@ func (b *ByteBudget) Stats() (heldBytes, rejected int64) {
 
 // Waiting reports the number of acquirers currently blocked.
 func (b *ByteBudget) Waiting() int64 { return b.waiting.Load() }
+
+// Capacity reports the configured budget size in bytes. Capacity is fixed
+// at construction, so the read needs no lock.
+func (b *ByteBudget) Capacity() int64 { return b.capacity }
