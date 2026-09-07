@@ -243,7 +243,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #12 | Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf) | 9router gap |
 | #13 | Web-search provider (SearXNG integration)                 | v2 candidate       |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
-| #16 | Always-thinking effort coercion (glm-5.3/glm-5.3-flash 400 on disable-thinking requests) | user report |
+| #17 | Self-healing thinking-dialect fallback: coerce + retry on thinking-class 400s, learn per (provider, model), combo-advance as last resort | #16 follow-up |
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
