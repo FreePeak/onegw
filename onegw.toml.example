@@ -1,0 +1,47 @@
+# onegw configuration.
+# Providers may also take keys from env: ONEGW_PROVIDER_<NAME>_KEY
+# Gateway client keys: ONEGW_KEYS="key1,key2"
+
+[server]
+listen = ":8080"
+data_dir = "data"              # usage.db lives here; "memory" disables persistence
+max_body_bytes = 33554432      # 32 MiB per-request cap
+buffered_budget_bytes = 50331648 # 48 MiB global buffered-path budget
+admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides
+
+[saver]
+enabled = true                 # RTK-style tool_result compression
+
+[usage]
+flush_interval = "5s"
+retention_days = 90
+
+# --- Providers -------------------------------------------------------------
+
+[provider.openrouter]
+kind = "openai"
+base_url = "https://openrouter.ai/api"
+# api_key = "..." or env ONEGW_PROVIDER_OPENROUTER_KEY
+models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3.2"]
+
+[provider.anthropic]
+kind = "anthropic"
+models = ["claude-sonnet-4-5", "claude-haiku-4-5"]
+
+[provider.gemini]
+kind = "gemini"
+models = ["gemini-3-pro", "gemini-3-flash"]
+
+[[provider.anthropic.accounts]]
+name = "main"
+api_key = ""                   # fill or use env
+
+[[provider.gemini.accounts]]
+name = "main"
+api_key = ""                   # fill or use env
+
+# --- Combos (ordered fallback) ----------------------------------------------
+
+[[combo]]
+name = "coding-stack"
+targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/deepseek/deepseek-v3.2"]
