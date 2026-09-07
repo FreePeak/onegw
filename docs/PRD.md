@@ -1,6 +1,7 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (/admin/health is now password-gated like
+*Last updated: 2026-09-07 (service now auto-resumes: supervisor restarts
+onegw on abnormal exit, kill-tested; /admin/health is now password-gated like
 /admin/usage — it carries the live in-flight gauge; dashboard passes the
 password and scripts updated; earlier: dashboard shows live in-flight
 request concurrency; codified ordered design
@@ -305,7 +306,11 @@ the issue):
   strip, live in-flight concurrency gauge (counter incremented across the
   proxy pipelines, shown as `live` and exposed as `inflight` in
   `/admin/health`), 401 flow verified in browser.
-- onegw runs as a supervised persistent service on 127.0.0.1:8080.
+- onegw runs as a supervised persistent service on 127.0.0.1:8080 with
+  autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
+  SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
+  stopped. Deploys remain rolling: pre-build, atomic binary swap, graceful
+  drain via SIGTERM.
 
 ## Docs
 
