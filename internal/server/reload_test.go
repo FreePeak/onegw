@@ -200,12 +200,12 @@ func TestRefusesOpenBindWithoutKeys(t *testing.T) {
 		t.Fatal("non-loopback bind with no auth keys must be refused")
 	}
 	// Keys present, non-loopback: allowed.
-	cfg.Auth.Keys = []string{"sk-test"}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test"}}
 	if _, err := New(cfg); err != nil {
 		t.Fatalf("non-loopback bind with keys should start: %v", err)
 	}
 	// Keys-only-whitespace/empty entries count as no keys.
-	cfg.Auth.Keys = []string{"", "  "}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: ""}, {Key: "  "}}
 	if _, err := New(cfg); err == nil {
 		t.Fatal("blank auth keys must be treated as none")
 	}

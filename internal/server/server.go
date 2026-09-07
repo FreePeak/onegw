@@ -96,9 +96,9 @@ func loopbackListen(addr string) bool {
 }
 
 // hasKey reports whether any usable client auth key is configured.
-func hasKey(keys []string) bool {
+func hasKey(keys []config.AuthKey) bool {
 	for _, k := range keys {
-		if strings.TrimSpace(k) != "" {
+		if strings.TrimSpace(k.Key) != "" {
 			return true
 		}
 	}
@@ -112,7 +112,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	// proxy over every upstream account quota. Returning before the atomic
 	// swap keeps the previous config live on reload; on startup it refuses
 	// to start.
-	if !loopbackListen(cfg.Server.Listen) && !hasKey(cfg.Auth.Keys) {
+	if !loopbackListen(cfg.Server.Listen) && !hasKey(cfg.Auth.KeyList) {
 		return fmt.Errorf("refusing to serve %q with no auth keys — set [auth] keys or bind a loopback address", cfg.Server.Listen)
 	}
 	pool := provider.NewPool()

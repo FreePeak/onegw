@@ -39,7 +39,7 @@ func TestOpencodeRotationAndSession(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.Server.DataDir = "memory"
-	cfg.Auth.Keys = []string{"gw-key"}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "gw-key"}}
 	cfg.Saver.Enabled = false
 	cfg.Providers = []config.ProviderCfg{{
 		Name: "opencode", Kind: "opencode", BaseURL: up.URL,

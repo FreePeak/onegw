@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-<<<<<<< HEAD
 func TestKeysExpandToAccounts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "onegw.toml")
@@ -73,7 +72,9 @@ kind = "opencode"
 	p := c.Providers[0]
 	if len(p.Accounts) != 2 || p.Accounts[0].APIKey != "k1" || p.Accounts[1].Name != "key-2" {
 		t.Fatalf("accounts = %+v, want env k1+k2 rotation", p.Accounts)
-=======
+	}
+}
+
 func writeTOML(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "onegw.toml")
@@ -312,6 +313,5 @@ func TestKeyLabelPrefersName(t *testing.T) {
 	}
 	if got := (&AuthKey{Key: "sk-test-abcd1234ef56"}).Label(); got != "sk-t***56" {
 		t.Errorf("Label() = %q, want sk-t***56", got)
->>>>>>> 7aae1c8 (feat(auth): per-key rpm/tpm limits and model allowlists (#3))
 	}
 }
