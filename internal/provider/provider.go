@@ -54,6 +54,29 @@ func opencodeSession(clientVal, apiKey string) string {
 	return "ses_" + hex.EncodeToString(sum[:16])
 }
 
+// ResponsesOnlyModel reports whether an OpenCode catalog model is served
+// only on the OpenAI Responses API (/v1/responses) — never on
+// /v1/chat/completions. Derived from the OpenCode Zen endpoint table: the
+// entire gpt-*, grok-* and muse-spark-* families.
+func ResponsesOnlyModel(model string) bool {
+	for _, p := range []string{"gpt-", "grok-", "muse-spark"} {
+		if strings.HasPrefix(model, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// UpstreamFormat returns the wire format the routed model actually speaks
+// on this provider. Only KindOpenCode varies per model (chat-completions
+// for the open-weight catalog, Responses API for gpt/grok/muse-spark).
+func (d *Def) UpstreamFormat(model string) translat.Format {
+	if d.Kind == KindOpenCode && ResponsesOnlyModel(model) {
+		return translat.FmtResponses
+	}
+	return d.Kind.Format()
+}
+
 // Format returns the wire format a kind speaks.
 func (k Kind) Format() translat.Format {
 	switch k {
@@ -193,17 +216,24 @@ func (k Kind) DefaultBaseURL() string {
 	}
 }
 
-// OpenCode Zen Go catalog: model ids served by the subscription's
-// /v1/chat/completions endpoint (verified against the OpenCode Go registry).
-// muse-spark-* is excluded — upstream serves it on the Responses API only,
-// which onegw does not speak.
+// OpenCode Zen Go catalog: the live subscription model list (verified via
+// GET /zen/go/v1/models, 2026-09-08). Chat-capable models route to
+// /v1/chat/completions; the Responses-only families (gpt-*, grok-*,
+// muse-spark-*) route to /v1/responses — see ResponsesOnlyModel.
 var openCodeGoModels = []string{
-	"glm-5.3-flash", "glm-5.2", "glm-5.1",
-	"kimi-k2.7-code", "kimi-k2.6",
-	"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
-	"mimo-v2.5", "mimo-v2.5-pro",
-	"minimax-m3", "minimax-m2.7", "minimax-m2.5",
-	"qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
+	"deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro",
+	"glm-5", "glm-5.1", "glm-5.2", "glm-5.3", "glm-5.3-flash",
+	"gpt-5.6-luna",
+	"grok-4.5", "grok-4.6",
+	"hy3", "hy3-preview", "hy4-preview",
+	"kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k3",
+	"longcat-2.0",
+	"mimo-v2-omni", "mimo-v2-pro", "mimo-v2.5", "mimo-v2.5-pro",
+	"minimax-m2.5", "minimax-m2.7", "minimax-m3",
+	"muse-spark-1.2-contributor", "muse-spark-1.3-contributor",
+	"omen-alpha",
+	"qwen3.5-plus", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus",
+	"qwen3.8-flash", "qwen3.8-max",
 }
 
 // DefaultModels returns the stock catalog for kinds with a curated upstream
@@ -367,9 +397,11 @@ type CallResult struct {
 	Acct   *Account
 }
 
-// Path builds the upstream URL path for a kind from the client's path intent.
-// `op` is "chat" (chat completions / messages / generateContent).
-func (d *Def) Path(op string) string {
+// Path builds the upstream URL path for a kind from the client's path
+// intent. `op` is "chat" (chat completions / messages / generateContent)
+// or "models". For KindOpenCode the chat path depends on the routed model:
+// Responses-only families (gpt/grok/muse-spark) live on /v1/responses.
+func (d *Def) Path(op, model string) string {
 	switch d.Kind {
 	case KindAnthropic:
 		if op == "models" {
@@ -385,6 +417,9 @@ func (d *Def) Path(op string) string {
 	case KindOpenCode:
 		if op == "models" {
 			return "/v1/models"
+		}
+		if ResponsesOnlyModel(model) {
+			return "/v1/responses"
 		}
 		return "/v1/chat/completions"
 	default:
@@ -427,7 +462,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 			req.Header.Set("x-goog-api-key", acct.APIKey)
 		}
 	default:
-		url = joinURL(base, d.Path("chat"))
+		url = joinURL(base, d.Path("chat", model))
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if err == nil {
 			switch d.Kind {
@@ -471,7 +506,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 		}
 		return nil, apiErr
 	}
-	return &CallResult{Resp: resp, Format: d.Kind.Format(), Acct: acct}, nil
+	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct}, nil
 }
 
 func coolDuration(retryAfter string) time.Duration {
@@ -506,7 +541,7 @@ func decodeUpstreamError(kind Kind, body []byte, status int) *types.APIError {
 // effort; used by the /v1/models surface for kinds that support it).
 func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, error) {
 	base := d.Base(acct)
-	url := joinURL(base, d.Path("models"))
+	url := joinURL(base, d.Path("models", ""))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, 500, err

@@ -22,6 +22,9 @@ const (
 	FmtOpenAI    Format = "openai"
 	FmtAnthropic Format = "anthropic"
 	FmtGemini    Format = "gemini"
+	// FmtResponses is the OpenAI Responses API (/v1/responses) — the wire
+	// grok and muse-spark models speak on the OpenCode Zen gateways.
+	FmtResponses Format = "openai-responses"
 )
 
 // ---------------------------------------------------------------------------
@@ -725,6 +728,9 @@ func EncodeOpenAIResponse(r *types.ChatResponse) ([]byte, error) {
 				}{Name: p.Name, Arguments: argsString(p.Args)},
 			})
 		}
+	}
+	if len(texts) > 0 {
+		msg.Content = mustJSON(strings.Join(texts, "\n"))
 	}
 	finish := "stop"
 	switch r.StopReason {

@@ -111,13 +111,13 @@ multi-key shortcut), combos, server limits, saver and usage settings.
 
 `kind = "opencode"` fronts an [OpenCode](https://opencode.ai/auth) Go
 subscription. `base_url` defaults to `https://opencode.ai/zen/go`; with no
-`models` list the full Go catalog is advertised (GLM, Kimi K2, DeepSeek V4,
-MiMo, MiniMax, Qwen — `muse-spark-*` excluded, it is Responses-API-only).
-Auth is the subscription key(s) as bearer credentials, and the gateway
-always sends an `x-opencode-session` upstream: the client's own session
-header when present, otherwise a stable per-key id (keeps upstream prompt
-caches warm, isolates conversations). Subscription keys round-robin and
-cool on quota errors exactly like any account pool:
+`models` list the full live Go catalog is advertised (35 models: GLM, Kimi,
+DeepSeek V4, MiMo, MiniMax, Qwen, plus the Responses-only families — Grok
+4.5/4.6, GPT-5.6, Muse Spark). Auth is the subscription key(s) as bearer
+credentials, and the gateway always sends an `x-opencode-session` upstream:
+the client's own session header when present, otherwise a stable per-key id
+(keeps upstream prompt caches warm, isolates conversations). Subscription
+keys round-robin and cool on quota errors exactly like any account pool:
 
 ```toml
 [[providers]]
@@ -125,6 +125,16 @@ name = "opencode"
 kind = "opencode"
 keys = ["oc-key-1", "oc-key-2"]   # one account per key
 ```
+
+**Per-model endpoint routing.** The open-weight catalog speaks OpenAI Chat
+Completions (`/v1/chat/completions`); the `gpt-*`, `grok-*` and
+`muse-spark-*` families are served only on the OpenAI **Responses API**
+(`/v1/responses`). onegw picks the endpoint per routed model and translates
+between the Responses wire and whichever client surface asked — so
+`"model": "opencode/grok-4.6"` works from OpenAI, Anthropic, and Gemini
+clients, streaming and non-streaming alike. A Responses stream that closes
+without `response.completed` is surfaced as an upstream error, never a
+clean finish.
 
 ### Always-thinking models
 

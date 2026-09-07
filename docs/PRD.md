@@ -1,6 +1,17 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (prompt-caching research across eight provider
+*Last updated: 2026-09-08 (grok via OpenAI Responses API: `FmtResponses`
+wire (request encode, non-stream decode, stateful SSE decoder with
+item-id tool correlation + terminal-event guard — a Responses stream that
+closes without `response.completed` is an error, not a clean finish);
+`kind = "opencode"` routes per model — gpt-*/grok-*/muse-spark-* to
+`/v1/responses`, the rest to `/v1/chat/completions` (probed live: grok
+chat path 503s "Endpoint is unavailable"); default Go catalog refreshed to
+the live 35-model listing; central fix: `attempt` now implements the
+documented buffered non-streaming cross-format path (it previously emitted
+a degenerate empty stream for every cross-format `stream:false` request)
+and `EncodeOpenAIResponse` no longer drops text content; earlier:
+prompt-caching research across eight provider
 families — new [Prompt caching (upstream)](#prompt-caching-upstream) section
 with the per-provider matrix; filed #31-#36. Verdict: the same-format path is
 already cache-friendly — its three body mutations are deterministic and
@@ -114,9 +125,8 @@ Single Go binary. Zero framework (net/http + httputil.ReverseProxy for
 same-format passthrough). Packages:
 
 | Package    | Responsibility                                                        |
-| ---------- | --------------------------------------------------------------------- |
 | `types`    | Unified internal request/response model + wire formats                |
-| `translat` | Bidirectional OpenAI ↔ Anthropic ↔ Gemini translation (body + SSE)    |
+| `translat` | Bidirectional OpenAI ↔ Anthropic ↔ Gemini translation (body + SSE), plus the OpenAI Responses-API upstream wire (opencode gpt/grok/muse-spark) |
 | `provider` | Provider interface, registry, per-provider HTTP client, adapters      |
 | `router`   | Model resolution, combo fallback chains, per-account round-robin      |
 | `saver`    | RTK-style tool_result compression filters (prefix sniffing, idempotent, loss profile test-pinned)|
