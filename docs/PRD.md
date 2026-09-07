@@ -1,12 +1,17 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (filed #19 — dashboard console log viewer
-(9router-style): in-memory ring-buffer log sink, password-gated /admin/logs
-endpoints, dashboard console pane; earlier: /admin/health is now
-password-gated like
-/admin/usage — it carries the live in-flight gauge; dashboard passes the
-password and scripts updated; earlier: dashboard shows live in-flight
-request concurrency; codified ordered design
+*Last updated: 2026-09-07 (security/stability hardening pass: constant-time
+key + admin-password comparison, admin auth moved to the X-Admin-Password
+header only (query strings leak into logs), fail-closed startup/reload on
+non-loopback binds with no auth keys, 30s shutdown drain deadline,
+upstream ResponseHeaderTimeout/TLSHandshakeTimeout so a stalled upstream
+cannot leak byte-budget reservations, sniffer scan limit now actually
+enforced, panics logged with stack traces; earlier: filed #19 — dashboard
+console log viewer (9router-style): in-memory ring-buffer log sink,
+password-gated /admin/logs endpoints, dashboard console pane; earlier:
+/admin/health is now password-gated like /admin/usage — it carries the live
+in-flight gauge; dashboard passes the password and scripts updated; earlier:
+dashboard shows live in-flight request concurrency; codified ordered design
 priorities: fast > security > massive sessions > token saving > lowest RAM;
 imported kilocode + xai bearer-token providers from 9router; custom
 wire-format gaps tracked as #12; easier-setup roadmap — auto-release CI,
@@ -34,9 +39,11 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
 
 1. **Fast** — streaming passthrough, zero frameworks, translation is the
    only O(body) work and only on cross-format requests.
-2. **Security** — bearer-key auth at the edge, keys only in gitignored TOML,
-   client `provider/model` strings rewritten so they never leak upstream,
-   localhost bind by default; per-key policies (#3) extend this.
+2. **Security** — bearer-key auth at the edge (constant-time compares),
+   keys only in gitignored TOML, client `provider/model` strings rewritten
+   so they never leak upstream, localhost bind by default, fail-closed on
+   non-loopback binds without keys, header-only admin auth; per-key
+   policies (#3) extend this.
 3. **Long-running massive sessions** — stateless by design; no conversation
    cache; nothing accumulates per session, so uptime is unbounded and
    session count is irrelevant to memory.
