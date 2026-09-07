@@ -36,9 +36,35 @@ type Auth struct {
 	KeyList []AuthKey       `toml:"-"`
 }
 
-// SaverCfg configures the token saver.
+// SaverCfg configures the token saver (input-side tool_result compression
+// plus output-side injection and external compress hooks).
 type SaverCfg struct {
 	Enabled bool `toml:"enabled"`
+	// Output-side: system-prompt injection rules. See saver.InjectCfg.
+	Inject []InjectCfg `toml:"inject"`
+	// Output-side: external compress hook (Headroom /v1/compress).
+	External ExternalCfg `toml:"external"`
+}
+
+// InjectCfg is one terse-output injection rule: when the request model
+// matches (path.Match globs; empty = all), the mode's directive is
+// prepended to the system prompt. Mode: caveman | terse | custom (text).
+type InjectCfg struct {
+	Mode   string   `toml:"mode"`
+	Models []string `toml:"models"`
+	Text   string   `toml:"text"`
+}
+
+// ExternalCfg points at an external compress service (Headroom protocol:
+// POST {messages} -> {messages}). Requests whose body is at least
+// min_bytes get their messages[] compressed; any failure passes the
+// request through uncompressed unless fail_open is explicitly false.
+type ExternalCfg struct {
+	Enabled   bool   `toml:"enabled"`
+	URL       string `toml:"url"`
+	TimeoutMS int    `toml:"timeout_ms"`
+	MinBytes  int    `toml:"min_bytes"`
+	FailOpen  *bool  `toml:"fail_open"`
 }
 
 // UsageCfg configures usage persistence.
@@ -335,6 +361,22 @@ func (c *Config) Validate() error {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return fmt.Errorf("usage.export_url %q must be an http(s) URL", u)
 		}
+	}
+	for i, in := range c.Saver.Inject {
+		switch in.Mode {
+		case "caveman", "terse":
+		case "custom":
+			if strings.TrimSpace(in.Text) == "" {
+				return fmt.Errorf("saver.inject[%d]: custom mode needs text", i)
+			}
+		case "":
+			return fmt.Errorf("saver.inject[%d]: missing mode", i)
+		default:
+			return fmt.Errorf("saver.inject[%d]: unknown mode %q (caveman|terse|custom)", i, in.Mode)
+		}
+	}
+	if c.Saver.External.Enabled && c.Saver.External.URL == "" {
+		return fmt.Errorf("saver.external enabled but url missing")
 	}
 	return nil
 }
