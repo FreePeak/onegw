@@ -429,7 +429,9 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	// source=store reads persisted rollups over ?days=N (default 1);
-	// default reads the live since-last-flush window.
+	// default reads the live since-last-flush window. Totals are computed
+	// from the same rows as the table so the header and table can never
+	// disagree (tracker totals are process-lifetime, not a time window).
 	if r.URL.Query().Get("source") == "store" && s.st != nil {
 		days := 1
 		if v := r.URL.Query().Get("days"); v != "" {
@@ -448,10 +450,16 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		if rows == nil {
 			rows = []store.UsageRow{}
 		}
-		reqs, in, out, saved := s.usage.Totals()
+		var totReq, totIn, totOut, totSaved int64
+		for _, r := range rows {
+			totReq += r.Requests
+			totIn += r.InputTok
+			totOut += r.OutputTok
+			totSaved += r.SavedTok
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"rows":   rows,
-			"totals": map[string]any{"requests": reqs, "input": in, "output": out, "saved": saved},
+			"totals": map[string]any{"requests": totReq, "input": totIn, "output": totOut, "saved": totSaved},
 		})
 		return
 	}

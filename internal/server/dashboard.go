@@ -63,21 +63,34 @@ async function refresh() {
     document.getElementById('health').className = 'err';
   }
   try {
-    const resp = await fetch(authed('/admin/usage?source=store&days=1'));
+    // days=2 is a coarse UTC fetch wide enough for any timezone; the exact
+    // browser-local day filter happens below (store rows carry UTC day+hour).
+    const resp = await fetch(authed('/admin/usage?source=store&days=2'));
     if (resp.status === 401) {
       document.getElementById('authstate').textContent = 'unauthorized — enter password';
       return;
     }
     document.getElementById('authstate').textContent = '';
     const u = await resp.json();
-    const t = u.totals || {};
+    // Keep only rows inside the viewer's local calendar day so the numbers
+    // match the user's timezone, not UTC.
+    const startMs = new Date(); startMs.setHours(0, 0, 0, 0);
+    const win = (u.rows || []).filter(r => Date.UTC(
+      +r.day.slice(0, 4), +r.day.slice(5, 7) - 1, +r.day.slice(8, 10), +(r.hour || 0)) >= startMs.getTime());
+    // Totals and the table are computed from the same filtered rows, so the
+    // header can never disagree with the table.
+    const t = { requests: 0, input: 0, output: 0, saved: 0 };
+    for (const r of win) {
+      t.requests += r.requests || 0; t.input += r.input || 0;
+      t.output += r.output || 0; t.saved += r.saved || 0;
+    }
     document.getElementById('totals').innerHTML =
-      '<b>' + (t.requests || 0) + '</b> reqs · in <b>' + fmtK(t.input || 0) +
-      '</b> tok · out <b>' + fmtK(t.output || 0) + '</b> tok · saved <b>' + fmtK(t.saved || 0) +
-      '</b> tok <span class="muted">(since process start; table = today UTC per provider+model)</span>';
-    // Aggregate persisted hourly rows into provider+model totals.
+      '<b>' + t.requests + '</b> reqs · in <b>' + fmtK(t.input) +
+      '</b> tok · out <b>' + fmtK(t.output) + '</b> tok · saved <b>' + fmtK(t.saved) +
+      '</b> tok <span class="muted">(today, your local time; table = same window per provider+model)</span>';
+    // Aggregate the filtered rows into provider+model totals.
     const agg = {};
-    for (const r of (u.rows || [])) {
+    for (const r of win) {
       const k = r.provider + '\u0000' + r.model;
       const a = agg[k] || (agg[k] = { provider: r.provider, model: r.model, requests: 0, input: 0, output: 0, cacheRead: 0, saved: 0 });
       a.requests += r.requests || 0; a.input += r.input || 0; a.output += r.output || 0;

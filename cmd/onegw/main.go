@@ -4,14 +4,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"onegw/internal/config"
 	"onegw/internal/server"
@@ -50,8 +56,26 @@ func main() {
 	}
 	defer srv.Close()
 
+	// SO_REUSEPORT lets a replacement binary bind the same port while this
+	// process is still serving, enabling zero-drop rolling restarts (start
+	// the new process, health-check it, then signal this one to drain).
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			var serr error
+			if cerr := c.Control(func(fd uintptr) {
+				serr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+			}); cerr != nil {
+				return cerr
+			}
+			return serr
+		},
+	}
+	ln, err := lc.Listen(context.Background(), "tcp", cfg.Server.Listen)
+	if err != nil {
+		fatal("listen %s: %v", cfg.Server.Listen, err)
+	}
+
 	httpSrv := &http.Server{
-		Addr:              cfg.Server.Listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No global WriteTimeout: streams run for minutes.
@@ -60,7 +84,20 @@ func main() {
 
 	log.Printf("onegw listening on %s (data: %s, budget: %d MiB)",
 		cfg.Server.Listen, cfg.Server.DataDir, cfg.Server.BufferCap>>20)
-	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+
+	// SIGTERM/SIGINT stop accepting new connections and drain in-flight
+	// requests before exit; deferred srv.Close() flushes the usage tracker.
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		s := <-sigc
+		log.Printf("onegw draining on %v", s)
+		if err := httpSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("onegw drain: %v", err)
+		}
+	}()
+
+	if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		fatal("serve: %v", err)
 	}
 }
