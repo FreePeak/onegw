@@ -47,7 +47,7 @@ GW_PID=$!
 GW_PID=$(pgrep -f "onegw-bench -config" | head -1)
 
 for i in $(seq 1 50); do
-  curl -sf "http://127.0.0.1:$GW_PORT/admin/health" >/dev/null 2>&1 && break
+  curl -sf "http://127.0.0.1:$GW_PORT/admin/health?password=bench" >/dev/null 2>&1 && break
   sleep 0.1
 done
 

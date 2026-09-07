@@ -1,8 +1,9 @@
 package server
 
-// dashboardHTML is the embedded dashboard: health + memory stats, cumulative
-// totals, persisted per provider+model rollups (source=store), admin password
-// persisted in localStorage. No external assets.
+// dashboardHTML is the embedded dashboard: health + memory stats (gated by
+// the admin password), cumulative totals, persisted per provider+model
+// rollups (source=store), admin password persisted in localStorage. No
+// external assets.
 const dashboardHTML = `<!doctype html>
 <html>
 <head>
@@ -52,14 +53,20 @@ function authed(url) {
 function fmtK(n) { return n >= 1000000 ? (n/1000000).toFixed(1) + 'M' : n >= 1000 ? (n/1000).toFixed(1) + 'K' : n; }
 async function refresh() {
   try {
-    const h = await (await fetch('/admin/health')).json();
-    document.getElementById('health').textContent = 'ok';
-    document.getElementById('health').className = '';
-    document.getElementById('uptime').textContent = h.uptime_s + 's';
-    document.getElementById('inflight').textContent = h.inflight;
-    document.getElementById('heap').textContent = h.heap_alloc_mb + ' MiB';
-    document.getElementById('sys').textContent = h.sys_mb + ' MiB';
-    document.getElementById('stamp').textContent = '· updated ' + new Date().toLocaleTimeString();
+    const hr = await fetch(authed('/admin/health'));
+    if (hr.status === 401) {
+      document.getElementById('health').textContent = 'unauthorized';
+      document.getElementById('health').className = 'err';
+    } else {
+      const h = await hr.json();
+      document.getElementById('health').textContent = 'ok';
+      document.getElementById('health').className = '';
+      document.getElementById('uptime').textContent = h.uptime_s + 's';
+      document.getElementById('inflight').textContent = h.inflight ?? '-';
+      document.getElementById('heap').textContent = h.heap_alloc_mb + ' MiB';
+      document.getElementById('sys').textContent = h.sys_mb + ' MiB';
+      document.getElementById('stamp').textContent = '· updated ' + new Date().toLocaleTimeString();
+    }
   } catch (e) {
     document.getElementById('health').textContent = 'error';
     document.getElementById('health').className = 'err';
