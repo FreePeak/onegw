@@ -1,6 +1,7 @@
 // Package provider defines the upstream provider abstraction: named kinds
-// (openai, anthropic, gemini, openai-compatible), account pools, and the
-// single HTTP call contract the router drives.
+// (openai, anthropic, gemini, openai-compatible clones, plus the virtual
+// searxng search kind), account pools, and the single HTTP call contract
+// the router drives.
 package provider
 
 import (
@@ -84,6 +85,9 @@ func (k Kind) Format() translat.Format {
 		return translat.FmtAnthropic
 	case KindGemini:
 		return translat.FmtGemini
+	// KindSearXNG (searxng.go) intentionally falls through to OpenAI: its
+	// Do() returns a synthetic OpenAI completion, so clients see a normal
+	// chat response in every surface.
 	default:
 		return translat.FmtOpenAI
 	}
@@ -117,6 +121,11 @@ type Def struct {
 	// "disable thinking" knobs (e.g. GLM 1210: use low|high|max). The
 	// server rewrites such requests instead of forwarding them.
 	AlwaysThinking []string `toml:"always_thinking"`
+
+	// SearXNG virtual-kind settings (kind = "searxng" only); zero values
+	// fall back to the defaults in searxng.go.
+	SearchMaxResults int
+	SearchTimeout    time.Duration
 
 	pool     *accountPool
 	inflight chan struct{}
@@ -211,6 +220,8 @@ func (k Kind) DefaultBaseURL() string {
 		return "https://generativelanguage.googleapis.com"
 	case KindOpenCode:
 		return "https://opencode.ai/zen/go"
+	case KindSearXNG:
+		return "" // no stock endpoint: base_url is required in config
 	default:
 		return "https://api.openai.com"
 	}
@@ -448,6 +459,10 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 	var req *http.Request
 	var err error
 	switch d.Kind {
+	case KindSearXNG:
+		// Virtual provider: answer with a SearXNG search instead of a chat
+		// call (see searxng.go).
+		return d.doSearch(ctx, acct, model, body, stream)
 	case KindGemini:
 		// Non-streaming: :generateContent; streaming: :streamGenerateContent?alt=sse
 		method := "generateContent"
