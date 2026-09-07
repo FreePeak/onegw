@@ -16,6 +16,7 @@ import (
 	"onegw/internal/translat"
 	"onegw/internal/types"
 	"onegw/internal/usage"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -235,9 +236,10 @@ func (s *Server) acquireForBody(r *http.Request) (func(), bool) {
 	if n < 0 {
 		n = 0
 	}
-	// Margin covers saver/translation heap amplification (maps + strings).
+	// Margin covers the request pipeline's transient amplification: decoded
+	// map (~2x), re-marshaled body (~1x), upstream write copy (~1x).
 	if n > 0 {
-		n += n/2 + 16<<10
+		n += 3*n + 64<<10
 	}
 	if err := s.budget.Acquire(r.Context(), n); err != nil {
 		s.budget.Saturated()
@@ -355,12 +357,6 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
-}
-
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r) {
 		return
@@ -389,6 +385,20 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":        "ok",
+		"uptime_s":      int(time.Since(s.start).Seconds()),
+		"heap_alloc_mb": m.HeapAlloc >> 20,
+		"heap_sys_mb":   m.HeapSys >> 20,
+		"sys_mb":        m.Sys >> 20,
+		"num_gc":        m.NumGC,
+	})
 }
 
 func (s *Server) adminOK(r *http.Request) bool {
