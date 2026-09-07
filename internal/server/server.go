@@ -147,6 +147,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets})
 	}
 	rt.SetCombos(combos)
+	rt.SetAliases(cfg.Aliases)
 
 	var sink usage.Sink
 	if s.st != nil {
@@ -477,6 +478,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, c := range cfg.Combos {
 		add(c.Name)
+	}
+	// Aliases surface as first-class model ids so clients can discover them.
+	for a := range cfg.Aliases {
+		add(a)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
