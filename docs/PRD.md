@@ -1,12 +1,13 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (codified ordered design priorities: fast >
-security > massive sessions > token saving > lowest RAM; imported kilocode +
-xai bearer-token providers from 9router; custom wire-format gaps tracked as
-#12; easier-setup roadmap — auto-release CI, one-command install, one-click
-agent-CLI install, Docker deploy — tracked as #14; always-thinking effort
-coercion for glm-5.3/glm-5.3-flash — 400 on streaming requests, root cause
-and fix in #16)*
+*Last updated: 2026-09-07 (dashboard now shows live in-flight request
+concurrency, gauge also on /admin/health; earlier: codified ordered design
+priorities: fast > security > massive sessions > token saving > lowest RAM;
+imported kilocode + xai bearer-token providers from 9router; custom
+wire-format gaps tracked as #12; easier-setup roadmap — auto-release CI,
+one-command install, one-click agent-CLI install, Docker deploy — tracked as
+#14; always-thinking effort coercion for glm-5.3/glm-5.3-flash — 400 on
+streaming requests, root cause and fix in #16)*
 
 ## Product
 
@@ -299,7 +300,9 @@ the issue):
   env; full agent loop (read/edit/bash) tested through onegw.
 - **Dashboard**: password-gated persisted rollups (today, aggregated per
   provider+model), since-start totals, saver "saved" column, health/mem
-  strip, 401 flow verified in browser.
+  strip, live in-flight concurrency gauge (counter incremented across the
+  proxy pipelines, shown as `live` and exposed as `inflight` in
+  `/admin/health`), 401 flow verified in browser.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080.
 
 ## Docs
