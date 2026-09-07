@@ -37,7 +37,9 @@ func makeCfg(t *testing.T, key, adminPW string, saverEnabled bool, provs ...prov
 	cfg := &config.Config{}
 	cfg.Server.DataDir = "memory"
 	cfg.Server.AdminPassword = adminPW
-	cfg.Auth.Keys = []string{key}
+	if key != "" {
+		cfg.Auth.KeyList = []config.AuthKey{{Key: key}}
+	}
 	cfg.Saver.Enabled = saverEnabled
 	for _, pr := range provs {
 		cfg.Providers = append(cfg.Providers, config.ProviderCfg{
@@ -198,12 +200,12 @@ func TestRefusesOpenBindWithoutKeys(t *testing.T) {
 		t.Fatal("non-loopback bind with no auth keys must be refused")
 	}
 	// Keys present, non-loopback: allowed.
-	cfg.Auth.Keys = []string{"sk-test"}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test"}}
 	if _, err := New(cfg); err != nil {
 		t.Fatalf("non-loopback bind with keys should start: %v", err)
 	}
 	// Keys-only-whitespace/empty entries count as no keys.
-	cfg.Auth.Keys = []string{"", "  "}
+	cfg.Auth.KeyList = []config.AuthKey{{Key: ""}, {Key: "  "}}
 	if _, err := New(cfg); err == nil {
 		t.Fatal("blank auth keys must be treated as none")
 	}
