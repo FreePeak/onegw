@@ -55,6 +55,7 @@ func main() {
 		fatal("init server: %v", err)
 	}
 	defer srv.Close()
+	srv.SetConfigPath(path) // powers /admin/config* (masked view, reload, keys/aliases)
 
 	// SO_REUSEPORT lets a replacement binary bind the same port while this
 	// process is still serving, enabling zero-drop rolling restarts (start
