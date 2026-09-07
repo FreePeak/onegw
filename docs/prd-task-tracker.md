@@ -41,6 +41,18 @@ Linked from `docs/PRD.md`. Status as of 2026-09-07.
 - [x] Dashboard table reads persisted store rollups (source=store), totals
       line live-window; browser-verified against real B.AI traffic
 
+- [x] pi CLI integration: `onegw` provider added to ~/.pi/agent/models.json
+      (combos + b-ai models), ONEGW_KEY in ~/.zshrc; full agent loop tested
+      (read/edit/bash) against B.AI via onegw
+- [x] Dashboard completeness pass: `developer`→`system` role normalization
+      for same-format passthrough (pi payloads), saver token counts now
+      recorded (were discarded), version string, aggregated per
+      provider+model rows, cache-read column, 401 auth hint; verified in
+      browser incl. 401 path
+- [x] joinURL generalized: any `vN` version-suffix base (GLM
+      /api/paas/v4) joins without doubled segments; glm route live-verified
+- [x] onegw runs as supervised persistent service (hub-managed) on :8080
+
 ## Open (v2 candidates)
 
 - [ ] SIGHUP hot reload of config
