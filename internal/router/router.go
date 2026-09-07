@@ -131,7 +131,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			}
 			lastErr = err
 			if !err.Retryable() {
-				break
+				return err
 			}
 			select {
 			case <-ctx.Done():
