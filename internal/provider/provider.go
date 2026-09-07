@@ -110,6 +110,14 @@ type Def struct {
 	BaseURL  string    `toml:"base_url"`
 	Accounts []Account `toml:"accounts"`
 
+	// Models advertises the bare model ids this provider serves (empty =
+	// pass any model through). Bare-model passthrough routing matches here.
+	Models []string `toml:"models"`
+
+	// Passthrough lists the OpenAI-format surfaces this provider may serve
+	// verbatim without translation: "embeddings", "stt", "tts".
+	Passthrough []string `toml:"passthrough"`
+
 	// Concurrency cap for in-flight upstream calls (0 = unlimited).
 	MaxConc int `toml:"max_concurrency"`
 
@@ -136,6 +144,17 @@ type Def struct {
 func (d *Def) AlwaysThinkingModel(model string) bool {
 	for _, pat := range d.AlwaysThinking {
 		if ok, err := path.Match(pat, model); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowsPassthrough reports whether the provider declares the OpenAI-format
+// passthrough surface op ("embeddings", "stt", "tts").
+func (d *Def) AllowsPassthrough(op string) bool {
+	for _, p := range d.Passthrough {
+		if p == op {
 			return true
 		}
 	}
@@ -412,7 +431,17 @@ type CallResult struct {
 // intent. `op` is "chat" (chat completions / messages / generateContent)
 // or "models". For KindOpenCode the chat path depends on the routed model:
 // Responses-only families (gpt/grok/muse-spark) live on /v1/responses.
+// Passthrough surfaces ("embeddings", "transcriptions", "speech") speak
+// OpenAI shape for every kind.
 func (d *Def) Path(op, model string) string {
+	switch op {
+	case "embeddings":
+		return "/v1/embeddings"
+	case "transcriptions":
+		return "/v1/audio/transcriptions"
+	case "speech":
+		return "/v1/audio/speech"
+	}
 	switch d.Kind {
 	case KindAnthropic:
 		if op == "models" {
@@ -522,6 +551,50 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 		return nil, apiErr
 	}
 	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct}, nil
+}
+
+// DoPassthrough performs one upstream call for a passthrough surface
+// ("embeddings", "transcriptions", "speech"). The body is relayed
+// byte-for-byte from body without buffering: multipart streams stay streams.
+// contentType is forwarded verbatim — a multipart boundary must reach the
+// upstream intact. Upstream errors are not decoded here because passthrough
+// bodies may be non-JSON (audio); the caller relays status and payload.
+// The caller owns resp.Body.
+func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, contentType string, body io.Reader, contentLen int64) (*http.Response, *types.APIError) {
+	if d.inflight != nil {
+		select {
+		case d.inflight <- struct{}{}:
+			defer func() { <-d.inflight }()
+		case <-ctx.Done():
+			return nil, &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
+		}
+	}
+	base := d.Base(acct)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(base, d.Path(op, model)), body)
+	if err != nil {
+		return nil, &types.APIError{Status: 500, Type: "internal", Message: err.Error()}
+	}
+	if contentLen >= 0 {
+		req.ContentLength = contentLen
+	}
+	req.Header.Set("Content-Type", contentType)
+	switch d.Kind {
+	case KindAnthropic:
+		req.Header.Set("x-api-key", acct.APIKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	case KindGemini:
+		req.Header.Set("x-goog-api-key", acct.APIKey)
+	default:
+		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+	}
+	for k, v := range d.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+	}
+	return resp, nil
 }
 
 func coolDuration(retryAfter string) time.Duration {

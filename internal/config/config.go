@@ -87,6 +87,9 @@ type ProviderCfg struct {
 	QuotaResetAnchor   string `toml:"quota_reset_anchor"`
 	QuotaLimitTokens   int64  `toml:"quota_limit_tokens"`
 	QuotaLimitRequests int64  `toml:"quota_limit_requests"`
+	// Passthrough opts the provider into the narrow OpenAI-format surfaces
+	// served without translation: "embeddings", "stt", "tts".
+	Passthrough []string `toml:"passthrough"`
 }
 
 // Acct is one provider account.
@@ -248,6 +251,13 @@ func (c *Config) Validate() error {
 		}
 		if p.QuotaLimitTokens < 0 || p.QuotaLimitRequests < 0 {
 			return fmt.Errorf("provider %s quota limits must be >= 0", p.Name)
+		}
+		for _, pc := range p.Passthrough {
+			switch pc {
+			case "embeddings", "stt", "tts":
+			default:
+				return fmt.Errorf("provider %s unknown passthrough capability %q", p.Name, pc)
+			}
 		}
 	}
 	comboNames := map[string]bool{}
