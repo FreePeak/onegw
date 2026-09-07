@@ -42,6 +42,12 @@ type Tracker struct {
 		mu sync.Mutex
 		m  map[Key]*liveBucket
 	}
+	// Cumulative since process start; never reset by flush.
+	totRequests atomic.Int64
+	totInput    atomic.Int64
+	totOutput   atomic.Int64
+	totSaved    atomic.Int64
+
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     sync.WaitGroup
@@ -129,6 +135,12 @@ func (t *Tracker) Observe(k Key, u types.Usage, savedTokens int64) {
 	}
 	b.lastSeen = time.Now()
 	sh.mu.Unlock()
+	t.totRequests.Add(1)
+	t.totInput.Add(u.InputTokens)
+	t.totOutput.Add(u.OutputTokens)
+	if savedTokens > 0 {
+		t.totSaved.Add(savedTokens)
+	}
 	b.c.requests.Add(1)
 	b.c.inputTokens.Add(u.InputTokens)
 	b.c.outputTokens.Add(u.OutputTokens)
@@ -141,6 +153,11 @@ func (t *Tracker) Observe(k Key, u types.Usage, savedTokens int64) {
 	if u.Estimated {
 		b.c.estimated.Add(1)
 	}
+}
+
+// Totals returns cumulative counters since process start.
+func (t *Tracker) Totals() (requests, input, output, saved int64) {
+	return t.totRequests.Load(), t.totInput.Load(), t.totOutput.Load(), t.totSaved.Load()
 }
 
 // loop flushes periodically.
