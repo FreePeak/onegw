@@ -1,7 +1,9 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (service now auto-resumes: supervisor restarts
-onegw on abnormal exit, kill-tested; /admin/health is now password-gated like
+*Last updated: 2026-09-07 (filed #19 — dashboard console log viewer
+(9router-style): in-memory ring-buffer log sink, password-gated /admin/logs
+endpoints, dashboard console pane; earlier: /admin/health is now
+password-gated like
 /admin/usage — it carries the live in-flight gauge; dashboard passes the
 password and scripts updated; earlier: dashboard shows live in-flight
 request concurrency; codified ordered design
@@ -248,6 +250,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #13 | Web-search provider (SearXNG integration)                 | v2 candidate       |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
 | #17 | Self-healing thinking-dialect fallback: coerce + retry on thinking-class 400s, learn per (provider, model), combo-advance as last resort | #16 follow-up |
+| #19 | Dashboard console log (9router-style): in-memory log sink + `/admin/logs` endpoints + dashboard console pane | user request |
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
