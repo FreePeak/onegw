@@ -22,7 +22,7 @@ cat > /tmp/onegw-smoke.toml <<EOF
 [server]
 listen = "127.0.0.1:$GW_PORT"
 data_dir = "/tmp/onegw-smoke-data"
-admin_password = ""
+admin_password = "smoke"
 
 [saver]
 enabled = true
@@ -49,14 +49,14 @@ EOF
 GW_PID=$!
 
 for i in $(seq 1 50); do
-  if curl -sf "$GW/admin/health" >/dev/null 2>&1; then break; fi
+  if curl -sf "$GW/admin/health?password=smoke" >/dev/null 2>&1; then break; fi
   sleep 0.1
 done
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
 echo "== 1. health =="
-curl -sf "$GW/admin/health" | grep -q '"ok"' || fail health
+curl -sf "$GW/admin/health?password=smoke" | grep -q '"ok"' || fail health
 
 echo "== 2. OpenAI non-streaming passthrough =="
 OUT=$(curl -sf "$GW/v1/chat/completions" -d '{"model":"mock/mock-model","mock_tokens":50,"messages":[{"role":"user","content":"hi"}]}')
@@ -85,7 +85,7 @@ echo "$OUT" | grep -q 'mock/mock-model' || fail models
 echo "== 7. usage accounting (admin) =="
 sleep 2   # allow a flush
 sleep 1
-OUT=$(curl -sf "$GW/admin/usage?password=admin&source=store&days=1")
+OUT=$(curl -sf "$GW/admin/usage?password=smoke&source=store&days=1")
 echo "$OUT" | grep -q '"provider":"mock"' || fail "admin usage missing mock: $OUT"
 REQS=$(echo "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(r["requests"] for r in d["rows"]))')
 [ "$REQS" -ge 4 ] || fail "expected >=4 requests in usage, got $REQS"
