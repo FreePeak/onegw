@@ -39,11 +39,19 @@ func (s *Saver) ApplyRaw(format translat.Format, raw []byte) ([]byte, int64) {
 	if saved <= 0 {
 		return raw, 0
 	}
-	out, err := json.Marshal(root)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // do not inflate <,>,& to \u003c… across untouched strings
+	if err := enc.Encode(root); err != nil {
 		return raw, 0
 	}
-	return out, saved
+	out := bytes.TrimSuffix(buf.Bytes(), []byte("\n")) // Encoder adds \n that Marshal does not
+	wireSaved := (int64(len(raw)) - int64(len(out))) / 4
+	if wireSaved <= 0 {
+		return raw, 0 // net-negative re-encode: pass original through, report nothing
+	}
+	// True accounting: actual wire reduction, incl. re-encode effects.
+	return out, wireSaved
 }
 
 func (s *Saver) applyOpenAI(root map[string]any) (saved int64) {
