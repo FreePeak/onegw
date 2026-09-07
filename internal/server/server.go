@@ -54,6 +54,7 @@ type Server struct {
 	// rl holds per-key rate-limit windows. It lives on the Server, not the
 	// reloadable state, so SIGHUP does not reset in-progress windows.
 	rl *ratelimit.Limiter
+	m  *gatewayMetrics
 }
 
 // cur returns the active state snapshot (non-nil once New has run).
@@ -72,7 +73,7 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("open store: %w", err)
 		}
 	}
-	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New()}
+	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), m: newGatewayMetrics()}
 	if st != nil {
 		st.SetNodeID(s.nodeID)
 	}
@@ -263,6 +264,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/health", s.handleHealth)
 	mux.HandleFunc("GET /admin/usage", s.handleAdminUsage)
 	mux.HandleFunc("GET /admin/quota", s.handleAdminQuota)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /", s.handleDashboard)
 	return s.withRecovery(mux)
 }
@@ -299,6 +301,53 @@ func (s *Server) handleGemini(w http.ResponseWriter, r *http.Request) {
 	s.proxyGemini(w, r, model, isStream)
 }
 
+// proxyGemini mirrors proxy() for the Gemini surface.
+func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model string, stream bool) {
+	ak, ok := s.authorize(w, r)
+	if !ok {
+		return
+	}
+	s.inflight.Add(1)
+	defer s.inflight.Add(-1)
+	release, ok := s.acquireForBody(r)
+	if !ok {
+		s.m.saturated()
+		s.rejectSaturated(w, translat.FmtGemini)
+		return
+	}
+	defer release()
+
+	body, err := s.readBody(r)
+	if err != nil {
+		s.m.tooLarge()
+		writeErr(w, translat.FmtGemini, errAPI(413, "body_too_large", err.Error()))
+		return
+	}
+	if !s.enforceRateLimits(w, translat.FmtGemini, ak) {
+		return
+	}
+	st := s.cur()
+	var savedTokens int64
+	if st.cfg.Saver.Enabled {
+		body, savedTokens = st.saver.ApplyRaw(translat.FmtGemini, body)
+	}
+	res, rerr := st.router.Resolve(model)
+	if rerr != nil {
+		s.m.noRoute(rerr.Status)
+		writeErr(w, translat.FmtGemini, rerr)
+		return
+	}
+	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
+		return
+	}
+	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
+	}, func(v any) {})
+	if execErr != nil && w.Header().Get("Content-Type") == "" {
+		writeErr(w, translat.FmtGemini, execErr)
+	}
+}
+
 // proxy is the main pipeline for OpenAI/Anthropic surfaces.
 //
 // Memory contract: buffered work (body read, saver, unified decode, any
@@ -314,6 +363,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	defer s.inflight.Add(-1)
 	release, ok := s.acquireForBody(r)
 	if !ok {
+		s.m.saturated()
 		s.rejectSaturated(w, clientFmt)
 		return
 	}
@@ -321,6 +371,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 
 	body, err := s.readBody(r)
 	if err != nil {
+		s.m.tooLarge()
 		writeErr(w, clientFmt, errAPI(413, "body_too_large", err.Error()))
 		return
 	}
@@ -338,6 +389,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 
 	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
+		s.m.noRoute(rerr.Status)
 		writeErr(w, clientFmt, rerr)
 		return
 	}
@@ -349,50 +401,6 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
-	}
-}
-
-// proxyGemini mirrors proxy() for the Gemini surface.
-func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model string, stream bool) {
-	ak, ok := s.authorize(w, r)
-	if !ok {
-		return
-	}
-	s.inflight.Add(1)
-	defer s.inflight.Add(-1)
-	release, ok := s.acquireForBody(r)
-	if !ok {
-		s.rejectSaturated(w, translat.FmtGemini)
-		return
-	}
-	defer release()
-
-	body, err := s.readBody(r)
-	if err != nil {
-		writeErr(w, translat.FmtGemini, errAPI(413, "body_too_large", err.Error()))
-		return
-	}
-	if !s.enforceRateLimits(w, translat.FmtGemini, ak) {
-		return
-	}
-	st := s.cur()
-	var savedTokens int64
-	if st.cfg.Saver.Enabled {
-		body, savedTokens = st.saver.ApplyRaw(translat.FmtGemini, body)
-	}
-	res, rerr := st.router.Resolve(model)
-	if rerr != nil {
-		writeErr(w, translat.FmtGemini, rerr)
-		return
-	}
-	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
-		return
-	}
-	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
-	}, func(v any) {})
-	if execErr != nil && w.Header().Get("Content-Type") == "" {
-		writeErr(w, translat.FmtGemini, execErr)
 	}
 }
 
@@ -430,6 +438,9 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 // (parse whole response, translate, answer JSON). Usage is recorded.
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
 	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string, ak *config.AuthKey) (any, *types.APIError) {
+	// mdl is the metrics label only: raw client model strings must not
+	// create unbounded series (routing already used the original string).
+	mdl := s.boundedModel(model)
 	upstreamFmt := def.UpstreamFormat(model)
 	// Quota enforcement (issue #7): an exhausted provider cools its whole
 	// account pool until the window ends and answers 503 (retryable, so
@@ -454,10 +465,12 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	}
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
+		s.m.invalidBody(def.Name, mdl)
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
 	res, apiErr := def.Do(ctx, acct, model, clientSession, upBody, stream)
 	if apiErr != nil {
+		s.m.upstreamErr(def.Name, mdl, apiErr.Status)
 		return nil, apiErr
 	}
 	defer res.Resp.Body.Close()
@@ -482,6 +495,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		defer s.cur().budget.Release(reserve)
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
+			s.m.upstreamErr(def.Name, mdl, 502)
 			return nil, errAPI(502, "upstream_read_failed", rerr.Error())
 		}
 		if int64(len(raw)) > maxResp {
@@ -489,10 +503,12 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		}
 		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
 		if derr != nil {
+			s.m.upstreamErr(def.Name, mdl, 501)
 			return nil, errAPI(501, "response_translate_failed", derr.Error())
 		}
 		out, eerr := translat.EncodeResponse(clientFmt, cr)
 		if eerr != nil {
+			s.m.upstreamErr(def.Name, mdl, 501)
 			return nil, errAPI(501, "response_encode_failed", eerr.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -529,6 +545,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		} else {
 			u, terr := translat.TranslateStream(res.Resp.Body, w, flush, upstreamFmt, clientFmt, model)
 			if terr != nil {
+				s.m.upstreamErr(def.Name, mdl, 502)
 				return nil, &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
 			}
 			rec = u
@@ -548,6 +565,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	if q := s.cur().quota; q != nil {
 		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
 	}
+	s.m.success(def.Name, mdl, rec, savedTokens)
 	return nil, nil
 }
 
