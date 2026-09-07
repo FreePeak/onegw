@@ -4,14 +4,15 @@
 //	POST /v1/chat/completions   — OpenAI shape, streaming + non-streaming
 //	POST /v1/messages           — Anthropic shape, streaming + non-streaming
 //
-// The generated content size is controlled by ?tokens=N or the JSON body's
-// "mock_tokens" field (default 200 tokens ≈ 800 chars).
+// The generated content size is controlled by the JSON body's "mock_tokens"
+// field (default 200 tokens ≈ 800 chars).
 package main
 
 import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -53,8 +54,14 @@ func tokenCount(r *http.Request, body []byte) int {
 }
 
 func readBody(r *http.Request) []byte {
+	// Probe the first 64 KiB for settings, then drain the rest so clients
+	// with multi-MB bodies never block writing to us.
 	buf := make([]byte, 1<<16)
-	n, _ := r.Body.Read(buf)
+	n, _ := io.ReadFull(r.Body, buf)
+	if n < 0 {
+		n = 0
+	}
+	go func(extra io.Reader) { _, _ = io.Copy(io.Discard, extra) }(r.Body)
 	return buf[:n]
 }
 
