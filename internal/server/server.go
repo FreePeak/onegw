@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"onegw/internal/config"
 	"onegw/internal/provider"
+	"onegw/internal/quota"
 	"onegw/internal/ratelimit"
 	"onegw/internal/router"
 	"onegw/internal/saver"
@@ -38,6 +39,7 @@ type state struct {
 	router *router.Router
 	saver  *saver.Saver
 	usage  *usage.Tracker
+	quota  *quota.Tracker
 	budget *ByteBudget
 }
 
@@ -168,6 +170,27 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	}
 	usageTracker := usage.New(sink, cfg.FlushEvery())
 
+	// Quota windows (issue #7): per-provider limits from config; counters
+	// seed from the store and inherit live state across hot reloads.
+	limits := make(map[string]quota.Limits, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		if p.QuotaWindow == "" {
+			continue
+		}
+		l := quota.Limits{Window: p.QuotaWindow, LimitTokens: p.QuotaLimitTokens, LimitRequests: p.QuotaLimitRequests}
+		if p.QuotaResetAnchor != "" {
+			if a, err := time.Parse(time.RFC3339, p.QuotaResetAnchor); err == nil {
+				l.Anchor = a
+			}
+		}
+		limits[p.Name] = l
+	}
+	var quotaTracker *quota.Tracker
+	if len(limits) > 0 {
+		quotaTracker = quota.New(limits, s.st, cfg.FlushEvery())
+		quotaTracker.Inherit(oldStateQuota(s.state.Load()))
+	}
+
 	old := s.state.Load()
 	s.state.Store(&state{
 		cfg:    cfg,
@@ -175,12 +198,24 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		router: rt,
 		saver:  saver.New(saver.Config{Enabled: cfg.Saver.Enabled}),
 		usage:  usageTracker,
+		quota:  quotaTracker,
 		budget: NewByteBudget(cfg.Server.BufferCap),
 	})
 	if !initial && old != nil {
 		old.usage.Stop() // flushes remaining data to the store, then ends the loop
+		if old.quota != nil {
+			old.quota.Stop()
+		}
 	}
 	return nil
+}
+
+// oldStateQuota returns the previous snapshot's quota tracker, or nil.
+func oldStateQuota(old *state) *quota.Tracker {
+	if old == nil {
+		return nil
+	}
+	return old.quota
 }
 
 // Reload hot-swaps configuration (SIGHUP). Bad config is rejected by the
@@ -195,6 +230,9 @@ func (s *Server) Reload(cfg *config.Config) {
 func (s *Server) Close() {
 	if st := s.cur(); st != nil {
 		st.usage.Stop()
+		if st.quota != nil {
+			st.quota.Stop()
+		}
 	}
 	if s.st != nil {
 		s.st.Close()
@@ -212,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1beta/models/", s.handleGemini)
 	mux.HandleFunc("GET /admin/health", s.handleHealth)
 	mux.HandleFunc("GET /admin/usage", s.handleAdminUsage)
+	mux.HandleFunc("GET /admin/quota", s.handleAdminQuota)
 	mux.HandleFunc("GET /", s.handleDashboard)
 	return s.withRecovery(mux)
 }
@@ -380,6 +419,27 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
 	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string, ak *config.AuthKey) (any, *types.APIError) {
 	upstreamFmt := def.UpstreamFormat(model)
+	// Quota enforcement (issue #7): an exhausted provider cools its whole
+	// account pool until the window ends and answers 503 (retryable, so
+	// combos fall through to the next target). Checked before the upstream
+	// call so a direct hit never reaches the provider. Retry-After rides
+	// on the error (written only if this error actually reaches the
+	// client), never on w — a fallen-through attempt must not leak it.
+	if q := s.cur().quota; q != nil {
+		if st, ok := q.Status(def.Name, time.Now()); ok && st.Exhausted {
+			cool := time.Until(st.WindowEnd)
+			if cool < 0 {
+				cool = 0
+			}
+			for i := range def.Accounts {
+				def.Cool(&def.Accounts[i], cool)
+			}
+			return nil, &types.APIError{Status: 503, Type: "provider_quota_exhausted", Code: "quota_exceeded",
+				RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+				Message: fmt.Sprintf("provider %s quota exhausted (%s window); resets %s",
+					def.Name, st.Window, st.WindowEnd.UTC().Format(time.RFC3339))}
+		}
+	}
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
@@ -473,6 +533,9 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	}
 	s.cur().usage.Observe(usage.Key{Provider: def.Name, Model: model, APIKey: label}, rec, savedTokens)
 	s.observeTPM(ak, rec.InputTokens+rec.OutputTokens)
+	if q := s.cur().quota; q != nil {
+		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
+	}
 	return nil, nil
 }
 
@@ -858,6 +921,9 @@ func peekStream(body []byte) bool {
 
 func writeErr(w http.ResponseWriter, f translat.Format, e *types.APIError) {
 	w.Header().Set("Content-Type", "application/json")
+	if e.RetryAfter != "" {
+		w.Header().Set("Retry-After", e.RetryAfter)
+	}
 	w.WriteHeader(e.Status)
 	_, _ = w.Write(translat.EncodeError(f, e))
 }
