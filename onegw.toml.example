@@ -12,6 +12,18 @@ admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides
 [saver]
 enabled = true                 # RTK-style tool_result compression
 
+# Output-side savers (each also requires the [saver] enabled flag):
+# [[saver.inject]]  — prepend an honest terse-output directive to the system prompt
+#   mode = "caveman"|"terse"|"custom" (custom needs text); models = globs, empty = all
+# [saver.external]  — send big bodies' messages[] to a Headroom-style /v1/compress service
+#   url, timeout_ms (default 2000), min_bytes (default 32768), fail_open (default true)
+# [[saver.inject]]
+# mode = "terse"
+# models = []
+# [saver.external]
+# enabled = true
+# url = "http://127.0.0.1:8819/v1/compress"
+
 [usage]
 flush_interval = "5s"
 retention_days = 90
