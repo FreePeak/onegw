@@ -18,25 +18,28 @@ retention_days = 90
 
 # --- Providers -------------------------------------------------------------
 
-[provider.openrouter]
+[[providers]]
+name = "openrouter"
 kind = "openai"
 base_url = "https://openrouter.ai/api"
 # api_key = "..." or env ONEGW_PROVIDER_OPENROUTER_KEY
 models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3.2"]
 
-[provider.anthropic]
+[[providers]]
+name = "anthropic"
 kind = "anthropic"
 models = ["claude-sonnet-4-5", "claude-haiku-4-5"]
 
-[provider.gemini]
+[[providers]]
+name = "gemini"
 kind = "gemini"
 models = ["gemini-3-pro", "gemini-3-flash"]
 
-[[provider.anthropic.accounts]]
+[[providers.accounts]]
 name = "main"
 api_key = ""                   # fill or use env
 
-[[provider.gemini.accounts]]
+[[providers.accounts]]
 name = "main"
 api_key = ""                   # fill or use env
 

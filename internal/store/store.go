@@ -106,14 +106,6 @@ func (s *Store) FlushBuckets(buckets []usage.Bucket) error {
 	return tx.Commit()
 }
 
-// UsageRow is one aggregated query result.
-type UsageRow struct {
-	Day, Hour, Provider, Model, APIKey string
-	Requests, InputTok, OutputTok      int64
-	CacheRead, CacheWrite, Reasoning   int64
-	SavedTok                           int64
-}
-
 // QueryRange aggregates rollups over [fromDay, toDay].
 func (s *Store) QueryRange(fromDay, toDay string) ([]UsageRow, error) {
 	rows, err := s.db.Query(`SELECT day, hour, provider, model, api_key,
@@ -136,15 +128,22 @@ func (s *Store) QueryRange(fromDay, toDay string) ([]UsageRow, error) {
 	return out, rows.Err()
 }
 
-// TotalsSince aggregates over a window.
-func (s *Store) TotalsSince(days int) (requests, inTok, outTok int64, err error) {
-	from := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
-	row := s.db.QueryRow(`SELECT COALESCE(SUM(requests),0), COALESCE(SUM(input_tok),0), COALESCE(SUM(output_tok),0)
-		FROM usage_rollup WHERE day >= ?`, from)
-	return requests, inTok, outTok, row.Scan(&requests, &inTok, &outTok)
+// UsageRow is one aggregated query result.
+type UsageRow struct {
+	Day        string `json:"day"`
+	Hour       string `json:"hour"`
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	APIKey     string `json:"api_key"`
+	Requests   int64  `json:"requests"`
+	InputTok   int64  `json:"input"`
+	OutputTok  int64  `json:"output"`
+	CacheRead  int64  `json:"cacheRead"`
+	CacheWrite int64  `json:"cacheWrite"`
+	Reasoning  int64  `json:"reasoning"`
+	SavedTok   int64  `json:"saved"`
 }
 
-// Prune deletes rollups older than retention days.
 func (s *Store) Prune(retentionDays int) (int64, error) {
 	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Format("2006-01-02")
 	res, err := s.db.Exec(`DELETE FROM usage_rollup WHERE day < ?`, cutoff)

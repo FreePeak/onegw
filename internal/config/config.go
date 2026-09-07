@@ -73,7 +73,7 @@ type Config struct {
 	Auth      Auth          `toml:"auth"`
 	Saver     SaverCfg      `toml:"saver"`
 	Usage     UsageCfg      `toml:"usage"`
-	Providers []ProviderCfg `toml:"provider"`
+	Providers []ProviderCfg `toml:"providers"`
 	Combos    []ComboCfg    `toml:"combo"`
 }
 
