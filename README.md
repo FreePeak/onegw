@@ -106,6 +106,19 @@ providers (`kind = "openai" | "anthropic" | "gemini"`, optional `base_url`,
 models, multiple `[[providers.accounts]]`), combos, server limits, saver and
 usage settings. `data_dir = "memory"` disables persistence.
 
+### Always-thinking models
+
+Some upstreams (e.g. GLM `glm-5.3` / `glm-5.3-flash`) reason unconditionally
+and reject disable-thinking knobs: `reasoning_effort` must be
+`low|high|max` (streaming `medium` returns 400), and
+`thinking:{"type":"disabled"}` / `enable_thinking:false` are refused. List
+such models per provider with `always_thinking = ["glm-5.3*"]` (globs use
+`path.Match`; `*` does not cross `/`). Requests routed to a matching model
+are rewritten instead of forwarded: `reasoning_effort`
+`""/none/minimal/medium` → `low` (`high`/`xhigh`/`max` pass through), and
+disable-thinking knobs are dropped so the upstream default (thinking on)
+applies.
+
 ## Surfaces
 
 | Client speaks | Endpoint | Upstream kinds |
