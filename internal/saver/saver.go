@@ -6,6 +6,7 @@ package saver
 
 import (
 	"strings"
+	"sync/atomic"
 )
 
 // Config controls filter aggressiveness.
@@ -38,39 +39,58 @@ func (c *Config) fill() Config {
 	return v
 }
 
-// Saver compresses tool_result text.
-type Saver struct{ cfg Config }
+// Saver compresses tool_result text. The config is an atomic snapshot so a
+// hot reload can flip Enabled (or any knob) without locking the hot path.
+type Saver struct {
+	cfg atomic.Pointer[Config]
+}
 
 // New builds a saver from config.
-func New(cfg Config) *Saver { return &Saver{cfg: cfg.fill()} }
+func New(cfg Config) *Saver {
+	s := &Saver{}
+	filled := cfg.fill()
+	s.cfg.Store(&filled)
+	return s
+}
+
+// SetEnabled flips the saver on/off without rebuilding filter config.
+func (s *Saver) SetEnabled(on bool) {
+	c := *s.cfg.Load()
+	c.Enabled = on
+	s.cfg.Store(&c)
+}
+
+// settings returns the active config snapshot.
+func (s *Saver) settings() Config { return *s.cfg.Load() }
 
 // Compress applies the best-matching filter to tool-result text. Empty text
 // passes through unchanged.
 func (s *Saver) Compress(text string) string {
-	if !s.cfg.Enabled || len(text) < 256 {
+	cfg := s.settings()
+	if !cfg.Enabled || len(text) < 256 {
 		return text
 	}
 	var out string
 	switch sniff(text) {
 	case "git-diff":
-		out = filterDiff(text, s.cfg)
+		out = filterDiff(text, cfg)
 	case "git-status":
-		out = filterDedupCollapse(text, s.cfg, false)
+		out = filterDedupCollapse(text, cfg, false)
 	case "grep":
-		out = filterGrep(text, s.cfg)
+		out = filterGrep(text, cfg)
 	case "find", "ls", "tree":
-		out = filterTree(text, s.cfg)
+		out = filterTree(text, cfg)
 	case "log":
-		out = filterDedupCollapse(text, s.cfg, true)
+		out = filterDedupCollapse(text, cfg, true)
 	default:
-		out = filterGeneric(text, s.cfg)
+		out = filterGeneric(text, cfg)
 	}
 	// Never grow, never over-truncate: savings gate.
 	if out == "" || len(out) >= len(text) {
 		return text
 	}
 	saved := 100 * (len(text) - len(out)) / len(text)
-	if saved < s.cfg.MinSavingsPct {
+	if saved < cfg.MinSavingsPct {
 		return text
 	}
 	return out

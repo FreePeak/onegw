@@ -12,6 +12,9 @@ import (
 // decoding keeps numeric fidelity). Returns the (possibly unmodified) body
 // and estimated saved tokens (chars/4 delta).
 func (s *Saver) ApplyRaw(format translat.Format, raw []byte) ([]byte, int64) {
+	if !s.settings().Enabled {
+		return raw, 0
+	}
 	var root any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

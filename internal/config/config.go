@@ -51,6 +51,10 @@ type ProviderCfg struct {
 	Models      []string          `toml:"models"` // advertised model ids
 	MaxConc     int               `toml:"max_concurrency"`
 	ExtraHeader map[string]string `toml:"extra_headers"`
+	// AlwaysThinking lists model globs (path.Match; "*" does not cross
+	// "/") that reason unconditionally upstream and reject
+	// disable-thinking knobs; see README.
+	AlwaysThinking []string `toml:"always_thinking"`
 }
 
 // Acct is one provider account.
@@ -80,7 +84,8 @@ type Config struct {
 // Defaults fills zero values with production-safe defaults.
 func (c *Config) Defaults() {
 	if c.Server.Listen == "" {
-		c.Server.Listen = ":8080"
+		// Security default: loopback only. Expose explicitly via listen = "0.0.0.0:8080".
+		c.Server.Listen = "127.0.0.1:8080"
 	}
 	if c.Server.DataDir == "" {
 		c.Server.DataDir = defaultDataDir()

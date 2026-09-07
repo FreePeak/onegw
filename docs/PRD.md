@@ -1,8 +1,12 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (imported kilocode + xai bearer-token providers
-from 9router; extended cmd/import9r for OAuth bearer connections; custom
-wire-format gaps tracked as #12)*
+*Last updated: 2026-09-07 (codified ordered design priorities: fast >
+security > massive sessions > token saving > lowest RAM; imported kilocode +
+xai bearer-token providers from 9router; custom wire-format gaps tracked as
+#12; easier-setup roadmap — auto-release CI, one-command install, one-click
+agent-CLI install, Docker deploy — tracked as #14; always-thinking effort
+coercion for glm-5.3/glm-5.3-flash — 400 on streaming requests, root cause
+and fix in #16)*
 
 ## Product
 
@@ -18,7 +22,22 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
 - **Throughput: 1–2 B tokens/day** (~12–23k tok/s sustained; bursts far higher
   because streaming is I/O-bound passthrough).
 - **Sessions: millions of concurrent** — sessions are pass-through by design;
-  the gateway never materializes a full conversation in memory.
+  no conversation state is held in memory.
+
+### Design priorities (ordered — tie-break rubric for every design decision)
+
+1. **Fast** — streaming passthrough, zero frameworks, translation is the
+   only O(body) work and only on cross-format requests.
+2. **Security** — bearer-key auth at the edge, keys only in gitignored TOML,
+   client `provider/model` strings rewritten so they never leak upstream,
+   localhost bind by default; per-key policies (#3) extend this.
+3. **Long-running massive sessions** — stateless by design; no conversation
+   cache; nothing accumulates per session, so uptime is unbounded and
+   session count is irrelevant to memory.
+4. **Save tokens** — input-side `tool_result` compression (saver); output
+   side tracked as #5.
+5. **Lowest RAM usage** — the 100 MB contract below; byte-budget
+   backpressure; SQLite measured, not assumed.
 
 ### Non-goals
 
@@ -160,6 +179,8 @@ Compared against the two reference gateways ( LiteLLM README + docs,
   → #4; audio/embeddings surfaces → #9; streaming request bodies → #8;
   multi-node rollup export → #10; runtime config writes → #11; web-search
   provider → #13.
+- Install/ops friction: no prebuilt releases, manual build, manual
+  agent-CLI wiring, no Docker image → #14.
 - Not pursued (non-goals): cloud sync (9router-only), billing/budget
   enforcement, semantic caching, guardrails/MCP/A2A, runtime dashboard
   config as the primary path (config stays file-based; #11 is optional
@@ -207,7 +228,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 
 | #  | Task                                                        | Source             |
 | -- | ----------------------------------------------------------- | ------------------ |
-| #1 | SIGHUP hot reload of config                                 | v2 tracker         |
+| ~~#1~~ | ~~SIGHUP hot reload of config~~ — **done 2026-09-07**; config swaps as one atomic snapshot, bad file rejected, old usage tracker flushed | v2 tracker |
 | #2 | OAuth device flows for subscription providers               | 9router gap        |
 | #3 | Per-key rate limits and model restrictions                  | v2 tracker         |
 | #4 | Prometheus metrics endpoint                                 | v2 tracker         |
@@ -216,10 +237,46 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #7 | Quota reset-window tracking and spending limits             | 9router gap        |
 | #8 | Streaming request bodies (client→upstream)                  | v2 tracker         |
 | #9 | Audio and embeddings surfaces (STT/TTS/embeddings)          | 9router gap        |
+| #10 | Multi-node usage rollup export                            | v2 candidate       |
+| #16 | Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family) | production hit |
 | #11 | Runtime config surface (dashboard/API writes)              | LiteLLM gap        |
 | #12 | Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf) | 9router gap |
+| #13 | Web-search provider (SearXNG integration)                 | v2 candidate       |
+| #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
+| #16 | Always-thinking effort coercion (glm-5.3/glm-5.3-flash 400 on disable-thinking requests) | user report |
+
+### Always-thinking effort coercion (#16, done 2026-09-07)
+
+GLM-5.3 family models always reason; the upstream rejects explicit
+disable-thinking requests with error 1210 ("use low, high or max"). New
+per-provider config `always_thinking = ["model-glob", ...]` (path.Match
+syntax) makes onegw rewrite such requests on the passthrough path instead
+of forwarding them: `reasoning_effort` none|minimal|medium → low; thinking
+`{type:disabled}` and `enable_thinking:false` are dropped (upstream default
+thinking-on applies). Knobs are never invented — only explicit disable
+requests are rewritten, so providers that legitimately accept "none"
+(OpenAI gpt-5.x) are untouched unless listed. Regression tests in
+`internal/server/thinking_test.go`; live glm route verified.
 
 Snapshot mirror with done-history: `docs/prd-task-tracker.md`.
+
+### Distribution and setup (#14)
+
+Requested 2026-09-07; four independently shippable workstreams (detail in
+the issue):
+
+- **Auto-release CI/CD** — every commit/merge to `master` builds static
+  multi-platform binaries (`linux`/`darwin` × `amd64`/`arm64`,
+  `CGO_ENABLED=0`) and publishes a tagged release; `latest` tracks newest.
+- **One-command local install** — install script fetches the release
+  binary, writes a starter `onegw.toml` (localhost bind), and starts the
+  server; launchd/systemd unit optional.
+- **One-click agent-CLI integration** — `onegw connect <tool>` writes
+  provider/base-URL + key into omp.sh, pi.dev, Claude Code, opencode, and
+  grok cli configs (pi `models.json` is the proven pattern).
+- **One-command cloud/VPS deploy** — multi-stage Dockerfile (static Go
+  binary, minimal image) published to `ghcr.io` + `docker run`/compose
+  example persisting `data/`.
 
 ## Current status (post-M5)
 - **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
