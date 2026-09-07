@@ -6,18 +6,21 @@ package saver
 
 import (
 	"strings"
+	"sync"
 	"sync/atomic"
 	"unicode/utf8"
 )
 
-// Config controls filter aggressiveness.
+// Config controls filter aggressiveness and the output-side savers.
 type Config struct {
-	Enabled       bool `toml:"enabled"`
-	MaxLine       int  `toml:"max_line"`        // collapse long lines beyond this (0=400)
-	DedupLines    bool `toml:"dedup_lines"`     // collapse repeated identical lines
-	MaxHead       int  `toml:"max_head"`        // keep N head lines for truncating filters (0=120)
-	MaxTail       int  `toml:"max_tail"`        // keep N tail lines (0=20)
-	MinSavingsPct int  `toml:"min_savings_pct"` // keep original if saved less (0=5)
+	Enabled       bool        `toml:"enabled"`
+	MaxLine       int         `toml:"max_line"`        // collapse long lines beyond this (0=400)
+	DedupLines    bool        `toml:"dedup_lines"`     // collapse repeated identical lines
+	MaxHead       int         `toml:"max_head"`        // keep N head lines for truncating filters (0=120)
+	MaxTail       int         `toml:"max_tail"`        // keep N tail lines (0=20)
+	MinSavingsPct int         `toml:"min_savings_pct"` // keep original if saved less (0=5)
+	Inject        []InjectCfg `toml:"inject"`          // output-side system-prompt injections
+	External      ExternalCfg `toml:"external"`        // external compress hook (Headroom protocol)
 }
 
 func (c *Config) fill() Config {
@@ -37,13 +40,20 @@ func (c *Config) fill() Config {
 	if v.MinSavingsPct == 0 {
 		v.MinSavingsPct = 5
 	}
+	if v.External.TimeoutMS == 0 {
+		v.External.TimeoutMS = 2000
+	}
+	if v.External.MinBytes == 0 {
+		v.External.MinBytes = 32768
+	}
 	return v
 }
 
 // Saver compresses tool_result text. The config is an atomic snapshot so a
 // hot reload can flip Enabled (or any knob) without locking the hot path.
 type Saver struct {
-	cfg atomic.Pointer[Config]
+	cfg     atomic.Pointer[Config]
+	extOnce sync.Once // logs the first external-compress failure, once
 }
 
 // New builds a saver from config.
