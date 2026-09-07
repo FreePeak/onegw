@@ -133,6 +133,23 @@ memory is O(event), not O(conversation).
 - **Config = single TOML file + env overrides**; usage state is the only
   SQLite content. SIGHUP reload is a v2 item.
 
+## Current status (post-M5)
+
+- **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
+  API-key connections as onegw providers (accounts, upstream model discovery,
+  gateway auth keys). Builtin base URLs resolved (GLM), unknown skipped with
+  warning. Real config lives in `onegw.toml` (gitignored).
+- **Live providers**: B.AI (7 accounts, 48 models, round-robin + fallback
+  verified) and GLM (1 account). Fixes that fell out: URL version-segment
+  join (`/v1`, `/api/paas/v4` bases), upstream model rewrite on same-format
+  passthrough, `developer`→`system` role normalization (pi CLI payloads).
+- **pi CLI wired**: `onegw` provider in `~/.pi/agent/models.json` + ONEGW_KEY
+  env; full agent loop (read/edit/bash) tested through onegw.
+- **Dashboard**: password-gated persisted rollups (today, aggregated per
+  provider+model), since-start totals, saver "saved" column, health/mem
+  strip, 401 flow verified in browser.
+- onegw runs as a supervised persistent service on 127.0.0.1:8080.
+
 ## Docs
 
 - `docs/ARCHITECTURE.md` — package detail, memory contract, config reference.
