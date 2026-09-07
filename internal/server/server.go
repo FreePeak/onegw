@@ -131,7 +131,9 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			BaseURL:          p.BaseURL,
 			MaxConc:          p.MaxConc,
 			ExtraHeaders:     p.ExtraHeader,
+			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
+			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
 			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
 		}
@@ -255,6 +257,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/usage/import", s.handleUsageImport)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropic)
 	mux.HandleFunc("POST /v1beta/models/", s.handleGemini)
+	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfEmbeddings) })
+	mux.HandleFunc("POST /v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfTranscriptions) })
+	mux.HandleFunc("POST /v1/audio/speech", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfSpeech) })
 	mux.HandleFunc("GET /admin/health", s.handleHealth)
 	mux.HandleFunc("GET /admin/usage", s.handleAdminUsage)
 	mux.HandleFunc("GET /admin/quota", s.handleAdminQuota)
