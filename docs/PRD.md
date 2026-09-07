@@ -1,6 +1,8 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (opencode provider kind: OpenCode Zen Go
+*Last updated: 2026-09-07 (dashboard token units: compact formatter gained
+a B tier — sums ≥ 1e9 now render `1B`, not `1002.2M`; trailing `.0` trimmed
+across K/M/B; earlier: opencode provider kind: OpenCode Zen Go
 subscription integration — `kind = "opencode"`, default base
 `https://opencode.ai/zen/go`, full Go catalog advertised by default
 (muse-spark excluded, Responses-API-only), bearer auth, mandatory
@@ -336,7 +338,8 @@ the issue):
 - **Dashboard**: password-gated persisted rollups with a usage range filter
   (today / 7 days / 1 month / all time — default all time, selection kept in
   the `?range=` query so it survives reload), aggregated per provider+model;
-  header totals show reqs, in/out/**sum**/saved tokens; saver "saved" column,
+  header totals show reqs, in/out/**sum**/saved tokens — token counts use a
+  K/M/B compact ladder (≥ 1e9 → `B`, trailing `.0` trimmed), saver "saved" column,
   health/mem strip, live in-flight concurrency gauge (counter incremented
   across the proxy pipelines, shown as `live` and exposed as `inflight` in
   `/admin/health`), 401 flow verified in browser.
