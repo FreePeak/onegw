@@ -441,7 +441,12 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOK(r) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+		return
+	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	w.Header().Set("Content-Type", "application/json")
