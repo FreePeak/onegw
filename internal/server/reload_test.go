@@ -174,6 +174,13 @@ func TestReloadSwapsProvidersKeysAndAdmin(t *testing.T) {
 	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/usage?password=pw-two", nil)); w.Code != 200 {
 		t.Fatalf("new admin password should pass, got %d", w.Code)
 	}
+	// Health shares the admin gate (it carries the in-flight gauge).
+	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/health", nil)); w.Code != http.StatusUnauthorized {
+		t.Fatalf("health without password should 401, got %d", w.Code)
+	}
+	if w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/health?password=pw-two", nil)); w.Code != 200 {
+		t.Fatalf("health with correct password should 200, got %d", w.Code)
+	}
 }
 
 // The SIGHUP caller only ever hands Reload configs that passed config.Load
