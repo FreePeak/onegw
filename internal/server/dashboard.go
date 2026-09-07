@@ -57,7 +57,7 @@ function authHeaders() {
   const pw = localStorage.getItem('onegw_admin') || '';
   return pw ? { 'X-Admin-Password': pw } : {};
 }
-function fmtK(n) { return n >= 1000000 ? (n/1000000).toFixed(1) + 'M' : n >= 1000 ? (n/1000).toFixed(1) + 'K' : n; }
+function fmtCompact(n) { const t = n >= 1e9 ? [n/1e9, 'B'] : n >= 1e6 ? [n/1e6, 'M'] : n >= 1e3 ? [n/1e3, 'K'] : null; return t ? t[0].toFixed(1).replace(/\.0$/, '') + t[1] : String(n); }
 // Range filter: days is the coarse UTC fetch window (server caps < 366),
 // back the exact browser-local day cutoff (-1 = no cutoff). Selection
 // lives in ?range= so it survives a reload; unknown/missing = all time.
@@ -127,9 +127,9 @@ async function refresh() {
       t.output += r.output || 0; t.saved += r.saved || 0;
     }
     document.getElementById('totals').innerHTML =
-      '<b>' + t.requests + '</b> reqs · in <b>' + fmtK(t.input) +
-      '</b> tok · out <b>' + fmtK(t.output) + '</b> tok · sum <b>' + fmtK(t.input + t.output) +
-      '</b> tok · saved <b>' + fmtK(t.saved) +
+      '<b>' + t.requests + '</b> reqs · in <b>' + fmtCompact(t.input) +
+      '</b> tok · out <b>' + fmtCompact(t.output) + '</b> tok · sum <b>' + fmtCompact(t.input + t.output) +
+      '</b> tok · saved <b>' + fmtCompact(t.saved) +
       '</b> tok <span class="muted">(' + range.label + ', your local time; table = same window per provider+model)</span>';
     // Aggregate the filtered rows into provider+model totals.
     const agg = {};
@@ -146,7 +146,7 @@ async function refresh() {
     for (const b of rows) {
       const tr = document.createElement('tr');
       tr.innerHTML = '<td>' + b.provider + '</td><td>' + b.model + '</td><td>' + b.requests +
-        '</td><td>' + fmtK(b.input) + '</td><td>' + fmtK(b.output) + '</td><td>' + fmtK(b.cacheRead) + '</td><td>' + fmtK(b.saved) + '</td>';
+        '</td><td>' + fmtCompact(b.input) + '</td><td>' + fmtCompact(b.output) + '</td><td>' + fmtCompact(b.cacheRead) + '</td><td>' + fmtCompact(b.saved) + '</td>';
       tb.appendChild(tr);
     }
   } catch (e) { /* health still shown */ }
