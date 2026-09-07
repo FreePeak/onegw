@@ -53,6 +53,7 @@ type Tracker struct {
 	done     sync.WaitGroup
 
 	sink       Sink
+	push       *Pusher
 	reset      chan struct{}
 	flushEvery atomic.Int64 // nanoseconds; loop re-arms its ticker on reset
 }
@@ -86,8 +87,9 @@ type Sink interface {
 }
 
 // New starts a tracker flushing every interval to sink (nil sink = memory
-// only; flushEvery <= 0 resets to the 30 s default).
-func New(sink Sink, flushEvery time.Duration) *Tracker {
+// only; flushEvery <= 0 resets to the 30 s default). push (may be nil) gets
+// every flushed window after the sink write — the optional remote export.
+func New(sink Sink, flushEvery time.Duration, push *Pusher) *Tracker {
 	if flushEvery <= 0 {
 		flushEvery = 30 * time.Second
 	}
@@ -95,6 +97,7 @@ func New(sink Sink, flushEvery time.Duration) *Tracker {
 		stop:  make(chan struct{}),
 		reset: make(chan struct{}, 1),
 		sink:  sink,
+		push:  push,
 	}
 	t.flushEvery.Store(int64(flushEvery))
 	for i := range t.shards {
@@ -241,6 +244,9 @@ func (t *Tracker) flushOnce() {
 	}
 	if t.sink != nil && len(out) > 0 {
 		_ = t.sink.FlushBuckets(out)
+	}
+	if len(out) > 0 {
+		t.push.AfterFlush(out) // fire-and-forget; never blocks this loop
 	}
 }
 
