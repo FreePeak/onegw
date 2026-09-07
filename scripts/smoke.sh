@@ -73,6 +73,11 @@ echo "$OUT" | grep -q '\[DONE\]' || fail "translated stream [DONE]"
 echo "$OUT" | grep -q '"finish_reason":"stop"' || fail "translated finish_reason"
 echo "$OUT" | grep -q '"completion_tokens":200' || fail "translated usage: $OUT"
 
+echo "== 4b. OpenAI client → Anthropic upstream, non-streaming (buffered cross-format) =="
+OUT=$(curl -sf "$GW/v1/chat/completions" -d '{"model":"mocka/mock-claude","mock_tokens":25,"messages":[{"role":"user","content":"hi"}]}')
+echo "$OUT" | grep -q '"content":"alpha bravo' || fail "non-stream translated content: $OUT"
+echo "$OUT" | grep -q '"completion_tokens":200' || fail "non-stream translated usage: $OUT"
+
 echo "== 5. Anthropic client → OpenAI upstream (cross-format translation) =="
 OUT=$(curl -sfN "$GW/v1/messages" -H 'anthropic-version: 2023-06-01' -d '{"model":"mock/mock-model","max_tokens":100,"mock_tokens":25,"stream":true,"messages":[{"role":"user","content":"hi"}]}')
 echo "$OUT" | grep -q 'event: message_stop' || fail "anthropic stream shape: $OUT"

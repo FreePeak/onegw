@@ -255,3 +255,49 @@ func TestMimoStillChatCompletions(t *testing.T) {
 		t.Fatalf("mimo path = %s", gotPath)
 	}
 }
+
+// Gemini client -> Responses upstream: the model arrives in the URL path
+// on this surface, so the translated body must carry the routed model.
+func TestGrokGeminiClientViaResponses(t *testing.T) {
+	var gotModel any
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		gotModel = req["model"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","model":"grok-4.6","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"pong"}]}],"usage":{"input_tokens":7,"output_tokens":3}}`))
+	}))
+	defer up.Close()
+	s := opencodeGw(t, up)
+	body, _ := json.Marshal(map[string]any{
+		"contents": []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "ping"}}}},
+	})
+	r := httptest.NewRequest(http.MethodPost, "/v1beta/models/opencode/grok-4.6:generateContent", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("x-api-key", "gw-key") // gateway accepts x-api-key/Bearer; gemini x-goog-api-key is not a gateway auth header
+	w := do(t, s.Handler(), r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if gotModel != "grok-4.6" {
+		t.Fatalf("upstream model = %v, want grok-4.6 (URL path model must reach the body)", gotModel)
+	}
+	var resp struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("not gemini-shaped: %v (%s)", err, w.Body.String())
+	}
+	if len(resp.Candidates) == 0 || resp.Candidates[0].Content.Parts[0].Text != "pong" {
+		t.Fatalf("gemini content wrong: %s", w.Body.String())
+	}
+}

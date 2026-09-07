@@ -72,6 +72,11 @@ type rsUsage struct {
 		ReasoningTokens int64 `json:"reasoning_tokens"`
 	} `json:"output_tokens_details,omitempty"`
 	TotalTokens int64 `json:"total_tokens"`
+	// Legacy aliases some upstreams emit instead of the canonical fields
+	// (mirrors 9router's fallbacks).
+	PromptTokens         int64 `json:"prompt_tokens"`
+	CompletionTokens     int64 `json:"completion_tokens"`
+	CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
 }
 
 type rsRequest struct {
@@ -88,7 +93,6 @@ type rsRequest struct {
 	ParallelTool    *bool           `json:"parallel_tool_calls,omitempty"`
 	Reasoning       *rsReasoning    `json:"reasoning,omitempty"`
 	Text            *rsTextFmt      `json:"text,omitempty"`
-	Metadata        map[string]any  `json:"metadata,omitempty"`
 }
 
 type rsReasoning struct {
@@ -177,10 +181,17 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 		mt := u.MaxTokens
 		req.MaxOutputTokens = &mt
 	}
-	if eff := u.ReasoningEffort; eff != "" && eff != "none" && eff != "minimal" {
-		req.Reasoning = &rsReasoning{Effort: eff, Summary: "auto"}
-	} else if u.Thinking != nil && u.Thinking.BudgetTokens > 0 {
-		// Budget maps to effort buckets; Responses has no numeric knob.
+	// reasoning.effort: pass the values Responses accepts verbatim
+	// (minimal|low|medium|high); ""/none mean "no knob" — omit reasoning
+	// entirely (knobs are never invented). Budget-derived effort only
+	// fills a gap: an explicit effort is never overridden.
+	if eff := u.ReasoningEffort; eff != "" && eff != "none" {
+		if eff == "max" || eff == "xhigh" {
+			req.Reasoning = &rsReasoning{Effort: "high", Summary: "auto"}
+		} else {
+			req.Reasoning = &rsReasoning{Effort: eff, Summary: "auto"}
+		}
+	} else if u.ReasoningEffort == "" && u.Thinking != nil && u.Thinking.BudgetTokens > 0 {
 		req.Reasoning = &rsReasoning{Effort: budgetToEffort(u.Thinking.BudgetTokens), Summary: "auto"}
 	}
 	var sb strings.Builder
@@ -424,12 +435,23 @@ func mapRSStop(status string, inc *struct {
 }
 
 func rsUsageToUnified(u *rsUsage) types.Usage {
-	out := types.Usage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, UpstreamFormat: string(FmtResponses)}
+	in := u.InputTokens
+	if in == 0 {
+		in = u.PromptTokens // legacy alias
+	}
+	out := u.OutputTokens
+	if out == 0 {
+		out = u.CompletionTokens // legacy alias
+	}
+	unified := types.Usage{InputTokens: in, OutputTokens: out, UpstreamFormat: string(FmtResponses)}
 	if u.InputTokensDetails != nil {
-		out.CacheReadTokens = u.InputTokensDetails.CachedTokens
+		unified.CacheReadTokens = u.InputTokensDetails.CachedTokens
+	}
+	if unified.CacheReadTokens == 0 {
+		unified.CacheReadTokens = u.CacheReadInputTokens // legacy alias
 	}
 	if u.OutputTokensDetails != nil {
-		out.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
+		unified.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
 	}
-	return out
+	return unified
 }

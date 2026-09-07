@@ -102,15 +102,19 @@ func TestEncodeResponsesRequestToolFlow(t *testing.T) {
 }
 
 func TestEncodeResponsesRequestReasoning(t *testing.T) {
+	// reasoning.effort is forwarded verbatim for values the Responses API
+	// accepts; ""/none omit the knob entirely; max clamps down (never up);
+	// a budget-derived effort never overrides an explicit one.
 	cases := []struct {
 		effort string
 		want   string // "" = no reasoning object
 	}{
 		{"", ""},
 		{"none", ""},
-		{"minimal", ""},
+		{"minimal", "minimal"},
 		{"low", "low"},
 		{"high", "high"},
+		{"max", "high"},
 	}
 	for _, c := range cases {
 		u := &types.ChatRequest{Model: "grok-4.6", ReasoningEffort: c.effort,
@@ -130,6 +134,34 @@ func TestEncodeResponsesRequestReasoning(t *testing.T) {
 		if got != c.want {
 			t.Fatalf("effort %q -> %q, want %q", c.effort, got, c.want)
 		}
+	}
+	// Budget alone (no explicit effort) fills the gap.
+	u := &types.ChatRequest{Model: "grok-4.6",
+		Thinking: &types.ThinkingCfg{BudgetTokens: 32768},
+		Messages: []types.Message{{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "x"}}}}}
+	body, err := EncodeResponsesRequest(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req rsRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Reasoning == nil || req.Reasoning.Effort != "high" {
+		t.Fatalf("budget-derived effort missing: %+v", req.Reasoning)
+	}
+	// Budget must NOT override an explicit client effort.
+	u.Thinking = &types.ThinkingCfg{BudgetTokens: 32768}
+	u.ReasoningEffort = "low"
+	body, err = EncodeResponsesRequest(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Reasoning == nil || req.Reasoning.Effort != "low" {
+		t.Fatalf("budget overrode explicit effort: %+v", req.Reasoning)
 	}
 }
 
@@ -257,6 +289,46 @@ func TestResponsesStreamToolCallsParallel(t *testing.T) {
 	// done-with-full-args must not duplicate the delta'd arguments.
 	if strings.Count(s, `\"x\":1`) != 1 {
 		t.Fatalf("args duplicated: %s", s)
+	}
+}
+
+func TestResponsesStreamToolDoneWithoutDelta(t *testing.T) {
+	// Some upstreams emit only output_item.done with complete arguments and
+	// never stream function_call_arguments.delta — args must reach the
+	// client exactly once from the done event.
+	stream := sse([][2]string{
+		{"response.created", `{"type":"response.created","response":{"id":"r"}}`},
+		{"response.output_item.added", `{"type":"response.output_item.added","item":{"type":"function_call","id":"i1","call_id":"c1","name":"f"}}`},
+		{"response.output_item.done", `{"type":"response.output_item.done","item":{"type":"function_call","id":"i1","call_id":"c1","name":"f","arguments":"{\"k\":1}"}}`},
+		{"response.completed", `{"type":"response.completed","response":{"status":"completed"}}`},
+	})
+	var out bytes.Buffer
+	if _, err := TranslateStream(strings.NewReader(stream), &out, nil, FmtResponses, FmtOpenAI, "grok-4.6"); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), `\"k\":1`); n != 1 {
+		t.Fatalf("done-only args emitted %d times, want 1: %s", n, out.String())
+	}
+}
+
+func TestResponsesStreamCompatAliases(t *testing.T) {
+	// Unnamed events (payload "type" carries the event), the response.done
+	// alias, and the legacy usage field names must all work — upstreams vary.
+	stream := sse([][2]string{
+		{"", `{"type":"response.created","response":{"id":"r","model":"grok-4.6"}}`},
+		{"", `{"type":"response.output_text.delta","delta":"ok"}`},
+		{"", `{"type":"response.done","response":{"status":"completed","usage":{"prompt_tokens":9,"completion_tokens":2,"cache_read_input_tokens":3}}}`},
+	})
+	var out bytes.Buffer
+	usage, err := TranslateStream(strings.NewReader(stream), &out, nil, FmtResponses, FmtOpenAI, "grok-4.6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"content":"ok"`) {
+		t.Fatalf("delta missing: %s", out.String())
+	}
+	if usage.InputTokens != 9 || usage.OutputTokens != 2 || usage.CacheReadTokens != 3 {
+		t.Fatalf("legacy usage fields not mapped: %+v", usage)
 	}
 }
 

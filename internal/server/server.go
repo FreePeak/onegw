@@ -390,24 +390,36 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 
 	var rec types.Usage
 	if !stream && upstreamFmt != clientFmt {
-		// Buffered cross-format path. The request body already holds a
-		// byte-budget reservation (acquireForBody); the reply is capped at
-		// the same per-request limit so total RSS stays bounded.
+		// Buffered cross-format path (PRD "parse whole request, parse whole
+		// response"). The reply bytes are accounted against the same global
+		// byte semaphore as the request, capped at max_body_bytes; all
+		// failures here are deterministic and non-retryable — a different
+		// key returns the same oversized body, and retrying translate/encode
+		// failures would only burn paid upstream calls.
 		maxResp := s.cur().cfg.Server.MaxBody
+		reserve := res.Resp.ContentLength
+		if reserve < 0 || reserve > maxResp {
+			reserve = maxResp
+		}
+		if err := s.cur().budget.Acquire(ctx, reserve); err != nil {
+			s.cur().budget.Saturated()
+			return nil, errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly")
+		}
+		defer s.cur().budget.Release(reserve)
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
 			return nil, errAPI(502, "upstream_read_failed", rerr.Error())
 		}
 		if int64(len(raw)) > maxResp {
-			return nil, errAPI(502, "upstream_response_too_large", "response exceeds max_body_bytes")
+			return nil, errAPI(413, "upstream_response_too_large", "response exceeds max_body_bytes")
 		}
 		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
 		if derr != nil {
-			return nil, errAPI(502, "response_translate_failed", derr.Error())
+			return nil, errAPI(501, "response_translate_failed", derr.Error())
 		}
 		out, eerr := translat.EncodeResponse(clientFmt, cr)
 		if eerr != nil {
-			return nil, errAPI(502, "response_encode_failed", eerr.Error())
+			return nil, errAPI(501, "response_encode_failed", eerr.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -669,6 +681,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 		if err != nil {
 			return nil, err
 		}
+		u.Model = upstreamModel // model arrives in the URL path on this surface
 		return encodeFor(upstream, u)
 	default:
 		return rewriteModel(body, upstreamModel)
