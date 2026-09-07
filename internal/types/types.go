@@ -164,12 +164,16 @@ type Usage struct {
 	UpstreamFormat   string `json:"upstream_format,omitempty"` // openai|anthropic|gemini
 }
 
-// APIError is the unified error payload.
+// APIError is the unified error payload. RetryAfter, when set, is written
+// as the Retry-After response header at the moment this error is emitted
+// to the client — never earlier, so a fallen-through attempt cannot leak
+// it onto a later successful response.
 type APIError struct {
-	Status  int    `json:"-"`
-	Type    string `json:"type,omitempty"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message"`
+	Status     int    `json:"-"`
+	Type       string `json:"type,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Message    string `json:"message"`
+	RetryAfter string `json:"-"` // seconds hint for 429/503-class errors
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).
