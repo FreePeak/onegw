@@ -174,32 +174,41 @@ func (c *Config) Validate() error {
 		}
 	}
 	// Aliases: keys must be new names, targets must resolve (transitively,
-	// depth-capped) to a "provider/model" literal or a combo.
+	// depth-capped) to a "provider/model" literal or a combo. All matching
+	// is case-insensitive, mirroring the router's lookup tables; two keys
+	// differing only in case are a duplicate and rejected.
+	aliasLower := make(map[string]string, len(c.Aliases)) // lower → original
+	for alias := range c.Aliases {
+		low := strings.ToLower(alias)
+		if prev, dup := aliasLower[low]; dup {
+			return fmt.Errorf("duplicate alias %q (case-variant of %q)", alias, prev)
+		}
+		aliasLower[low] = alias
+	}
 	for alias, target := range c.Aliases {
+		low := strings.ToLower(alias)
 		if alias == "" {
 			return fmt.Errorf("alias missing name")
 		}
 		if strings.Contains(alias, "/") {
 			return fmt.Errorf("alias %q must not contain \"/\"", alias)
 		}
-		if names["provider:"+alias] || comboNames[strings.ToLower(alias)] {
+		if names["provider:"+low] || comboNames[low] {
 			return fmt.Errorf("alias %q shadows an existing provider or combo", alias)
 		}
-		if _, dup := c.Aliases[alias]; dup {
-			_ = dup // map keys are unique by construction; the dup check is the shadowing one above
-		}
-		seen := map[string]bool{alias: true}
+		seen := map[string]bool{low: true}
 		cur := target
 		for hop := 0; ; hop++ {
 			if hop >= maxAliasHops {
 				return fmt.Errorf("alias %q: chain longer than %d hops or cyclic", alias, maxAliasHops)
 			}
-			if nxt, ok := c.Aliases[cur]; ok {
-				if seen[cur] {
+			if _, isAlias := aliasLower[strings.ToLower(cur)]; isAlias {
+				curlow := strings.ToLower(cur)
+				if seen[curlow] {
 					return fmt.Errorf("alias %q: cycle at %q", alias, cur)
 				}
-				seen[cur] = true
-				cur = nxt
+				seen[curlow] = true
+				cur = c.Aliases[aliasLower[strings.ToLower(cur)]]
 				continue
 			}
 			if comboNames[strings.ToLower(cur)] {
