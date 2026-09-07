@@ -425,6 +425,7 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	// source=store reads persisted rollups over ?days=N (default 1);
 	// default reads the live since-last-flush window.
 	if r.URL.Query().Get("source") == "store" && s.st != nil {
@@ -452,7 +453,11 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	if snap == nil {
 		snap = []usage.Bucket{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"buckets": snap})
+	reqs, in, out, saved := s.usage.Totals()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"buckets": snap,
+		"totals":  map[string]any{"requests": reqs, "input": in, "output": out, "saved": saved},
+	})
 }
 
 // prepareUpstreamBody returns the body to send upstream. Same format →
