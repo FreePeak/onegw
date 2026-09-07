@@ -1,7 +1,9 @@
 # onegw PRD
 
-*Last updated: 2026-09-07 (dashboard now shows live in-flight request
-concurrency, gauge also on /admin/health; earlier: codified ordered design
+*Last updated: 2026-09-07 (/admin/health is now password-gated like
+/admin/usage — it carries the live in-flight gauge; dashboard passes the
+password and scripts updated; earlier: dashboard shows live in-flight
+request concurrency; codified ordered design
 priorities: fast > security > massive sessions > token saving > lowest RAM;
 imported kilocode + xai bearer-token providers from 9router; custom
 wire-format gaps tracked as #12; easier-setup roadmap — auto-release CI,
