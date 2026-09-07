@@ -24,6 +24,10 @@ type Server struct {
 	// for homelab.
 	AdminPassword string `toml:"admin_password"`
 	AccessLog     bool   `toml:"access_log"`
+	// StreamRequests relays same-format request bodies to the upstream
+	// without buffering them fully (fixed byte reservation per request).
+	// Default false: bodies are read fully under the 4x budget.
+	StreamRequests bool `toml:"stream_requests"`
 }
 
 // Auth holds gateway API keys clients authenticate with. Keys may be

@@ -366,6 +366,14 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	}
 	s.inflight.Add(1)
 	defer s.inflight.Add(-1)
+	// Opt-in streaming passthrough: relay same-format bodies without a
+	// full read. proxyStream falls back (false) to the buffered pipeline
+	// below with the body intact whenever it is not eligible.
+	if st := s.cur(); st.cfg.Server.StreamRequests && !st.cfg.Saver.Enabled {
+		if s.proxyStream(w, r, clientFmt, ak, r.Header.Get(provider.OpenCodeSessionHeader)) {
+			return
+		}
+	}
 	release, ok := s.acquireForBody(r)
 	if !ok {
 		s.m.saturated()
@@ -479,11 +487,22 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		s.m.invalidBody(def.Name, mdl)
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
-	res, apiErr := def.Do(ctx, acct, model, clientSession, upBody, stream)
+	res, apiErr := def.Do(ctx, acct, model, clientSession, bytes.NewReader(upBody), stream)
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, apiErr.Status)
 		return nil, apiErr
 	}
+	return nil, s.relayResponse(w, res, def, model, clientFmt, upstreamFmt, stream, len(body), savedTokens, ak, ctx)
+}
+
+// relayResponse delivers an upstream response to the client: the buffered
+// cross-format path for non-streaming format mismatches, otherwise the
+// sniffed/translated pipe. Usage is recorded, TPM and quota observed. It
+// owns res.Resp.Body.
+func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, def *provider.Def, model string,
+	clientFmt, upstreamFmt translat.Format, stream bool, reqBodyLen int, savedTokens int64, ak *config.AuthKey,
+	ctx context.Context) *types.APIError {
+
 	defer res.Resp.Body.Close()
 
 	var rec types.Usage
@@ -501,26 +520,26 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		}
 		if err := s.cur().budget.Acquire(ctx, reserve); err != nil {
 			s.cur().budget.Saturated()
-			return nil, errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly")
+			return errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly")
 		}
 		defer s.cur().budget.Release(reserve)
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
-			s.m.upstreamErr(def.Name, mdl, 502)
-			return nil, errAPI(502, "upstream_read_failed", rerr.Error())
+			s.m.upstreamErr(def.Name, model, 502)
+			return errAPI(502, "upstream_read_failed", rerr.Error())
 		}
 		if int64(len(raw)) > maxResp {
-			return nil, errAPI(413, "upstream_response_too_large", "response exceeds max_body_bytes")
+			return errAPI(413, "upstream_response_too_large", "response exceeds max_body_bytes")
 		}
 		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
 		if derr != nil {
-			s.m.upstreamErr(def.Name, mdl, 501)
-			return nil, errAPI(501, "response_translate_failed", derr.Error())
+			s.m.upstreamErr(def.Name, model, 501)
+			return errAPI(501, "response_translate_failed", derr.Error())
 		}
 		out, eerr := translat.EncodeResponse(clientFmt, cr)
 		if eerr != nil {
-			s.m.upstreamErr(def.Name, mdl, 501)
-			return nil, errAPI(501, "response_encode_failed", eerr.Error())
+			s.m.upstreamErr(def.Name, model, 501)
+			return errAPI(501, "response_encode_failed", eerr.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -556,8 +575,8 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		} else {
 			u, terr := translat.TranslateStream(res.Resp.Body, w, flush, upstreamFmt, clientFmt, model)
 			if terr != nil {
-				s.m.upstreamErr(def.Name, mdl, 502)
-				return nil, &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
+				s.m.upstreamErr(def.Name, model, 502)
+				return &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
 			}
 			rec = u
 		}
@@ -565,7 +584,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	rec.UpstreamFormat = string(upstreamFmt)
 	if rec.InputTokens == 0 && rec.OutputTokens == 0 {
 		rec.Estimated = true
-		rec.InputTokens = int64(len(body)) / 4
+		rec.InputTokens = int64(reqBodyLen) / 4
 	}
 	label := ""
 	if ak != nil {
@@ -576,8 +595,8 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	if q := s.cur().quota; q != nil {
 		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
 	}
-	s.m.success(def.Name, mdl, rec, savedTokens)
-	return nil, nil
+	s.m.success(def.Name, model, rec, savedTokens)
+	return nil
 }
 
 // ---------------------------------------------------------------------------

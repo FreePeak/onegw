@@ -5,7 +5,6 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -470,11 +469,13 @@ func (d *Def) Path(op, model string) string {
 	}
 }
 
-// Do performs one upstream call. body may be nil. The caller owns Resp.Body.
+// Do performs one upstream call. body supplies the request payload; it is
+// sent as-is (Content-Length is derived for *bytes.Reader, *bytes.Buffer,
+// and *strings.Reader; any other reader goes out chunked). body may be nil.
 // clientSession is the value of the client's x-opencode-session header (""
 // when absent); it is only consumed by KindOpenCode, which always sends a
 // session id upstream.
-func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string, body []byte, stream bool) (*CallResult, *types.APIError) {
+func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string, body io.Reader, stream bool) (*CallResult, *types.APIError) {
 	if d.inflight != nil {
 		select {
 		case d.inflight <- struct{}{}:
@@ -490,8 +491,12 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 	switch d.Kind {
 	case KindSearXNG:
 		// Virtual provider: answer with a SearXNG search instead of a chat
-		// call (see searxng.go).
-		return d.doSearch(ctx, acct, model, body, stream)
+		// call (see searxng.go). The search body is tiny; read it whole.
+		raw, rerr := io.ReadAll(body)
+		if rerr != nil {
+			return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: rerr.Error()}
+		}
+		return d.doSearch(ctx, acct, model, raw, stream)
 	case KindGemini:
 		// Non-streaming: :generateContent; streaming: :streamGenerateContent?alt=sse
 		method := "generateContent"
@@ -501,13 +506,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 			qs = "?alt=sse"
 		}
 		url = fmt.Sprintf("%s/models/%s:%s%s", joinURL(base, "/v1beta"), model, method, qs)
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 		if err == nil {
 			req.Header.Set("x-goog-api-key", acct.APIKey)
 		}
 	default:
 		url = joinURL(base, d.Path("chat", model))
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 		if err == nil {
 			switch d.Kind {
 			case KindAnthropic:
