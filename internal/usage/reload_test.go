@@ -47,7 +47,7 @@ func (s *sinkStub) firstLen() int {
 
 func TestSetFlushIntervalResetsCadence(t *testing.T) {
 	sink := &sinkStub{}
-	tr := New(sink, time.Hour) // effectively never flushes on its own
+	tr := New(sink, time.Hour, nil) // effectively never flushes on its own
 	defer tr.Stop()
 
 	tr.Observe(Key{Provider: "p", Model: "m"}, types.Usage{InputTokens: 1, OutputTokens: 2}, 0)
@@ -69,7 +69,7 @@ func TestSetFlushIntervalResetsCadence(t *testing.T) {
 
 func TestSetFlushIntervalPreservesData(t *testing.T) {
 	sink := &sinkStub{}
-	tr := New(sink, time.Hour)
+	tr := New(sink, time.Hour, nil)
 	defer tr.Stop()
 
 	tr.Observe(Key{Provider: "p", Model: "m"}, types.Usage{InputTokens: 3, OutputTokens: 4}, 0)
@@ -104,7 +104,7 @@ func TestSetFlushIntervalPreservesData(t *testing.T) {
 }
 
 func TestSetFlushIntervalZeroResetsDefault(t *testing.T) {
-	tr := New(nil, time.Hour)
+	tr := New(nil, time.Hour, nil)
 	defer tr.Stop()
 	tr.SetFlushInterval(0)
 	if d := time.Duration(tr.flushEvery.Load()); d != 30*time.Second {
@@ -116,7 +116,7 @@ func TestSetFlushIntervalZeroResetsDefault(t *testing.T) {
 // notify send is non-blocking. Before the fix, a second call after Stop
 // blocked forever (buffer full, loop goroutine gone).
 func TestSetFlushIntervalAfterStopDoesNotWedge(t *testing.T) {
-	tr := New(nil, time.Hour)
+	tr := New(nil, time.Hour, nil)
 	tr.SetFlushInterval(5 * time.Millisecond) // absorbed by the buffer
 	tr.Stop()
 
@@ -137,7 +137,7 @@ func TestSetFlushIntervalAfterStopDoesNotWedge(t *testing.T) {
 // loop may be mid-flush; concurrent calls must all return.
 func TestSetFlushIntervalConcurrent(t *testing.T) {
 	sink := &sinkStub{}
-	tr := New(sink, 10*time.Millisecond)
+	tr := New(sink, 10*time.Millisecond, nil)
 	tr.Observe(Key{Provider: "p", Model: "m"}, types.Usage{InputTokens: 1}, 0)
 
 	done := make(chan struct{})
