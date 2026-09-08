@@ -434,8 +434,11 @@ func DecodeAnthropicResponse(body []byte) (*types.ChatResponse, error) {
 		}
 	}
 	if r.Usage != nil {
+		// Anthropic reports input_tokens EXCLUSIVE of cache read/write;
+		// fold both into InputTokens so the unified convention holds
+		// (InputTokens is the total prompt size, cache-inclusive).
 		out.Usage = types.Usage{
-			InputTokens:      r.Usage.InputTokens,
+			InputTokens:      r.Usage.InputTokens + r.Usage.CacheReadInputTokens + r.Usage.CacheCreationInputTokens,
 			OutputTokens:     r.Usage.OutputTokens,
 			CacheReadTokens:  r.Usage.CacheReadInputTokens,
 			CacheWriteTokens: r.Usage.CacheCreationInputTokens,
@@ -478,7 +481,9 @@ func EncodeAnthropicResponse(r *types.ChatResponse) ([]byte, error) {
 		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 		OutputTokens             int64 `json:"output_tokens"`
 	}{
-		InputTokens:              r.Usage.InputTokens,
+		// Denormalize: Anthropic's input_tokens EXCLUDES cache read/write,
+		// so subtract the subsets from the unified inclusive total (>= 0).
+		InputTokens:              anthropicInputTokens(r.Usage),
 		OutputTokens:             maxI64(r.Usage.OutputTokens, 1),
 		CacheReadInputTokens:     r.Usage.CacheReadTokens,
 		CacheCreationInputTokens: r.Usage.CacheWriteTokens,
@@ -491,6 +496,13 @@ func maxI64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// anthropicInputTokens denormalizes the unified cache-inclusive input total
+// back into Anthropic's wire convention (input_tokens EXCLUDES cache
+// read/write), clamped at 0. Used by every Anthropic-format usage emitter.
+func anthropicInputTokens(u types.Usage) int64 {
+	return maxI64(u.InputTokens-u.CacheReadTokens-u.CacheWriteTokens, 0)
 }
 
 // DecodeAnthropicError parses an Anthropic error payload.
