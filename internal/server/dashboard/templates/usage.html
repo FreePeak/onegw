@@ -48,14 +48,14 @@ function fmtDay(u, ticks){ // x-axis: hours on the today view, dates otherwise
 }
 function themeCols(){
   const dark = document.documentElement.dataset.theme !== 'light';
-  return { text: dark ? '#8b949e' : '#656d76', grid: dark ? 'rgba(139,148,158,.12)' : 'rgba(0,0,0,.08)',
-           cursor: dark ? '#58a6ff' : '#0969da' };
+  return { text: dark ? '#b6c2cf' : '#57606a', grid: dark ? 'rgba(139,148,158,.14)' : 'rgba(0,0,0,.08)' };
 }
 function axes(){
   const c = themeCols();
   return [
     { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid }, values: fmtDay },
-    { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid }, values: (u,v) => v.map(kmb) },
+    { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid },
+      values: (u, splits) => splits.map((v, i) => (v === splits[i-1] ? '' : kmb(v))) },
   ];
 }
 
