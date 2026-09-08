@@ -24,7 +24,8 @@
     let txt = t + '  ' + mark + '  ' + (e.provider ? e.provider + '/' + e.model : e.model || '(unresolved)') +
       '  ' + e.code + (e.kind ? ' · ' + e.kind : '') +
       '  · ' + kfmt(e.in) + ' in · ' + kfmt(e.out) + ' out' + (e.cache_read ? ' · ' + kfmt(e.cache_read) + ' cached' : '') +
-      (e.saved ? ' · ' + kfmt(e.saved) + ' saved' : '');
+      (e.saved ? ' · ' + kfmt(e.saved) + ' saved' : '') +
+      (e.err ? '  — ' + (e.err.length > 160 ? e.err.slice(0, 160) + '…' : e.err) : '');
     return txt;
   }
   function kfmt(n){ if(n==null||n===0)return '0'; if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M'; if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return String(n); }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"onegw/internal/metrics"
 	"onegw/internal/types"
@@ -61,15 +62,32 @@ func (m *gatewayMetrics) success(provider, model string, u types.Usage, savedTok
 			m.tokens.Add(e.n, provider, model, e.typ)
 		}
 	}
-	m.logReq(provider, model, 200, "", u, savedTokens)
+	m.logReq(provider, model, 200, "", u, savedTokens, "")
 }
 
 // logReq routes one completion into the #19 ring; nil-safe because tests
-// build gatewayMetrics without a Server.
-func (m *gatewayMetrics) logReq(provider, model string, code int, kind string, u types.Usage, saved int64) {
+// build gatewayMetrics without a Server. errMsg carries the upstream
+// explanation (upstream body / failure text) so the console log answers
+// "why" and not just "what" — it is diagnostic payload, not a secret:
+// it can contain model names, request ids, and upstream error prose.
+func (m *gatewayMetrics) logReq(provider, model string, code int, kind string, u types.Usage, saved int64, errMsg string) {
 	if m.srv != nil {
-		m.srv.observeLog(provider, model, code, kind, u, saved, "")
+		m.srv.observeLog(provider, model, code, kind, u, saved, truncErr(errMsg))
 	}
+}
+
+// truncErr caps the stored error text: upstream bodies are read up to
+// 1 MiB and the ring/SSE payload must stay small. Cut on a rune boundary.
+func truncErr(s string) string {
+	const max = 300
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // boundedModel clamps a routed model string to config-defined routes
@@ -85,11 +103,13 @@ func (s *Server) boundedModel(model string) string {
 }
 
 // upstreamErr records one failed upstream attempt (HTTP error from the
-// provider, or a failure translating its stream).
-func (m *gatewayMetrics) upstreamErr(provider, model string, status int) {
+// provider, or a failure translating its stream). The upstream message
+// rides into the request log so incidents are diagnosable from the
+// dashboard alone.
+func (m *gatewayMetrics) upstreamErr(provider, model string, status int, errMsg string) {
 	m.requests.Inc(provider, model, strconv.Itoa(status))
 	m.errors.Inc(provider, "upstream_error")
-	m.logReq(provider, model, status, "upstream_error", types.Usage{}, 0)
+	m.logReq(provider, model, status, "upstream_error", types.Usage{}, 0, errMsg)
 }
 
 // noRoute records a request the router could not resolve (unknown provider /
@@ -99,7 +119,7 @@ func (m *gatewayMetrics) upstreamErr(provider, model string, status int) {
 func (m *gatewayMetrics) noRoute(status int) {
 	m.requests.Inc("", "unresolved", strconv.Itoa(status))
 	m.errors.Inc("", "no_route")
-	m.logReq("", "", status, "no_route", types.Usage{}, 0)
+	m.logReq("", "", status, "no_route", types.Usage{}, 0, "")
 }
 
 // saturated records a request rejected because the buffered-memory budget
@@ -107,13 +127,13 @@ func (m *gatewayMetrics) noRoute(status int) {
 func (m *gatewayMetrics) saturated() {
 	m.requests.Inc("", "", "503")
 	m.errors.Inc("", "budget_saturated")
-	m.logReq("", "", 503, "budget_saturated", types.Usage{}, 0)
+	m.logReq("", "", 503, "budget_saturated", types.Usage{}, 0, "")
 }
 
 // tooLarge records a request rejected because its body exceeded the body cap.
 func (m *gatewayMetrics) tooLarge() {
 	m.requests.Inc("", "", "413")
-	m.logReq("", "", 413, "no_route", types.Usage{}, 0)
+	m.logReq("", "", 413, "no_route", types.Usage{}, 0, "")
 }
 
 // invalidBody records an attempt aborted before the upstream call because
@@ -121,7 +141,7 @@ func (m *gatewayMetrics) tooLarge() {
 // It is a client-side 400, not one of the three error kinds.
 func (m *gatewayMetrics) invalidBody(provider, model string) {
 	m.requests.Inc(provider, model, "400")
-	m.logReq(provider, model, 400, "", types.Usage{}, 0)
+	m.logReq(provider, model, 400, "", types.Usage{}, 0, "")
 }
 
 // handleMetrics serves GET /metrics in the Prometheus text exposition

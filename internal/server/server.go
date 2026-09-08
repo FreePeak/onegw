@@ -615,7 +615,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	}
 	res, apiErr := def.Do(ctx, acct, model, clientSession, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
-		s.m.upstreamErr(def.Name, mdl, apiErr.Status)
+		s.m.upstreamErr(def.Name, mdl, apiErr.Status, apiErr.Message)
 		if alwaysThinking400(apiErr) {
 			// Runtime self-healing for providers whose config lacks the
 			// always_thinking globs (a combo can mix models with different
@@ -652,11 +652,11 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		var err error
 		head, herr, err = translat.InspectCommandCodeHead(res.Resp.Body)
 		if err != nil {
-			s.m.upstreamErr(def.Name, model, 502)
+			s.m.upstreamErr(def.Name, model, 502, err.Error())
 			return errAPI(502, "upstream_unreachable", err.Error())
 		}
 		if herr != nil {
-			s.m.upstreamErr(def.Name, model, herr.Status)
+			s.m.upstreamErr(def.Name, model, herr.Status, herr.Message)
 			return herr
 		}
 	}
@@ -675,15 +675,15 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		resp, aerr := translat.AggregateStream(src, upstreamFmt, model)
 		if aerr != nil {
 			if apiErr, ok := aerr.(*types.APIError); ok {
-				s.m.upstreamErr(def.Name, model, apiErr.Status)
+				s.m.upstreamErr(def.Name, model, apiErr.Status, apiErr.Message)
 				return apiErr
 			}
-			s.m.upstreamErr(def.Name, model, 502)
+			s.m.upstreamErr(def.Name, model, 502, aerr.Error())
 			return errAPI(502, "stream_aggregate_failed", aerr.Error())
 		}
 		rb, merr := translat.EncodeResponse(clientFmt, resp)
 		if merr != nil {
-			s.m.upstreamErr(def.Name, model, 501)
+			s.m.upstreamErr(def.Name, model, 501, merr.Error())
 			return errAPI(501, "response_encode_failed", merr.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -710,7 +710,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		defer st.budget.Release(reserve)
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
-			s.m.upstreamErr(def.Name, model, 502)
+			s.m.upstreamErr(def.Name, model, 502, rerr.Error())
 			return errAPI(502, "upstream_read_failed", rerr.Error())
 		}
 		if int64(len(raw)) > maxResp {
@@ -718,12 +718,12 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
 		if derr != nil {
-			s.m.upstreamErr(def.Name, model, 501)
+			s.m.upstreamErr(def.Name, model, 501, derr.Error())
 			return errAPI(501, "response_translate_failed", derr.Error())
 		}
 		out, eerr := translat.EncodeResponse(clientFmt, cr)
 		if eerr != nil {
-			s.m.upstreamErr(def.Name, model, 501)
+			s.m.upstreamErr(def.Name, model, 501, eerr.Error())
 			return errAPI(501, "response_encode_failed", eerr.Error())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -765,7 +765,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		} else {
 			u, terr := translat.TranslateStream(src, w, flush, upstreamFmt, clientFmt, model)
 			if terr != nil {
-				s.m.upstreamErr(def.Name, model, 502)
+				s.m.upstreamErr(def.Name, model, 502, terr.Error())
 				return &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
 			}
 			rec = u
