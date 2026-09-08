@@ -47,16 +47,20 @@ jobs:
 
           # Bump policy (matches this repo's free-form history: typeless and
           # non-CC types like "dashboard:", "saver:", "security:" carry real
-          # work, so anything except docs/test/chore bumps at least patch):
+          # work, so anything except docs/test/chore/ci bumps at least patch):
           #   BREAKING CHANGE: / type!  -> major
           #   feat                      -> minor
           #   fix, perf                 -> patch
-          #   anything else except docs/test/chore -> patch
-          # Merge commits are excluded (their subjects aren't work).
-          msgs="$(git log $range --no-merges --pretty=%B)"
+          #   anything else except docs/test/chore/ci -> patch
+          # Type detection reads commit SUBJECTS (%s) — body lines must not
+          # match (a multi-line ci: commit body would otherwise bump patch).
+          # Full bodies are scanned only for BREAKING CHANGE:. Merge commits
+          # are excluded (their subjects aren't work).
+          msgs="$(git log $range --no-merges --pretty=%s)"
+          breaking="$(git log $range --no-merges --pretty=%B | grep -c 'BREAKING CHANGE:' || true)"
           bump=""
           if printf '%s\n' "$msgs" | grep -Eq '^[a-z]+(\([^)]*\))?!:' \
-            || printf '%s\n' "$msgs" | grep -q 'BREAKING CHANGE:'; then
+            || [ "$breaking" -gt 0 ]; then
             bump=major
           elif printf '%s\n' "$msgs" | grep -Eq '^feat(\([^)]*\))?:'; then
             bump=minor
