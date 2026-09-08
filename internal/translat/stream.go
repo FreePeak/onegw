@@ -137,7 +137,7 @@ func TranslateStream(body io.Reader, w io.Writer, flush func(), from, to Format,
 	enc := newStreamEncoder(to, model)
 	dec, termCheck := newStreamDecoder(from)
 	var usage types.Usage
-	err := readSSE(br, func(ev sseEvent) error {
+	err := wireReader(from)(br, func(ev sseEvent) error {
 		events, derr := dec.decode(ev)
 		if derr != nil {
 			return derr
@@ -183,6 +183,8 @@ func DecodeResponse(f Format, body []byte) (*types.ChatResponse, error) {
 		return DecodeGeminiResponse(body)
 	case FmtResponses:
 		return DecodeResponsesResponse(body)
+	case FmtOpenAIResponses:
+		return DecodeGrokCliResponse(body)
 	default:
 		return DecodeOpenAIResponse(body)
 	}

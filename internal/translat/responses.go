@@ -248,6 +248,14 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 				b, _ := json.Marshal([]rsContent{{Type: "input_text", Text: ""}})
 				items = append(items, rsItem{Type: "message", Role: "user", Content: b})
 			}
+		case types.RoleTool:
+			// OpenAI Responses shape: a tool reply is a function_call_output
+			// item keyed to the call it answers.
+			items = append(items, rsItem{
+				Type:   "function_call_output",
+				CallID: orDefault(m.ToolCallID, m.Name),
+				Output: m.FlattenText(),
+			})
 		case types.RoleAssistant:
 			var texts []rsContent
 			for _, p := range m.Content {
