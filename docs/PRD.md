@@ -540,6 +540,5 @@ the issue):
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
 
 ---
-*Last updated: 2026-09-08 (sticky account round-robin: per-provider `sticky` TTL pins session/key identity to one account, failed attempts unpin; orcarouter now 4 accounts sticky 5m)*
 *Last updated: 2026-09-08 (incident follow-ups landed: #43 midnight-UTC test time-bomb, #39 keyless-provider warn-and-skip, #38 data_dir peer visibility, #37 zero-drop deploy runbook, #40 reservation-leak guard; all five issues closed; sticky account round-robin shipped same day)*
 
