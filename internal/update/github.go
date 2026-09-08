@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -101,7 +102,19 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("update: check %s: HTTP %d %s", c.Repo, resp.StatusCode, strings.TrimSpace(string(body)))
+		msg := fmt.Sprintf("update: check %s: HTTP %d %s", c.Repo, resp.StatusCode, strings.TrimSpace(string(body)))
+		// 401/403/404 on the releases endpoint is almost always a token
+		// problem, not a missing release: private repos 404 WITHOUT a
+		// token and 401 WITH a rejected one. Say which fix applies.
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			if resolveToken(c) == "" {
+				msg += " (private repo? set ONEGW_GITHUB_TOKEN or GITHUB_TOKEN to read its releases)"
+			} else {
+				msg += " (credentials rejected? refresh the token, or unset ONEGW_GITHUB_TOKEN/GITHUB_TOKEN to fall back to the public API)"
+			}
+		}
+		return nil, errors.New(msg)
 	}
 	var rel Release
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {

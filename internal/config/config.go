@@ -278,6 +278,17 @@ func (c *Config) Validate() error {
 	if err := validateKeys(c.Auth.KeyList); err != nil {
 		return err
 	}
+	// A typo'd check_interval ("24hr") must fail the load, not silently
+	// check daily — UpdateEvery's fallback is only for untouched configs.
+	if s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval)); s != "" {
+		switch s {
+		case "0", "off", "false", "disabled":
+		default:
+			if _, err := time.ParseDuration(s); err != nil {
+				return fmt.Errorf("update.check_interval %q is not a Go duration (e.g. \"24h\", \"30m\") or 0/off", c.Update.CheckInterval)
+			}
+		}
+	}
 	names := map[string]bool{}
 	for _, p := range c.Providers {
 		if p.Name == "" {

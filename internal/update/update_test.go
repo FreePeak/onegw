@@ -94,6 +94,8 @@ func TestLatestAndSelectAsset(t *testing.T) {
 }
 
 func TestLatestBadStatus(t *testing.T) {
+	t.Setenv("ONEGW_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
@@ -102,6 +104,16 @@ func TestLatestBadStatus(t *testing.T) {
 	_, err := c.Latest(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("want 401 error, got %v", err)
+	}
+	// A rejected token must point at the fix, and an absent token at the
+	// private-repo alternative.
+	if !strings.Contains(err.Error(), "credentials rejected") {
+		t.Fatalf("401 with token set must hint at the token, got %v", err)
+	}
+	c2 := &Client{Base: srv.URL, Repo: "r"}
+	_, err = c2.Latest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "private repo?") {
+		t.Fatalf("401 without token must hint at the private-repo fix, got %v", err)
 	}
 }
 
