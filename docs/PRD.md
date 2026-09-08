@@ -1,6 +1,12 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (#46/#47: SearXNG search enabled live — repo ships
+*Last updated: 2026-09-08 (dashboard shipped (#41/#45/#19): full 9-page admin
+console live — Go html/template + vendored htmx + uPlot (zero external
+assets), cookie-session login, bounded SSE live events, #19 request-log ring,
+grouped read-only /admin/api/v1, 7 agent-CLI preset cards, daily rollup
+retention finally wired; unit-loss compact bug fixed (1.0B → "1" → "1B") and
+today view charts hourly; README dashboard section with screenshots; RSS
+bench pre/post ≈ 88/89 MiB peak; live-verified in-browser; earlier: #46/#47: SearXNG search enabled live — repo ships
 profile-gated `searxng` compose service (loopback :8888, JSON format, limiter
 off) with settings in docker/searxng/; live onegw.toml has `search` provider +
 fail-open `search-or-llm` combo; live-verified OpenAI/Anthropic/SSE surfaces +
@@ -507,14 +513,14 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#13~~ | ~~Web-search provider (SearXNG integration)~~ — **done 2026-09-08**; `kind = "searxng"` virtual search provider (9bd3594): `search/<x>` model requests answered with a SearXNG JSON search as a synthetic OpenAI completion, retryable-503 fail-open in combos, `max_results`/`timeout`/`extra_headers` knobs, unit + E2E tests on both client surfaces | 9router gap |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
 | #17 | Self-healing thinking-dialect fallback: coerce + retry on thinking-class 400s, learn per (provider, model), combo-advance as last resort | #16 follow-up |
-| #19 | Dashboard console log (9router-style): in-memory log sink + `/admin/logs` endpoints + dashboard console pane | user request |
+| ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (a59c2a3) | user request |
 | #31 | Fix cache-inclusive/exclusive usage semantics across translation | research 2026-09-08 |
 | #32 | Preserve `cache_control` / `prompt_cache_key` / `session_id` across translation | research 2026-09-08 |
 | #33 | Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests | research 2026-09-08 |
 | #34 | Per-provider cache profiles: breakpoint anchoring, anchor-last ordering | research 2026-09-08 |
 | #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
 | #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
-| #41 | Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API (read-mostly; umbrella over #19/#11; boundary: config stays file-based) | user request |
+| ~~#41~~ | ~~Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API~~ — **done 2026-09-08**; full IA shipped (Overview/Usage/Providers/Combos/Quota/Saver/Logs/CLI Tools/Settings), variant-A stack, grouped `/admin/api/v1`, live-deployed + browser-verified + memory-benched (16f3dc9, a59c2a3); runtime dashboard *writes* stay #11 | user request |
 | ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1aa6a95) | #37/#39 follow-up |
 | ~~#42~~ | ~~Ownership model for the live gateway + shared config~~ — **done 2026-09-08**; `internal/owner` stamps `<data_dir>/owner.json` at startup (pid, listen, start time, config path + mtime, argv, build stamp: module version/git revision/dirty flag) and re-stamps on every successful reload (SIGHUP or `PUT /admin/config/reload`); `/admin/health` reports the same record live; file is atomic and survives exit as crash evidence; reload-not-restart + deploy discipline in README "Operations"; optional younger-build start guard skipped — single-instance is operator discipline after the #38 revert | incident RCA |
 | ~~#37~~ | ~~Zero-drop deploy runbook: start→verify→stop ordering~~ — **done 2026-09-08**; `scripts/deploy.sh` (build → overlap-bind → health-verify NEW → SIGTERM OLD → confirm single NEW listener; setsid isolates NEW from the deploying session's process group after the freeze RCA), 5 behavioral scenarios tested on scratch ports (d14441d, 9cabbf6) | incident RCA |
@@ -522,7 +528,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
 | #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan | user request |
-| #45 | Dashboard build approach for #41 (stack: Go templates + htmx + uPlot; SSE plumbing; cookie-session auth prerequisite; grouped cursor-paginated API) | #41 deep dive |
+| ~~#45~~ | ~~Dashboard build approach for #41~~ — **done 2026-09-08**; decision held: Go html/template + vendored htmx 2.0.6 + uPlot 1.6.32, stdlib SSE with bounded fan-out, cookie sessions; health strip fixed to server-rendered HTML in fe2d532; RSS bench pre/post ≈ 88/89 MiB peak | #41 deep dive |
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
 | #48 | b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down | found live testing #47 |
@@ -678,7 +684,8 @@ the issue):
   landing order.
 
 ---
-*Last updated: 2026-09-08 (Claude Code wired + translat Anthropic SSE block-synthesis fix, c8422d1;
+*Last updated: 2026-09-08 (dashboard shipped + bugs fixed + retention wired;
+commits 16f3dc9/fe2d532/a59c2a3/5b4520f; earlier: Claude Code wired + translat Anthropic SSE block-synthesis fix, c8422d1;
 earlier: #42 ownership model landed: `internal/owner`
 reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
 revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
