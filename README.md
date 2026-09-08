@@ -131,6 +131,55 @@ curl "http://127.0.0.1:8080/v1beta/models/anthropic/claude-sonnet-4-5:generateCo
 Use a combo name as the model to get an ordered fallback chain
 (`"model": "coding-stack"`).
 
+## Dashboard
+
+The built-in admin console lives at `http://127.0.0.1:8080/admin` — sign in
+with `admin_password` from your config (a 12-hour HttpOnly cookie; the
+`X-Admin-Password` header keeps working for scripts). Fully server-rendered
+Go `html/template` + htmx + uPlot, vendored inline: zero external assets, no
+CDN, no Node toolchain — the console ships inside the single binary.
+
+![Overview](docs/screenshots/dashboard-overview.png)
+
+**Overview** — today's request/token/saver totals, the byte-budget meter
+(`503` rejection count included), and a live SSE strip (in-flight, uptime,
+heap, GC) refreshing every second. Every page renders fully without
+JavaScript; SSE only adds the live updates.
+
+![Usage](docs/screenshots/dashboard-usage.png)
+
+**Usage** — per `provider/model` rollups over today / 7 days / 1 month /
+all time, with uPlot charts (stacked tokens and request counts, hourly
+axis on the today view). The same data is cursor-paginated at
+`GET /admin/api/v1/usage/daily` and CSV-exportable.
+
+![Providers](docs/screenshots/dashboard-providers.png)
+
+**Providers / Combos / Quota / Token Saver** — read-only views over the
+live config: accounts and advertised models per provider, fallback chains,
+quota windows with reset countdowns, saver stats. Keys are always masked.
+
+![Console Log](docs/screenshots/dashboard-logs.png)
+
+**Console Log** — a live request feed (in-memory ring, newest request
+highlighted, errors in red): model, status, tokens in/out/cached/saved per
+line, streamed over the same SSE endpoint. Also available as JSON at
+`GET /admin/api/v1/logs?limit=N`.
+
+![CLI Tools](docs/screenshots/dashboard-tools.png)
+
+**CLI Tools** — copy-paste preset cards for wiring agent CLIs to the
+gateway: Claude Code, opencode, grok, Codex CLI, omp, pi, and hermes —
+each snippet mirrors that tool's real config schema, with the bearer key
+as a `$ONEGW_KEY` placeholder (real keys never render in the UI).
+
+![Login](docs/screenshots/dashboard-login.png)
+
+The grouped read-only API lives under `/admin/api/v1/`
+(`providers`, `combos`, `quota`, `saver`, `logs`, `usage/daily`); the flat
+`/admin/*` endpoints stay unchanged for scripts. Rollup retention
+(`[usage].retention_days`, default 90) prunes old rows daily.
+
 ## Configuration
 
 Single TOML file (`-config` flag, `./onegw.toml`, or `$ONEGW_CONFIG`), plus
@@ -228,7 +277,7 @@ timeout = "10s"                # per-search timeout (0 = 10s)
 
 [[combo]]
 name = "search-or-llm"         # fail-open: search down -> falls to the model
-targets = ["search/query", "b-ai/mimo-v2.5"]
+targets = ["search/query", "openrouter/openai/gpt-5.5"]
 ```
 
 ```bash
@@ -238,17 +287,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 No upstream credential is needed for the kind (public instances are open);
-only `base_url` is validated.
-
-**Run one locally.** The repo ships a ready-to-run SearXNG stack — loopback
-only, JSON format enabled (upstream ships `html` only), limiter off:
-
-```bash
-docker compose --profile search up -d searxng   # serves 127.0.0.1:8888
-```
-
-then set `base_url = "http://127.0.0.1:8888"` on the provider above. A remote
-or existing instance just needs `search.format=json` in its `settings.yml`.
+only `base_url` is validated. Your SearXNG instance must allow the JSON
+format (`search.format=json`).
 
 ### Always-thinking models
 
@@ -348,7 +388,7 @@ Kilo Code tokens carry no refresh token — re-run `login` when they expire.
 | Anthropic | `POST /v1/messages`, `POST /anthropic/v1/messages` | anthropic (passthrough), openai, gemini |
 | Gemini | `POST /v1beta/models/{model}:generateContent[?alt=sse]` | gemini (passthrough), openai, anthropic |
 | — | `GET /v1/models` | Config-defined model + combo list |
-| — | `GET /` | Built-in dashboard |
+| — | `GET /admin` | Dashboard (multi-page admin console; `/` redirects there) |
 | — | `GET /admin/health`, `GET /admin/usage` | Admin (password-protected) |
 
 Translation maps stop reasons, usage fields (including cache and thinking
