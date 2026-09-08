@@ -11,15 +11,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
-	"strings"
-
 	"onegw/internal/provider"
 	"onegw/internal/router"
 	"onegw/internal/translat"
 	"onegw/internal/types"
 	"onegw/internal/usage"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // surface describes one passthrough endpoint: op is the upstream path token
@@ -137,7 +139,22 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		// prefix so "provider/model" never leaks upstream.
 		mp.retarget(t.Model)
 		id := requestIdentity(r, ak)
-		aerr := s.passthroughCall(r.Context(), w, def, def.NextAccount(id), sf, t.Model,
+		acct, poolReady := def.NextAccount(id)
+		if acct == nil {
+			// Pool cooling from upstream 429s: answer 429 + Retry-After
+			// without a doomed upstream call, mirroring proxyStream.
+			cool := time.Until(poolReady)
+			if cool < 0 {
+				cool = 0
+			}
+			writeErr(w, translat.FmtOpenAI, &types.APIError{Status: 429, Type: "provider_rate_limited",
+				Code:       "rate_limit_exceeded",
+				RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+				Message: fmt.Sprintf("provider %s: all accounts rate-limited upstream; retry after %ds",
+					def.Name, int64(cool.Seconds())+1)})
+			return
+		}
+		aerr := s.passthroughCall(r.Context(), w, def, acct, sf, t.Model,
 			mp.replay(), mp.length(r.ContentLength), contentType)
 		if aerr != nil {
 			def.Unpin(id) // failed one-shot attempt must not keep its pin

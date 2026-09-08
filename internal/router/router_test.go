@@ -170,3 +170,56 @@ func TestExecuteFallbackableRetriesThenFallsThrough(t *testing.T) {
 		t.Fatalf("calls=%v served=%s, want [2 1] with p2 serving m (one retry, then next target)", calls, served)
 	}
 }
+
+// When a provider's whole account pool is cooling from upstream 429s, the
+// router must fall through to the next combo target without any doomed
+// upstream attempt (zero calls against the cooling provider), and a
+// single-target route must surface 429 + Retry-After naming the pool's
+// recovery.
+func TestExecuteFallsThroughOnCoolingPool(t *testing.T) {
+	p := provider.NewPool()
+	def := &provider.Def{
+		Name: "p1", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "a", APIKey: "k1"}, {Name: "b", APIKey: "k2"}},
+	}
+	p.Set(def)
+	p.Set(&provider.Def{
+		Name: "p2", Kind: provider.KindAnthropic,
+		Accounts: []provider.Account{{Name: "c", APIKey: "k3"}},
+	})
+	r := New(p)
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+
+	// Bench both p1 accounts (as upstream 429s would).
+	def.RateLimited(&def.Accounts[0], 0)
+	def.RateLimited(&def.Accounts[1], 0)
+
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		return "ok", nil
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("combo should succeed via p2, got %v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want exactly 1 (p2 only) — no doomed attempt against the cooling pool", calls)
+	}
+
+	// Single-target route: the cooling pool becomes 429 + Retry-After.
+	res1, _ := r.Resolve("p1/m1")
+	err := r.Execute(context.Background(), res1, caller, func(a any) {})
+	if err == nil || err.Status != 429 || err.Type != "provider_rate_limited" {
+		t.Fatalf("cooling pool: got %v, want 429 provider_rate_limited", err)
+	}
+	if err.RetryAfter == "" {
+		t.Fatal("Retry-After missing on cooling-pool 429")
+	}
+}
