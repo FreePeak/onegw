@@ -92,6 +92,9 @@ func (s *Server) handleAdminConfigGet(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&buf, "# config_file = %s\n", path)
 	}
 	fmt.Fprintf(&buf, "# generated = %s\n", time.Now().UTC().Format(time.RFC3339))
+	for _, name := range s.cur().cfg.Skipped {
+		fmt.Fprintf(&buf, "# skipped_provider = %s  # issue #39: no credentials at boot (loopback bind); requests to it return 404 unknown_provider\n", name)
+	}
 	if err := toml.NewEncoder(&buf).Encode(maskedConfig(s.cur().cfg)); err != nil {
 		adminError(w, http.StatusInternalServerError, "config encode failed")
 		return
