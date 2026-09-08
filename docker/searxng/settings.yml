@@ -1,0 +1,17 @@
+# Minimal SearXNG settings for onegw's search provider (issue #46).
+# Mounted read-only by the `searxng` compose service (profile: search).
+# Local, single-user instance: the limiter (bot protection) is off and the
+# JSON API format is enabled — upstream ships with html only, while onegw
+# calls GET {base_url}/search?q=…&format=json.
+
+use_default_settings: true
+
+server:
+  secret_key: "onegw-local-search"   # local-only; rotate before any exposure
+  limiter: false
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json
