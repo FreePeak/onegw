@@ -110,6 +110,10 @@ type Account struct {
 	APIKey  string `toml:"api_key"`
 	BaseURL string `toml:"base_url"` // optional override of kind default
 	Weight  int    `toml:"weight"`   // round-robin weight, 0 = 1
+
+	// OAuthToken resolves the credential at request time (issue #2): OAuth-
+	// managed accounts rotate it in the background; nil = static APIKey.
+	OAuthToken TokenProvider
 }
 
 // Def is a configured provider instance: a kind + endpoint defaults + its
@@ -541,27 +545,26 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 		url = joinURL(base, d.Path("chat", model))
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 		if err == nil {
+			// Kind-specific NON-credential headers (fingerprints, versions).
+			// Credentials are set once below via applyAuth (issue #2: also
+			// resolves OAuth tokens).
 			switch d.Kind {
 			case KindAnthropic:
-				req.Header.Set("x-api-key", acct.APIKey)
 				req.Header.Set("anthropic-version", "2023-06-01")
 			case KindOpenCode:
-				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
-				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientSession, acct.APIKey))
+				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientSession, acct.bearerToken()))
 			case KindCommandCode:
-				// 9router fingerprint: per-request session id + CLI version
-				// headers; the key is a plain bearer (user_... token).
-				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+				// 9router fingerprint: per-request session id + CLI version.
 				req.Header.Set("x-command-code-version", translat.CommandCodeVersion)
 				req.Header.Set("x-cli-environment", "cli")
 				req.Header.Set("x-session-id", newRequestUUID())
 			case KindOpenAIResponses:
-				// Grok CLI fingerprint headers on top of the bearer.
+				// Grok CLI fingerprint headers.
 				req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
 				req.Header.Set("x-grok-client-version", "0.2.99")
-			default:
-				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 			}
+			// applyAuth is the single credential owner for EVERY kind.
+			applyAuth(req.Header, d.Kind, acct.bearerToken())
 		}
 	}
 	if err != nil {
@@ -677,30 +680,24 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	if err != nil {
 		return nil, 500, err
 	}
+	// Kind-specific non-credential headers; credential via applyAuth below
+	// (issue #2: also resolves OAuth tokens for subscription accounts).
 	switch d.Kind {
 	case KindAnthropic:
-		req.Header.Set("x-api-key", acct.APIKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
-	case KindGemini:
-		req.Header.Set("x-goog-api-key", acct.APIKey)
 	case KindOpenCode:
-		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
-		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.APIKey))
+		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.bearerToken()))
 	case KindCommandCode:
-		// 9router fingerprint: per-request session id + CLI version headers;
-		// the key is a plain bearer (user_... token).
-		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+		// 9router fingerprint: per-request session id + CLI version.
 		req.Header.Set("x-command-code-version", translat.CommandCodeVersion)
 		req.Header.Set("x-cli-environment", "cli")
 		req.Header.Set("x-session-id", newRequestUUID())
 	case KindOpenAIResponses:
-		// Grok CLI fingerprint: xai-grok-cli bearer + client headers.
-		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+		// Grok CLI fingerprint headers.
 		req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
 		req.Header.Set("x-grok-client-version", "0.2.99")
-	default:
-		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 	}
+	applyAuth(req.Header, d.Kind, acct.bearerToken())
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 502, err
