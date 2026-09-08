@@ -499,7 +499,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		s.m.invalidBody(def.Name, mdl)
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
-	res, apiErr := def.Do(ctx, acct, model, clientSession, bytes.NewReader(upBody), stream)
+	res, apiErr := def.Do(ctx, acct, model, clientSession, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, apiErr.Status)
 		return nil, apiErr
@@ -517,8 +517,54 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 
 	defer res.Resp.Body.Close()
 
+	// CommandCode streams NDJSON and can report errors INSIDE a 200 body.
+	// Inspect the head (bounded): an in-200 error event is answered as a
+	// real HTTP error before any bytes reach the client.
+	var head []byte
+	if upstreamFmt == translat.FmtCommandCode {
+		var herr *types.APIError
+		var err error
+		head, herr, err = translat.InspectCommandCodeHead(res.Resp.Body)
+		if err != nil {
+			s.m.upstreamErr(def.Name, model, 502)
+			return errAPI(502, "upstream_unreachable", err.Error())
+		}
+		if herr != nil {
+			s.m.upstreamErr(def.Name, model, herr.Status)
+			return herr
+		}
+	}
+
 	var rec types.Usage
-	if !stream && upstreamFmt != clientFmt {
+	if !stream && def.Kind.ForcedStream() {
+		// Stream-only upstream (commandcode, grok responses), non-streaming
+		// client: aggregate the stream into one completion. Errors detected
+		// during aggregation still get a real status (nothing was written).
+		// OpenCode's responses kind is NOT here: its non-stream reply is a
+		// plain JSON body handled by the buffered cross-format path below.
+		var src io.Reader = res.Resp.Body
+		if len(head) > 0 {
+			src = io.MultiReader(bytes.NewReader(head), res.Resp.Body)
+		}
+		resp, aerr := translat.AggregateStream(src, upstreamFmt, model)
+		if aerr != nil {
+			if apiErr, ok := aerr.(*types.APIError); ok {
+				s.m.upstreamErr(def.Name, model, apiErr.Status)
+				return apiErr
+			}
+			s.m.upstreamErr(def.Name, model, 502)
+			return errAPI(502, "stream_aggregate_failed", aerr.Error())
+		}
+		rb, merr := translat.EncodeResponse(clientFmt, resp)
+		if merr != nil {
+			s.m.upstreamErr(def.Name, model, 501)
+			return errAPI(501, "response_encode_failed", merr.Error())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(rb)
+		rec = resp.Usage
+	} else if !stream && upstreamFmt != clientFmt {
 		// Buffered cross-format path (PRD "parse whole request, parse whole
 		// response"). The reply bytes are accounted against the same global
 		// byte semaphore as the request, capped at max_body_bytes; all
@@ -576,8 +622,13 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 		flush()
 
+		var src io.Reader = res.Resp.Body
+		if len(head) > 0 {
+			// Re-attach the inspected head so no events are lost.
+			src = io.MultiReader(bytes.NewReader(head), res.Resp.Body)
+		}
 		if upstreamFmt == clientFmt {
-			sn := usage.NewSniffer(res.Resp.Body, 0)
+			sn := usage.NewSniffer(src, 0)
 			_, _ = io.Copy(w, sn)
 			flush()
 			in, out, cr, cw, rs, seen := sn.Usage()
@@ -585,7 +636,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs}
 			}
 		} else {
-			u, terr := translat.TranslateStream(res.Resp.Body, w, flush, upstreamFmt, clientFmt, model)
+			u, terr := translat.TranslateStream(src, w, flush, upstreamFmt, clientFmt, model)
 			if terr != nil {
 				s.m.upstreamErr(def.Name, model, 502)
 				return &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
@@ -627,6 +678,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (*config.Auth
 	key := strings.TrimPrefix(auth, "Bearer ")
 	if key == "" {
 		key = r.Header.Get("x-api-key")
+	}
+	if key == "" {
+		key = r.Header.Get("x-goog-api-key") // native Gemini clients authenticate with this
 	}
 	for i := range keys {
 		if keys[i].Key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(keys[i].Key)) == 1 {
@@ -967,6 +1021,10 @@ func encodeFor(f translat.Format, u *types.ChatRequest) ([]byte, error) {
 		return translat.EncodeGeminiRequest(u)
 	case translat.FmtResponses:
 		return translat.EncodeResponsesRequest(u)
+	case translat.FmtOpenAIResponses:
+		return translat.EncodeGrokCliRequest(u)
+	case translat.FmtCommandCode:
+		return translat.EncodeCommandCodeRequest(u)
 	default:
 		return nil, fmt.Errorf("unknown format %s", f)
 	}
