@@ -373,27 +373,60 @@ func lastPathSegment(base string) string {
 
 var versionRe = regexp.MustCompile(`^v\d+$`)
 
-// Account pool: weighted round-robin with cooldown on quota errors
+// Account pool: weighted round-robin with adaptive cooldown on rate limits
 // ---------------------------------------------------------------------------
 
+// Adaptive cooldown ladder for upstream 429s that carry no Retry-After
+// (empty-body one-api style limits). The first 429 benches the account for
+// coolBase — long enough for a transient burst window (~5s observed) to
+// clear, short enough not to starve a healthy pool. Each consecutive 429
+// doubles the bench (the key is sinking into longer upstream blocks, not
+// just a burst window), capped at coolCap. A successful call resets the
+// ladder (pool.ok). A Retry-After header, when present, always wins.
+const (
+	coolBase = 10 * time.Second
+	coolCap  = 60 * time.Second
+)
+
 // NextAccount picks the next available account (weighted round-robin with
-// quota cooldowns). With a sticky TTL configured, the identity (client
-// session or auth-key label) is pinned to one account for the window:
-// the first pick rotates and pins, repeats within the window reuse the
-// pin, and expired or cooling pins rotate to the next account and re-pin.
-// Identity "" disables pinning.
-func (d *Def) NextAccount(id string) *Account { return d.pool.next(id) }
+// adaptive rate-limit cooldowns). With a sticky TTL configured, the identity
+// (client session or auth-key label) is pinned to one account for the
+// window: the first pick rotates and pins, repeats within the window reuse
+// the pin, and expired or cooling pins rotate to the next account and
+// re-pin. Identity "" disables pinning.
+//
+// When every account is cooling, NextAccount returns (nil, ready) where
+// ready is the soonest cooldown expiry — callers must NOT send an upstream
+// call against a cooling pool (it burns a doomed ~1s attempt and digs the
+// upstream limit deeper); they fall through to the next combo target or
+// answer 429 with Retry-After = time until ready.
+func (d *Def) NextAccount(id string) (*Account, time.Time) { return d.pool.next(id) }
 
 // Unpin drops an identity's pinned account so the next NextAccount rotates.
 // Call after a failed upstream attempt to avoid re-sticking to a dead key.
 func (d *Def) Unpin(id string) { d.pool.unpin(id) }
 
-// Cool marks an account as cooling after a quota error.
+// Cool parks an account for d (quota/rate-limit error). Used for errors
+// carrying an explicit duration (Retry-After, region lock) and for
+// provider-wide quota exhaustion; plain 429s should use RateLimited to
+// get the adaptive ladder.
 func (d *Def) Cool(a *Account, dDur time.Duration) { d.pool.cool(a, dDur) }
+
+// RateLimited applies the adaptive 429 cooldown ladder to a: coolBase,
+// doubling per consecutive 429, capped at coolCap. A Retry-After duration
+// > 0 bypasses the ladder and wins verbatim.
+func (d *Def) RateLimited(a *Account, retryAfter time.Duration) {
+	d.pool.rateLimited(a, retryAfter)
+}
+
+// OK records an account success and clears its consecutive-429 strike
+// count, so a recovered key re-enters the ladder at coolBase.
+func (d *Def) OK(a *Account) { d.pool.ok(a) }
 
 type accountState struct {
 	acct     Account
 	cooldown time.Time // until when the account is skipped
+	strikes  int       // consecutive 429s (adaptive ladder); reset on success
 }
 
 // maxStickyPins bounds the affinity map. Identities are client session ids
@@ -440,7 +473,12 @@ func newAccountPool(accts []Account, sticky time.Duration) *accountPool {
 // non-empty identity, a live pin returns its account untouched; an
 // expired or cooling pin is dropped and rotation starts after that
 // account's slot, re-pinning the winner.
-func (p *accountPool) next(id string) *Account {
+//
+// When every account is cooling it returns (nil, ready) instead of
+// handing out a doomed pick: the caller falls through to the next combo
+// target or answers 429 with Retry-After, rather than burning a ~1s
+// upstream attempt that extends the pool's rate-limit damage.
+func (p *accountPool) next(id string) (*Account, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
@@ -451,7 +489,7 @@ func (p *accountPool) next(id string) *Account {
 			for i := range p.accts {
 				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
 					if now.After(s.cooldown) {
-						return &s.acct
+						return &s.acct, time.Time{}
 					}
 					start = i + 1 // pinned account cooling: rotate past it
 					break
@@ -460,18 +498,81 @@ func (p *accountPool) next(id string) *Account {
 		}
 		delete(p.sticky, id)
 	}
+	var ready time.Time // soonest cooldown expiry among cooling accounts
 	for i := range n {
 		s := &p.accts[(start+i)%n]
 		if now.After(s.cooldown) {
 			p.rr = (uint64(start+i) + 1) % uint64(n)
 			p.pin(id, &s.acct, now)
-			return &s.acct
+			return &s.acct, time.Time{}
+		}
+		if t := s.cooldown; ready.IsZero() || t.Before(ready) {
+			ready = t
 		}
 	}
-	// All cooling: keep the old fallback so the error names a cause.
-	s := &p.accts[start%n]
-	p.rr = (p.rr + 1) % uint64(n)
-	return &s.acct
+	return nil, ready
+}
+
+// ok records a successful call on a: the account is healthy, so both its
+// strike count and any leftover cooldown reset — the next 429 starts the
+// ladder at coolBase again. All slots of the account are touched —
+// weighted pools expand one account into several slots.
+func (p *accountPool) ok(a *Account) {
+	if p == nil || a == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.accts {
+		if p.accts[i].acct.Name == a.Name && p.accts[i].acct.APIKey == a.APIKey {
+			p.accts[i].strikes = 0
+			p.accts[i].cooldown = time.Time{}
+		}
+	}
+}
+
+// rateLimited benches a after an upstream 429. retryAfter > 0 (upstream
+// Retry-After) wins verbatim; otherwise the adaptive ladder benches for
+// coolBase << strikes, capped at coolCap.
+func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
+	if p == nil || a == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// One account may occupy several weighted slots. Read the shared
+	// strike count once (slots stay in sync: every 429 adds exactly one
+	// strike, every success zeroes all), compute the ladder once, then
+	// apply the same bench and strike value to every slot — cool()
+	// semantics: a weighted pool cools as one.
+	cur := -1
+	for i := range p.accts {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey && cur < 0 {
+			cur = s.strikes
+		}
+	}
+	if cur < 0 {
+		return // account not in this pool
+	}
+	d := retryAfter
+	if d <= 0 {
+		d = coolBase << uint(min(cur, 3))
+		if d > coolCap {
+			d = coolCap
+		}
+	}
+	now := p.now()
+	for i := range p.accts {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
+			s.strikes = cur + 1
+			if s.cooldown.Before(now) {
+				s.cooldown = now
+			}
+			if t := now.Add(d); t.After(s.cooldown) {
+				s.cooldown = t
+			}
+		}
+	}
 }
 
 // pin records the identity → account affinity, keeping the map bounded.
@@ -507,7 +608,7 @@ func (p *accountPool) unpin(id string) {
 
 // cool marks an account cooling for d (quota exhausted).
 func (p *accountPool) cool(a *Account, d time.Duration) {
-	if a == nil {
+	if p == nil || a == nil {
 		return
 	}
 	p.mu.Lock()
@@ -693,7 +794,11 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		apiErr := decodeUpstreamError(d.Kind, limited, resp.StatusCode)
 		if apiErr.OverQuota() && acct != nil {
-			d.pool.cool(acct, coolDuration(resp.Header.Get("Retry-After")))
+			// Retry-After (when upstream sends one) wins verbatim; otherwise
+			// the adaptive ladder benches the account (10s doubling to 60s
+			// per consecutive 429 — empty-body one-api style limits recover
+			// fast but re-trigger immediately under sustained load).
+			d.pool.rateLimited(acct, coolDuration(resp.Header.Get("Retry-After")))
 		}
 		if apiErr.RegionLocked() && acct != nil {
 			// The credential is refused by policy, not load: park it long
@@ -702,6 +807,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 		}
 		return nil, apiErr
 	}
+	d.pool.ok(acct) // success resets the 429 ladder
 	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct}, nil
 }
 

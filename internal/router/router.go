@@ -4,6 +4,8 @@ package router
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -237,8 +239,26 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			lastErr = &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + t.Provider}
 			continue
 		}
-		for attempt := 0; attempt < max(1, r.MaxAttempts); attempt++ {
-			acct := def.NextAccount(id)
+		for attempt := range max(1, r.MaxAttempts) {
+			acct, poolReady := def.NextAccount(id)
+			if acct == nil {
+				// Whole account pool cooling from upstream 429s: an
+				// upstream call now is a doomed ~1s attempt that only
+				// digs the limit deeper. Fall through to the next combo
+				// target immediately; as the last target it becomes a
+				// 429 whose Retry-After tells the client when the pool
+				// reopens.
+				cool := time.Until(poolReady)
+				if cool < 0 {
+					cool = 0
+				}
+				lastErr = &types.APIError{Status: 429, Type: "provider_rate_limited",
+					Code:       "rate_limit_exceeded",
+					RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+					Message: fmt.Sprintf("provider %s: all accounts rate-limited upstream; retry after %ds",
+						def.Name, int64(cool.Seconds())+1)}
+				break
+			}
 			out, err := call(ctx, def, acct, t.Model)
 			if err == nil {
 				onResult(out)
