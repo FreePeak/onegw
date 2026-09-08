@@ -538,5 +538,6 @@ the issue):
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
 
+---
 *Last updated: 2026-09-08 (sticky account round-robin: per-provider `sticky` TTL pins session/key identity to one account, failed attempts unpin; orcarouter now 4 accounts sticky 5m)*
 
