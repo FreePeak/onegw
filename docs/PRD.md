@@ -1,6 +1,12 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (ops: SearXNG search decommissioned live per user request — container + image removed,
+*Last updated: 2026-09-08 (RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
+budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
+`[server] response_header_timeout` knob (live: 120s) + transport-error classification
+(504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
+ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
+h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall through; branch
+fix/upstream-header-timeout)*
 `search` provider + `search-or-llm` combo dropped from live onegw.toml, gateway rebuilt from HEAD and zero-drop restarted;
 earlier: docs: open-work table synced with GitHub — #2-#12 struck done,
 close dates from the issue tracker, #17 verified landed via 7e935f2; earlier: issue #44
@@ -627,6 +633,32 @@ the issue):
   grok cli configs (pi `models.json` is the proven pattern).
 
 ## Current status (post-M5)
+- **Upstream pre-first-byte timeouts on massive prefills — RCA + fix**
+  (2026-09-08 evening, branch `fix/upstream-header-timeout`): the b-ai
+  glm-5.3-flash dashboard showed recurring
+  `502 upstream_error — http2: timeout awaiting response headers` on
+  30-300K-token requests (0 in / 0 out, i.e. dead before first byte) while
+  neighbors succeeded. Root causes: (1) the shared upstream HTTP transport
+  had a fixed 60s `ResponseHeaderTimeout`, and cold-cache prefills of
+  massive thinking-model sessions can legitimately exceed it — the abort
+  was a gateway-side budget, not an upstream outage (upstream answered
+  nothing; every failed attempt was ~60s of dead latency); (2) the failure
+  logged as `502 upstream_error` because transport errors were not
+  classified, hiding both the timeout nature and its retryability
+  (`Retryable()` covers 504, and combos DID fall through, but the log gave
+  no signal). Fix: `[server] response_header_timeout` knob (per-Def
+  memoized HTTP client, SIGHUP-safe; live config = 120s) +
+  `transportErr` classification (504 `upstream_timeout` /
+  502 `upstream_unreachable` / 499 `client_closed`). Classification
+  subtlety pinned by regression test: Go's header-timeout error BOTH
+  implements `net.Error` `Timeout()=true` AND satisfies
+  `errors.Is(err, context.DeadlineExceeded)` (probe-verified h1 + h2,
+  Go 1.25), so client-hangup detection must consult the REQUEST CONTEXT,
+  not the error chain — and timeout detection walks the whole unwrap chain
+  (`errors.As` stops at the outermost `*url.Error`, whose `Timeout()`
+  only type-asserts its direct child). Zero-drop deployed (pid verified);
+  post-deploy the same failure class logs `504 upstream_timeout` and falls
+  through the combo.
 - **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
   API-key connections as onegw providers (accounts, upstream model discovery,
   gateway auth keys) and OAuth bearer-token connections whose upstream
@@ -729,31 +761,12 @@ the issue):
   landing order.
 
 ---
-*Last updated: 2026-09-08 (request-log carries the upstream error message —
-502-storm RCA: 2026-09-08 18:25–19:33 the b-ai + glm upstreams (both backed
-by Zhipu) 502ed large requests together while small requests succeeded;
-combo fall-through kept most traffic alive. Dashboard showed bare
-"502 · upstream_error" because every metrics path discarded the upstream
-text; commit 43f3375 threads the decoded upstream message (rune-safe 300B
-cap) through logReq into the ring and renders it in the console log. All
-provider keys verified live (7 b-ai accounts + glm + kilocode + orcarouter
-200; xai OAuth token expired 2026-09-07 21:24:50Z — re-auth in 9router then
-re-import; tracked as config debt). Live gateway redeployed zero-drop
-(scripts/deploy.sh) from 43f3375; earlier: dashboard shipped + bugs fixed +
-retention wired, commits 16f3dc9/fe2d532/a59c2a3/5b4520f; earlier: Claude
-Code wired + translat Anthropic SSE block-synthesis fix, c8422d1;
-earlier: #42 ownership model landed: `internal/owner`
-reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
-revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
-2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
-`search/query` with a SearXNG JSON search as a synthetic OpenAI completion,
-fail-open in combos; PRD gap list + issue table marked done, feature bullet
-added, tracker ticked, README how-to filled; earlier: dashboard build-approach
-deep dive: #45 filed, new Dashboard build approach section,
-docs/dashboard-deep-dive.md — stack Go html/template + htmx + uPlot over a
-React bundle, stdlib SSE bounded fan-out, cookie-session login as SSE auth
-prerequisite, grouped cursor-paginated /admin/api/v1; earlier: deliberate
-revert of #38/#39 features at user decision — heartbeat peer scan/gauge and
-loopback warn-and-skip removed, boot back to strict Validate, 9049dd4)*
+*Last updated: 2026-09-08 (RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
+budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
+`[server] response_header_timeout` knob (live: 120s) + transport-error classification
+(504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
+ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
+h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall through; branch
+fix/upstream-header-timeout)*
 
 
