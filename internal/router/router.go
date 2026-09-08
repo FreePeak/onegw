@@ -272,15 +272,17 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			lastErr = &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + t.Provider}
 			continue
 		}
-		for attempt := range max(1, r.MaxAttempts) {
+		benched := 0 // gated 403s rotated this target (each benches one account)
+		for attempt := 0; attempt < max(1, r.MaxAttempts) || benched > 0; {
 			acct, poolReady := def.NextAccount(id)
 			if acct == nil {
-				// Whole account pool cooling from upstream 429s: an
-				// upstream call now is a doomed ~1s attempt that only
-				// digs the limit deeper. Fall through to the next combo
-				// target immediately; as the last target it becomes the
-				// configured pool-empty error (default: 429 whose
-				// Retry-After tells the client when the pool reopens).
+				// Whole account pool cooling from upstream 429s or
+				// premium-gating 403s: an upstream call now is a doomed
+				// ~1s attempt that only digs the limit deeper. Fall
+				// through to the next combo target immediately; as the
+				// last target it becomes the configured pool-empty error
+				// (default: 429 whose Retry-After tells the client when
+				// the pool reopens).
 				lastErr = r.poolEmptyError(def, poolReady)
 				break
 			}
@@ -294,6 +296,27 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			if !(err.Retryable() || err.RegionLocked() || err.Fallbackable) {
 				return err
 			}
+			if err.Fallbackable && err.Status == 403 {
+				// Gated account (issue #48): Do benched it on the
+				// ladder, so rotation is bounded by the POOL — every
+				// hit benches exactly one account, so the next pick is
+				// a different one and a fully benched pool surfaces as
+				// pool-empty instead of a raw 403 the client would
+				// treat as terminal. Spending the retry budget here
+				// would leak the 403 while a healthy key still waits
+				// in the pool. The +len(Accounts) guard is belt-and-
+				// braces against a Fallbackable 403 that never benches.
+				if benched++; benched > len(def.Accounts) {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
+				default:
+				}
+				continue
+			}
+			attempt++
 			if err.RegionLocked() || err.Fallbackable {
 				// next attempt: pool skips the parked account, or the
 				// attempt now coerces upfront (learned always-thinking).
@@ -305,7 +328,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			select {
 			case <-ctx.Done():
 				return &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
-			case <-time.After(backoff(attempt, err)):
+			case <-time.After(backoff(attempt-1, err)):
 			}
 		}
 	}

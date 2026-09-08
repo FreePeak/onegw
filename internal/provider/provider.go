@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -47,6 +48,15 @@ const OpenCodeSessionHeader = "X-Opencode-Session"
 // mirroring the OpenCode gateway's own limit.
 const maxOpenCodeSessionLen = 256
 
+// perKeySession derives the stable opaque id for one credential: the same
+// key always maps to the same id (upstream prompt caches stay warm),
+// different keys differ, and the salt keeps ids unrelated across
+// mechanisms. Never returns "".
+func perKeySession(salt, apiKey string) string {
+	sum := sha256.Sum256([]byte(salt + "\x00" + apiKey))
+	return "ses_" + hex.EncodeToString(sum[:16])
+}
+
 // opencodeSession returns the session id to send for this upstream call.
 // Precedence: client header (trimmed, length-capped) > per-key derived id
 // (stable across requests so the same credential maps to one upstream
@@ -55,8 +65,31 @@ func opencodeSession(clientVal, apiKey string) string {
 	if s := strings.TrimSpace(clientVal); s != "" && len(s) <= maxOpenCodeSessionLen {
 		return s
 	}
-	sum := sha256.Sum256([]byte("opencode-go\x00" + apiKey))
-	return "ses_" + hex.EncodeToString(sum[:16])
+	return perKeySession("opencode-go", apiKey)
+}
+
+// sessionAffinityHeaders are the client-sent conversation/session headers
+// forwarded verbatim to every upstream (issue #36): xAI's documented
+// prompt-cache stickiness ids and generic session ids. Lookup is
+// case-insensitive (clients pick their own casing); only values the
+// client actually sent are forwarded — nothing is invented here.
+var sessionAffinityHeaders = [...]string{
+	"x-grok-conv-id",
+	"x-grok-session-id",
+	"x-session-id",
+	"session_id",
+}
+
+// clientHeader returns the first value of the named header, matched
+// case-insensitively (Header.Get canonicalizes only the query key, so a
+// client-sent X-GROK-CONV-ID would miss a canonical Get). "" when absent.
+func clientHeader(h http.Header, name string) string {
+	for k, vs := range h {
+		if len(k) == len(name) && strings.EqualFold(k, name) && len(vs) > 0 {
+			return vs[0]
+		}
+	}
+	return ""
 }
 
 // ResponsesOnlyModel reports whether an OpenCode catalog model is served
@@ -153,8 +186,26 @@ type Def struct {
 	// NextAccount (0 = plain round-robin). Set from ProviderCfg.Sticky.
 	StickyTTL time.Duration
 
-	pool     *accountPool
-	inflight chan struct{}
+	// SessionHeader opts the provider into derived session affinity
+	// (issue #36): when the client sent none of sessionAffinityHeaders,
+	// Do sends a stable per-key opaque id (perKeySession) in this header
+	// so repeat calls with one credential land on a warm upstream cache.
+	// Only for upstreams documented to use it (xai: x-grok-conv-id).
+	// "" (default) never invents a header. Set from
+	// ProviderCfg.SessionHeader.
+	SessionHeader string
+
+	// HeaderTimeout bounds the pre-first-byte phase (dial, TLS, full body
+	// upload, upstream prefill) of every upstream call. 0 = 60s default.
+	// Massive-prefill providers (thinking models, ~100K-token sessions)
+	// need more; set from [server] response_header_timeout.
+	HeaderTimeout time.Duration
+
+	// Memoized per-Def HTTP client (see httpClient).
+	clientOnce sync.Once
+	http       *http.Client
+	pool       *accountPool
+	inflight   chan struct{}
 
 	// learnedAT records models discovered at runtime to reject
 	// thinking-effort/disable knobs (GLM 1210-family 400) even though they
@@ -419,6 +470,15 @@ func (d *Def) RateLimited(a *Account, retryAfter time.Duration) {
 	d.pool.rateLimited(a, retryAfter)
 }
 
+// Gated benches a after a premium-gating rejection (issue #48: upstream
+// 403 access_denied, "Deposit required"): the CREDENTIAL lacks access to
+// the model, so the request must rotate to another account, but the gate
+// is a sales state that can clear (a deposit lands, plan upgrades) — not
+// a hard revocation like a region lock. Reuse the 429 escalation ladder
+// (gating is account state; repeated hits extend the window, capped at
+// coolCap) rather than a fixed long park.
+func (d *Def) Gated(a *Account) { d.pool.rateLimited(a, 0) }
+
 // OK records an account success and clears its consecutive-429 strike
 // count, so a recovered key re-enters the ladder at coolBase.
 func (d *Def) OK(a *Account) { d.pool.ok(a) }
@@ -631,21 +691,70 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 // Upstream calls
 // ---------------------------------------------------------------------------
 
-var client = &http.Client{
-	Transport: &http.Transport{
-		DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
-		MaxIdleConns:        256,
-		MaxIdleConnsPerHost: 64,
-		IdleConnTimeout:     90 * time.Second,
-		ForceAttemptHTTP2:   true,
-		// Bound the pre-body phase: a stalled upstream must not hold its
-		// goroutine (and any byte-budget reservation) indefinitely. Body
-		// streaming after headers stays unbounded — streams are long-lived.
-		ResponseHeaderTimeout: 60 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-	},
-	Timeout: 0, // streams are long-lived; per-request ctx governs
+// newHTTPClient builds the shared transport with a per-provider bound on
+// the pre-first-byte phase (dial + TLS + full request-body upload +
+// upstream prefill). 60s was sized for interactive chat: massive-session
+// prefills on thinking models routinely exceed it, aborting with a 502
+// before the upstream says a word (2026-09-08 502 storm: ~115K-token
+// requests dying in waves while small probes succeeded). Streams after
+// headers stay unbounded — streams are long-lived.
+func newHTTPClient(headerTimeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
+			MaxIdleConns:        256,
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+			// Body streaming after headers stays unbounded — streams are
+			// long-lived.
+			ResponseHeaderTimeout: headerTimeout,
+			TLSHandshakeTimeout:   10 * time.Second,
+		},
+		Timeout: 0, // streams are long-lived; per-request ctx governs
+	}
 }
+
+// httpClient resolves the client for one call: a per-Def override when the
+// config tuned response_header_timeout (memoized once per Def — Defs are
+// rebuilt on SIGHUP reload, so state stays in sync with config), else the
+// package default.
+func (d *Def) httpClient() *http.Client {
+	d.clientOnce.Do(func() {
+		if d.HeaderTimeout > 0 && d.HeaderTimeout != 60*time.Second {
+			d.http = newHTTPClient(d.HeaderTimeout)
+		}
+	})
+	if d.http != nil {
+		return d.http
+	}
+	return client
+}
+
+// transportErr classifies a failed upstream round-trip so the console log
+// can tell a gateway-side timeout from a dead endpoint from a client that
+// hung up — pre-2026-09-08 all three logged as bare 502 upstream_error.
+// The request context is the discriminator: when ctx is done the CLIENT
+// hung up (cancel or client deadline). Note os.ErrDeadlineExceeded — the
+// error the transport's own ResponseHeaderTimeout wraps — compares equal
+// to context.DeadlineExceeded, so the error chain alone cannot tell a
+// gateway-side pre-first-byte timeout from a client deadline; only the
+// live context can. Otherwise a net timeout is the gateway's budget
+// expiring (504, retryable); anything else is a dead/unreachable endpoint.
+func transportErr(ctx context.Context, err error) *types.APIError {
+	if ctx.Err() != nil {
+		return &types.APIError{Status: 499, Type: "client_closed", Message: err.Error()}
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return &types.APIError{Status: 504, Type: "upstream_timeout", Message: err.Error()}
+	}
+	return &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+}
+
+// defaultClient keeps the previous package-level behavior for callers
+// without per-Def overrides (passthrough diagnostics, searxng).
+var client = newHTTPClient(60 * time.Second)
 
 // CallResult bundles the upstream HTTP response for the router to stream.
 type CallResult struct {
@@ -710,10 +819,11 @@ func (d *Def) Path(op, model string) string {
 // Do performs one upstream call. body supplies the request payload; it is
 // sent as-is (Content-Length is derived for *bytes.Reader, *bytes.Buffer,
 // and *strings.Reader; any other reader goes out chunked). body may be nil.
-// clientSession is the value of the client's x-opencode-session header (""
-// when absent); it is only consumed by KindOpenCode, which always sends a
-// session id upstream.
-func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string, body io.Reader, stream bool) (*CallResult, *types.APIError) {
+// clientHdr carries the client request's headers (nil for headerless
+// callers): the conversation/session ids among them are forwarded
+// verbatim (issue #36) and KindOpenCode always sends a session id
+// upstream, the client's own value when present.
+func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr http.Header, body io.Reader, stream bool) (*CallResult, *types.APIError) {
 	if d.inflight != nil {
 		select {
 		case d.inflight <- struct{}{}:
@@ -759,7 +869,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 			case KindAnthropic:
 				req.Header.Set("anthropic-version", "2023-06-01")
 			case KindOpenCode:
-				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientSession, acct.bearerToken()))
+				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientHeader(clientHdr, OpenCodeSessionHeader), acct.bearerToken()))
 			case KindCommandCode:
 				// 9router fingerprint: per-request session id + CLI version.
 				req.Header.Set("x-command-code-version", translat.CommandCodeVersion)
@@ -774,9 +884,6 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 			applyAuth(req.Header, d.Kind, acct.bearerToken())
 		}
 	}
-	if err != nil {
-		return nil, &types.APIError{Status: 500, Type: "internal", Message: err.Error()}
-	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if stream {
@@ -785,9 +892,19 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
-	resp, err := client.Do(req)
+	// Cache-affinity identity (issue #36): forward the client's
+	// conversation/session ids verbatim — the live xai route loses
+	// x-grok-conv-id today because Do builds a fresh upstream request —
+	// and, when the client sent none and the provider opted in via
+	// SessionHeader, derive a stable per-key id (same trade
+	// opencodeSession makes for OpenCode Zen). Last: an explicit
+	// operator extra_headers pin is config-error territory, but a
+	// static pin must never collapse per-conversation ids, so the
+	// client's per-request values win.
+	d.applySessionAffinity(req.Header, clientHdr, acct.bearerToken())
+	resp, err := d.httpClient().Do(req)
 	if err != nil {
-		return nil, &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+		return nil, transportErr(ctx, err)
 	}
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
@@ -805,6 +922,19 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 			// enough that the pool hands the next attempt a healthy key.
 			d.pool.cool(acct, 5*time.Minute)
 		}
+		if gated403(resp.StatusCode, limited) && acct != nil {
+			// Premium-gated account (issue #48): the credential itself is
+			// refused for this model until a deposit lands — account state,
+			// not transient load, so unlike a 429 the request must rotate.
+			// Bench the account on the adaptive ladder (first hit coolBase,
+			// repeat hits double to coolCap; a deposit clearing the gate
+			// resets it via pool.ok) and mark the error Fallbackable so
+			// Router.Execute retries this target on the next account and
+			// falls through to the next combo target instead of surfacing
+			// the 403.
+			d.Gated(acct)
+			apiErr.Fallbackable = true
+		}
 		return nil, apiErr
 	}
 	d.pool.ok(acct) // success resets the 429 ladder
@@ -815,10 +945,11 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 // ("embeddings", "transcriptions", "speech"). The body is relayed
 // byte-for-byte from body without buffering: multipart streams stay streams.
 // contentType is forwarded verbatim — a multipart boundary must reach the
-// upstream intact. Upstream errors are not decoded here because passthrough
-// bodies may be non-JSON (audio); the caller relays status and payload.
-// The caller owns resp.Body.
-func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, contentType string, body io.Reader, contentLen int64) (*http.Response, *types.APIError) {
+// upstream intact. clientHdr carries the client's headers for the
+// session-affinity forward (issue #36; nil = none). Upstream errors are not
+// decoded here because passthrough bodies may be non-JSON (audio); the
+// caller relays status and payload. The caller owns resp.Body.
+func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, contentType string, clientHdr http.Header, body io.Reader, contentLen int64) (*http.Response, *types.APIError) {
 	if d.inflight != nil {
 		select {
 		case d.inflight <- struct{}{}:
@@ -848,11 +979,47 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
-	resp, err := client.Do(req)
+	d.applySessionAffinity(req.Header, clientHdr, acct.bearerToken())
+	resp, err := d.httpClient().Do(req)
 	if err != nil {
-		return nil, &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+		return nil, transportErr(ctx, err)
 	}
 	return resp, nil
+}
+
+// gated403 reports whether an upstream error is the premium-gating
+// refusal (issue #48): b-ai premium-gated accounts answer 403 with
+// "access_denied" / "Deposit required to unlock premium models." instead
+// of a retryable error. Deliberately narrow: any other 403 (invalid key,
+// permission denied) keeps failing fast — only these markers rotate.
+func gated403(status int, body []byte) bool {
+	if status != 403 {
+		return false
+	}
+	b := strings.ToLower(string(body))
+	return strings.Contains(b, "access_denied") || strings.Contains(b, "deposit required")
+}
+
+// applySessionAffinity forwards the client's conversation/session ids to
+// the upstream request (issue #36). Client-sent values ride verbatim for
+// EVERY provider — nothing is invented. When the client sent none and the
+// provider opted in via SessionHeader, a stable per-key opaque id is
+// derived instead, so repeat calls with the same credential land on one
+// warm upstream cache (the same trade opencodeSession makes for OpenCode
+// Zen). Kind-specific headers run BEFORE this, so a kind that claims an
+// allow-listed name (commandcode's per-request x-session-id) wins.
+func (d *Def) applySessionAffinity(up, client http.Header, apiKey string) {
+	sent := false
+	for _, name := range sessionAffinityHeaders {
+		if v := clientHeader(client, name); v != "" {
+			up.Set(name, v)
+			sent = true
+		}
+	}
+	if sent || d.SessionHeader == "" {
+		return
+	}
+	up.Set(d.SessionHeader, perKeySession("cache-affinity", apiKey))
 }
 
 func coolDuration(retryAfter string) time.Duration {

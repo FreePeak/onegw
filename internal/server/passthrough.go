@@ -155,7 +155,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 			return
 		}
 		aerr := s.passthroughCall(r.Context(), w, def, acct, sf, t.Model,
-			mp.replay(), mp.length(r.ContentLength), contentType)
+			mp.replay(), mp.length(r.ContentLength), contentType, r.Header)
 		if aerr != nil {
 			def.Unpin(id) // failed one-shot attempt must not keep its pin
 			if w.Header().Get("Content-Type") == "" {
@@ -173,7 +173,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		// Rewrite the routed model into the JSON body (surgical: every other
 		// byte is preserved) so the client's "provider/model" never leaks.
 		out, _ := rewriteModel(body, m)
-		return nil, s.passthroughCall(ctx, w, def, acct, sf, m, bytes.NewReader(out), int64(len(out)), contentType)
+		return nil, s.passthroughCall(ctx, w, def, acct, sf, m, bytes.NewReader(out), int64(len(out)), contentType, r.Header)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtOpenAI, execErr)
@@ -183,11 +183,12 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 // passthroughCall performs one upstream attempt for a passthrough surface and
 // relays the response. Returns nil on success (response already written); on
 // upstream failure before any byte was written it returns the error so the
-// router can fall back.
+// router can fall back. clientHdr rides to DoPassthrough so session-affinity
+// ids reach embeddings/stt/tts upstreams too.
 func (s *Server) passthroughCall(ctx context.Context, w http.ResponseWriter, def *provider.Def,
-	acct *provider.Account, sf surface, m string, src io.Reader, srcLen int64, contentType string) *types.APIError {
+	acct *provider.Account, sf surface, m string, src io.Reader, srcLen int64, contentType string, clientHdr http.Header) *types.APIError {
 
-	resp, apiErr := def.DoPassthrough(ctx, acct, sf.op, m, contentType, src, srcLen)
+	resp, apiErr := def.DoPassthrough(ctx, acct, sf.op, m, contentType, clientHdr, src, srcLen)
 	if apiErr != nil {
 		return apiErr
 	}

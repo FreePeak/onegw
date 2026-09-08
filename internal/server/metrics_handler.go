@@ -90,6 +90,30 @@ func truncErr(s string) string {
 	return s[:cut] + "…"
 }
 
+// upstreamErr records one failed upstream attempt. The error object drives
+// the row: status from herr.Status, kind from herr.Type — so the console
+// log distinguishes upstream_unreachable / upstream_timeout / the
+// upstream's own error type instead of lumping every failure as
+// upstream_error — and the message rides as the err field. The Prometheus
+// label stays the coarse "upstream_error" bucket (label contract).
+func (m *gatewayMetrics) upstreamErr(provider, model string, herr *types.APIError) {
+	status := 502
+	kind := "upstream_error"
+	msg := ""
+	if herr != nil {
+		if herr.Status != 0 {
+			status = herr.Status
+		}
+		if herr.Type != "" {
+			kind = herr.Type
+		}
+		msg = herr.Message
+	}
+	m.requests.Inc(provider, model, strconv.Itoa(status))
+	m.errors.Inc(provider, "upstream_error")
+	m.logReq(provider, model, status, kind, types.Usage{}, 0, msg)
+}
+
 // boundedModel clamps a routed model string to config-defined routes
 // ("provider/model" tables, combos, aliases, advertised models). Clients
 // can name arbitrary models via direct "provider/model" strings or the
@@ -102,24 +126,14 @@ func (s *Server) boundedModel(model string) string {
 	return "unresolved"
 }
 
-// upstreamErr records one failed upstream attempt (HTTP error from the
-// provider, or a failure translating its stream). The upstream message
-// rides into the request log so incidents are diagnosable from the
-// dashboard alone.
-func (m *gatewayMetrics) upstreamErr(provider, model string, status int, errMsg string) {
-	m.requests.Inc(provider, model, strconv.Itoa(status))
-	m.errors.Inc(provider, "upstream_error")
-	m.logReq(provider, model, status, "upstream_error", types.Usage{}, 0, errMsg)
-}
-
 // noRoute records a request the router could not resolve (unknown provider /
 // model, missing model field). The model label is the fixed "unresolved"
 // placeholder: the client string never resolved to a route, and series are
 // never evicted, so raw client strings must not become label values.
-func (m *gatewayMetrics) noRoute(status int) {
+func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 	m.requests.Inc("", "unresolved", strconv.Itoa(status))
 	m.errors.Inc("", "no_route")
-	m.logReq("", "", status, "no_route", types.Usage{}, 0, "")
+	m.logReq("", "", status, "no_route", types.Usage{}, 0, errMsg)
 }
 
 // saturated records a request rejected because the buffered-memory budget
@@ -139,9 +153,9 @@ func (m *gatewayMetrics) tooLarge() {
 // invalidBody records an attempt aborted before the upstream call because
 // the request body could not be prepared (translation/model rewrite failed).
 // It is a client-side 400, not one of the three error kinds.
-func (m *gatewayMetrics) invalidBody(provider, model string) {
+func (m *gatewayMetrics) invalidBody(provider, model string, errMsg string) {
 	m.requests.Inc(provider, model, "400")
-	m.logReq(provider, model, 400, "", types.Usage{}, 0, "")
+	m.logReq(provider, model, 400, "", types.Usage{}, 0, errMsg)
 }
 
 // handleMetrics serves GET /metrics in the Prometheus text exposition

@@ -53,7 +53,7 @@ type streamScan struct {
 // Streaming is single-shot: the body can be read once, so there is no retry
 // and no account rotation on this path. Saver, always-thinking adaptation
 // and normalizeRoles need the full body, so those requests stay buffered.
-func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt translat.Format, ak *config.AuthKey, clientSession string) (handled bool) {
+func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt translat.Format, ak *config.AuthKey) (handled bool) {
 	st := s.cur()
 
 	// Declared-size gate mirrors the buffered path's 413 semantics. Chunked
@@ -156,9 +156,33 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 				def.Name, int64(cool.Seconds())+1)})
 		return true
 	}
-	cres, apiErr := def.Do(r.Context(), acct, t.Model, clientSession, src, sc.stream)
+	cres, apiErr := def.Do(r.Context(), acct, t.Model, r.Header, src, sc.stream)
 	if apiErr != nil {
+		s.m.upstreamErr(def.Name, t.Model, apiErr)
 		def.Unpin(id) // failed fast-path attempt must not keep its pin
+		if apiErr.Fallbackable {
+			// Pre-body gated 403 (issue #48): Do benched the account, but
+			// this single-shot path cannot rotate — the transport already
+			// consumed the streamed body, so a replay would be truncated.
+			// Answer the same cooling-pool 429 the empty-pool branch
+			// above produces (the buffered path's fall-through analog):
+			// the client's retry lands on the next account or falls
+			// through the combo, and the raw 403 never surfaces while
+			// the pool can still serve. Retry-After comes from a fresh
+			// pool probe: ~1s when another account is live, the soonest
+			// ladder expiry when the whole pool is benched.
+			_, ready := def.NextAccount(id)
+			cool := time.Until(ready)
+			if cool < 0 {
+				cool = 0
+			}
+			writeErr(w, clientFmt, &types.APIError{Status: 429, Type: "provider_rate_limited",
+				Code:       "rate_limit_exceeded",
+				RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+				Message: fmt.Sprintf("provider %s: account gated upstream; retry after %ds",
+					def.Name, int64(cool.Seconds())+1)})
+			return true
+		}
 		if alwaysThinking400(apiErr) {
 			// Single-shot path: no replay/retry is possible, but the
 			// learned flag makes every future request for this model

@@ -223,3 +223,66 @@ func TestExecuteFallsThroughOnCoolingPool(t *testing.T) {
 		t.Fatal("Retry-After missing on cooling-pool 429")
 	}
 }
+
+// A gated 403 (issue #48) benches its account without spending the retry
+// budget: rotation runs until a healthy key serves or the pool empties —
+// a fully-gated pool answers the pool-empty 429, never the raw 403, and a
+// mixed pool always reaches its healthy key.
+func TestExecuteGated403RotatesWholePool(t *testing.T) {
+	p := provider.NewPool()
+	def := &provider.Def{
+		Name: "p1", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{
+			{Name: "g1", APIKey: "k1"}, {Name: "g2", APIKey: "k2"}, {Name: "h", APIKey: "k3"},
+		},
+	}
+	p.Set(def)
+	p.Set(&provider.Def{
+		Name: "p2", Kind: provider.KindAnthropic,
+		Accounts: []provider.Account{{Name: "c", APIKey: "k9"}},
+	})
+	r := New(p)
+	r.SetCombos([]*Combo{{
+		Name:    "stack",
+		Targets: []Target{{Provider: "p1", Model: "m1"}, {Provider: "p2", Model: "m2"}},
+	}})
+	res, _ := r.Resolve("stack")
+
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		// Mirror Do's gated-403 handling: bench the account, then report
+		// the Fallbackable 403 (Execute must not see a benched-less 403).
+		// k1/k2 are the gated keys; k3/k9 serve.
+		if acct.APIKey == "k1" || acct.APIKey == "k2" {
+			def.Gated(acct)
+			return nil, &types.APIError{Status: 403, Type: "upstream_error", Fallbackable: true,
+				Message: "Access restricted. Deposit required to unlock premium models."}
+		}
+		return "ok", nil
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("combo must succeed on the healthy key, got %v", got)
+	}
+	if calls != 3 { // g1, g2 benched, h serves — never reaches p2
+		t.Fatalf("calls=%d, want 3 (two gated rotations + healthy serve)", calls)
+	}
+
+	// All-gated pool on a single-target route: pool-empty 429, not the 403.
+	def2 := &provider.Def{
+		Name: "p3", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "g1", APIKey: "k1"}, {Name: "g2", APIKey: "k2"}},
+	}
+	p.Set(def2)
+	r.SetCombos(nil)
+	r.SetModels([]string{"p3/m"})
+	res3, _ := r.Resolve("p3/m")
+	calls = 0
+	if err := r.Execute(context.Background(), res3, caller, func(a any) {}); err == nil ||
+		err.Status != 429 || err.Type != "provider_rate_limited" || err.RetryAfter == "" {
+		t.Fatalf("fully-gated pool: got %v, want 429 provider_rate_limited with Retry-After", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d, want 2 (both accounts benched, then pool-empty)", calls)
+	}
+}

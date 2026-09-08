@@ -362,7 +362,7 @@ func TestDoAdaptiveCooldownAndSuccessReset(t *testing.T) {
 	p.Set(def)
 
 	a1 := &def.Accounts[0]
-	_, apiErr := def.Do(context.Background(), a1, "m", "", bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
+	_, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
 	if apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("first call: got %v, want 429", apiErr)
 	}
@@ -372,10 +372,10 @@ func TestDoAdaptiveCooldownAndSuccessReset(t *testing.T) {
 	}
 	// Second 429 on a1 (bench extended to 20s), then recovery.
 	atomic.StoreInt32(hits, 1)
-	_, apiErr = def.Do(context.Background(), a1, "m", "", bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
+	_, apiErr = def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
 	_ = apiErr
 	atomic.StoreInt32(hits, 2)
-	if _, apiErr := def.Do(context.Background(), a1, "m", "", bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr != nil {
+	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr != nil {
 		t.Fatalf("post-recovery call failed: %v", apiErr)
 	}
 	// Success must reset the ladder: bench the pool, clear via ok, and
@@ -395,7 +395,7 @@ func TestDoRetryAfterBench(t *testing.T) {
 		Accounts: []Account{{Name: "a1", APIKey: "k1"}}}
 	p.Set(def)
 	a1 := &def.Accounts[0]
-	if _, apiErr := def.Do(context.Background(), a1, "m", "", bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr == nil || apiErr.Status != 429 {
+	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("got %v, want 429", apiErr)
 	}
 	slot := findSlot(def.pool, "a1")
