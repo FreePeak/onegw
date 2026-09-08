@@ -87,6 +87,11 @@ status. Status as of 2026-09-08.
 - [ ] #11 Runtime config surface (dashboard/API writes to config)
 - [ ] #12 Custom wire formats: commandcode (NDJSON), grok-cli (OpenAI
       Responses), cursor (protobuf)
+- [x] Auto-update: `onegw update` command, background release checks,
+      auto-apply opt-in, `/admin/update` endpoints, zero-drop self-handoff
+      with rollback; container mode checks + prints host commands; CI
+      version stamping for release binaries and Docker images — done
+      2026-09-08
 - [x] #13 Web-search provider (SearXNG integration) — done 2026-09-08
       (9bd3594): `kind = "searxng"` virtual provider answering `search/query`
       with a SearXNG JSON search as a synthetic OpenAI completion; fail-open

@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -21,9 +22,25 @@ import (
 
 	"onegw/internal/config"
 	"onegw/internal/server"
+	"onegw/internal/update"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version":
+			os.Exit(runVersion(os.Args[2:]))
+		case "update":
+			os.Exit(runUpdate(os.Args[2:]))
+		case "-h", "--help", "help":
+			fmt.Fprintf(os.Stderr, "usage: onegw [-config onegw.toml] | onegw version | onegw update [--check] [--force] [--yes]\n")
+			os.Exit(0)
+		}
+	}
+	runGateway()
+}
+
+func runGateway() {
 	cfgPath := flag.String("config", "", "path to onegw.toml (default ./onegw.toml, then $ONEGW_CONFIG)")
 	flag.Parse()
 
@@ -56,7 +73,7 @@ func main() {
 	}
 	defer srv.Close()
 	srv.SetConfigPath(path) // powers /admin/config* (masked view, reload, keys/aliases)
-	srv.StampOwner() // writes <data_dir>/owner.json and fills /admin/health's owner block (#42); re-stamped by every successful reload
+	srv.StampOwner()        // writes <data_dir>/owner.json and fills /admin/health's owner block (#42); re-stamped by every successful reload
 
 	// SO_REUSEPORT lets a replacement binary bind the same port while this
 	// process is still serving, enabling zero-drop rolling restarts (start
@@ -77,8 +94,34 @@ func main() {
 		fatal("listen %s: %v", cfg.Server.Listen, err)
 	}
 
+	// The update service re-reads [update] settings on every wake; the
+	// closure keeps a pointer to the CURRENT config (replaced on SIGHUP)
+	// so auto-apply always hands off with the live listen address and
+	// admin password, never a stale snapshot.
+	var curCfg atomic.Pointer[config.Config]
+	curCfg.Store(cfg)
+	upd := update.NewService(func() update.Settings {
+		c := curCfg.Load()
+		return update.Settings{
+			Interval: int64(c.UpdateEvery() / time.Second),
+			Auto:     c.Update.Auto,
+			Repo:     c.Update.Repo,
+			Listen:   c.Server.Listen,
+			Password: c.Server.AdminPassword,
+		}
+	})
+	upd.Start()
+	defer upd.Stop()
+
+	// srv.Handler() wraps its mux (recovery), so /admin/update mounts on
+	// an outer mux that delegates everything else inward; the
+	// method-specific pattern outranks the "/" catch-all.
+	outer := http.NewServeMux()
+	outer.Handle("/admin/update", updateHandler(upd, curCfg.Load))
+	outer.Handle("/", srv.Handler())
+
 	httpSrv := &http.Server{
-		Handler:           srv.Handler(),
+		Handler:           outer,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No global WriteTimeout: streams run for minutes.
 		IdleTimeout: 120 * time.Second,
@@ -112,6 +155,7 @@ func main() {
 			srv.Reload(fresh)
 			log.Printf("onegw config reloaded: %d providers, %d combos, %d auth keys",
 				len(fresh.Providers), len(fresh.Combos), len(fresh.Auth.KeyList))
+			curCfg.Store(fresh) // update service + admin routes read the new settings
 		}
 	}()
 

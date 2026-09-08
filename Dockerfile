@@ -5,16 +5,18 @@
 # and takes all credentials through env (ONEGW_KEYS, ONEGW_PROVIDER_*_KEY,
 # ONEGW_ADMIN_PASSWORD) — no secrets baked into the image.
 
-# --- Build stage -------------------------------------------------------------
 # golang:1.25-alpine has no .git → buildvcs skips stamping, same as the release
-# workflow's binary; module version resolves to (devel) in both.
+# workflow's binary; VERSION is injected by the release workflow so the
+# binary (and `onegw update`) reports its real release. Local builds: dev.
+ARG VERSION=dev
 FROM golang:1.25-alpine AS build
+ARG VERSION
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/onegw ./cmd/onegw
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X onegw/internal/update.version=${VERSION}" -o /out/onegw ./cmd/onegw
 
 # --- Runtime stage -----------------------------------------------------------
 FROM alpine:3.20

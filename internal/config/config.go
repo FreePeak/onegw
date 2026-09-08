@@ -50,6 +50,18 @@ type SaverCfg struct {
 	External ExternalCfg `toml:"external"`
 }
 
+// UpdateCfg configures release checking and self-update. CheckInterval
+// is a Go duration ("24h"); "0"/"off" disables background checks (the
+// `onegw update` command still works). Auto applies a newer release by
+// zero-drop handoff restart; inside a container auto is ignored (the
+// filesystem belongs to the image) and only the check runs. Repo points
+// at the GitHub releases source.
+type UpdateCfg struct {
+	CheckInterval string `toml:"check_interval"`
+	Auto          bool   `toml:"auto"`
+	Repo          string `toml:"repo"`
+}
+
 // InjectCfg is one terse-output injection rule: when the request model
 // matches (path.Match globs; empty = all), the mode's directive is
 // prepended to the system prompt. Mode: caveman | terse | custom (text).
@@ -154,6 +166,7 @@ type Config struct {
 	// never shadow a real provider/model or combo name.
 	Aliases map[string]string `toml:"aliases"`
 	OAuth   OAuthCfg          `toml:"oauth"` // device-flow accounts; see oauth.go (#2)
+	Update  UpdateCfg         `toml:"update"`
 }
 
 // Defaults fills zero values with production-safe defaults.
@@ -182,6 +195,12 @@ func (c *Config) Defaults() {
 	}
 	if c.Usage.ExportPassword == "" {
 		c.Usage.ExportPassword = os.Getenv("ONEGW_EXPORT_PASSWORD")
+	}
+	if c.Update.Repo == "" {
+		c.Update.Repo = "FreePeak/onegw"
+	}
+	if c.Update.CheckInterval == "" {
+		c.Update.CheckInterval = "24h"
 	}
 	if c.Usage.RetentionDays == 0 {
 		c.Usage.RetentionDays = 90
@@ -237,6 +256,19 @@ func (c *Config) FlushEvery() time.Duration {
 	d, err := time.ParseDuration(c.Usage.FlushInterval)
 	if err != nil || d <= 0 {
 		return 5 * time.Second
+	}
+	return d
+}
+
+// UpdateEvery parses the release-check interval; 0 means disabled.
+func (c *Config) UpdateEvery() time.Duration {
+	s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval))
+	if s == "0" || s == "off" || s == "false" || s == "disabled" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 24 * time.Hour
 	}
 	return d
 }

@@ -144,3 +144,17 @@ targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/dee
 # service  = "xai"        # oauth profile: xai | kilocode (default: provider)
 # # Endpoint overrides for self-hosted IdPs / staging:
 # # device_url / token_url / client_id / scope
+
+# [update] keeps the binary current against GitHub releases.
+#
+# check_interval: how often the gateway checks for a newer release (Go
+#   duration). "0" or "off" disables background checks — the `onegw update`
+#   command always checks on demand.
+# auto: apply a newer release automatically via zero-drop handoff restart.
+#   Off by default. Ignored inside containers (update the image instead).
+# repo: GitHub owner/name to poll for releases.
+#
+# [update]
+# check_interval = "24h"
+# auto = false
+# repo = "FreePeak/onegw"

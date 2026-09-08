@@ -1,6 +1,6 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (dashboard shipped (#41/#45/#19): full 9-page admin
+*Last updated: 2026-09-08 (auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
 console live — Go html/template + vendored htmx + uPlot (zero external
 assets), cookie-session login, bounded SSE live events, #19 request-log ring,
 grouped read-only /admin/api/v1, 7 agent-CLI preset cards, daily rollup
@@ -661,6 +661,17 @@ the issue):
   gateway: OpenAI surface buffered, Anthropic surface cross-format, SSE
   streaming (usage included), and fail-open fall-through with the instance
   stopped (search → 503 → kilo free model answered).
+- self-update is built in (`onegw update` / `onegw version` commands,
+  2026-09-08): background release checks (`[update] check_interval`,
+  default 24h; `auto` opt-in apply), `/admin/update` status/check/apply
+  endpoints, and a zero-drop self-handoff — download (sha256-verified) →
+  smoke-run → atomic swap with `.old` backup → SO_REUSEPORT overlap → the
+  new process must answer `/admin/update` with its own pid → drain old
+  pid; every failure rolls back with the old gateway still serving.
+  Container deployments check + log and print host-side
+  `docker pull`/recreate commands instead of self-applying (the image
+  owns the filesystem). Release binaries and Docker images are
+  version-stamped by CI so `onegw version` reports the tag.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
