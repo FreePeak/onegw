@@ -1,7 +1,10 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (grok via OpenAI Responses API: `FmtResponses`
-wire (request encode, non-stream decode, stateful SSE decoder with
+*Last updated: 2026-09-08 (filed #41 — dashboard/admin-API revamp umbrella: 9router IA researched from source
+(sidebar: Endpoint & Key / Providers / Combos / Usage / Quota / Token Saver / CLI Tools / Console Log),
+LiteLLM Admin UI feature set, and frontend skills identified (anthropics/skills frontend-design +
+web-artifacts-builder — single-bundled-HTML path preserves the no-external-assets constraint); scope pinned
+read-mostly per the runtime-dashboard-config non-goal; earlier: grok via OpenAI Responses API: `FmtResponses`
 item-id tool correlation + terminal-event guard — a Responses stream that
 closes without `response.completed` is an error, not a clean finish);
 `kind = "opencode"` routes per model — gpt-*/grok-*/muse-spark-* to
@@ -383,6 +386,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #34 | Per-provider cache profiles: breakpoint anchoring, anchor-last ordering | research 2026-09-08 |
 | #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
 | #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
+| #41 | Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API (read-mostly; umbrella over #19/#11; boundary: config stays file-based) | user request |
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
