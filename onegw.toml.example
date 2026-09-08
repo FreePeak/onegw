@@ -69,6 +69,14 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # byte-for-byte; only the model selector is rewritten. A provider without
 # the marker answers 404 passthrough_not_supported on those surfaces.
 # passthrough = ["embeddings", "stt", "tts"]
+#
+# Session affinity: when the client sends none of the forwarded identity
+# headers (x-grok-conv-id, x-grok-session-id, x-session-id, session_id —
+# always relayed verbatim), opts this provider into deriving a stable
+# per-key opaque id ("ses_" + hex) and sending it in the named header.
+# Keeps upstream prompt caches warm (issue #36; e.g. xAI x-grok-conv-id).
+# Default "" never invents a header; client-sent values always win.
+# session_header = "x-grok-conv-id"
 
 [[providers]]
 name = "anthropic"
@@ -129,6 +137,17 @@ targets = ["search/query", "b-ai/mimo-v2.5"]
 [[combo]]
 name = "coding-stack"
 targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/deepseek/deepseek-v3.2"]
+
+# Model tiering (issue #44 step 1, config-only): define a cheap combo and a
+# strong combo, then point the agent CLI's role slots at them (smol/tiny ->
+# tiny, default/plan -> planning; see README "Model tiering"). The client
+# knows the task type; the gateway just routes.
+# [[combo]]
+# name = "tiny"                   # free/flash-tier upstreams for background work
+# targets = ["orcarouter/z-ai/glm-5.3-flash-free", "orcarouter/deepseek/deepseek-v4-flash-free", "gemini/gemini-3-flash"]
+# [[combo]]
+# name = "planning"               # frontier models for plan/default/advisor roles
+# targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/deepseek/deepseek-v3.2"]
 
 # --- OAuth device-flow accounts (issue #2) ----------------------------------
 # Subscription providers (xAI/Grok, Kilo Code) log in with a device flow:
