@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -152,6 +153,16 @@ type Def struct {
 	// StickyTTL enables account affinity for the identities passed to
 	// NextAccount (0 = plain round-robin). Set from ProviderCfg.Sticky.
 	StickyTTL time.Duration
+
+	// HeaderTimeout bounds the pre-first-byte phase (dial, TLS, full body
+	// upload, upstream prefill) of every upstream call. 0 = 60s default.
+	// Massive-prefill providers (thinking models, ~100K-token sessions)
+	// need more; set from [server] response_header_timeout.
+	HeaderTimeout time.Duration
+
+	// Memoized per-Def HTTP client (see httpClient).
+	clientOnce sync.Once
+	http       *http.Client
 
 	pool     *accountPool
 	inflight chan struct{}
@@ -631,21 +642,84 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 // Upstream calls
 // ---------------------------------------------------------------------------
 
-var client = &http.Client{
-	Transport: &http.Transport{
-		DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
-		MaxIdleConns:        256,
-		MaxIdleConnsPerHost: 64,
-		IdleConnTimeout:     90 * time.Second,
-		ForceAttemptHTTP2:   true,
-		// Bound the pre-body phase: a stalled upstream must not hold its
-		// goroutine (and any byte-budget reservation) indefinitely. Body
-		// streaming after headers stays unbounded — streams are long-lived.
-		ResponseHeaderTimeout: 60 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-	},
-	Timeout: 0, // streams are long-lived; per-request ctx governs
+// newHTTPClient builds the shared transport with a per-provider bound on
+// the pre-first-byte phase (dial + TLS + full request-body upload +
+// upstream prefill). 60s was sized for interactive chat: massive-session
+// prefills on thinking models routinely exceed it, aborting with a 502
+// before the upstream says a word (2026-09-08 502 storm: ~115K-token
+// requests dying in waves while small probes succeeded). Streams after
+// headers stay unbounded — streams are long-lived.
+func newHTTPClient(headerTimeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
+			MaxIdleConns:        256,
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+			// Body streaming after headers stays unbounded — streams are
+			// long-lived.
+			ResponseHeaderTimeout: headerTimeout,
+			TLSHandshakeTimeout:   10 * time.Second,
+		},
+		Timeout: 0, // streams are long-lived; per-request ctx governs
+	}
 }
+
+// httpClient resolves the client for one call: a per-Def override when the
+// config tuned response_header_timeout (memoized once per Def — Defs are
+// rebuilt on SIGHUP reload, so state stays in sync with config), else the
+// package default.
+func (d *Def) httpClient() *http.Client {
+	d.clientOnce.Do(func() {
+		if d.HeaderTimeout > 0 && d.HeaderTimeout != 60*time.Second {
+			d.http = newHTTPClient(d.HeaderTimeout)
+		}
+	})
+	if d.http != nil {
+		return d.http
+	}
+	return client
+}
+
+// transportErr classifies a failed upstream round-trip so the console log
+// can tell a gateway-side timeout from a dead endpoint from a client that
+// hung up — pre-2026-09-08 all three logged as bare 502 upstream_error.
+// Go reports ResponseHeaderTimeout/dial timeouts as net.Error with
+// Timeout() set; a canceled or client-deadline context means the CLIENT
+// hung up, not the upstream.
+func transportErr(ctx context.Context, err error) *types.APIError {
+	// The request context is the authoritative client-hangup signal, and it
+	// MUST be checked before the error chain: a ResponseHeaderTimeout's
+	// error also satisfies errors.Is(err, context.DeadlineExceeded) on the
+	// current Go (verified h1 + h2), so chain-matching alone cannot tell a
+	// client deadline from a gateway-side pre-first-byte timeout.
+	if ctx != nil && ctx.Err() != nil {
+		return &types.APIError{Status: 499, Type: "client_closed", Message: err.Error()}
+	}
+	if anyChainTimeout(err) {
+		return &types.APIError{Status: 504, Type: "upstream_timeout", Message: err.Error()}
+	}
+	return &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+}
+
+// anyChainTimeout reports whether ANY error in the unwrap chain reports a
+// transport timeout. errors.As alone is not enough: it stops at the first
+// net.Error in the chain, and (*url.Error).Timeout() only type-asserts its
+// direct child — an extra wrap layer between them (fmt.Errorf, middleware)
+// hides a real timeout deeper in the chain.
+func anyChainTimeout(err error) bool {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if ne, ok := e.(net.Error); ok && ne.Timeout() {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultClient keeps the previous package-level behavior for callers
+// without per-Def overrides (passthrough diagnostics, searxng).
+var client = newHTTPClient(60 * time.Second)
 
 // CallResult bundles the upstream HTTP response for the router to stream.
 type CallResult struct {
@@ -785,9 +859,9 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
-	resp, err := client.Do(req)
+	resp, err := d.httpClient().Do(req)
 	if err != nil {
-		return nil, &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+		return nil, transportErr(ctx, err)
 	}
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
@@ -848,9 +922,9 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
-	resp, err := client.Do(req)
+	resp, err := d.httpClient().Do(req)
 	if err != nil {
-		return nil, &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+		return nil, transportErr(ctx, err)
 	}
 	return resp, nil
 }
@@ -912,7 +986,7 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	applyAuth(req.Header, d.Kind, acct.bearerToken())
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 502, err
+		return nil, transportErr(ctx, err).Status, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
