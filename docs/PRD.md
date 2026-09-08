@@ -651,7 +651,7 @@ the issue):
   `docker/searxng/settings.yml` + profile-gated `searxng` compose service
   (loopback 127.0.0.1:8888, JSON format, limiter off) run the instance; live
   onegw.toml carries `search` + fail-open combo `search-or-llm`
-  (["search/query", "kilocode/kilo-auto/free"]). Live-verified through the
+  (["search/query", "b-ai/mimo-v2.5"]). Live-verified through the
   gateway: OpenAI surface buffered, Anthropic surface cross-format, SSE
   streaming (usage included), and fail-open fall-through with the instance
   stopped (search → 503 → kilo free model answered).
