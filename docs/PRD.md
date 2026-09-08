@@ -1,6 +1,8 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (docs: issue #44 research published cleanly to the
+*Last updated: 2026-09-08 (docs: open-work table synced with GitHub — #2-#12 struck done,
+close dates from the issue tracker, #17 verified landed via 7e935f2; earlier: issue #44
+research published cleanly to the
 issue — the body had been stored double-JSON-encoded and rendered on GitHub
 as a raw JSON blob; reviewed and re-verified against sources (LiteLLM current
 docs, 9router PR #2045 still unmerged, OmniRoute taskAwareRouting.ts
@@ -525,21 +527,21 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #  | Task                                                        | Source             |
 | -- | ----------------------------------------------------------- | ------------------ |
 | ~~#1~~ | ~~SIGHUP hot reload of config~~ — **done 2026-09-07**; config swaps as one atomic snapshot, bad file rejected, old usage tracker flushed | v2 tracker |
-| #2 | OAuth device flows for subscription providers               | 9router gap        |
-| #3 | Per-key rate limits and model restrictions                  | v2 tracker         |
-| #4 | Prometheus metrics endpoint                                 | v2 tracker         |
-| #5 | Output-side token savers (prompt injection / compression)   | 9router gap        |
-| #6 | Model aliases in config                                     | 9router gap        |
-| #7 | Quota reset-window tracking and spending limits             | 9router gap        |
-| #8 | Streaming request bodies (client→upstream)                  | v2 tracker         |
-| #9 | Audio and embeddings surfaces (STT/TTS/embeddings)          | 9router gap        |
-| #10 | Multi-node usage rollup export                            | v2 candidate       |
+| ~~#2~~ | ~~OAuth device flows for subscription providers~~ — **done 2026-09-08** | 9router gap |
+| ~~#3~~ | ~~Per-key rate limits and model restrictions~~ — **done 2026-09-07** | v2 tracker |
+| ~~#4~~ | ~~Prometheus metrics endpoint~~ — **done 2026-09-07** | v2 tracker |
+| ~~#5~~ | ~~Output-side token savers (prompt injection / compression)~~ — **done 2026-09-07** | 9router gap |
+| ~~#6~~ | ~~Model aliases in config~~ — **done 2026-09-07** | 9router gap |
+| ~~#7~~ | ~~Quota reset-window tracking and spending limits~~ — **done 2026-09-07** | v2 tracker |
+| ~~#8~~ | ~~Streaming request bodies (client→upstream)~~ — **done 2026-09-07** | v2 tracker |
+| ~~#9~~ | ~~Audio and embeddings surfaces (STT/TTS/embeddings)~~ — **done 2026-09-07** | 9router gap |
+| ~~#10~~ | ~~Multi-node usage rollup export~~ — **done 2026-09-07** | v2 candidate |
 | ~~#16~~ | ~~Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family)~~ — **done 2026-09-07**; per-provider `always_thinking` globs + same-format effort coercion/drop, knob documented in README + onegw.toml.example, regression tests (commit 40977cf) | production hit |
-| #11 | Runtime config surface (dashboard/API writes)              | LiteLLM gap        |
-| #12 | Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf) | 9router gap |
+| ~~#11~~ | ~~Runtime config surface~~ — **done 2026-09-07** via #21 (masked view, no-shell reload, keys/aliases PATCH); dashboard stays read-mostly by design | LiteLLM gap |
+| ~~#12~~ | ~~Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf)~~ — **done 2026-09-08** (cursor as skeleton, #29) | 9router gap |
 | ~~#13~~ | ~~Web-search provider (SearXNG integration)~~ — **done 2026-09-08**; `kind = "searxng"` virtual search provider (9bd3594): `search/<x>` model requests answered with a SearXNG JSON search as a synthetic OpenAI completion, retryable-503 fail-open in combos, `max_results`/`timeout`/`extra_headers` knobs, unit + E2E tests on both client surfaces | 9router gap |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
-| #17 | Self-healing thinking-dialect fallback: coerce + retry on thinking-class 400s, learn per (provider, model), combo-advance as last resort | #16 follow-up |
+| ~~#17~~ | ~~Self-healing thinking-dialect fallback~~ — **done 2026-09-08**; shipped as always-thinking self-healing (7e935f2): coerceEffort xhigh→max/unknown→high, signature-400 detection, learned per (provider, model) on the Def (fresh on reload), Fallbackable retry-once then combo fall-through, stream fast path learns; live-verified with the xhigh replay; issue closed with landed note | #16 follow-up |
 | ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (a59c2a3) | user request |
 | #31 | Fix cache-inclusive/exclusive usage semantics across translation | research 2026-09-08 |
 | #32 | Preserve `cache_control` / `prompt_cache_key` / `session_id` across translation | research 2026-09-08 |
@@ -567,7 +569,12 @@ Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
 features were later deliberately reverted, 9049dd4); ~~#42~~ ownership model
 landed 2026-09-08 (`owner.json` + `/admin/health` owner block). Tier 1 complete.
 
-Tier 3 — product: #17 (self-healing thinking fallback) → #41 dashboard revamp (#19 console log as first slice) → remaining #14 workstreams (install script, `onegw connect`, Docker/ghcr) → #2/#3/#12.
+Tier 3 — remaining 2026-09-08: #48 (b-ai gated-account 403 → account cooldown +
+fall-through, the e820571 pattern) → prompt-cache cluster: #36 (tiny, live grok gain)
+→ #31 (usage-semantics foundation) → #33 → #32 → #34/#35 (per-provider cache
+profiles; candidates to merge into one feature) → #44 step 2 (task-aware combo
+reordering; step 1 config-only roles still absent from the live toml) → #14
+remainder (`onegw connect <tool>`, launchd/systemd unit).
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
