@@ -23,8 +23,12 @@ const (
 	FmtAnthropic Format = "anthropic"
 	FmtGemini    Format = "gemini"
 	// FmtResponses is the OpenAI Responses API (/v1/responses) — the wire
-	// grok and muse-spark models speak on the OpenCode Zen gateways.
+	// format grok and muse-spark models speak on the OpenCode Zen gateways.
 	FmtResponses Format = "openai-responses"
+	// Custom wire formats (issue #12).
+	FmtCommandCode     Format = "commandcode"           // CommandCode /alpha/generate NDJSON
+	FmtOpenAIResponses Format = "openai-responses-grok" // Grok CLI Responses API (distinct from opencode FmtResponses)
+	FmtCursor          Format = "cursor"                // Cursor protobuf (skeleton)
 )
 
 // ---------------------------------------------------------------------------
