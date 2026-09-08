@@ -1,0 +1,13 @@
+{{define "hdr"}}<span>{{len .}} combos · fallback chains</span>{{end}}
+{{define "content"}}
+<div class="tblwrap">
+<table>
+<thead><tr><th>combo</th><th>fallback chain (tried in order)</th></tr></thead>
+<tbody>
+{{range .}}<tr><td><b class="mono">{{.Name}}</b></td><td class="mono">{{.Targets}}</td></tr>
+{{else}}<tr><td colspan="2" class="empty">no combos configured — model strings resolve directly</td></tr>{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
+{{define "scripts"}}{{end}}

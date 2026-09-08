@@ -1,0 +1,28 @@
+{{define "hdr"}}<span>pid {{.PID}} · {{.Build}}</span>{{end}}
+{{define "content"}}
+<div class="card" style="margin-bottom:14px"><h3>Process</h3>
+<div class="kv">
+  <span class="k">build</span><span class="mono">{{.Build}}</span>
+  <span class="k">started</span><span class="mono">{{.StartedAt}} · up {{.Uptime}}</span>
+  <span class="k">listen</span><span class="mono">{{.Listen}}</span>
+  <span class="k">config file</span><span class="mono">{{.ConfigPath}}{{if .ConfigMtime}} (mtime {{.ConfigMtime}}){{end}}</span>
+  <span class="k">data dir</span><span class="mono">{{.DataDir}}</span>
+  <span class="k">admin auth</span><span>{{if .AdminSet}}password set{{else}}<span class="pill warn">open — no admin_password</span>{{end}}</span>
+</div></div>
+
+<div class="card" style="margin-bottom:14px"><h3>Maintenance</h3>
+<div style="display:flex;gap:10px;align-items:center">
+  <button class="btn" hx-put="/admin/config/reload" hx-target="#reload-res" hx-swap="innerHTML">Reload config (SIGHUP)</button>
+  <form method="post" action="/admin/logout" style="margin:0"><button type="submit" class="btn danger">Sign out</button></form>
+</div>
+<pre id="reload-res" class="mono" style="margin:10px 0 0;color:var(--mut)"></pre></div>
+
+<div class="card"><h3>Admin API</h3>
+<div class="kv">
+  <span class="k">JSON (flat, stable)</span><span class="mono">/admin/health · /admin/usage · /admin/quota · /admin/config</span>
+  <span class="k">JSON (grouped)</span><span class="mono">/admin/api/v1/{usage/daily,logs,providers,combos,quota,saver}</span>
+  <span class="k">live events</span><span class="mono">GET /admin/events?topics=health,usage,quota,logs (SSE)</span>
+  <span class="k">auth</span><span class="mono">X-Admin-Password header · or session cookie via POST /admin/login</span>
+</div></div>
+{{end}}
+{{define "scripts"}}{{end}}
