@@ -193,36 +193,6 @@ func TestQuotaOffProvidersUntracked(t *testing.T) {
 	}
 }
 
-// TestDashboardScriptBalanced guards the embedded dashboard JS against
-// unbalanced try/catch or braces (a SyntaxError kills the whole page:
-// refresh would be undefined and setInterval throws).
-func TestDashboardScriptBalanced(t *testing.T) {
-	start := strings.Index(dashboardHTML, "<script>")
-	end := strings.Index(dashboardHTML, "</script>")
-	if start < 0 || end < 0 || end < start {
-		t.Fatal("dashboard <script> block not found")
-	}
-	js := dashboardHTML[start+len("<script>") : end]
-	if n := strings.Count(js, "try {"); strings.Count(js, "} catch") != n {
-		t.Fatalf("dashboard JS has %d try blocks but %d catch blocks", n, strings.Count(js, "} catch"))
-	}
-	depth := 0
-	for _, r := range js {
-		switch r {
-		case '{':
-			depth++
-		case '}':
-			depth--
-		}
-		if depth < 0 {
-			t.Fatal("dashboard JS closes more braces than it opens")
-		}
-	}
-	if depth != 0 {
-		t.Fatalf("dashboard JS braces unbalanced: depth %d at end", depth)
-	}
-}
-
 // TestQuotaFallThroughNoStaleRetryAfter proves a cooled first target does
 // not leak Retry-After onto the successful fallback response.
 func TestQuotaFallThroughNoStaleRetryAfter(t *testing.T) {

@@ -1,0 +1,26 @@
+{{define "hdr"}}<span>{{compact .SavedTotal}} tokens saved all-time</span>{{end}}
+{{define "content"}}
+<div class="grid c3">
+  <div class="card"><h3>Input saver</h3>
+    <div class="big">{{if .Enabled}}<span style="color:var(--ok)">on</span>{{else}}<span style="color:var(--mut)">off</span>{{end}}</div>
+    <div class="sub">RTK-style tool_result compression on the request body</div></div>
+  <div class="card"><h3>Saved tokens · all time</h3><div class="big" style="color:var(--ok)">{{compact .SavedTotal}}</div>
+    <div class="sub">wire-delta accounting — the true reduction after re-encode</div></div>
+  <div class="card"><h3>External compress</h3>
+    {{if .External.Enabled}}<div class="big mono" style="font-size:14px">{{.External.URL}}</div>
+    <div class="sub">min {{compact .External.MinBytes}} bytes · {{.External.FailOpen}}</div>
+    {{else}}<div class="big" style="color:var(--mut)">off</div>{{end}}</div>
+</div>
+
+<h3 style="margin:18px 0 8px">Output-side injection rules</h3>
+<div class="tblwrap">
+<table>
+<thead><tr><th>mode</th><th>models</th><th>directive</th></tr></thead>
+<tbody>
+{{range .Inject}}<tr><td><span class="pill">{{.Mode}}</span></td><td class="mono">{{.Models}}</td><td class="mono" style="white-space:pre-wrap">{{.Text}}</td></tr>
+{{else}}<tr><td colspan="3" class="empty">no injection rules — <code class="chip">[saver.inject]</code> adds terse-output directives</td></tr>{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
+{{define "scripts"}}{{end}}
