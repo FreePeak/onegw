@@ -1,6 +1,9 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (#13 docs sync: SearXNG web-search provider — shipped
+*Last updated: 2026-09-08 (#42 ownership model landed: `internal/owner`
+stamps `<data_dir>/owner.json` at startup and re-stamps on every successful
+reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
+revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
 2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
 `search/query` with a SearXNG JSON search as a synthetic OpenAI completion,
 fail-open in combos; PRD gap list + issue table marked done, feature bullet
@@ -508,7 +511,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
 | #41 | Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API (read-mostly; umbrella over #19/#11; boundary: config stays file-based) | user request |
 | ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1aa6a95) | #37/#39 follow-up |
-| #42 | Ownership model for the live gateway + shared config (deploy discipline; owner.json in /admin/health) | incident RCA |
+| ~~#42~~ | ~~Ownership model for the live gateway + shared config~~ — **done 2026-09-08**; `internal/owner` stamps `<data_dir>/owner.json` at startup (pid, listen, start time, config path + mtime, argv, build stamp: module version/git revision/dirty flag) and re-stamps on every successful reload (SIGHUP or `PUT /admin/config/reload`); `/admin/health` reports the same record live; file is atomic and survives exit as crash evidence; reload-not-restart + deploy discipline in README "Operations"; optional younger-build start guard skipped — single-instance is operator discipline after the #38 revert | incident RCA |
 | ~~#37~~ | ~~Zero-drop deploy runbook: start→verify→stop ordering~~ — **done 2026-09-08**; `scripts/deploy.sh` (build → overlap-bind → health-verify NEW → SIGTERM OLD → confirm single NEW listener; setsid isolates NEW from the deploying session's process group after the freeze RCA), 5 behavioral scenarios tested on scratch ports (d14441d, 9cabbf6) | incident RCA |
 | ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in cfce76f, reverted at user decision in 9049dd4 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
@@ -520,11 +523,8 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 
 Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
 ~~#43~~ → ~~#39~~ → ~~#38~~ → ~~#37~~ → ~~#40~~ all landed and closed (the #39/#38
-features were later deliberately reverted, 9049dd4); remaining
-reliability item: #42 (ownership model, rides along with future deploys).
-
-Tier 2 — token saving (the PRD's biggest lever; small fixes before the umbrella):
-#31 (usage semantics) → #33 (vendor cache-usage shapes) → #32 (cache knob preservation) → #36 (xai sticky header) → #35 (saver gate cache-bust) → #34 (cache profiles umbrella).
+features were later deliberately reverted, 9049dd4); ~~#42~~ ownership model
+landed 2026-09-08 (`owner.json` + `/admin/health` owner block). Tier 1 complete.
 
 Tier 3 — product: #17 (self-healing thinking fallback) → #41 dashboard revamp (#19 console log as first slice) → remaining #14 workstreams (install script, `onegw connect`, Docker/ghcr) → #2/#3/#12.
 
@@ -652,7 +652,10 @@ the issue):
   landing order.
 
 ---
-*Last updated: 2026-09-08 (#13 docs sync: SearXNG web-search provider — shipped
+*Last updated: 2026-09-08 (#42 ownership model landed: `internal/owner`
+stamps `<data_dir>/owner.json` at startup and re-stamps on every successful
+reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
+revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
 2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
 `search/query` with a SearXNG JSON search as a synthetic OpenAI completion,
 fail-open in combos; PRD gap list + issue table marked done, feature bullet
