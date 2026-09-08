@@ -27,6 +27,18 @@ func TestValidateSearxngRequiresBaseURL(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsCustomWireKinds(t *testing.T) {
+	// issue #12 kinds: valid in config; openai-responses serves the
+	// OpenAI Responses API (orcarouter, Grok CLI proxy), commandcode is
+	// NDJSON, cursor fails fast at request time.
+	for _, kind := range []string{"openai-responses", "commandcode", "cursor"} {
+		c := &Config{Providers: []ProviderCfg{{Name: "x", Kind: kind, APIKey: "k"}}}
+		if err := c.Validate(); err != nil {
+			t.Fatalf("kind %q must validate: %v", kind, err)
+		}
+	}
+}
+
 func TestValidateRejectsUnknownKind(t *testing.T) {
 	c := &Config{Providers: []ProviderCfg{{Name: "x", Kind: "nope", APIKey: "k"}}}
 	if err := c.Validate(); err == nil {
