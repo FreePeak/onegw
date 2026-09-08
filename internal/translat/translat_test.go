@@ -2,6 +2,7 @@ package translat
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -271,6 +272,104 @@ func TestTranslateStreamOpenAIToAnthropic(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// Anthropic SSE requires every delta to belong to an open content block, and
+// thinking/text must occupy separate blocks at distinct indices. OpenAI
+// upstreams emit bare text/thinking deltas with no part-start events, so the
+// encoder must synthesize content_block_start/content_block_stop around them.
+// Claude Code (a strict Anthropic SSE consumer) returns an empty reply
+// without this.
+func TestTranslateStreamOpenAIToAnthropicSynthesizesBlockStarts(t *testing.T) {
+	upstream := strings.Join([]string{
+		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-x","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-x","choices":[{"index":0,"delta":{"reasoning_content":"why"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-x","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-x","choices":[],"usage":{"prompt_tokens":9,"completion_tokens":5,"total_tokens":14}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	var sb strings.Builder
+	usage, err := TranslateStream(strings.NewReader(upstream), &sb, nil, FmtOpenAI, FmtAnthropic, "gpt-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.InputTokens != 9 || usage.OutputTokens != 5 {
+		t.Fatalf("usage wrong: %+v", usage)
+	}
+
+	type ev struct {
+		name   string
+		fields map[string]any
+	}
+	var events []ev
+	for _, chunk := range strings.Split(sb.String(), "\n\n") {
+		var name string
+		var data string
+		for _, ln := range strings.Split(chunk, "\n") {
+			switch {
+			case strings.HasPrefix(ln, "event: "):
+				name = strings.TrimPrefix(ln, "event: ")
+			case strings.HasPrefix(ln, "data: "):
+				data = strings.TrimPrefix(ln, "data: ")
+			}
+		}
+		if name == "" {
+			continue
+		}
+		var fields map[string]any
+		if data != "" {
+			if err := json.Unmarshal([]byte(data), &fields); err != nil {
+				t.Fatalf("bad SSE data %q: %v", data, err)
+			}
+		}
+		events = append(events, ev{name, fields})
+	}
+
+	check := func(i int, name string, want map[string]any) {
+		if i >= len(events) {
+			t.Fatalf("stream ended before expected %s; got %d events:\n%s", name, len(events), sb.String())
+		}
+		e := events[i]
+		if e.name != name {
+			t.Fatalf("event %d: want %s, got %s\nstream:\n%s", i, name, e.name, sb.String())
+		}
+		for k, v := range want {
+			got, ok := e.fields[k]
+			if !ok {
+				t.Fatalf("event %d (%s): missing key %q\nstream:\n%s", i, name, k, sb.String())
+			}
+			if fmt.Sprint(got) != fmt.Sprint(v) {
+				t.Fatalf("event %d (%s): key %q = %v, want %v\nstream:\n%s", i, name, k, got, v, sb.String())
+			}
+		}
+	}
+
+	check(0, "message_start", map[string]any{"type": "message_start"})
+	check(1, "content_block_start", map[string]any{"index": float64(0)})
+	if got := events[1].fields["content_block"].(map[string]any)["type"]; got != "thinking" {
+		t.Fatalf("block 0: want thinking, got %v\nstream:\n%s", got, sb.String())
+	}
+	check(2, "content_block_delta", map[string]any{"index": float64(0), "delta": map[string]any{"type": "thinking_delta", "thinking": "why"}})
+	check(3, "content_block_stop", map[string]any{"index": float64(0)})
+	check(4, "content_block_start", map[string]any{"index": float64(1)})
+	if got := events[4].fields["content_block"].(map[string]any)["type"]; got != "text" {
+		t.Fatalf("block 1: want text, got %v\nstream:\n%s", got, sb.String())
+	}
+	check(5, "content_block_delta", map[string]any{"index": float64(1), "delta": map[string]any{"type": "text_delta", "text": "ok"}})
+	check(6, "content_block_stop", map[string]any{"index": float64(1)})
+	check(7, "message_delta", map[string]any{"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]any{"input_tokens": float64(9), "output_tokens": float64(5)}})
+	check(8, "message_stop", map[string]any{"type": "message_stop"})
+	if len(events) != 9 {
+		t.Fatalf("want 9 events, got %d:\n%s", len(events), sb.String())
 	}
 }
 
