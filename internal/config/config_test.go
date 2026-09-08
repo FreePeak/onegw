@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateRejectsNonHTTPExportURL(t *testing.T) {
@@ -45,6 +46,29 @@ func TestValidateCheckInterval(t *testing.T) {
 		}
 		if err == nil || !strings.Contains(err.Error(), c.errSub) {
 			t.Errorf("check_interval %q: want error containing %q, got %v", c.val, c.errSub, err)
+		}
+	}
+}
+
+// The 2026-09-08 502 storm included gateway-side pre-first-byte aborts: the
+// fixed 60s header timeout is too tight for massive thinking-model prefills.
+// The knob must parse, and fall back to 60s when empty or invalid.
+func TestResponseHeaderTimeoutDur(t *testing.T) {
+	cases := []struct {
+		val  string
+		want time.Duration
+	}{
+		{"", 60 * time.Second},
+		{"120s", 120 * time.Second},
+		{"2m", 2 * time.Minute},
+		{"bogus", 60 * time.Second},
+		{"-5s", 60 * time.Second},
+	}
+	for _, c := range cases {
+		cfg := &Config{}
+		cfg.Server.ResponseHeaderTimeout = c.val
+		if got := cfg.ResponseHeaderTimeoutDur(); got != c.want {
+			t.Errorf("response_header_timeout %q: got %v, want %v", c.val, got, c.want)
 		}
 	}
 }

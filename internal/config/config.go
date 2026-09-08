@@ -28,6 +28,12 @@ type Server struct {
 	// without buffering them fully (fixed byte reservation per request).
 	// Default false: bodies are read fully under the 4x budget.
 	StreamRequests bool `toml:"stream_requests"`
+	// ResponseHeaderTimeout bounds the upstream pre-first-byte phase
+	// (dial + TLS + full request-body upload + upstream prefill) as a Go
+	// duration, e.g. "120s". Massive thinking-model prefills can
+	// legitimately exceed the historical fixed 60s; empty/invalid keeps
+	// 60s. Applied when providers are built (startup and SIGHUP reload).
+	ResponseHeaderTimeout string `toml:"response_header_timeout"`
 }
 
 // Auth holds gateway API keys clients authenticate with. Keys may be
@@ -125,6 +131,13 @@ type ProviderCfg struct {
 	// so repeat calls reuse the same key (prompt-cache friendly). A failed
 	// attempt unpins; a cooling account rotates. "" = plain round-robin.
 	Sticky string `toml:"sticky"`
+	// SessionHeader opts the provider into derived session affinity
+	// (issue #36): when the client sent none of the forwarded session
+	// headers (x-grok-conv-id, x-grok-session-id, x-session-id,
+	// session_id), the gateway sends a stable per-key opaque id in this
+	// header — only for upstreams documented to use it (xai:
+	// "x-grok-conv-id"). "" (default) never invents a header.
+	SessionHeader string `toml:"session_header"`
 	// Quota tracking (issue #7): Window "" = off | "5h" | "daily" |
 	// "weekly". QuotaResetAnchor optionally pins the reset grid to an ISO
 	// instant (its time-of-day phases daily resets; its instant phases 5h/
@@ -260,6 +273,16 @@ func (c *Config) FlushEvery() time.Duration {
 	return d
 }
 
+// ResponseHeaderTimeoutDur parses [server] response_header_timeout; empty
+// or invalid keeps the historical 60s pre-first-byte budget.
+func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
+	d, err := time.ParseDuration(c.Server.ResponseHeaderTimeout)
+	if err != nil || d <= 0 {
+		return 60 * time.Second
+	}
+	return d
+}
+
 // UpdateEvery parses the release-check interval; 0 means disabled.
 func (c *Config) UpdateEvery() time.Duration {
 	s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval))
@@ -338,6 +361,9 @@ func (c *Config) Validate() error {
 			if d, err := time.ParseDuration(p.Sticky); err != nil || d <= 0 {
 				return fmt.Errorf("provider %s invalid sticky %q (want a positive duration like \"5m\")", p.Name, p.Sticky)
 			}
+		}
+		if h := strings.TrimSpace(p.SessionHeader); p.SessionHeader != "" && !validHeaderName(h) {
+			return fmt.Errorf("provider %s invalid session_header %q", p.Name, p.SessionHeader)
 		}
 		for _, pc := range p.Passthrough {
 			switch pc {
@@ -448,6 +474,25 @@ func (c *Config) Validate() error {
 // maxAliasHops caps alias chain resolution so a cyclic TOML table cannot
 // loop the resolver; one hop is the normal case, chains are a convenience.
 const maxAliasHops = 8
+
+// validHeaderName reports whether s is a usable HTTP header name for
+// session_header: RFC 7230 token characters, no spaces. Invalid values
+// must fail config load, not silently drop the derived ids upstream.
+func validHeaderName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-' || c == '_' || c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // Load reads and validates the TOML file at path.
 func Load(path string) (*Config, error) {
