@@ -28,12 +28,22 @@ type Combo struct {
 
 // Router resolves model strings and executes calls with fallback.
 type Router struct {
-	mu     sync.RWMutex
-	pool   *provider.Pool
-	models map[string]directRoute // "provider/model" passthrough
-	combos map[string]*Combo
-	// alias chains: chased iteratively inside Resolve under RLock.
+	mu      sync.RWMutex
+	pool    *provider.Pool
+	models  map[string]directRoute
+	combos  map[string]*Combo
 	aliases map[string]string
+
+	// PoolEmptyError, when set, builds the error Execute reports when a
+	// target's whole account pool is cooling and the upstream attempt is
+	// skipped. The default (DefaultPoolEmptyError) answers 429
+	// provider_rate_limited with the pool's soonest recovery as
+	// Retry-After; the server overrides it to surface richer semantics
+	// (quota-window exhaustion answers 503 provider_quota_exhausted with
+	// the window end — that gate lives inside the Caller, which Execute
+	// skips when it never picks an account).
+	PoolEmptyError func(def *provider.Def, ready time.Time) *types.APIError
+
 	// maxAttempts per target before falling to next (network/5xx).
 	MaxAttempts int
 }
@@ -55,6 +65,29 @@ func New(pool *provider.Pool) *Router {
 		aliases:     map[string]string{},
 		MaxAttempts: 2,
 	}
+}
+
+// DefaultPoolEmptyError is the plain rate-limit answer for a cooling pool:
+// 429 with the soonest recovery as Retry-After.
+func DefaultPoolEmptyError(def *provider.Def, ready time.Time) *types.APIError {
+	cool := time.Until(ready)
+	if cool < 0 {
+		cool = 0
+	}
+	return &types.APIError{Status: 429, Type: "provider_rate_limited",
+		Code:       "rate_limit_exceeded",
+		RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+		Message: fmt.Sprintf("provider %s: all accounts rate-limited upstream; retry after %ds",
+			def.Name, int64(cool.Seconds())+1)}
+}
+
+// poolEmptyError returns the configured builder, defaulting to the plain
+// 429 (nil-check on the instance so tests can build routers directly).
+func (r *Router) poolEmptyError(def *provider.Def, ready time.Time) *types.APIError {
+	if r.PoolEmptyError != nil {
+		return r.PoolEmptyError(def, ready)
+	}
+	return DefaultPoolEmptyError(def, ready)
 }
 
 // SetModels replaces the direct-route table (parsed from config).
@@ -245,18 +278,10 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// Whole account pool cooling from upstream 429s: an
 				// upstream call now is a doomed ~1s attempt that only
 				// digs the limit deeper. Fall through to the next combo
-				// target immediately; as the last target it becomes a
-				// 429 whose Retry-After tells the client when the pool
-				// reopens.
-				cool := time.Until(poolReady)
-				if cool < 0 {
-					cool = 0
-				}
-				lastErr = &types.APIError{Status: 429, Type: "provider_rate_limited",
-					Code:       "rate_limit_exceeded",
-					RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
-					Message: fmt.Sprintf("provider %s: all accounts rate-limited upstream; retry after %ds",
-						def.Name, int64(cool.Seconds())+1)}
+				// target immediately; as the last target it becomes the
+				// configured pool-empty error (default: 429 whose
+				// Retry-After tells the client when the pool reopens).
+				lastErr = r.poolEmptyError(def, poolReady)
 				break
 			}
 			out, err := call(ctx, def, acct, t.Model)
