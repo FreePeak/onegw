@@ -15,8 +15,8 @@
 </div>
 
 {{if .HasCharts}}
-<div class="card" style="margin-bottom:14px"><h3>Tokens · per day <span class="sub" style="text-transform:none">stacked: input → output → cache read</span></h3><div id="chart-tok"></div></div>
-<div class="card" style="margin-bottom:14px"><h3>Requests · per day</h3><div id="chart-req"></div></div>
+<div class="card" style="margin-bottom:14px"><h3>Tokens · {{.ChartUnit}} <span class="sub" style="text-transform:none">stacked: input → output → cache read</span></h3><div id="chart-tok"></div></div>
+<div class="card" style="margin-bottom:14px"><h3>Requests · {{.ChartUnit}}</h3><div id="chart-req"></div></div>
 {{end}}
 
 <div class="tblwrap">
@@ -40,13 +40,13 @@ const D = {{.ChartJSON}};
 function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'K';return String(n)}
 function draw(id, series, title){
   const el = document.getElementById(id);
-  if(!el || !D.days.length) return;
+  if(!el || !D.xs.length) return;
   new uPlot({
-    width: el.clientWidth, height: 230, title,
+    width: el.clientWidth || 600, height: 230, title,
     series: [{}, ...series.map(s => ({label: s.label, stroke: s.color, width: 1.6,
       fill: s.fill ? s.color+'2e' : undefined, points: {show: false}}))],
-    axes: [{}, {values: (u, v) => v.map(kmb)}]
-  }, [D.days, ...series.map(s => s.vals)], el);
+    axes: [{}, {values: (u2, v) => v.map(kmb)}]
+  }, [D.xs, ...series.map(s => s.vals)], el);
 }
 // stacked areas: cumulative input → +output → +cache_read
 const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
@@ -54,10 +54,10 @@ draw('chart-tok', [
   {label:'cache read', vals: cr, color:'#58a6ff', fill:true},
   {label:'output', vals: out, color:'#3fb950', fill:true},
   {label:'input', vals: inp, color:'#d29922', fill:true},
-], 'tokens/day (cumulative stack — read bottom label as the layer value)');
+], 'tokens · {{.ChartUnit}} (cumulative stack — read bottom label as the layer value)');
 draw('chart-req', [
   {label:'requests', vals: D.requests, color:'#bc8cff', fill:true},
-], 'requests/day');
+], 'requests · {{.ChartUnit}}');
 </script>
 {{end}}
 {{end}}
