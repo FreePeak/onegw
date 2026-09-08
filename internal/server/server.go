@@ -172,6 +172,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			SearchMaxResults: p.MaxResults,
 			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
 			StickyTTL:        stickyTTL,
+			SessionHeader:    p.SessionHeader,
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
@@ -429,7 +430,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	}
 	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
-		s.m.noRoute(rerr.Status)
+		s.m.noRoute(rerr.Status, rerr.Message)
 		writeErr(w, translat.FmtGemini, rerr)
 		return
 	}
@@ -437,7 +438,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		return
 	}
 	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
+		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtGemini, execErr)
@@ -461,7 +462,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	// full read. proxyStream falls back (false) to the buffered pipeline
 	// below with the body intact whenever it is not eligible.
 	if st := s.cur(); st.cfg.Server.StreamRequests && !st.cfg.Saver.Enabled {
-		if s.proxyStream(w, r, clientFmt, ak, r.Header.Get(provider.OpenCodeSessionHeader)) {
+		if s.proxyStream(w, r, clientFmt, ak) {
 			return
 		}
 	}
@@ -498,7 +499,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 
 	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
-		s.m.noRoute(rerr.Status)
+		s.m.noRoute(rerr.Status, rerr.Message)
 		writeErr(w, clientFmt, rerr)
 		return
 	}
@@ -506,7 +507,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		return
 	}
 	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
+		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
@@ -581,8 +582,11 @@ func requestIdentity(r *http.Request, ak *config.AuthKey) string {
 // client. Streaming replies are piped/translated event-by-event; a
 // non-streaming cross-format reply takes the documented buffered path
 // (parse whole response, translate, answer JSON). Usage is recorded.
+// r's session-affinity headers are forwarded upstream (issue #36); nil is
+// allowed for headerless callers (tests).
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
-	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64, clientSession string, ak *config.AuthKey) (any, *types.APIError) {
+	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64,
+	clientHdr http.Header, ak *config.AuthKey) (any, *types.APIError) {
 	// mdl is the metrics label only: raw client model strings must not
 	// create unbounded series (routing already used the original string).
 	mdl := s.boundedModel(model)
@@ -610,12 +614,12 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	}
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
-		s.m.invalidBody(def.Name, mdl)
+		s.m.invalidBody(def.Name, mdl, err.Error())
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
-	res, apiErr := def.Do(ctx, acct, model, clientSession, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
+	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
-		s.m.upstreamErr(def.Name, mdl, apiErr.Status, apiErr.Message)
+		s.m.upstreamErr(def.Name, mdl, apiErr)
 		if alwaysThinking400(apiErr) {
 			// Runtime self-healing for providers whose config lacks the
 			// always_thinking globs (a combo can mix models with different
@@ -652,11 +656,12 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		var err error
 		head, herr, err = translat.InspectCommandCodeHead(res.Resp.Body)
 		if err != nil {
-			s.m.upstreamErr(def.Name, model, 502, err.Error())
-			return errAPI(502, "upstream_unreachable", err.Error())
+			herr := errAPI(502, "upstream_unreachable", err.Error())
+			s.m.upstreamErr(def.Name, model, herr)
+			return herr
 		}
 		if herr != nil {
-			s.m.upstreamErr(def.Name, model, herr.Status, herr.Message)
+			s.m.upstreamErr(def.Name, model, herr)
 			return herr
 		}
 	}
@@ -674,17 +679,29 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 		resp, aerr := translat.AggregateStream(src, upstreamFmt, model)
 		if aerr != nil {
+			var herr *types.APIError
 			if apiErr, ok := aerr.(*types.APIError); ok {
-				s.m.upstreamErr(def.Name, model, apiErr.Status, apiErr.Message)
-				return apiErr
+				herr = apiErr
+			} else {
+				herr = errAPI(502, "stream_aggregate_failed", aerr.Error())
 			}
-			s.m.upstreamErr(def.Name, model, 502, aerr.Error())
-			return errAPI(502, "stream_aggregate_failed", aerr.Error())
+			// Mid-stream/aggregate failures bypass provider.Do's
+			// classification hooks: an in-stream 429/403 must still cool
+			// the account or the next attempt re-picks it and repeats.
+			if herr.OverQuota() && res.Acct != nil {
+				def.RateLimited(res.Acct, 0) // no Retry-After in-stream: adaptive ladder
+			}
+			if herr.RegionLocked() && res.Acct != nil {
+				def.Cool(res.Acct, 5*time.Minute)
+			}
+			s.m.upstreamErr(def.Name, model, herr)
+			return herr
 		}
 		rb, merr := translat.EncodeResponse(clientFmt, resp)
 		if merr != nil {
-			s.m.upstreamErr(def.Name, model, 501, merr.Error())
-			return errAPI(501, "response_encode_failed", merr.Error())
+			herr := errAPI(501, "response_encode_failed", merr.Error())
+			s.m.upstreamErr(def.Name, model, herr)
+			return herr
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -710,21 +727,24 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		defer st.budget.Release(reserve)
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
-			s.m.upstreamErr(def.Name, model, 502, rerr.Error())
-			return errAPI(502, "upstream_read_failed", rerr.Error())
+			herr := errAPI(502, "upstream_read_failed", rerr.Error())
+			s.m.upstreamErr(def.Name, model, herr)
+			return herr
 		}
 		if int64(len(raw)) > maxResp {
 			return errAPI(413, "upstream_response_too_large", "response exceeds max_body_bytes")
 		}
 		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
 		if derr != nil {
-			s.m.upstreamErr(def.Name, model, 501, derr.Error())
-			return errAPI(501, "response_translate_failed", derr.Error())
+			herr := errAPI(501, "response_translate_failed", derr.Error())
+			s.m.upstreamErr(def.Name, model, herr)
+			return herr
 		}
 		out, eerr := translat.EncodeResponse(clientFmt, cr)
 		if eerr != nil {
-			s.m.upstreamErr(def.Name, model, 501, eerr.Error())
-			return errAPI(501, "response_encode_failed", eerr.Error())
+			herr := errAPI(501, "response_encode_failed", eerr.Error())
+			s.m.upstreamErr(def.Name, model, herr)
+			return herr
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -765,8 +785,22 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		} else {
 			u, terr := translat.TranslateStream(src, w, flush, upstreamFmt, clientFmt, model)
 			if terr != nil {
-				s.m.upstreamErr(def.Name, model, 502, terr.Error())
-				return &types.APIError{Status: 502, Type: "stream_translate_failed", Message: terr.Error()}
+				var herr *types.APIError
+				if apiErr, ok := terr.(*types.APIError); ok {
+					herr = apiErr
+				} else {
+					herr = errAPI(502, "stream_translate_failed", terr.Error())
+				}
+				// Mid-stream failures bypass provider.Do's classification
+				// hooks: cool on in-stream 429/403 like the aggregate path.
+				if herr.OverQuota() && res.Acct != nil {
+					def.RateLimited(res.Acct, 0)
+				}
+				if herr.RegionLocked() && res.Acct != nil {
+					def.Cool(res.Acct, 5*time.Minute)
+				}
+				s.m.upstreamErr(def.Name, model, herr)
+				return herr
 			}
 			rec = u
 		}
