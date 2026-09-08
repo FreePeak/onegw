@@ -3,7 +3,7 @@
 *Last updated: 2026-09-08 (adaptive 429 cooldown ladder — b.ai's one-api
 style upstream 429s per-key with an empty body and no Retry-After; live
 metrics showed 65% of b-ai attempts failing (666×429 vs 352×200) because
-plain round-robin re-picked spent keys every request. Shipped ac58a27,
+plain round-robin re-picked spent keys every request. Shipped e820571,
 live-verified: per-account adaptive cooldown (10 s base, doubling per
 consecutive 429, 60 s cap, reset on success; upstream Retry-After wins
 verbatim), `NextAccount` returns (nil, soonest-ready) when the whole pool
@@ -16,7 +16,9 @@ attempt()'s quota gate, so a quota-cooled pool answered 429 instead of
 with the quota check: exhausted windows answer the same 503
 provider_quota_exhausted, genuine 429-limits keep the fast-fail. Caught
 in the post-commit audit (3 quota tests red in-tree and on master at
-ac58a27), fixed, full suite green; earlier: auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
+e820571), fixed, full suite green; live post-deploy: ~70% success
+sustained (130×200 / 56×429 vs 352×200 / 666×429 pre-fix), client-visible
+429s now carry Retry-After; earlier: auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
 console live — Go html/template + vendored htmx + uPlot (zero external
 assets), cookie-session login, bounded SSE live events, #19 request-log ring,
 grouped read-only /admin/api/v1, 7 agent-CLI preset cards, daily rollup
