@@ -192,6 +192,14 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		}
 	}
 	rt := router.New(pool)
+	// Quota semantics own the cooling-pool answer: when the pool is empty
+	// because the provider's quota window is exhausted, answer the same
+	// 503 the attempt() gate would have produced (the gate lives inside
+	// the Caller, which Execute skips when it never picks an account).
+	// Genuine 429-limits keep the default 429 + Retry-After fast-fail.
+	rt.PoolEmptyError = func(def *provider.Def, ready time.Time) *types.APIError {
+		return s.poolEmptyError(def, ready)
+	}
 	for _, p := range cfg.Providers {
 		rt.SetModels(p.Models)
 	}
@@ -532,6 +540,28 @@ func (s *Server) acquireForBody(r *http.Request) (func(), bool) {
 func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 	w.Header().Set("Retry-After", "2")
 	writeErr(w, f, errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly"))
+}
+
+// poolEmptyError answers a request whose target provider's whole account
+// pool is cooling. When the cooldown comes from quota-window exhaustion
+// (the pool was cooled by the attempt() gate), the answer must be the same
+// 503 provider_quota_exhausted the gate itself would return — combo
+// fall-through and Retry-After semantics depend on it. Any other cooling
+// (upstream 429s) falls back to the router's default 429 + Retry-After.
+func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIError {
+	if q := s.cur().quota; q != nil {
+		if st, ok := q.Status(def.Name, time.Now()); ok && st.Exhausted {
+			cool := time.Until(st.WindowEnd)
+			if cool < 0 {
+				cool = 0
+			}
+			return &types.APIError{Status: 503, Type: "provider_quota_exhausted", Code: "quota_exceeded",
+				RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+				Message: fmt.Sprintf("provider %s quota exhausted (%s window); resets %s",
+					def.Name, st.Window, st.WindowEnd.UTC().Format(time.RFC3339))}
+		}
+	}
+	return router.DefaultPoolEmptyError(def, ready)
 }
 
 // requestIdentity derives the sticky-account identity for a request: the
