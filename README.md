@@ -71,6 +71,37 @@ buffering, no conversation state.
 
 ## Quick start
 
+### One command (macOS / Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FreePeak/onegw/master/scripts/install.sh | sh
+```
+
+Installs the latest release binary, writes a starter config (loopback bind,
+generated admin password), and starts the gateway on 127.0.0.1:8080. It prints
+the gateway key and dashboard password — set `ONEGW_LISTEN` or `ONEGW_KEYS`
+to override. Config lives in `~/.onegw/onegw.toml`; add `[[providers]]` blocks
+there (see [Configuration](#configuration)).
+
+### One command (VPS / cloud, Docker)
+
+```bash
+docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
+  -e ONEGW_KEYS=change-me -v onegw-data:/data ghcr.io/freepeak/onegw:latest
+```
+
+Runs the non-root image (~40 MB, healthchecked) with usage data persisted in
+the `onegw-data` volume. Pass provider keys as env, e.g.
+`-e ONEGW_PROVIDER_OPENROUTER_KEY=sk-...`; or mount your own config with
+`-v $PWD/onegw.toml:/etc/onegw/onegw.toml:ro`. For a compose setup with
+resource limits, see [`docker-compose.yml`](docker-compose.yml):
+
+```bash
+docker compose up -d
+```
+
+### Build from source
+
 ```bash
 go build -o onegw ./cmd/onegw
 cp onegw.toml.example onegw.toml   # add provider keys
