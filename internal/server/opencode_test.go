@@ -277,7 +277,7 @@ func TestGrokGeminiClientViaResponses(t *testing.T) {
 	})
 	r := httptest.NewRequest(http.MethodPost, "/v1beta/models/opencode/grok-4.6:generateContent", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("x-api-key", "gw-key") // gateway accepts x-api-key/Bearer; gemini x-goog-api-key is not a gateway auth header
+	r.Header.Set("x-goog-api-key", "gw-key") // native Gemini client auth
 	w := do(t, s.Handler(), r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())

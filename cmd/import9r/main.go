@@ -49,14 +49,17 @@ type connData struct {
 	} `json:"providerSpecificData"`
 }
 
-// bearerTokenProviders maps 9router OAuth-connection providers whose upstream
-// accepts the stored access token as a plain bearer key to the onegw kind,
-// base_url, and models endpoint to use. Others (cursor, grok-cli — custom
-// wire formats) are skipped with a warning: onegw v1 speaks
-// OpenAI/Anthropic/Gemini only.
+// bearerTokenProviders maps 9router connections whose upstream accepts the
+// stored token/key as a plain bearer to the onegw kind, base_url, and models
+// endpoint to use. commandcode connections are apikey (not OAuth) but their
+// upstream also takes the raw key as a bearer, so they import through the
+// same table via the apikey path below. cursor/grok-cli remain skipped:
+// cursor's protobuf protocol is a onegw skeleton (issue #12) and grok-cli
+// needs an OAuth refresh flow (issue #2).
 var bearerTokenProviders = map[string]struct{ kind, baseURL, modelsURL string }{
-	"xai":      {"openai", "https://api.x.ai", "https://api.x.ai/v1/models"},
-	"kilocode": {"openai", "https://api.kilo.ai/api/openrouter", "https://api.kilo.ai/api/gateway/models"},
+	"xai":         {"openai", "https://api.x.ai", "https://api.x.ai/v1/models"},
+	"kilocode":    {"openai", "https://api.kilo.ai/api/openrouter", "https://api.kilo.ai/api/gateway/models"},
+	"commandcode": {"commandcode", "https://api.commandcode.ai/alpha/generate", ""},
 }
 
 type account struct {
@@ -82,6 +85,13 @@ var builtinBaseURL = map[string]string{
 	"glm": "https://open.bigmodel.cn/api/paas/v4",
 }
 
+// builtinKind maps 9router built-in providers whose upstream is not an
+// OpenAI-compatible chat-completions endpoint (empty modelsURL = discovery
+// unsupported for that kind).
+var builtinKind = map[string]struct{ kind, baseURL, modelsURL string }{
+	"commandcode": {"commandcode", "https://api.commandcode.ai/alpha/generate", ""},
+}
+
 func main() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -90,20 +100,38 @@ func main() {
 	dbPath := flag.String("db", home+"/.9router/db/data.sqlite", "path to 9router data.sqlite")
 	out := flag.String("out", "", "output TOML path (default stdout)")
 	flag.Parse()
+	os.Exit(runImport(*dbPath, *out, false))
+}
 
-	db, err := sql.Open("sqlite", *dbPath+"?_pragma=busy_timeout(3000)")
-	fatal(err)
+// runImport reads the 9router DB and writes the onegw TOML. Split from main
+// so tests can drive it; returns a process exit code. Verbose echoes the
+// generated config to stdout.
+func runImport(dbPath, out string, verbose bool) int {
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(3000)")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	defer db.Close()
 
 	groups := map[string]*group{}
 	rows, err := db.Query(`SELECT provider, name, priority, data FROM providerConnections
 		WHERE authType IN ('apikey', 'oauth') AND isActive = 1 ORDER BY provider, priority`)
-	fatal(err)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	for rows.Next() {
 		var r connRow
-		fatal(rows.Scan(&r.Provider, &r.Name, &r.Priority, &r.Data))
+		if err := rows.Scan(&r.Provider, &r.Name, &r.Priority, &r.Data); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
 		var d connData
-		fatal(json.Unmarshal([]byte(r.Data), &d))
+		if err := json.Unmarshal([]byte(r.Data), &d); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
 		psd := d.ProviderSpecificData
 		base := psd.BaseURL
 		node := psd.Node
@@ -124,25 +152,34 @@ func main() {
 			}
 			continue
 		}
+		kind, modelsURL := "openai", ""
+		if bk, ok := builtinKind[r.Provider]; ok {
+			kind, modelsURL = bk.kind, bk.modelsURL
+		}
 		if base == "" {
-			known, ok := builtinBaseURL[r.Provider]
-			if !ok {
+			if known, ok := builtinBaseURL[r.Provider]; ok {
+				base = known
+				node = r.Provider
+			} else if bk, ok := builtinKind[r.Provider]; ok {
+				base = bk.baseURL
+				node = r.Provider
+			} else {
 				fmt.Fprintf(os.Stderr, "skip %s (%s): no base_url known to onegw; configure manually\n", r.Provider, r.Name)
 				continue
 			}
-			base = known
-			node = r.Provider
 		}
 		key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(node, ".", "-"), " ", "-"))
 		g := groups[key]
 		if g == nil {
-			g = &group{name: key, kind: "openai", baseURL: base, nodeName: node}
+			g = &group{name: key, kind: kind, baseURL: base, modelsURL: modelsURL, nodeName: node}
 			groups[key] = g
 		}
 		g.accts = append(g.accts, account{name: orDefault(r.Name, "default"), key: d.APIKey, ok: d.TestStatus == "active"})
 	}
-	fatal(rows.Err())
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 
 	var names []string
 	for k := range groups {
@@ -195,19 +232,31 @@ func main() {
 		b.WriteString("\n")
 	}
 
-	if *out == "" {
+	if out == "" || verbose {
 		os.Stdout.WriteString(b.String())
-		return
 	}
-	fatal(os.WriteFile(*out, []byte(b.String()), 0o600))
-	fmt.Fprintln(os.Stderr, "wrote", *out)
+	if out == "" {
+		return 0
+	}
+	if err := os.WriteFile(out, []byte(b.String()), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Fprintln(os.Stderr, "wrote", out)
+	return 0
 }
 
 // discoverModels lists upstream models via GET /models using the first
 // account; returns nil on any failure (pass-through routing still works via
 // provider/model strings).
 func discoverModels(g *group) []string {
+	// modelsURL == "" on a non-openai kind means the upstream has no
+	// discoverable /models endpoint (e.g. commandcode): skip discovery;
+	// pass-through routing still works via provider/model strings.
 	if g.baseURL == "" || len(g.accts) == 0 {
+		return nil
+	}
+	if g.modelsURL == "" && g.kind != "openai" {
 		return nil
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
