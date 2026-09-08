@@ -50,23 +50,6 @@ func main() {
 
 	applyMemoryTuning()
 
-	// Issue #38: report — never block — other live gateways sharing this
-	// data_dir. A heartbeat file keeps the peer count fresh for /metrics;
-	// no lifetime flock, so SO_REUSEPORT overlap deploys are unaffected.
-	if peers := server.ScanPeers(cfg.Server.DataDir, os.Getpid(), time.Now()); len(peers) > 0 {
-		for _, p := range peers {
-			if p.Source == "heartbeat" {
-				log.Printf("onegw WARNING: data_dir %s is already served by pid %d (listen %s) — concurrent instances may corrupt usage state",
-					cfg.Server.DataDir, p.PID, p.Listen)
-			} else {
-				log.Printf("onegw WARNING: another onegw process is running on this host (pid %d) — if it shares data_dir %s, concurrent instances may corrupt usage state",
-					p.PID, cfg.Server.DataDir)
-			}
-		}
-	}
-	peerWatch := server.StartPeerWatch(cfg.Server.DataDir, cfg.Server.Listen)
-	defer peerWatch.Stop()
-
 	srv, err := server.New(cfg)
 	if err != nil {
 		fatal("init server: %v", err)
@@ -100,8 +83,8 @@ func main() {
 		IdleTimeout: 120 * time.Second,
 	}
 
-	log.Printf("onegw listening on %s (data: %s, budget: %d MiB, peers: %d)",
-		cfg.Server.Listen, cfg.Server.DataDir, cfg.Server.BufferCap>>20, server.PeerCount())
+	log.Printf("onegw listening on %s (data: %s, budget: %d MiB)",
+		cfg.Server.Listen, cfg.Server.DataDir, cfg.Server.BufferCap>>20)
 
 	// Signal loop: SIGTERM/SIGINT drain in-flight requests and exit;
 	// SIGHUP hot-reloads the config — providers, combos, auth keys, saver

@@ -24,7 +24,6 @@ type gatewayMetrics struct {
 	budgetHeld *metrics.Family // onegw_budget_inflight_bytes
 	budgetCap  *metrics.Family // onegw_budget_cap_bytes
 	uptime     *metrics.Family // onegw_uptime_seconds
-	peers      *metrics.Family // onegw_data_dir_peers
 }
 
 func newGatewayMetrics() *gatewayMetrics {
@@ -39,7 +38,6 @@ func newGatewayMetrics() *gatewayMetrics {
 		budgetHeld: reg.Gauge("onegw_budget_inflight_bytes", "Bytes currently reserved under the global buffered-memory budget."),
 		budgetCap:  reg.Gauge("onegw_budget_cap_bytes", "Capacity of the global buffered-memory budget in bytes."),
 		uptime:     reg.Gauge("onegw_uptime_seconds", "Seconds since the gateway process started."),
-		peers:      reg.Gauge("onegw_data_dir_peers", "Other live gateway processes seen for this data_dir (heartbeat-verified; the process-table scan additionally reports onegw processes predating heartbeats)."),
 	}
 }
 
@@ -133,7 +131,6 @@ func (m *gatewayMetrics) invalidBody(provider, model string) {
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	m := s.m
 	m.inflight.Set(s.inflight.Load())
-	m.peers.Set(int64(PeerCount()))
 	if st := s.cur(); st != nil && st.budget != nil {
 		held, _ := st.budget.Stats()
 		m.budgetHeld.Set(held)
