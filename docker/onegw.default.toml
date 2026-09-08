@@ -1,0 +1,23 @@
+# onegw default config baked into the container image.
+# Everything secret comes from env at runtime — no keys in the image:
+#   ONEGW_KEYS="key1,key2"                     gateway client keys
+#   ONEGW_PROVIDER_<NAME>_KEY[2..9]            upstream provider keys
+#   ONEGW_ADMIN_PASSWORD                       dashboard/admin API (default: admin)
+# Mount your own config over /etc/onegw/onegw.toml to override any of this.
+
+[server]
+listen = "0.0.0.0:8080"        # in-container bind; publish with -p to reach it
+data_dir = "/data"             # usage.db lives here (volume)
+admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides; Defaults() -> "admin"
+
+[saver]
+enabled = true
+
+# No providers configured: the gateway boots and serves the dashboard until
+# you add providers via a mounted config or env. Define providers like:
+# [[providers]]
+# name = "openrouter"
+# kind = "openai"
+# base_url = "https://openrouter.ai/api"
+# models = ["openai/gpt-5.5"]
+# See onegw.toml.example for the full reference.

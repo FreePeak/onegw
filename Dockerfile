@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+
+# Multi-stage: build a static onegw binary, ship it in a minimal runtime image.
+# Final image is non-root, listens on 0.0.0.0:8080, persists usage data in /data,
+# and takes all credentials through env (ONEGW_KEYS, ONEGW_PROVIDER_*_KEY,
+# ONEGW_ADMIN_PASSWORD) — no secrets baked into the image.
+
+# --- Build stage -------------------------------------------------------------
+# golang:1.25-alpine has no .git → buildvcs skips stamping, same as the release
+# workflow's binary; module version resolves to (devel) in both.
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/onegw ./cmd/onegw
+
+# --- Runtime stage -----------------------------------------------------------
+FROM alpine:3.20
+# ca-certificates: the gateway dials https upstreams; tzdata: SQLite/rollup
+# timestamps; curl: advertised healthcheck probe.
+RUN apk add --no-cache ca-certificates tzdata curl \
+    && addgroup -S onegw && adduser -S -G onegw -h /data -s /sbin/nologin onegw \
+    && mkdir -p /data && chown onegw:onegw /data
+COPY --from=build /out/onegw /usr/local/bin/onegw
+COPY docker/onegw.default.toml /etc/onegw/onegw.toml
+
+# Runtime config; /data holds usage.db (bind-mount or named volume it).
+ENV ONEGW_CONFIG=/etc/onegw/onegw.toml \
+    ONEGW_DATA_DIR=/data
+WORKDIR /data
+USER onegw
+EXPOSE 8080
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1
+# Probes the unauthenticated dashboard root — /admin/* is password-gated
+# (X-Admin-Password), so a header probe would break with a mounted config
+# that sets a different password.
+ENTRYPOINT ["/usr/local/bin/onegw"]
