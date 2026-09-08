@@ -499,6 +499,16 @@ the issue):
   fell out: URL version-segment join (`/v1`, `/api/paas/v4` bases), upstream
   model rewrite on same-format passthrough, `developer`→`system` role
   normalization (pi CLI payloads).
+- **Sticky account round-robin** (2026-09-08): per-provider `sticky = "5m"`
+  pins one upstream account to a request identity (client session header,
+  else auth-key label) for the window so repeat calls reuse the same key
+  (upstream prompt-cache friendly); identity rides the request context into
+  `Router.Execute`, the first pick rotates and pins, repeats reuse the pin,
+  and any failed attempt unpins (retries and combo fallthrough never
+  re-stick to a dead key) — cooling pins rotate and re-pin. Map is bounded
+  (4096, expire-swept). orcarouter runs 4 accounts (linh, harvey, clone2,
+  clone1) with `sticky = "5m"`; unit + end-to-end failover tests in
+  `internal/provider/sticky_test.go`, `internal/server/sticky_test.go`.
 - **pi CLI wired**: `onegw` provider in `~/.pi/agent/models.json` + ONEGW_KEY
   env; full agent loop (read/edit/bash) tested through onegw.
 - **Dashboard**: password-gated persisted rollups with a usage range filter
@@ -528,6 +538,5 @@ the issue):
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
 
----
+*Last updated: 2026-09-08 (sticky account round-robin: per-provider `sticky` TTL pins session/key identity to one account, failed attempts unpin; orcarouter now 4 accounts sticky 5m)*
 
-*Last updated: 2026-09-08 (one-command deploy: Dockerfile + ghcr publish + install.sh + compose, #14 workstreams 2+4; sys-memory RCA documented in memory strategy)*
