@@ -50,7 +50,7 @@ func TestCoerceEffort(t *testing.T) {
 	for in, want := range map[string]string{
 		"none": "low", "minimal": "low", "medium": "low",
 		"xhigh": "max", // client ladders above high map onto GLM's max
-		"low": "low", "high": "high", "max": "max",
+		"low":   "low", "high": "high", "max": "max",
 		"ultra": "high", // unrecognized values land on the accepted middle
 	} {
 		if got := coerceEffort(in); got != want {
@@ -73,9 +73,9 @@ func TestAlwaysThinking400Signature(t *testing.T) {
 		}
 	}
 	no := []types.APIError{
-		{Status: 400, Type: "invalid_request", Message: "missing messages"}, // plain bad request
+		{Status: 400, Type: "invalid_request", Message: "missing messages"},     // plain bad request
 		{Status: 400, Code: "400001", Message: "invalid parameter temperature"}, // code alone is not enough
-		{Status: 429, Message: "该模型始终思考"}, // wrong status class
+		{Status: 429, Message: "该模型始终思考"},                                       // wrong status class
 	}
 	for i := range no {
 		if alwaysThinking400(&no[i]) {
