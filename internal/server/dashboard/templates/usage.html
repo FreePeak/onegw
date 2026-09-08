@@ -37,7 +37,7 @@
 <script>{{asset_js "uPlot.iife.min.js"}}</script>
 <script>
 const D = {{.ChartJSON}};
-function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'K';return String(n)}
+function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';if(n>=1e6)return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';if(n>=1e3)return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';return String(n)}
 function fmtDay(u, ticks){ // x-axis: hours on the today view, dates otherwise
   const span = u.data[0][u.data[0].length-1] - u.data[0][0];
   return ticks.map(t => {
@@ -54,7 +54,7 @@ function axes(){
   const c = themeCols();
   return [
     { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid }, values: fmtDay },
-    { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid },
+    { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid }, size: 62,
       values: (u, splits) => splits.map((v, i) => (v === splits[i-1] ? '' : kmb(v))) },
   ];
 }
