@@ -346,6 +346,28 @@ Translation maps stop reasons, usage fields (including cache and thinking
 tokens), and tool calls across all three formats. Stream events are re-encoded
 per event — N+M decoders/encoders instead of N×M pairwise adapters.
 
+## Operations
+
+### Ownership: who is running what
+
+The gateway records itself at startup — pid, listen address, start time,
+config path + mtime, argv, and binary build stamp (module version, git
+revision, dirty flag) — in `<data_dir>/owner.json` and in
+`GET /admin/health`'s `owner` block. Operators (and agents) answer
+"which instance is canonical" from a live endpoint or a file, not
+process-table archaeology. The file is atomic (tmp + rename), re-stamped
+on every successful SIGHUP reload, and deliberately **not** removed on
+exit: a stale pid from a crashed predecessor is evidence. With a
+zero-drop deploy (start NEW → verify health → SIGTERM OLD), the surviving
+owner.json is always the serving instance.
+
+### Config changes: reload, don't restart
+
+`kill -HUP <pid>` (or `PUT /admin/config/reload`) hot-swaps providers,
+combos, auth keys, saver, admin password. A bad config is rejected and
+the previous one keeps serving. Restart is only needed for binary
+changes or `data_dir` moves.
+
 ## Benchmarks
 
 `bench/memory.sh` measures RSS against a mock provider
