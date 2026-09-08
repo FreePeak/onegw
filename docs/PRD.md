@@ -1,6 +1,11 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (adaptive 429 cooldown ladder — b.ai's one-api
+*Last updated: 2026-09-08 (docs: issue #44 research published cleanly to the
+issue — the body had been stored double-JSON-encoded and rendered on GitHub
+as a raw JSON blob; reviewed and re-verified against sources (LiteLLM current
+docs, 9router PR #2045 still unmerged, OmniRoute taskAwareRouting.ts
+constants), dangling "implementation candidate below" reference fixed; earlier:
+adaptive 429 cooldown ladder — b.ai's one-api
 style upstream 429s per-key with an empty body and no Retry-After; live
 metrics showed 65% of b-ai attempts failing (666×429 vs 352×200) because
 plain round-robin re-picked spent keys every request. Shipped e820571,
@@ -261,7 +266,11 @@ memory is O(event), not O(conversation).
 Research 2026-09-08: LiteLLM docs, 9router README + source (0.5.70),
 OmniRoute source (`open-sse/services/taskAwareRouting.ts`), omp harness docs
 (`omp://models.md`). Question: cheap model for tiny tasks, strong model for
-planning/brainstorming.
+planning/brainstorming. Deliverable lives in
+[issue #44](https://github.com/FreePeak/onegw/issues/44); re-verified on the
+2026-09-08 reformat — LiteLLM claims match current docs, 9router PR #2045
+still unmerged, OmniRoute numbers match `taskAwareRouting.ts` line-for-line
+(the issue body had been stored double-JSON-encoded and rendered as a blob).
 
 | | **LiteLLM** | **9router** | **OmniRoute** | **omp (client)** |
 | --- | --- | --- | --- | --- |
@@ -545,7 +554,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in cfce76f, reverted at user decision in 9049dd4 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
-| #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan | user request |
+| #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan — published to issue 2026-09-08 (body repaired, sources re-verified) | user request |
 | ~~#45~~ | ~~Dashboard build approach for #41~~ — **done 2026-09-08**; decision held: Go html/template + vendored htmx 2.0.6 + uPlot 1.6.32, stdlib SSE with bounded fan-out, cookie sessions; health strip fixed to server-rendered HTML in fe2d532; RSS bench pre/post ≈ 88/89 MiB peak | #41 deep dive |
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
