@@ -1,6 +1,14 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
+*Last updated: 2026-09-09 (three-lane parallel implementation wave landed, merged with the
+concurrent 502-storm RCA work (3e3e87b) — all attribution split by hunk in the merge commit
+7e28aa0; full suite green on the merged tree before push: #48 b-ai premium-gating 403
+(403 + access_denied/"Deposit required" signature) benches the ACCOUNT on the adaptive 429
+ladder and falls through instead of surfacing (242f303); #36 session-affinity headers
+forwarded verbatim + opt-in per-provider derived id (242f303); #31 cache-inclusive usage
+convention with direction-pinned tests + #33 DeepSeek/Responses/Kimi cache shapes (f03dfcc);
+#44 step 1 config-only tiny/planning combo examples (e797986); earlier:
+RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
 budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
 `[server] response_header_timeout` knob (live: 120s) + transport-error classification
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
@@ -547,12 +555,12 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
 | ~~#17~~ | ~~Self-healing thinking-dialect fallback~~ — **done 2026-09-08**; shipped as always-thinking self-healing (7e935f2): coerceEffort xhigh→max/unknown→high, signature-400 detection, learned per (provider, model) on the Def (fresh on reload), Fallbackable retry-once then combo fall-through, stream fast path learns; live-verified with the xhigh replay; issue closed with landed note | #16 follow-up |
 | ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (a59c2a3) | user request |
-| #31 | Fix cache-inclusive/exclusive usage semantics across translation | research 2026-09-08 |
+| ~~#31~~ | ~~Fix cache-inclusive/exclusive usage semantics across translation~~ — **done 2026-09-09** (f03dfcc): `Usage.InputTokens` = cache-INCLUSIVE total documented on the type; Anthropic decode folds read+write in, every Anthropic-format emitter denormalizes via `anthropicInputTokens` (clamped ≥ 0); sniffer normalizes Anthropic payloads at the same boundary; TotalTokenCount includes cache-write; 18 non-stream + 12 stream direction pairs pinned | research 2026-09-08 |
 | #32 | Preserve `cache_control` / `prompt_cache_key` / `session_id` across translation | research 2026-09-08 |
-| #33 | Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests | research 2026-09-08 |
+| ~~#33~~ | ~~Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests~~ — **done 2026-09-09** (f03dfcc): `prompt_cache_hit_tokens` in the sniffer's cache-read pattern; Responses `input_tokens_details` + Kimi top-level `cached_tokens` on the typed path; all six vendor shapes pinned through sniffer + typed decode (TestSniffVendorUsageShapes) | research 2026-09-08 |
 | #34 | Per-provider cache profiles: breakpoint anchoring, anchor-last ordering | research 2026-09-08 |
 | #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
-| #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
+| ~~#36~~ | ~~Forward `x-grok-conv-id` — live sticky-routing loss on xai~~ — **done 2026-09-09** (242f303): allow-list (x-grok-conv-id, x-grok-session-id, x-session-id, session_id) forwarded verbatim through Do/DoPassthrough for every provider; absent client values, stable per-key `ses_` id derived (generalized opencodeSession) only when the per-provider `session_header` knob opts in — nothing invented ungated | research 2026-09-08 |
 | ~~#41~~ | ~~Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API~~ — **done 2026-09-08**; full IA shipped (Overview/Usage/Providers/Combos/Quota/Saver/Logs/CLI Tools/Settings), variant-A stack, grouped `/admin/api/v1`, live-deployed + browser-verified + memory-benched (16f3dc9, a59c2a3); runtime dashboard *writes* stay #11 | user request |
 | ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1aa6a95) | #37/#39 follow-up |
 | ~~#42~~ | ~~Ownership model for the live gateway + shared config~~ — **done 2026-09-08**; `internal/owner` stamps `<data_dir>/owner.json` at startup (pid, listen, start time, config path + mtime, argv, build stamp: module version/git revision/dirty flag) and re-stamps on every successful reload (SIGHUP or `PUT /admin/config/reload`); `/admin/health` reports the same record live; file is atomic and survives exit as crash evidence; reload-not-restart + deploy discipline in README "Operations"; optional younger-build start guard skipped — single-instance is operator discipline after the #38 revert | incident RCA |
@@ -560,11 +568,11 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in cfce76f, reverted at user decision in 9049dd4 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
-| #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan — published to issue 2026-09-08 (body repaired, sources re-verified) | user request |
+| #44 | Model tiering: step 1 (config-only tiny/planning combos) shipped 2026-09-09 as README + onegw.toml.example examples (e797986) — applying to the live toml is operator config, not code; step 2 (task-aware combo reordering) unbuilt | user request |
 | ~~#45~~ | ~~Dashboard build approach for #41~~ — **done 2026-09-08**; decision held: Go html/template + vendored htmx 2.0.6 + uPlot 1.6.32, stdlib SSE with bounded fan-out, cookie sessions; health strip fixed to server-rendered HTML in fe2d532; RSS bench pre/post ≈ 88/89 MiB peak | #41 deep dive |
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
-| #48 | b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down | found live testing #47 |
+| ~~#48~~ | ~~b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down~~ — **done 2026-09-09** (242f303): narrow gated-403 signature (403 + access_denied/"Deposit required") benches the ACCOUNT on the adaptive 429 ladder (deposit-clearing success resets via pool.ok), marks Fallbackable — buffered rotates accounts→combo targets, router rotates pool-bounded without spending retry budget, all-gated pools answer 429+Retry-After, stream fast path answers pre-body; non-gated 403s fail fast unchanged; quota-503 untouched | found live testing #47 |
 | #50 | Cross-format encode path never coerces always-thinking effort (residual from #17) — fix shape verified: coerce `u.ReasoningEffort`/`u.Thinking` in `prepareUpstreamBody`'s cross-format branches via `AlwaysThinkingModel` before `encodeFor`; natural to land with #32 | #17 residual |
 
 ### Recommended implementation order (2026-09-08)
@@ -574,13 +582,11 @@ Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
 features were later deliberately reverted, 9049dd4); ~~#42~~ ownership model
 landed 2026-09-08 (`owner.json` + `/admin/health` owner block). Tier 1 complete.
 
-Tier 3 — remaining 2026-09-08: #48 (b-ai gated-account 403 → account cooldown +
-fall-through, the e820571 pattern) → prompt-cache cluster: #36 (tiny, live grok gain)
-→ #31 (usage-semantics foundation) → #33 → #32 + #50 (encode-layer work area:
-field preservation + cross-format effort coercion) → #34/#35 (per-provider cache
+Tier 3 — remaining 2026-09-09: #32 + #50 (encode-layer work area: cache-field
+preservation + cross-format effort coercion) → #34/#35 (per-provider cache
 profiles; candidates to merge into one feature) → #44 step 2 (task-aware combo
-reordering; step 1 config-only roles still absent from the live toml) → #14
-remainder (`onegw connect <tool>`, launchd/systemd unit).
+reordering) → #14 remainder (`onegw connect <tool>`, launchd/systemd unit).
+#31/#33/#36/#48 landed 2026-09-09; #44 step 1 documented (config examples).
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
