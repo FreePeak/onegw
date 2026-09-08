@@ -28,6 +28,12 @@ type Server struct {
 	// without buffering them fully (fixed byte reservation per request).
 	// Default false: bodies are read fully under the 4x budget.
 	StreamRequests bool `toml:"stream_requests"`
+	// ResponseHeaderTimeout bounds the upstream pre-first-byte phase
+	// (dial + TLS + full request-body upload + upstream prefill) as a Go
+	// duration, e.g. "120s". Massive thinking-model prefills can
+	// legitimately exceed the historical fixed 60s; empty/invalid keeps
+	// 60s. Applied when providers are built (startup and SIGHUP reload).
+	ResponseHeaderTimeout string `toml:"response_header_timeout"`
 }
 
 // Auth holds gateway API keys clients authenticate with. Keys may be
@@ -256,6 +262,16 @@ func (c *Config) FlushEvery() time.Duration {
 	d, err := time.ParseDuration(c.Usage.FlushInterval)
 	if err != nil || d <= 0 {
 		return 5 * time.Second
+	}
+	return d
+}
+
+// ResponseHeaderTimeoutDur parses [server] response_header_timeout; empty
+// or invalid keeps the historical 60s pre-first-byte budget.
+func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
+	d, err := time.ParseDuration(c.Server.ResponseHeaderTimeout)
+	if err != nil || d <= 0 {
+		return 60 * time.Second
 	}
 	return d
 }

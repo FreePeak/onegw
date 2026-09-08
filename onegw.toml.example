@@ -8,6 +8,11 @@ data_dir = "data"              # usage.db lives here; "memory" disables persiste
 max_body_bytes = 33554432      # 32 MiB per-request cap
 buffered_budget_bytes = 50331648 # 48 MiB global buffered-path budget
 admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides
+# Pre-first-byte upstream budget: dial + TLS + full request-body upload +
+# upstream prefill. 60s default aborts massive thinking-model prefills
+# (100-300K-token sessions) with "http2: timeout awaiting response headers".
+# Applied on startup and SIGHUP reload.
+# response_header_timeout = "120s"
 
 [saver]
 enabled = true                 # RTK-style tool_result compression
