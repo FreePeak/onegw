@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"onegw/internal/provider"
+	"onegw/internal/router"
 	"onegw/internal/translat"
 	"onegw/internal/types"
 	"onegw/internal/usage"
@@ -44,7 +45,8 @@ const multipartPeekLimit = 8 << 10
 // direct, combo, bare model); combo targets that lack the surface capability
 // are dropped so fallback skips them.
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf surface) {
-	if _, ok := s.authorize(w, r); !ok {
+	ak, ok := s.authorize(w, r)
+	if !ok {
 		return
 	}
 	s.inflight.Add(1)
@@ -134,15 +136,19 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		// Mirror the JSON path: splice the routed model into the streamed
 		// prefix so "provider/model" never leaks upstream.
 		mp.retarget(t.Model)
-		aerr := s.passthroughCall(r.Context(), w, def, def.NextAccount(), sf, t.Model,
+		id := requestIdentity(r, ak)
+		aerr := s.passthroughCall(r.Context(), w, def, def.NextAccount(id), sf, t.Model,
 			mp.replay(), mp.length(r.ContentLength), contentType)
-		if aerr != nil && w.Header().Get("Content-Type") == "" {
-			writeErr(w, translat.FmtOpenAI, aerr)
+		if aerr != nil {
+			def.Unpin(id) // failed one-shot attempt must not keep its pin
+			if w.Header().Get("Content-Type") == "" {
+				writeErr(w, translat.FmtOpenAI, aerr)
+			}
 		}
 		return
 	}
 
-	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		if !def.AllowsPassthrough(sf.cap) {
 			return nil, errAPI(http.StatusNotFound, "passthrough_not_supported",
 				"provider "+def.Name+" does not declare passthrough \""+sf.cap+"\"")

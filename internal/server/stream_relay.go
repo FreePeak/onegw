@@ -137,8 +137,10 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	}
 	src := &countingReader{r: io.MultiReader(bytes.NewReader(relayPrefix), r.Body)}
 
-	cres, apiErr := def.Do(r.Context(), def.NextAccount(), t.Model, clientSession, src, sc.stream)
+	id := requestIdentity(r, ak)
+	cres, apiErr := def.Do(r.Context(), def.NextAccount(id), t.Model, clientSession, src, sc.stream)
 	if apiErr != nil {
+		def.Unpin(id) // failed fast-path attempt must not keep its pin
 		if w.Header().Get("Content-Type") == "" {
 			writeErr(w, clientFmt, apiErr)
 		}
