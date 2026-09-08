@@ -17,5 +17,20 @@ services:
     mem_limit: 256m            # gateway targets <=100 MB RSS
     cpus: 1
 
+  # Optional local SearXNG for onegw's web-search provider (issue #46):
+  #   docker compose --profile search up -d searxng
+  # Serves the JSON API onegw calls (GET /search?q=…&format=json) on the
+  # loopback only; point the provider's base_url at http://127.0.0.1:8888.
+  searxng:
+    image: searxng/searxng:latest
+    profiles: ["search"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    mem_limit: 256m
+    cpus: 1
+
 volumes:
   onegw-data:
