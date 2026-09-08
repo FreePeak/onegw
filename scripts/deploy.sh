@@ -82,13 +82,19 @@ fi
 
 # --- 2. start NEW overlapping the live listener. SO_REUSEPORT makes the
 # double-bind safe; clients round-robin between old and new.
+# The NEW listener is detached from this script's process group (setsid +
+# disown) so nothing that kills this script — a job timeout, an interrupted
+# bash session, our own abort path — can ever take the gateway down
+# (2026-09-08 freeze RCA: a parent timeout SIGTERMed the whole group and
+# killed a just-verified NEW listener, freezing every session).
 step "2. start NEW instance (overlapping bind)"
 if [ "$DRY_RUN" = 1 ]; then
-  echo "  [dry-run] $NEW_BIN -config $CONFIG &   # capture NEW_PID"
+  echo "  [dry-run] setsid $NEW_BIN -config $CONFIG &   # capture NEW_PID"
   NEW_PID="<new>"
 else
-  "$NEW_BIN" -config "$CONFIG" &
+  setsid "$NEW_BIN" -config "$CONFIG" </dev/null >>/tmp/onegw-new.log 2>&1 &
   NEW_PID=$!
+  disown "$NEW_PID" 2>/dev/null || true
   sleep 1
   kill -0 "$NEW_PID" 2>/dev/null || abort "NEW instance (pid $NEW_PID) exited immediately; old listener untouched"
   echo "  NEW_PID=$NEW_PID"
