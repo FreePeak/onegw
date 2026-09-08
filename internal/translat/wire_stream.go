@@ -47,6 +47,34 @@ type oaChunk struct {
 	Error *oaError `json:"error"`
 }
 
+// commandCodeDecoder decodes commandcode streams: events carry no part
+// numbering, so per-stream state assigns unified part indices.
+type commandCodeDecoder struct {
+	from Format
+	cc   ccStreamState
+}
+
+func newCommandCodeDecoder(f Format) *commandCodeDecoder {
+	return &commandCodeDecoder{from: f}
+}
+
+func (d *commandCodeDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
+	switch d.from {
+	case FmtCommandCode:
+		return decodeCommandCodeStreamEvent(ev, &d.cc)
+	case FmtCursor:
+		return nil, fmt.Errorf("cursor wire format is a skeleton; executor not implemented")
+	default:
+		return decodeStreamEvent(d.from, ev)
+	}
+}
+
+// errDecoder fails every event: used for formats with no decoder
+// registered (skeleton kinds, unknown formats). Never nil.
+type errDecoder struct{ err error }
+
+func (d errDecoder) decode(ev sseEvent) ([]StreamEvent, error) { return nil, d.err }
+
 func decodeOpenAIStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 	data := ev.Data
 	if strings.TrimSpace(string(data)) == "[DONE]" || len(data) == 0 {
