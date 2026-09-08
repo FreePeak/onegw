@@ -1,6 +1,11 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (model-tiering research (#44) surveyed
+*Last updated: 2026-09-08 (dashboard build-approach deep dive (#45): stack
+pinned — Go html/template + htmx + uPlot over a React bundle, stdlib SSE with
+bounded fan-out, cookie-session login as the SSE auth prerequisite,
+cursor-paginated grouped /admin/api/v1; new
+[Dashboard build approach](#dashboard-build-approach-issues-4145) section +
+docs/dashboard-deep-dive.md; earlier: model-tiering research (#44) surveyed
 LiteLLM/9router/OmniRoute/omp and landed a layered adoption plan — config-only
 role combos now, task-aware combo reordering as the feature; earlier:
 always-thinking self-healing shipped: omp sent
@@ -256,6 +261,38 @@ named roles wired per use, not per request.
 types) — an LLM call to pick a model contradicts fast/low-RAM; local signals
 are what the merged-quality implementations use.
 
+### Dashboard build approach (issues #41/#45)
+
+Research 2026-09-08 (full write-up:
+[docs/dashboard-deep-dive.md](dashboard-deep-dive.md), issue #45): how to
+build the #41 revamp.
+
+- **Stack: Go `html/template` + htmx + uPlot** — server-rendered pages,
+  htmx partial updates (~14 KB min.gz), uPlot Canvas-2D charts (~48 KB min
+  vs Chart.js 254 KB / ECharts 1 MB), all vendored inline: zero external
+  assets, zero Node toolchain. A bundled React+Tailwind single-HTML artifact
+  (#41's original sketch) is the documented fallback if a page ever needs
+  real client-side state — the read-mostly IA doesn't.
+- **Live data: one stdlib SSE endpoint** `GET /admin/events?topics=…`
+  (`http.Flusher`) with bounded fan-out (≤ 32 subscribers, ~8 KB ring each;
+  slow subscriber → events dropped + `resync` refetch event, mirroring the
+  byte-budget philosophy). Topics: health 1 s, usage 5 s, logs (#19 sink
+  push), quota on change. Pages render fully server-side without JS.
+- **Auth prerequisite**: `EventSource` cannot send headers → the planned
+  session-cookie login (`POST /admin/login`, HttpOnly SameSite=Strict
+  cookie, header callers keep working) lands before any SSE page.
+- **API**: grouped `/admin/api/v1/` (usage with **cursor** pagination
+  shared with export; read-only providers/combos/quota/saver; uniform JSON
+  errors); flat `/admin/*` endpoints stay for scripts/smoke.sh, deprecated
+  later, never broken in place.
+- **RAM**: read-only embedded bytes + one small alloc per template render +
+  bounded SSE fan-out — inside the 100 MB contract; verified with
+  `bench/memory.sh` before/after each slice.
+- **Landing order**: cookie login → shell (`internal/server/dashboard/`,
+  `go:embed` FS replacing the `dashboardHTML` const, #41 sidebar) →
+  Overview + health topic → Usage analytics + uPlot → Logs pane (#19) →
+  read-only config views + CLI Tools cards → grouped API completion.
+
 ### Prompt caching (upstream)
 
 Research 2026-09-07/08: official vendor docs, live probes against the
@@ -472,6 +509,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
 | #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan | user request |
+| #45 | Dashboard build approach for #41 (stack: Go templates + htmx + uPlot; SSE plumbing; cookie-session auth prerequisite; grouped cursor-paginated API) | #41 deep dive |
 
 ### Recommended implementation order (2026-09-08)
 
@@ -596,9 +634,16 @@ the issue):
 - `docs/prd-task-tracker.md` — historical done-list + issue snapshot mirror.
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
+- `docs/dashboard-deep-dive.md` — dashboard build-approach research (#45,
+  companion to #41): stack, SSE plumbing, auth prerequisite, API shape,
+  landing order.
 
 ---
-*Last updated: 2026-09-08 (deliberate revert of #38/#39 features at user
+*Last updated: 2026-09-08 (dashboard build-approach deep dive: #45 filed, new
+Dashboard build approach section, docs/dashboard-deep-dive.md — stack Go
+html/template + htmx + uPlot over a React bundle, stdlib SSE bounded fan-out,
+cookie-session login as SSE auth prerequisite, grouped cursor-paginated
+/admin/api/v1; earlier: deliberate revert of #38/#39 features at user
 decision — heartbeat peer scan/gauge and loopback warn-and-skip removed,
-boot back to strict Validate, 9049dd4; earlier: model-tiering research (#44): LiteLLM routes between tiers only client-side, 9router's task-aware routing is still an unmerged PR, OmniRoute ships gateway-side classifyTask + modelPowerScore + combo reordering, omp solves it with client model roles — adoption plan layered config-first in the new PRD section; gaps section refreshed: #5/#6 closed)*
+boot back to strict Validate, 9049dd4)*
 
