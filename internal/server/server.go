@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"onegw/internal/config"
+	"onegw/internal/oauth"
 	"onegw/internal/provider"
 	"onegw/internal/quota"
 	"onegw/internal/ratelimit"
@@ -49,6 +50,7 @@ type Server struct {
 	st     *store.Store
 	nodeID string
 	start  time.Time
+	oauth  *oauth.Manager // device-flow token manager; nil-safe after Close
 
 	state    atomic.Pointer[state]
 	inflight atomic.Int64 // requests currently live in the gateway pipeline
@@ -85,6 +87,7 @@ func New(cfg *config.Config) (*Server, error) {
 	if st != nil {
 		st.SetNodeID(s.nodeID)
 	}
+	s.initOAuth(cfg)
 	if err := s.apply(cfg, true); err != nil {
 		return nil, err
 	}
@@ -155,6 +158,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		} else {
 			def.Accounts = []provider.Account{{Name: "default", APIKey: p.APIKey, BaseURL: p.BaseURL}}
 		}
+		s.wireOAuthTokens(cfg, def)
 		pool.Set(def)
 		// Materialize the kind's default catalog onto the config copy so
 		// routing AND every surface that reads cfg.Providers (models list,
@@ -223,6 +227,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			old.quota.Stop()
 		}
 	}
+	s.syncOAuth(cfg)
 	return nil
 }
 
@@ -244,6 +249,9 @@ func (s *Server) Reload(cfg *config.Config) {
 
 // Close releases resources.
 func (s *Server) Close() {
+	if s.oauth != nil {
+		s.oauth.Stop()
+	}
 	if st := s.cur(); st != nil {
 		st.usage.Stop()
 		if st.quota != nil {
