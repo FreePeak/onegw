@@ -173,8 +173,19 @@ same-format passthrough). Packages:
   `metadata.user_id` (`openai.go:192`, `anthropic.go:123`) but read nowhere,
   and rollups key on day/hour/provider/model/api_key. Forwarding it as a
   cache-affinity hint is open work (#34, #36).
-- `GOGC` default; soft memory limit `GOMEMLIMIT=90MiB` set at startup if
-  unset. Allocation-heavy JSON reuse in hot loops.
+- `GOGC=60` (set at startup if `GOGC` env unset); soft memory limit
+  `GOMEMLIMIT=90MiB` set at startup if unset. Allocation-heavy JSON reuse in
+  hot loops.
+- **`sys` is a lifetime ratchet, not a leak (RCA 2026-09-08).** The dashboard's
+  `sys` = Go `memstats.Sys`: cumulative arena reservations. Under repeated
+  agent-class load (22 concurrent × 1.5 MB streaming bodies) a test instance
+  plateaued at 41 MiB within one wave and held through 4 waves + idle; the live
+  instance held 74 MiB flat for 6+ minutes while inflight went 6→22 and
+  heap alloc 14→27 MiB. Growth reflects the largest concurrent burst seen
+  (arena high-water), and Go returns freed arenas lazily (MADV_FREE on macOS
+  also keeps RSS high). Usage aggregation is SQL-side (`GROUP BY` in SQLite);
+  no unbounded in-memory maps. If the plateau exceeds the envelope, cap
+  concurrent buffered-path bytes harder — no code fix indicated.
 - **SQLite RSS is measured, not assumed.** `modernc.org/sqlite` is a generated
   C→Go port with nontrivial heap. M5 includes a benchmark asserting its
   resident cost under the flush workload; if it exceeds the budget the store
@@ -444,9 +455,23 @@ the issue):
   `-trimpath -ldflags "-s -w"`) via build matrix → `gh release create --generate-notes`
   with binaries attached; `latest` tracks newest. Verified end-to-end: first run cut
   v0.1.0; darwin-arm64 artifact executed locally.
-- **One-command local install** — install script fetches the release
-  binary, writes a starter `onegw.toml` (localhost bind), and starts the
-  server; launchd/systemd unit optional.
+- **One-command local install — done 2026-09-08.** `scripts/install.sh`
+  (`curl -fsSL .../scripts/install.sh | sh`): detects OS/arch, installs the
+  latest release binary (prefix `/usr/local`, falls back to `~/.local/bin`),
+  writes a starter `~/.onegw/onegw.toml` (loopback bind, generated admin
+  password), starts the gateway and verifies via the unauthenticated
+  dashboard root (`/admin/*` is password-gated). Env overrides: `ONEGW_BIN`,
+  `ONEGW_VERSION`, `ONEGW_LISTEN`, `ONEGW_KEYS`, `ONEGW_START`. Sandbox-tested;
+  launchd/systemd unit remains an optional follow-up.
+- **One-command cloud/VPS deploy — done 2026-09-08.** Multi-stage `Dockerfile`
+  (static CGO-free binary in alpine, non-root uid 100, `/data` volume,
+  healthcheck on the unauthenticated dashboard root) published as
+  `ghcr.io/freepeak/onegw:{latest,<tag>}` (linux/amd64+arm64) by the release
+  workflow's `docker` job; `docker-compose.yml` VPS example (restart policy,
+  resource limits, named volume, optional config mount); README one-command
+  sections for both paths. Verified: local build 41.8 MB image, healthcheck
+  healthy, usage.db persisted across restart, open-proxy guard refuses
+  0.0.0.0 without keys, RSS 9.4 MB at boot.
 - **One-click agent-CLI integration** — `onegw connect <tool>` writes
   provider/base-URL + key into omp.sh, pi.dev, Claude Code, opencode, and
   grok cli configs (pi `models.json` is the proven pattern).
@@ -508,4 +533,4 @@ the issue):
 
 ---
 
-*Last updated: 2026-09-08 (release CI landed: .github/workflows/release.yml, v0.1.0 published; open-work table + recommended implementation order added)*
+*Last updated: 2026-09-08 (one-command deploy: Dockerfile + ghcr publish + install.sh + compose, #14 workstreams 2+4; sys-memory RCA documented in memory strategy)*
