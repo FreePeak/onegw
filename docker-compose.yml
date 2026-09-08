@@ -1,0 +1,21 @@
+# onegw on a VPS: `docker compose up -d`
+services:
+  onegw:
+    image: ghcr.io/freepeak/onegw:latest
+    # build: .                 # uncomment to build from this directory instead
+    restart: unless-stopped
+    ports:
+      - "8080:8080"           # LAN/public; use "127.0.0.1:8080:8080" to keep it loopback-only
+    environment:
+      ONEGW_KEYS: "change-me-gateway-key"      # clients authenticate with this
+      ONEGW_ADMIN_PASSWORD: "change-me-admin"  # dashboard/admin API
+      # ONEGW_PROVIDER_OPENROUTER_KEY: "sk-..." # upstream keys (or mount a config)
+    volumes:
+      - onegw-data:/data       # usage.db persists across upgrades
+      # Optional: run with your own full config instead of the baked default:
+      # - ./onegw.toml:/etc/onegw/onegw.toml:ro
+    mem_limit: 256m            # gateway targets <=100 MB RSS
+    cpus: 1
+
+volumes:
+  onegw-data:
