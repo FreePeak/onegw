@@ -38,12 +38,13 @@
 <script>
 const D = {{.ChartJSON}};
 function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';if(n>=1e6)return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';if(n>=1e3)return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';return String(n)}
-function fmtDay(u, ticks){ // x-axis: hours on the today view, dates otherwise
+function fmtDay(u, ticks){ // x-axis labels in the BROWSER's locale time
   const span = u.data[0][u.data[0].length-1] - u.data[0][0];
   const out = ticks.map(t => {
     const d = new Date(t * 1000);
-    return span < 26*3600 ? String(d.getUTCHours()).padStart(2,'0')
-                          : (d.getUTCMonth()+1) + '/' + d.getUTCDate();
+    return span < 26*3600
+      ? String(d.getHours()).padStart(2,'0')
+      : (d.getMonth()+1) + '/' + d.getDate();
   });
   return out.map((v, i) => v === out[i-1] ? '' : v);
 }
