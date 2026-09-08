@@ -629,6 +629,18 @@ the issue):
   health/mem strip, live in-flight concurrency gauge (counter incremented
   across the proxy pipelines, shown as `live` and exposed as `inflight` in
   `/admin/health`), 401 flow verified in browser.
+- **Claude Code wired + Anthropic SSE block synthesis fix** (2026-09-08,
+  c8422d1): `~/.claude/settings.json` now points at onegw
+  (`ANTHROPIC_BASE_URL=http://127.0.0.1:8080`, Bearer key, combos
+  `dev`/`free`) — Claude Code speaks Anthropic `/v1/messages` with strict
+  SSE block discipline, which exposed a translat bug: OpenAI/Gemini
+  upstreams emit bare text/thinking deltas, and the Anthropic encoder
+  streamed `content_block_delta` with no `content_block_start`, reusing one
+  index across thinking and text — Claude Code accumulated an empty reply.
+  The encoder now opens a block on the first delta, closes it on part-type
+  change or at finish, and retires the client index on every close so a
+  closed index is never reopened; regression test pins the full event
+  sequence (thinking@0 → text@1).
 - **Web search (SearXNG)** (#13, shipped 2026-09-08 in 9bd3594): `kind =
   "searxng"` virtual provider — clients send model `search/query`, the gateway
   answers with a SearXNG JSON search (last user message = query) formatted as
@@ -666,8 +678,8 @@ the issue):
   landing order.
 
 ---
-*Last updated: 2026-09-08 (#42 ownership model landed: `internal/owner`
-stamps `<data_dir>/owner.json` at startup and re-stamps on every successful
+*Last updated: 2026-09-08 (Claude Code wired + translat Anthropic SSE block-synthesis fix, c8422d1;
+earlier: #42 ownership model landed: `internal/owner`
 reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
 revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
 2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
