@@ -148,6 +148,7 @@ type Config struct {
 	// or another alias. Chains resolve iteratively (depth-capped); aliases
 	// never shadow a real provider/model or combo name.
 	Aliases map[string]string `toml:"aliases"`
+	OAuth   OAuthCfg          `toml:"oauth"` // device-flow accounts; see oauth.go (#2)
 }
 
 // Defaults fills zero values with production-safe defaults.
@@ -381,6 +382,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Saver.External.Enabled && c.Saver.External.URL == "" {
 		return fmt.Errorf("saver.external enabled but url missing")
+	}
+	if err := validateOAuth(c); err != nil {
+		return err
 	}
 	return nil
 }
