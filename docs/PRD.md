@@ -1,7 +1,18 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (orcarouter.ai provider added live: `config.Validate`
-now accepts the #12 custom wire kinds `openai-responses`/`commandcode`/`cursor`
+*Last updated: 2026-09-08 (always-thinking self-healing shipped: omp sent
+`reasoning_effort: "xhigh"` to combo `free` and the raw GLM 400
+(该模型始终思考，use low/high/max) surfaced to the client — two gaps:
+`coerceEffort` passed unrecognized values through, and a 400 is
+non-retryable so `Execute` never fell through the combo chain. Fixed:
+xhigh→max + unknown→high coercion; `attempt()` now detects the signature
+400 (code 1210 / 始终思考 message shapes), learns the model as
+always-thinking on its `Def` (fresh on reload), marks the error
+`Fallbackable` and `Execute` retries the target once with the coerced body
+then falls through to the next combo target; the streaming fast path
+learns too and routes future requests buffered. Mutation-checked; live
+verified with a replay of the failing xhigh request. Earlier: orcarouter.ai
+provider added live: `config.Validate`
 — the executor layer shipped but config Load rejected them, a boot-crash-loop
 trap (#39 pattern); four free-tier orcarouter models configured
 (`z-ai/glm-5.3-flash-free`, `deepseek/deepseek-v4-flash-free`,
