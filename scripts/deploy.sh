@@ -41,8 +41,14 @@ done
 step() { echo "== $1 =="; }
 die() { echo "DEPLOY ABORTED: $1" >&2; exit 1; }
 run() { # run <desc> <cmd...>: execute, or print only under --dry-run
-  if [ "$DRY_RUN" = 1 ]; then echo "  [dry-run] $*"; else "$@"; fi
+  # shift past the description, else "$@" execs a literal binary named
+  # after the description's first word ("go build" -> command not found).
+  if [ "$DRY_RUN" = 1 ]; then echo "  [dry-run] $*"; else shift; "$@"; fi
 }
+
+# Resolve CONFIG to an absolute path: the NEW instance outlives this
+# script, and a relative -config would make its cwd load-bearing.
+CONFIG=$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")
 
 [ -f "$CONFIG" ] || die "config not found: $CONFIG"
 
@@ -89,10 +95,14 @@ fi
 # killed a just-verified NEW listener, freezing every session).
 step "2. start NEW instance (overlapping bind)"
 if [ "$DRY_RUN" = 1 ]; then
-  echo "  [dry-run] setsid $NEW_BIN -config $CONFIG &   # capture NEW_PID"
+  echo "  [dry-run] perl -MPOSIX setsid $NEW_BIN -config $CONFIG &   # capture NEW_PID"
   NEW_PID="<new>"
 else
-  setsid "$NEW_BIN" -config "$CONFIG" </dev/null >>/tmp/onegw-new.log 2>&1 &
+  # macOS has no setsid(1); perl's POSIX::setsid() moves the child to a
+  # NEW SESSION/GROUP so nothing that kills this script — a bash job
+  # timeout, cleanup traps, an interrupted session — can ever reach the
+  # gateway (2026-09-08 freeze RCA). nohup/disown alone do NOT do this.
+  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- "$NEW_BIN" -config "$CONFIG" </dev/null >>/tmp/onegw-new.log 2>&1 &
   NEW_PID=$!
   disown "$NEW_PID" 2>/dev/null || true
   sleep 1

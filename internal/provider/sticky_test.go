@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -117,6 +118,45 @@ func TestStickyHonorsWeights(t *testing.T) {
 	got := p.next("sess")
 	if got.Name == pinned.Name {
 		t.Fatal("rotate after unpin must move accounts")
+	}
+}
+
+func TestStickyPinMapStaysBounded(t *testing.T) {
+	// Hostile client flood: thousands of unique session ids must not grow
+	// the affinity map unboundedly (RAM guard, maxStickyPins + sweep).
+	p, _ := mkPool(t, time.Hour)
+	for i := range maxStickyPins * 2 {
+		p.next(fmt.Sprintf("sess-%d", i))
+	}
+	if len(p.sticky) > maxStickyPins {
+		t.Fatalf("pin map unbounded: %d entries, cap %d", len(p.sticky), maxStickyPins)
+	}
+	// After the reset path, an existing identity still resolves to A pin.
+	a := p.next("late-comer")
+	if b := p.next("late-comer"); b.Name != a.Name {
+		t.Fatalf("pin broken after cap reset: %s vs %s", a.Name, b.Name)
+	}
+}
+
+func TestStickyWeightsRotateThroughWeightedSlots(t *testing.T) {
+	// Weighted pool a(1),b(2),c(1) -> slots [a,b,b,c]. Unpin+rotate walks
+	// the slot list, so consecutive unpins visit b twice before c — the
+	// documented first-matching-slot quirk of identity-matched pins.
+	p := newAccountPool([]Account{
+		{Name: "a", APIKey: "ka"},
+		{Name: "b", APIKey: "kb", Weight: 2},
+		{Name: "c", APIKey: "kc"},
+	}, time.Hour)
+	cur := time.Now()
+	p.now = func() time.Time { return cur }
+
+	var order []string
+	for range 3 {
+		order = append(order, p.next("sess").Name)
+		p.unpin("sess")
+	}
+	if order[0] == order[1] && order[1] == order[2] {
+		t.Fatalf("weighted rotation stuck on one account: %v", order)
 	}
 }
 
