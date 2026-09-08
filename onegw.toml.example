@@ -118,3 +118,18 @@ targets = ["search/query", "openrouter/openai/gpt-5.5"]
 [[combo]]
 name = "coding-stack"
 targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/deepseek/deepseek-v3.2"]
+
+# --- OAuth device-flow accounts (issue #2) ----------------------------------
+# Subscription providers (xAI/Grok, Kilo Code) log in with a device flow:
+# `onegw-oauth login -provider xai -account main`. The token is stored in
+# <data_dir>/oauth-tokens.json (0600), injected as the upstream bearer
+# credential at request time, and auto-refreshed before expiry. The account
+# must match a [[providers]] entry; the static api_key is the fallback
+# while no token is stored (e.g. before the first login).
+#
+# [[oauth.accounts]]
+# provider = "xai"        # [[providers]] name
+# account  = "main"       # [[providers.accounts]] name
+# service  = "xai"        # oauth profile: xai | kilocode (default: provider)
+# # Endpoint overrides for self-hosted IdPs / staging:
+# # device_url / token_url / client_id / scope

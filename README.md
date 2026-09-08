@@ -52,6 +52,16 @@ buffering, no conversation state.
   compression (prefix sniffing, idempotent, same-format surgical JSON walk)
   cuts prompt tokens before they reach the upstream. Output side: system-prompt
   injection of terse-output directives and an external compress hook (below).
+- **OAuth device flows for subscription providers (#2).** `onegw-oauth
+  login -provider xai` runs the RFC 8628 device flow (Kilo Code's bespoke
+  dialect also built in), stores the token in
+  `<data_dir>/oauth-tokens.json` (0600, atomic writes), and the gateway
+  injects it as the upstream bearer credential at request time — with a
+  per-account refresher that tops up the token before expiry (single-flight
+  per account) and cools the account when a refresh fails.
+- **Token saver.** RTK-style `tool_result` compression (prefix sniffing,
+  idempotent, same-format surgical JSON walk) cuts prompt tokens before they
+  reach the upstream.
 - **Usage tracking.** Lock-sharded atomic counters flushed to SQLite on a
   timer; per `provider / model / key / day / hour` rollups; admin API and
   built-in dashboard.
@@ -189,6 +199,24 @@ Fail-open semantics: any external failure (HTTP error, timeout, malformed
 response, or a "compressed" payload larger than the original) means the
 request continues with its original messages — a saving optimization must
 never become an outage. Set `fail_open = false` to answer 502 instead.
+### OAuth accounts (device flow)
+
+```toml
+[[oauth.accounts]]
+provider = "xai"   # [[providers]] entry whose upstream calls carry the token
+account  = "main"  # [[providers.accounts]] name
+service  = "xai"   # oauth profile: xai | kilocode (defaults to provider)
+```
+
+```bash
+onegw-oauth login -provider xai -account main   # prints URL + code, polls, stores
+onegw-oauth list                                # stored accounts + expiry state
+```
+
+Tokens never live in TOML; the account's static `api_key` is the fallback
+until a token is stored. Endpoints are overridable per account
+(`device_url` / `token_url` / `client_id` / `scope`) for self-hosted IdPs.
+Kilo Code tokens carry no refresh token — re-run `login` when they expire.
 
 ## Surfaces
 
