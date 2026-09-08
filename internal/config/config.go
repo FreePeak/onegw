@@ -5,6 +5,8 @@ package config
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -154,6 +156,12 @@ type Config struct {
 	// never shadow a real provider/model or combo name.
 	Aliases map[string]string `toml:"aliases"`
 	OAuth   OAuthCfg          `toml:"oauth"` // device-flow accounts; see oauth.go (#2)
+	// Skipped lists providers warn-and-skipped at validation (issue #39):
+	// a provider with no credentials on a loopback bind is dropped from
+	// the active set instead of failing the boot; requests routed to it
+	// fail fast with 404 unknown_provider. Never serialized; empty on
+	// non-loopback binds, where validation keeps failing hard.
+	Skipped []string `toml:"-"`
 }
 
 // Defaults fills zero values with production-safe defaults.
@@ -241,11 +249,15 @@ func (c *Config) FlushEvery() time.Duration {
 	return d
 }
 
-// Validate checks required invariants.
+// Validate checks required invariants. On a loopback-only bind, a
+// provider with no credentials is warn-and-skipped (issue #39): dropped
+// from the active set and recorded in Config.Skipped instead of failing
+// the boot. Wildcard and non-loopback binds keep returning an error.
 func (c *Config) Validate() error {
 	if err := validateKeys(c.Auth.KeyList); err != nil {
 		return err
 	}
+	c.Skipped = nil // re-validation must not double-report
 	names := map[string]bool{}
 	for _, p := range c.Providers {
 		if p.Name == "" {
@@ -272,8 +284,21 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("provider %s unknown kind %q", p.Name, p.Kind)
 		}
-		if p.Kind != "searxng" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
-			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
+		if p.Kind != "searxng" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 && !c.oauthBacked(p.Name) {
+			if !isLoopbackListen(c.Server.Listen) {
+				return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
+			}
+			// Issue #39: on a loopback bind a credential-less provider is
+			// not worth a failed boot — drop it from the active set and
+			// keep serving. Its name stays in `names` (registered above),
+			// so combos and aliases referencing it still validate; at
+			// request time routing fails fast with 404 unknown_provider.
+			// Wildcard and non-loopback binds keep failing hard: a
+			// silently missing provider on an exposed port hides a real
+			// config error.
+			c.Skipped = append(c.Skipped, p.Name)
+			log.Printf("onegw config: provider %q has no credentials — skipped for this boot (loopback bind); requests to it return 404", p.Name)
+			continue
 		}
 		switch p.QuotaWindow {
 		case "", "5h", "daily", "weekly":
@@ -303,6 +328,19 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("provider %s unknown passthrough capability %q", p.Name, pc)
 			}
 		}
+	}
+	if len(c.Skipped) > 0 {
+		skip := make(map[string]bool, len(c.Skipped))
+		for _, n := range c.Skipped {
+			skip[n] = true
+		}
+		kept := make([]ProviderCfg, 0, len(c.Providers)-len(skip))
+		for _, p := range c.Providers {
+			if !skip[p.Name] {
+				kept = append(kept, p)
+			}
+		}
+		c.Providers = kept
 	}
 	comboNames := map[string]bool{}
 	for _, cb := range c.Combos {
@@ -400,6 +438,39 @@ func (c *Config) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// isLoopbackListen reports whether a server bind address is loopback-only:
+// "localhost", a loopback IP ("127.0.0.1", "[::1]"), or the loopback
+// default Defaults installs. A wildcard host (":8080", "0.0.0.0") or an
+// external hostname is NOT loopback. Load always runs Defaults first, so
+// an empty listen only reaches this from direct callers — treated as a
+// wildcard bind.
+func isLoopbackListen(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		host = listen
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// oauthBacked reports whether the provider has an [[oauth.accounts]]
+// entry: its credential is the rotating token in the data-dir store,
+// injected at request time. A provider with no static key but an OAuth
+// account is fully credentialed and must not be treated as keyless
+// (issue #39).
+func (c *Config) oauthBacked(provider string) bool {
+	for _, a := range c.OAuth.Accounts {
+		if a.Provider == provider {
+			return true
+		}
+	}
+	return false
 }
 
 // maxAliasHops caps alias chain resolution so a cyclic TOML table cannot
