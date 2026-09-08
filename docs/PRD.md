@@ -1,6 +1,11 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (dashboard build-approach deep dive (#45): stack
+*Last updated: 2026-09-08 (#13 docs sync: SearXNG web-search provider — shipped
+2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
+`search/query` with a SearXNG JSON search as a synthetic OpenAI completion,
+fail-open in combos; PRD gap list + issue table marked done, feature bullet
+added, tracker ticked, README how-to filled; earlier: dashboard build-approach
+deep dive (#45): stack
 pinned — Go html/template + htmx + uPlot over a React bundle, stdlib SSE with
 bounded fan-out, cookie-session login as the SSE auth prerequisite,
 cursor-paginated grouped /admin/api/v1; new
@@ -423,7 +428,7 @@ Compared against the two reference gateways ( LiteLLM README + docs,
 - ~~Model aliases → #6~~ (done 2026-09-08); per-key rate
   limits/restrictions → #3; Prometheus → #4; audio/embeddings surfaces → #9;
   streaming request bodies → #8; multi-node rollup export → #10; runtime
-  config writes → #11; web-search provider → #13.
+  config writes → #11; ~~web-search provider → #13~~ (done 2026-09-08).
 - Install/ops friction: no prebuilt releases, manual build, manual
   agent-CLI wiring, no Docker image → #14.
 - Not pursued (non-goals): cloud sync (9router-only), billing/budget
@@ -491,7 +496,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#16~~ | ~~Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family)~~ — **done 2026-09-07**; per-provider `always_thinking` globs + same-format effort coercion/drop, knob documented in README + onegw.toml.example, regression tests (commit 40977cf) | production hit |
 | #11 | Runtime config surface (dashboard/API writes)              | LiteLLM gap        |
 | #12 | Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf) | 9router gap |
-| #13 | Web-search provider (SearXNG integration)                 | v2 candidate       |
+| ~~#13~~ | ~~Web-search provider (SearXNG integration)~~ — **done 2026-09-08**; `kind = "searxng"` virtual search provider (9bd3594): `search/<x>` model requests answered with a SearXNG JSON search as a synthetic OpenAI completion, retryable-503 fail-open in combos, `max_results`/`timeout`/`extra_headers` knobs, unit + E2E tests on both client surfaces | 9router gap |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
 | #17 | Self-healing thinking-dialect fallback: coerce + retry on thinking-class 400s, learn per (provider, model), combo-advance as last resort | #16 follow-up |
 | #19 | Dashboard console log (9router-style): in-memory log sink + `/admin/logs` endpoints + dashboard console pane | user request |
@@ -616,6 +621,14 @@ the issue):
   health/mem strip, live in-flight concurrency gauge (counter incremented
   across the proxy pipelines, shown as `live` and exposed as `inflight` in
   `/admin/health`), 401 flow verified in browser.
+- **Web search (SearXNG)** (#13, shipped 2026-09-08 in 9bd3594): `kind =
+  "searxng"` virtual provider — clients send model `search/query`, the gateway
+  answers with a SearXNG JSON search (last user message = query) formatted as
+  a synthetic OpenAI completion through the normal pipeline (cross-format
+  translation, combos, usage rollups). Instance failures are retryable 503
+  `search_unavailable` errors, so combos fail open to the next model. Unit +
+  E2E tests (OpenAI/Anthropic surfaces). Not yet enabled in the live
+  onegw.toml — needs a SearXNG instance.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
@@ -639,11 +652,15 @@ the issue):
   landing order.
 
 ---
-*Last updated: 2026-09-08 (dashboard build-approach deep dive: #45 filed, new
-Dashboard build approach section, docs/dashboard-deep-dive.md — stack Go
-html/template + htmx + uPlot over a React bundle, stdlib SSE bounded fan-out,
-cookie-session login as SSE auth prerequisite, grouped cursor-paginated
-/admin/api/v1; earlier: deliberate revert of #38/#39 features at user
-decision — heartbeat peer scan/gauge and loopback warn-and-skip removed,
-boot back to strict Validate, 9049dd4)*
+*Last updated: 2026-09-08 (#13 docs sync: SearXNG web-search provider — shipped
+2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
+`search/query` with a SearXNG JSON search as a synthetic OpenAI completion,
+fail-open in combos; PRD gap list + issue table marked done, feature bullet
+added, tracker ticked, README how-to filled; earlier: dashboard build-approach
+deep dive: #45 filed, new Dashboard build approach section,
+docs/dashboard-deep-dive.md — stack Go html/template + htmx + uPlot over a
+React bundle, stdlib SSE bounded fan-out, cookie-session login as SSE auth
+prerequisite, grouped cursor-paginated /admin/api/v1; earlier: deliberate
+revert of #38/#39 features at user decision — heartbeat peer scan/gauge and
+loopback warn-and-skip removed, boot back to strict Validate, 9049dd4)*
 

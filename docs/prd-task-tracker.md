@@ -87,7 +87,10 @@ status. Status as of 2026-09-07.
 - [ ] #11 Runtime config surface (dashboard/API writes to config)
 - [ ] #12 Custom wire formats: commandcode (NDJSON), grok-cli (OpenAI
       Responses), cursor (protobuf)
-- [ ] #13 Web-search provider (SearXNG integration)
+- [x] #13 Web-search provider (SearXNG integration) — done 2026-09-08
+      (9bd3594): `kind = "searxng"` virtual provider answering `search/query`
+      with a SearXNG JSON search as a synthetic OpenAI completion; fail-open
+      (retryable 503) in combos; unit + E2E tests. Not yet in live onegw.toml.
 
 Deliberately NOT tracked (PRD non-goals): cloud sync, billing/budgets as an
 enforcement feature, guardrails/MCP/A2A gateways, response caching.
