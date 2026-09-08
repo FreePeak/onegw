@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"onegw/internal/types"
@@ -634,6 +635,7 @@ type anthropicEncoder struct {
 	started    bool
 	blockMap   map[int]int // upstream index -> client block index
 	nextBlock  int
+	openBlocks map[int]string // upstream index -> open block part type
 	usage      types.Usage
 	finished   bool
 	stopReason string
@@ -711,22 +713,31 @@ func (e *anthropicEncoder) encode(w io.Writer, ev StreamEvent) error {
 		if err := e.ensureStart(w, ev); err != nil {
 			return err
 		}
-		idx := e.blockIndex(ev.Index)
-		var block map[string]any
-		switch ev.PartType {
-		case types.PartToolUse:
-			block = map[string]any{"type": "tool_use", "id": orDefault(ev.ToolID, "toolu_onegw"+randHex(6)), "name": ev.ToolName, "input": map[string]any{}}
-		case types.PartThinking:
-			block = map[string]any{"type": "thinking", "thinking": "", "signature": ""}
-		default:
-			block = map[string]any{"type": "text", "text": ""}
+		if err := e.closeBlock(w, ev.Index); err != nil {
+			return err
 		}
+		e.openBlocks = openBlocksSet(e.openBlocks, ev.Index, ev.PartType)
 		return e.raw(w, "content_block_start", map[string]any{
-			"type": "content_block_start", "index": idx, "content_block": block,
+			"type": "content_block_start", "index": e.blockIndex(ev.Index), "content_block": e.startBlock(ev.PartType, ev.ToolID, ev.ToolName),
 		})
 	case EvDelta:
 		if err := e.ensureStart(w, ev); err != nil {
 			return err
+		}
+		// Upstreams frequently emit deltas without a part start (OpenAI
+		// text/thinking, Gemini thought parts): synthesize the
+		// content_block_start, and close the previous block when the part
+		// type changes on the same upstream index.
+		if open, ok := e.openBlocks[ev.Index]; !ok || open != ev.PartType {
+			if err := e.closeBlock(w, ev.Index); err != nil {
+				return err
+			}
+			e.openBlocks = openBlocksSet(e.openBlocks, ev.Index, ev.PartType)
+			if err := e.raw(w, "content_block_start", map[string]any{
+				"type": "content_block_start", "index": e.blockIndex(ev.Index), "content_block": e.startBlock(ev.PartType, "", ""),
+			}); err != nil {
+				return err
+			}
 		}
 		idx := e.blockIndex(ev.Index)
 		var delta map[string]any
@@ -746,10 +757,7 @@ func (e *anthropicEncoder) encode(w io.Writer, ev StreamEvent) error {
 			"type": "content_block_delta", "index": idx, "delta": delta,
 		})
 	case EvPartStop:
-		idx := e.blockIndex(ev.Index)
-		return e.raw(w, "content_block_stop", map[string]any{
-			"type": "content_block_stop", "index": idx,
-		})
+		return e.closeBlock(w, ev.Index)
 	case EvStop:
 		// Defer message_delta to finish(): upstreams commonly send usage
 		// after finish_reason, and message_delta carries final usage.
@@ -767,9 +775,56 @@ func (e *anthropicEncoder) encode(w io.Writer, ev StreamEvent) error {
 	return nil
 }
 
+// closeBlock emits content_block_stop for the open block at upstream index up
+// (if any) and retires its client index: a later block at the same upstream
+// index must open at a fresh client index, because Anthropic clients key
+// content blocks by index.
+func (e *anthropicEncoder) closeBlock(w io.Writer, up int) error {
+	if _, ok := e.openBlocks[up]; !ok {
+		return nil
+	}
+	delete(e.openBlocks, up)
+	idx := e.blockIndex(up)
+	delete(e.blockMap, up)
+	return e.raw(w, "content_block_stop", map[string]any{
+		"type": "content_block_stop", "index": idx,
+	})
+}
+
+// startBlock builds the content_block payload for a part start.
+func (e *anthropicEncoder) startBlock(partType, toolID, toolName string) map[string]any {
+	switch partType {
+	case types.PartToolUse:
+		return map[string]any{"type": "tool_use", "id": orDefault(toolID, "toolu_onegw"+randHex(6)), "name": toolName, "input": map[string]any{}}
+	case types.PartThinking:
+		return map[string]any{"type": "thinking", "thinking": "", "signature": ""}
+	default:
+		return map[string]any{"type": "text", "text": ""}
+	}
+}
+
+func openBlocksSet(m map[int]string, up int, partType string) map[int]string {
+	if m == nil {
+		m = map[int]string{}
+	}
+	m[up] = partType
+	return m
+}
+
 func (e *anthropicEncoder) finish(w io.Writer) error {
 	if err := e.ensureStart(w, StreamEvent{}); err != nil {
 		return err
+	}
+	// message events.
+	ups := make([]int, 0, len(e.openBlocks))
+	for up := range e.openBlocks {
+		ups = append(ups, up)
+	}
+	sort.Ints(ups)
+	for _, up := range ups {
+		if err := e.closeBlock(w, up); err != nil {
+			return err
+		}
 	}
 	if !e.finished {
 		e.stopReason = types.StopEndTurn
