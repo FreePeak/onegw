@@ -468,15 +468,16 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1aa6a95) | #37/#39 follow-up |
 | #42 | Ownership model for the live gateway + shared config (deploy discipline; owner.json in /admin/health) | incident RCA |
 | ~~#37~~ | ~~Zero-drop deploy runbook: start→verify→stop ordering~~ — **done 2026-09-08**; `scripts/deploy.sh` (build → overlap-bind → health-verify NEW → SIGTERM OLD → confirm single NEW listener; setsid isolates NEW from the deploying session's process group after the freeze RCA), 5 behavioral scenarios tested on scratch ports (d14441d, 9cabbf6) | incident RCA |
-| ~~#38~~ | ~~Single-instance guard on data_dir~~ — **done 2026-09-08**; heartbeat files + process-scan peer detection, boot warning, `onegw_data_dir_peers` gauge, no lifetime flock (cfce76f); optional `/admin/health` JSON field deferred (server.go landmine) and noted on the issue | incident RCA |
-| ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **done 2026-09-08**; warn-and-skip on loopback binds (`Config.Skipped` recorded, `/admin/config` exposes it, skipped-provider requests fail fast), wildcard/non-loopback keeps failing hard (5d17c82) | incident RCA |
+| ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in cfce76f, reverted at user decision in 9049dd4 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
+| ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
 | #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan | user request |
 
 ### Recommended implementation order (2026-09-08)
 
 Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
-~~#43~~ → ~~#39~~ → ~~#38~~ → ~~#37~~ → ~~#40~~ all landed and closed; remaining
+~~#43~~ → ~~#39~~ → ~~#38~~ → ~~#37~~ → ~~#40~~ all landed and closed (the #39/#38
+features were later deliberately reverted, 9049dd4); remaining
 reliability item: #42 (ownership model, rides along with future deploys).
 
 Tier 2 — token saving (the PRD's biggest lever; small fixes before the umbrella):
@@ -597,5 +598,7 @@ the issue):
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
 
 ---
-*Last updated: 2026-09-08 (model-tiering research (#44): LiteLLM routes between tiers only client-side, 9router's task-aware routing is still an unmerged PR, OmniRoute ships gateway-side classifyTask + modelPowerScore + combo reordering, omp solves it with client model roles — adoption plan layered config-first in the new PRD section; gaps section refreshed: #5/#6 closed)*
+*Last updated: 2026-09-08 (deliberate revert of #38/#39 features at user
+decision — heartbeat peer scan/gauge and loopback warn-and-skip removed,
+boot back to strict Validate, 9049dd4; earlier: model-tiering research (#44): LiteLLM routes between tiers only client-side, 9router's task-aware routing is still an unmerged PR, OmniRoute ships gateway-side classifyTask + modelPowerScore + combo reordering, omp solves it with client model roles — adoption plan layered config-first in the new PRD section; gaps section refreshed: #5/#6 closed)*
 
