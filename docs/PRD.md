@@ -1,6 +1,11 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (#42 ownership model landed: `internal/owner`
+*Last updated: 2026-09-08 (#46/#47: SearXNG search enabled live — repo ships
+profile-gated `searxng` compose service (loopback :8888, JSON format, limiter
+off) with settings in docker/searxng/; live onegw.toml has `search` provider +
+fail-open `search-or-llm` combo; live-verified OpenAI/Anthropic/SSE surfaces +
+fall-through with the instance down; b-ai gated-account 403s found live → #48;
+earlier: #42 ownership model landed: `internal/owner`
 stamps `<data_dir>/owner.json` at startup and re-stamps on every successful
 reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
 revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
@@ -518,6 +523,9 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
 | #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan | user request |
 | #45 | Dashboard build approach for #41 (stack: Go templates + htmx + uPlot; SSE plumbing; cookie-session auth prerequisite; grouped cursor-paginated API) | #41 deep dive |
+| #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
+| #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
+| #48 | b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down | found live testing #47 |
 
 ### Recommended implementation order (2026-09-08)
 
@@ -627,8 +635,14 @@ the issue):
   a synthetic OpenAI completion through the normal pipeline (cross-format
   translation, combos, usage rollups). Instance failures are retryable 503
   `search_unavailable` errors, so combos fail open to the next model. Unit +
-  E2E tests (OpenAI/Anthropic surfaces). Not yet enabled in the live
-  onegw.toml — needs a SearXNG instance.
+  E2E tests (OpenAI/Anthropic surfaces). **Enabled live 2026-09-08 (#46/#47)**:
+  `docker/searxng/settings.yml` + profile-gated `searxng` compose service
+  (loopback 127.0.0.1:8888, JSON format, limiter off) run the instance; live
+  onegw.toml carries `search` + fail-open combo `search-or-llm`
+  (["search/query", "kilocode/kilo-auto/free"]). Live-verified through the
+  gateway: OpenAI surface buffered, Anthropic surface cross-format, SSE
+  streaming (usage included), and fail-open fall-through with the instance
+  stopped (search → 503 → kilo free model answered).
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
