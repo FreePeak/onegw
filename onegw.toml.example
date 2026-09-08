@@ -122,7 +122,7 @@ timeout = "10s"                # per-search timeout (0 = 10s)
 
 [[combo]]
 name = "search-or-llm"         # fail-open: search down -> falls to the model
-targets = ["search/query", "openrouter/openai/gpt-5.5"]
+targets = ["search/query", "b-ai/mimo-v2.5"]
 
 # --- Combos (ordered fallback) ----------------------------------------------
 
