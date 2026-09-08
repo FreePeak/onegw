@@ -1,0 +1,20 @@
+# Never ship secrets or local state into the build context.
+onegw.toml
+onegw.toml.bak*
+*.env
+.env*
+data/
+logs/
+*.log
+
+# Not needed to build cmd/onegw
+.git
+.github
+docs/
+assets/
+scripts/
+bench/
+*.md
+LICENSE
+Dockerfile
+docker-compose.yml
