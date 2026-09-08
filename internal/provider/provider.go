@@ -204,8 +204,9 @@ type Def struct {
 	// Memoized per-Def HTTP client (see httpClient).
 	clientOnce sync.Once
 	http       *http.Client
-	pool       *accountPool
-	inflight   chan struct{}
+
+	pool     *accountPool
+	inflight chan struct{}
 
 	// learnedAT records models discovered at runtime to reject
 	// thinking-effort/disable knobs (GLM 1210-family 400) even though they
@@ -734,22 +735,36 @@ func (d *Def) httpClient() *http.Client {
 // transportErr classifies a failed upstream round-trip so the console log
 // can tell a gateway-side timeout from a dead endpoint from a client that
 // hung up — pre-2026-09-08 all three logged as bare 502 upstream_error.
-// The request context is the discriminator: when ctx is done the CLIENT
-// hung up (cancel or client deadline). Note os.ErrDeadlineExceeded — the
-// error the transport's own ResponseHeaderTimeout wraps — compares equal
-// to context.DeadlineExceeded, so the error chain alone cannot tell a
-// gateway-side pre-first-byte timeout from a client deadline; only the
-// live context can. Otherwise a net timeout is the gateway's budget
-// expiring (504, retryable); anything else is a dead/unreachable endpoint.
+// Go reports ResponseHeaderTimeout/dial timeouts as net.Error with
+// Timeout() set; a canceled or client-deadline context means the CLIENT
+// hung up, not the upstream.
 func transportErr(ctx context.Context, err error) *types.APIError {
-	if ctx.Err() != nil {
+	// The request context is the authoritative client-hangup signal, and it
+	// MUST be checked before the error chain: a ResponseHeaderTimeout's
+	// error also satisfies errors.Is(err, context.DeadlineExceeded) on the
+	// current Go (verified h1 + h2), so chain-matching alone cannot tell a
+	// client deadline from a gateway-side pre-first-byte timeout.
+	if ctx != nil && ctx.Err() != nil {
 		return &types.APIError{Status: 499, Type: "client_closed", Message: err.Error()}
 	}
-	var nerr net.Error
-	if errors.As(err, &nerr) && nerr.Timeout() {
+	if anyChainTimeout(err) {
 		return &types.APIError{Status: 504, Type: "upstream_timeout", Message: err.Error()}
 	}
 	return &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+}
+
+// anyChainTimeout reports whether ANY error in the unwrap chain reports a
+// transport timeout. errors.As alone is not enough: it stops at the first
+// net.Error in the chain, and (*url.Error).Timeout() only type-asserts its
+// direct child — an extra wrap layer between them (fmt.Errorf, middleware)
+// hides a real timeout deeper in the chain.
+func anyChainTimeout(err error) bool {
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if ne, ok := e.(net.Error); ok && ne.Timeout() {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultClient keeps the previous package-level behavior for callers
@@ -1079,7 +1094,7 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	applyAuth(req.Header, d.Kind, acct.bearerToken())
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 502, err
+		return nil, transportErr(ctx, err).Status, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))

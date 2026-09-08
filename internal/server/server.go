@@ -173,6 +173,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
 			StickyTTL:        stickyTTL,
 			SessionHeader:    p.SessionHeader,
+			HeaderTimeout:    cfg.ResponseHeaderTimeoutDur(),
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
