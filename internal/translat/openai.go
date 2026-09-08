@@ -116,7 +116,10 @@ type oaRespFmt struct {
 	} `json:"json_schema,omitempty"`
 }
 
-// oaUsage mirrors the OpenAI usage object plus common extensions.
+// oaUsage mirrors the OpenAI usage object plus common extensions. DeepSeek
+// speaks OpenAI chat-completions but reports cache hits as top-level
+// prompt_cache_hit_tokens / prompt_cache_miss_tokens (prompt_tokens = hit +
+// miss) instead of prompt_tokens_details.cached_tokens (issue #33).
 type oaUsage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
 	CompletionTokens    int64 `json:"completion_tokens"`
@@ -127,6 +130,11 @@ type oaUsage struct {
 	CompletionTokensDetails *struct {
 		ReasoningTokens int64 `json:"reasoning_tokens"`
 	} `json:"completion_tokens_details,omitempty"`
+	// DeepSeek cache shape.
+	PromptCacheHitTokens  int64 `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTokens int64 `json:"prompt_cache_miss_tokens"`
+	// Kimi/Moonshot report the cached subset at the top level.
+	CachedTokens int64 `json:"cached_tokens,omitempty"`
 }
 
 // DecodeOpenAIRequest parses an OpenAI chat-completions body into the unified
@@ -621,7 +629,7 @@ func DecodeOpenAIResponse(body []byte) (*types.ChatResponse, error) {
 	}
 	if r.Error != nil {
 		return nil, &types.APIError{
-			Status:  502,
+			Status:  statusFromOAErr(r.Error.Code, r.Error.Type, r.Error.Message),
 			Type:    orDefault(r.Error.Type, "upstream_error"),
 			Code:    errCodeString(r.Error.Code),
 			Message: r.Error.Message,
@@ -699,6 +707,14 @@ func oaUsageToUnified(u *oaUsage) types.Usage {
 	out := types.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, UpstreamFormat: string(FmtOpenAI)}
 	if u.PromptTokensDetails != nil {
 		out.CacheReadTokens = u.PromptTokensDetails.CachedTokens
+	}
+	// DeepSeek shape: prompt_tokens = hit + miss; the hit is the cached
+	// subset (unified InputTokens is already inclusive upstream).
+	if out.CacheReadTokens == 0 && u.PromptCacheHitTokens > 0 {
+		out.CacheReadTokens = u.PromptCacheHitTokens
+	}
+	if out.CacheReadTokens == 0 {
+		out.CacheReadTokens = u.CachedTokens // Kimi top level
 	}
 	if u.CompletionTokensDetails != nil {
 		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens

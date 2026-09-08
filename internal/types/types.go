@@ -152,9 +152,14 @@ type ChatResponse struct {
 	Usage        Usage  `json:"usage"`
 }
 
-// Usage is unified token accounting. Counters the upstream did not report
-// stay 0; cost estimation treats 0 input/output with Estimated=true as
-// char-derived approximation.
+// Usage is unified token accounting. InputTokens is the TOTAL prompt size,
+// cache-INCLUSIVE: CacheReadTokens and CacheWriteTokens are subsets of it
+// (mirrors OpenAI's prompt_tokens semantics; issue #31). Translators
+// normalize at the decode boundary: Anthropic reports input_tokens
+// EXCLUDING cache reads/writes, so its decoders add cache read+write into
+// InputTokens and its encoders subtract them back out (clamped at 0).
+// Counters the upstream did not report stay 0; cost estimation treats
+// 0 input/output with Estimated=true as char-derived approximation.
 type Usage struct {
 	InputTokens      int64  `json:"input_tokens"`
 	OutputTokens     int64  `json:"output_tokens"`
