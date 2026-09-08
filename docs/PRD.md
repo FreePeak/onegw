@@ -561,6 +561,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
 | #48 | b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down | found live testing #47 |
+| #50 | Cross-format encode path never coerces always-thinking effort (residual from #17) — fix shape verified: coerce `u.ReasoningEffort`/`u.Thinking` in `prepareUpstreamBody`'s cross-format branches via `AlwaysThinkingModel` before `encodeFor`; natural to land with #32 | #17 residual |
 
 ### Recommended implementation order (2026-09-08)
 
@@ -571,7 +572,8 @@ landed 2026-09-08 (`owner.json` + `/admin/health` owner block). Tier 1 complete.
 
 Tier 3 — remaining 2026-09-08: #48 (b-ai gated-account 403 → account cooldown +
 fall-through, the e820571 pattern) → prompt-cache cluster: #36 (tiny, live grok gain)
-→ #31 (usage-semantics foundation) → #33 → #32 → #34/#35 (per-provider cache
+→ #31 (usage-semantics foundation) → #33 → #32 + #50 (encode-layer work area:
+field preservation + cross-format effort coercion) → #34/#35 (per-provider cache
 profiles; candidates to merge into one feature) → #44 step 2 (task-aware combo
 reordering; step 1 config-only roles still absent from the live toml) → #14
 remainder (`onegw connect <tool>`, launchd/systemd unit).
