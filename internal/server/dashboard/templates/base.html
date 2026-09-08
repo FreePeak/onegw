@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>onegw · {{.Title}}</title>
+<style>{{asset_css "admin.css"}}</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="logo">one<span>gw</span></div>
+  <nav class="nav">
+    {{range .Nav}}<a href="{{.Href}}"{{if eq .ID $.Active}} class="active"{{end}}>{{.Label}}</a>{{end}}
+  </nav>
+</aside>
+<main class="main">
+<header>
+  <h1>{{.Title}}</h1>
+  <div class="hdr">{{block "hdr" .V}}{{end}}</div>
+  <button id="theme" class="btn" title="toggle dark/light" style="padding:2px 9px">◐</button>
+</header>
+<div class="content">
+{{block "content" .V}}{{end}}
+</div>
+<footer>onegw admin · read-mostly views · config stays in onegw.toml · reload via Settings</footer>
+</main>
+</div>
+<script>{{asset_js "htmx.min.js"}}</script>
+{{if .Live}}<script>{{asset_js "sse.min.js"}}</script>{{end}}
+<script>
+(function(){
+  var t=localStorage.getItem('ogw-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
+  document.documentElement.dataset.theme=t;
+  document.getElementById('theme').onclick=function(){
+    var n=document.documentElement.dataset.theme==='dark'?'light':'dark';
+    document.documentElement.dataset.theme=n;localStorage.setItem('ogw-theme',n);};
+})();
+</script>
+{{block "scripts" .V}}{{end}}
+</body>
+</html>

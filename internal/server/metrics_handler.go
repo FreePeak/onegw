@@ -15,6 +15,7 @@ import (
 // Server (not in the hot-reloadable state) so counters survive config
 // reloads and stay cumulative for the process lifetime.
 type gatewayMetrics struct {
+	srv      *Server // back-reference for the #19 log ring; set once in New
 	reg      *metrics.Registry
 	requests *metrics.Family // onegw_requests_total{provider,model,code}
 	tokens   *metrics.Family // onegw_tokens_total{provider,model,type}
@@ -60,6 +61,15 @@ func (m *gatewayMetrics) success(provider, model string, u types.Usage, savedTok
 			m.tokens.Add(e.n, provider, model, e.typ)
 		}
 	}
+	m.logReq(provider, model, 200, "", u, savedTokens)
+}
+
+// logReq routes one completion into the #19 ring; nil-safe because tests
+// build gatewayMetrics without a Server.
+func (m *gatewayMetrics) logReq(provider, model string, code int, kind string, u types.Usage, saved int64) {
+	if m.srv != nil {
+		m.srv.observeLog(provider, model, code, kind, u, saved, "")
+	}
 }
 
 // boundedModel clamps a routed model string to config-defined routes
@@ -79,6 +89,7 @@ func (s *Server) boundedModel(model string) string {
 func (m *gatewayMetrics) upstreamErr(provider, model string, status int) {
 	m.requests.Inc(provider, model, strconv.Itoa(status))
 	m.errors.Inc(provider, "upstream_error")
+	m.logReq(provider, model, status, "upstream_error", types.Usage{}, 0)
 }
 
 // noRoute records a request the router could not resolve (unknown provider /
@@ -88,6 +99,7 @@ func (m *gatewayMetrics) upstreamErr(provider, model string, status int) {
 func (m *gatewayMetrics) noRoute(status int) {
 	m.requests.Inc("", "unresolved", strconv.Itoa(status))
 	m.errors.Inc("", "no_route")
+	m.logReq("", "", status, "no_route", types.Usage{}, 0)
 }
 
 // saturated records a request rejected because the buffered-memory budget
@@ -95,11 +107,13 @@ func (m *gatewayMetrics) noRoute(status int) {
 func (m *gatewayMetrics) saturated() {
 	m.requests.Inc("", "", "503")
 	m.errors.Inc("", "budget_saturated")
+	m.logReq("", "", 503, "budget_saturated", types.Usage{}, 0)
 }
 
 // tooLarge records a request rejected because its body exceeded the body cap.
 func (m *gatewayMetrics) tooLarge() {
 	m.requests.Inc("", "", "413")
+	m.logReq("", "", 413, "no_route", types.Usage{}, 0)
 }
 
 // invalidBody records an attempt aborted before the upstream call because
@@ -107,6 +121,7 @@ func (m *gatewayMetrics) tooLarge() {
 // It is a client-side 400, not one of the three error kinds.
 func (m *gatewayMetrics) invalidBody(provider, model string) {
 	m.requests.Inc(provider, model, "400")
+	m.logReq(provider, model, 400, "", types.Usage{}, 0)
 }
 
 // handleMetrics serves GET /metrics in the Prometheus text exposition
