@@ -729,8 +729,19 @@ the issue):
   landing order.
 
 ---
-*Last updated: 2026-09-08 (dashboard shipped + bugs fixed + retention wired;
-commits 16f3dc9/fe2d532/a59c2a3/5b4520f; earlier: Claude Code wired + translat Anthropic SSE block-synthesis fix, c8422d1;
+*Last updated: 2026-09-08 (request-log carries the upstream error message —
+502-storm RCA: 2026-09-08 18:25–19:33 the b-ai + glm upstreams (both backed
+by Zhipu) 502ed large requests together while small requests succeeded;
+combo fall-through kept most traffic alive. Dashboard showed bare
+"502 · upstream_error" because every metrics path discarded the upstream
+text; commit 43f3375 threads the decoded upstream message (rune-safe 300B
+cap) through logReq into the ring and renders it in the console log. All
+provider keys verified live (7 b-ai accounts + glm + kilocode + orcarouter
+200; xai OAuth token expired 2026-09-07 21:24:50Z — re-auth in 9router then
+re-import; tracked as config debt). Live gateway redeployed zero-drop
+(scripts/deploy.sh) from 43f3375; earlier: dashboard shipped + bugs fixed +
+retention wired, commits 16f3dc9/fe2d532/a59c2a3/5b4520f; earlier: Claude
+Code wired + translat Anthropic SSE block-synthesis fix, c8422d1;
 earlier: #42 ownership model landed: `internal/owner`
 reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
 revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
@@ -744,4 +755,5 @@ React bundle, stdlib SSE bounded fan-out, cookie-session login as SSE auth
 prerequisite, grouped cursor-paginated /admin/api/v1; earlier: deliberate
 revert of #38/#39 features at user decision — heartbeat peer scan/gauge and
 loopback warn-and-skip removed, boot back to strict Validate, 9049dd4)*
+
 
