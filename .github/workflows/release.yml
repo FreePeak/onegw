@@ -45,7 +45,15 @@ jobs:
             IFS=. read -r major minor patch <<< "$ver"
           fi
 
-          msgs="$(git log $range --pretty=%B)"
+          # Bump policy (matches this repo's free-form history: typeless and
+          # non-CC types like "dashboard:", "saver:", "security:" carry real
+          # work, so anything except docs/test/chore bumps at least patch):
+          #   BREAKING CHANGE: / type!  -> major
+          #   feat                      -> minor
+          #   fix, perf                 -> patch
+          #   anything else except docs/test/chore -> patch
+          # Merge commits are excluded (their subjects aren't work).
+          msgs="$(git log $range --no-merges --pretty=%B)"
           bump=""
           if printf '%s\n' "$msgs" | grep -Eq '^[a-z]+(\([^)]*\))?!:' \
             || printf '%s\n' "$msgs" | grep -q 'BREAKING CHANGE:'; then
@@ -53,6 +61,8 @@ jobs:
           elif printf '%s\n' "$msgs" | grep -Eq '^feat(\([^)]*\))?:'; then
             bump=minor
           elif printf '%s\n' "$msgs" | grep -Eq '^(fix|perf)(\([^)]*\))?:'; then
+            bump=patch
+          elif printf '%s\n' "$msgs" | awk 'NF && $0 !~ /^(docs|test|chore|ci)(\([^)]*\))?:/ {found=1} END {exit !found}'; then
             bump=patch
           fi
 
