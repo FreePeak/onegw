@@ -137,6 +137,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		kind := provider.Kind(p.Kind)
+		stickyTTL, _ := time.ParseDuration(p.Sticky) // "" stays 0; Validate rejects unparseable values
 		def := &provider.Def{
 			Name:             p.Name,
 			Kind:             kind,
@@ -148,6 +149,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
 			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
+			StickyTTL:        stickyTTL,
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
@@ -365,7 +367,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -434,7 +436,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(r.Context(), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header.Get(provider.OpenCodeSessionHeader), ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -469,6 +471,19 @@ func (s *Server) acquireForBody(r *http.Request) (func(), bool) {
 func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 	w.Header().Set("Retry-After", "2")
 	writeErr(w, f, errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly"))
+}
+
+// requestIdentity derives the sticky-account identity for a request: the
+// client session header when present, else the auth key label. Empty
+// disables affinity (plain round-robin).
+func requestIdentity(r *http.Request, ak *config.AuthKey) string {
+	if sid := r.Header.Get(provider.OpenCodeSessionHeader); sid != "" {
+		return "s:" + sid
+	}
+	if ak != nil {
+		return "k:" + ak.Label()
+	}
+	return ""
 }
 
 // attempt performs one upstream call and returns the response to the

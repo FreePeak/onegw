@@ -149,6 +149,10 @@ type Def struct {
 	SearchMaxResults int
 	SearchTimeout    time.Duration
 
+	// StickyTTL enables account affinity for the identities passed to
+	// NextAccount (0 = plain round-robin). Set from ProviderCfg.Sticky.
+	StickyTTL time.Duration
+
 	pool     *accountPool
 	inflight chan struct{}
 }
@@ -192,7 +196,7 @@ func NewPool() *Pool { return &Pool{byName: map[string]*Def{}} }
 // Set (re)registers a provider definition.
 func (p *Pool) Set(d *Def) {
 	if d.pool == nil {
-		d.pool = newAccountPool(d.Accounts)
+		d.pool = newAccountPool(d.Accounts, d.StickyTTL)
 	}
 	if d.MaxConc > 0 {
 		d.inflight = make(chan struct{}, d.MaxConc)
@@ -213,7 +217,7 @@ func (p *Pool) Replace(defs []*Def) {
 	order := make([]string, 0, len(defs))
 	for _, d := range defs {
 		if d.pool == nil {
-			d.pool = newAccountPool(d.Accounts)
+			d.pool = newAccountPool(d.Accounts, d.StickyTTL)
 		}
 		if d.MaxConc > 0 {
 			d.inflight = make(chan struct{}, d.MaxConc)
@@ -345,8 +349,16 @@ var versionRe = regexp.MustCompile(`^v\d+$`)
 // ---------------------------------------------------------------------------
 
 // NextAccount picks the next available account (weighted round-robin with
-// quota cooldowns).
-func (d *Def) NextAccount() *Account { return d.pool.next() }
+// quota cooldowns). With a sticky TTL configured, the identity (client
+// session or auth-key label) is pinned to one account for the window:
+// the first pick rotates and pins, repeats within the window reuse the
+// pin, and expired or cooling pins rotate to the next account and re-pin.
+// Identity "" disables pinning.
+func (d *Def) NextAccount(id string) *Account { return d.pool.next(id) }
+
+// Unpin drops an identity's pinned account so the next NextAccount rotates.
+// Call after a failed upstream attempt to avoid re-sticking to a dead key.
+func (d *Def) Unpin(id string) { d.pool.unpin(id) }
 
 // Cool marks an account as cooling after a quota error.
 func (d *Def) Cool(a *Account, dDur time.Duration) { d.pool.cool(a, dDur) }
@@ -356,18 +368,34 @@ type accountState struct {
 	cooldown time.Time // until when the account is skipped
 }
 
+// maxStickyPins bounds the affinity map. Identities are client session ids
+// and auth-key labels — normally a handful; the cap only matters against
+// runaway session ids. At the cap, expired pins are swept, then the map
+// resets (affinity is a cache, never load-bearing).
+const maxStickyPins = 4096
+
 type accountPool struct {
 	mu      sync.Mutex
 	accts   []accountState
 	rr      uint64
 	stopped bool
+	ttl     time.Duration // sticky affinity window; 0 = plain round-robin
+	sticky  map[string]stickyPin
+	now     func() time.Time // injectable clock (tests)
 }
 
-func newAccountPool(accts []Account) *accountPool {
+// stickyPin is one identity's pinned account, matched by Name+APIKey like
+// cool() so weighted slot expansion never breaks a pin.
+type stickyPin struct {
+	name, key string
+	expires   time.Time
+}
+
+func newAccountPool(accts []Account, sticky time.Duration) *accountPool {
 	if len(accts) == 0 {
 		accts = []Account{{Name: "default"}}
 	}
-	p := &accountPool{}
+	p := &accountPool{ttl: sticky, now: time.Now}
 	for _, a := range accts {
 		w := a.Weight
 		if w <= 0 {
@@ -380,23 +408,73 @@ func newAccountPool(accts []Account) *accountPool {
 	return p
 }
 
-// next picks the next non-cooling account; nil = all cooling (caller picks
-// first anyway so the error names a concrete cause).
-func (p *accountPool) next() *Account {
+// next picks the account for this request. With a sticky TTL and a
+// non-empty identity, a live pin returns its account untouched; an
+// expired or cooling pin is dropped and rotation starts after that
+// account's slot, re-pinning the winner.
+func (p *accountPool) next(id string) *Account {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	now := time.Now()
+	now := p.now()
 	n := len(p.accts)
-	for i := 0; i < n; i++ {
-		s := &p.accts[(int(p.rr)+i)%n]
+	start := int(p.rr)
+	if p.ttl > 0 && id != "" {
+		if pin, ok := p.sticky[id]; ok && now.Before(pin.expires) {
+			for i := range p.accts {
+				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
+					if now.After(s.cooldown) {
+						return &s.acct
+					}
+					start = i + 1 // pinned account cooling: rotate past it
+					break
+				}
+			}
+		}
+		delete(p.sticky, id)
+	}
+	for i := range n {
+		s := &p.accts[(start+i)%n]
 		if now.After(s.cooldown) {
-			p.rr = (uint64(int(p.rr)+i) + 1) % uint64(n)
+			p.rr = (uint64(start+i) + 1) % uint64(n)
+			p.pin(id, &s.acct, now)
 			return &s.acct
 		}
 	}
-	s := &p.accts[int(p.rr)%n]
+	// All cooling: keep the old fallback so the error names a cause.
+	s := &p.accts[start%n]
 	p.rr = (p.rr + 1) % uint64(n)
 	return &s.acct
+}
+
+// pin records the identity → account affinity, keeping the map bounded.
+func (p *accountPool) pin(id string, a *Account, now time.Time) {
+	if p.ttl <= 0 || id == "" {
+		return
+	}
+	if p.sticky == nil {
+		p.sticky = make(map[string]stickyPin)
+	}
+	if len(p.sticky) >= maxStickyPins {
+		for k, v := range p.sticky {
+			if now.After(v.expires) {
+				delete(p.sticky, k)
+			}
+		}
+		if len(p.sticky) >= maxStickyPins {
+			p.sticky = make(map[string]stickyPin)
+		}
+	}
+	p.sticky[id] = stickyPin{name: a.Name, key: a.APIKey, expires: now.Add(p.ttl)}
+}
+
+// unpin drops an identity's pin so the next next() rotates.
+func (p *accountPool) unpin(id string) {
+	if id == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.sticky, id)
 }
 
 // cool marks an account cooling for d (quota exhausted).
