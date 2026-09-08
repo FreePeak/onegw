@@ -246,11 +246,16 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			}
 			lastErr = err
 			def.Unpin(id) // a failed attempt must not keep its pin
-			if !(err.Retryable() || err.RegionLocked()) {
+			if !(err.Retryable() || err.RegionLocked() || err.Fallbackable) {
 				return err
 			}
-			if err.RegionLocked() {
-				continue // next attempt: pool skips the parked account
+			if err.RegionLocked() || err.Fallbackable {
+				// next attempt: pool skips the parked account, or the
+				// attempt now coerces upfront (learned always-thinking).
+				// A Fallbackable error retries this target once — the
+				// rewritten body has a chance to pass — then falls
+				// through to the next combo target via MaxAttempts.
+				continue
 			}
 			select {
 			case <-ctx.Done():

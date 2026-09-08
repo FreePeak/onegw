@@ -53,8 +53,9 @@ type ChatRequest struct {
 	StopSequences []string `json:"stop_sequences,omitempty"`
 
 	// Reasoning controls. Effort is a free-form string (OpenAI dialect:
-	// none|minimal|low|medium|high|max; always-thinking upstreams like GLM
-	// accept only low|high|max — see provider AlwaysThinking). Budget is
+	// none|minimal|low|medium|high|max; xhigh is a client ladder above
+	// high). Always-thinking upstreams like GLM accept only low|high|max —
+	// the server coerces (see provider AlwaysThinking). Budget is
 	// explicit thinking-token budget. Exactly one may be set.
 	ReasoningEffort string       `json:"reasoning_effort,omitempty"`
 	Thinking        *ThinkingCfg `json:"thinking,omitempty"`
@@ -174,6 +175,12 @@ type APIError struct {
 	Code       string `json:"code,omitempty"`
 	Message    string `json:"message"`
 	RetryAfter string `json:"-"` // seconds hint for 429/503-class errors
+	// Fallbackable marks a per-model capability rejection (e.g. a learned
+	// always-thinking upstream that cannot serve the request even after the
+	// gateway coerced the body): Router.Execute retries the target once
+	// (the attempt now coerces upfront) and then falls through to the next
+	// combo target instead of surfacing the 400. Never serialized.
+	Fallbackable bool `json:"-"`
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).
