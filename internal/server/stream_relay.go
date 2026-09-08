@@ -139,7 +139,24 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	src := &countingReader{r: io.MultiReader(bytes.NewReader(relayPrefix), r.Body)}
 
 	id := requestIdentity(r, ak)
-	cres, apiErr := def.Do(r.Context(), def.NextAccount(id), t.Model, clientSession, src, sc.stream)
+	acct, poolReady := def.NextAccount(id)
+	if acct == nil {
+		// Whole account pool cooling from upstream 429s: never send a
+		// doomed upstream call from the single-shot fast path. Answer
+		// 429 with the pool's soonest recovery, exactly like the
+		// buffered pipeline's fall-through (server.go attempt()).
+		cool := time.Until(poolReady)
+		if cool < 0 {
+			cool = 0
+		}
+		writeErr(w, clientFmt, &types.APIError{Status: 429, Type: "provider_rate_limited",
+			Code:       "rate_limit_exceeded",
+			RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+			Message: fmt.Sprintf("provider %s: all accounts rate-limited upstream; retry after %ds",
+				def.Name, int64(cool.Seconds())+1)})
+		return true
+	}
+	cres, apiErr := def.Do(r.Context(), acct, t.Model, clientSession, src, sc.stream)
 	if apiErr != nil {
 		def.Unpin(id) // failed fast-path attempt must not keep its pin
 		if alwaysThinking400(apiErr) {
