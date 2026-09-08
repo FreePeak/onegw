@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -141,6 +142,15 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	cres, apiErr := def.Do(r.Context(), def.NextAccount(id), t.Model, clientSession, src, sc.stream)
 	if apiErr != nil {
 		def.Unpin(id) // failed fast-path attempt must not keep its pin
+		if alwaysThinking400(apiErr) {
+			// Single-shot path: no replay/retry is possible, but the
+			// learned flag makes every future request for this model
+			// fall back to the buffered pipeline above (eligible guard
+			// consults AlwaysThinkingModel), where the body is coerced.
+			if def.LearnAlwaysThinking(t.Model) {
+				log.Printf("server: learned always-thinking %s/%s from upstream 400; future stream requests go buffered", def.Name, t.Model)
+			}
+		}
 		if w.Header().Get("Content-Type") == "" {
 			writeErr(w, clientFmt, apiErr)
 		}

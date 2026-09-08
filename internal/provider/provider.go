@@ -155,17 +155,45 @@ type Def struct {
 
 	pool     *accountPool
 	inflight chan struct{}
+
+	// learnedAT records models discovered at runtime to reject
+	// thinking-effort/disable knobs (GLM 1210-family 400) even though they
+	// are not listed in AlwaysThinking. Learned state lives on the Def on
+	// purpose: a SIGHUP reload rebuilds the pool with fresh Defs, which
+	// re-syncs it with the on-disk config.
+	learnedMu sync.RWMutex
+	learnedAT map[string]struct{}
+}
+
+// LearnAlwaysThinking records model as runtime-discovered always-thinking
+// (its upstream rejected thinking knobs with the always-thinking 400) and
+// reports whether this call newly learned it, so callers can log once.
+func (d *Def) LearnAlwaysThinking(model string) bool {
+	d.learnedMu.Lock()
+	defer d.learnedMu.Unlock()
+	if d.learnedAT == nil {
+		d.learnedAT = make(map[string]struct{})
+	}
+	if _, ok := d.learnedAT[model]; ok {
+		return false
+	}
+	d.learnedAT[model] = struct{}{}
+	return true
 }
 
 // AlwaysThinkingModel reports whether the routed upstream model matches one
-// of the provider's always-thinking globs (path.Match syntax).
+// of the provider's always-thinking globs (path.Match syntax) or was
+// learned always-thinking at runtime (see LearnAlwaysThinking).
 func (d *Def) AlwaysThinkingModel(model string) bool {
 	for _, pat := range d.AlwaysThinking {
 		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
 		}
 	}
-	return false
+	d.learnedMu.RLock()
+	defer d.learnedMu.RUnlock()
+	_, ok := d.learnedAT[model]
+	return ok
 }
 
 // AllowsPassthrough reports whether the provider declares the OpenAI-format

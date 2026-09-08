@@ -7,6 +7,7 @@ import (
 
 	"onegw/internal/provider"
 	"onegw/internal/translat"
+	"onegw/internal/types"
 )
 
 // assertField decodes a prepared body and checks the top-level string
@@ -48,11 +49,57 @@ func TestAlwaysThinkingModel(t *testing.T) {
 func TestCoerceEffort(t *testing.T) {
 	for in, want := range map[string]string{
 		"none": "low", "minimal": "low", "medium": "low",
-		"low": "low", "high": "high", "max": "max", "xhigh": "xhigh",
+		"xhigh": "max", // client ladders above high map onto GLM's max
+		"low": "low", "high": "high", "max": "max",
+		"ultra": "high", // unrecognized values land on the accepted middle
 	} {
 		if got := coerceEffort(in); got != want {
 			t.Errorf("coerceEffort(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestAlwaysThinking400Signature(t *testing.T) {
+	yes := []types.APIError{
+		{Status: 400, Code: "1210", Message: "use low, high or max"},
+		{Status: 400, Code: "400001", Type: "invalid_request_error",
+			Message: "The request is invalid: 该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"},
+		{Status: 400, Message: "This model always thinks; please use low, high, or max."},
+	}
+	for _, e := range yes {
+		e := e
+		if !alwaysThinking400(&e) {
+			t.Errorf("alwaysThinking400(%q code=%q) = false, want true", e.Message, e.Code)
+		}
+	}
+	no := []types.APIError{
+		{Status: 400, Type: "invalid_request", Message: "missing messages"}, // plain bad request
+		{Status: 400, Code: "400001", Message: "invalid parameter temperature"}, // code alone is not enough
+		{Status: 429, Message: "该模型始终思考"}, // wrong status class
+	}
+	for i := range no {
+		if alwaysThinking400(&no[i]) {
+			t.Errorf("alwaysThinking400(%v) = true, want false", no[i])
+		}
+	}
+}
+
+func TestLearnAlwaysThinking(t *testing.T) {
+	def := &provider.Def{} // no globs configured
+	if def.AlwaysThinkingModel("glm-5.3-flash") {
+		t.Fatal("unlearned model must not be always-thinking")
+	}
+	if !def.LearnAlwaysThinking("glm-5.3-flash") {
+		t.Fatal("first learn must report newly learned")
+	}
+	if def.LearnAlwaysThinking("glm-5.3-flash") {
+		t.Error("second learn of the same model must not report newly learned")
+	}
+	if !def.AlwaysThinkingModel("glm-5.3-flash") {
+		t.Error("learned model must be reported always-thinking")
+	}
+	if def.AlwaysThinkingModel("glm-5.1") {
+		t.Error("other models must not inherit the learned flag")
 	}
 }
 
