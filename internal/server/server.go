@@ -69,6 +69,14 @@ type Server struct {
 	// owner records the running process (pid, build stamp, config mtime)
 	// for /admin/health and <data_dir>/owner.json (#42).
 	owner atomic.Pointer[owner.Info]
+	// sessions/logins power the dashboard cookie login (#45); events is
+	// the bounded SSE fan-out hub; reqlog is the #19 request ring. All
+	// live on the Server (not the reloadable state) so reloads neither
+	// drop sessions nor lose the log history.
+	sessions *adminSessions
+	logins   *loginGuard
+	events   *sseHub
+	reqlog   *requestLog
 	// cfgMu serializes admin config mutations so concurrent PATCH/reload
 	// read-modify-write cycles on the TOML file stay atomic.
 	cfgMu sync.Mutex
@@ -90,7 +98,11 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("open store: %w", err)
 		}
 	}
-	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), m: newGatewayMetrics(), dataDir: dataDir}
+	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), dataDir: dataDir,
+		sessions: newAdminSessions(), logins: newLoginGuard(), events: newSSEHub(), reqlog: newRequestLog()}
+	s.m = newGatewayMetrics()
+	s.m.srv = s
+	s.reqlog.next = s.events
 	if st != nil {
 		st.SetNodeID(s.nodeID)
 	}
@@ -280,6 +292,9 @@ func (s *Server) StampOwner() {
 
 // Close releases resources.
 func (s *Server) Close() {
+	if s.events != nil {
+		s.events.shutdown()
+	}
 	if s.oauth != nil {
 		s.oauth.Stop()
 	}
@@ -316,6 +331,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/usage", s.handleAdminUsage)
 	mux.HandleFunc("GET /admin/quota", s.handleAdminQuota)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
+	mux.HandleFunc("POST /admin/login", s.handleAdminLogin)
+	mux.HandleFunc("GET /admin", s.handleAdminPage)
+	mux.HandleFunc("POST /admin/logout", s.handleAdminLogout)
+	mux.HandleFunc("GET /admin/events", s.handleEvents)
+	mux.HandleFunc("GET /admin/api/v1/logs", s.handleAPILogs)
+	mux.HandleFunc("GET /admin/api/v1/usage/daily", s.handleAPIUsageDaily)
+	mux.HandleFunc("GET /admin/api/v1/providers", s.handleAPIProviders)
+	mux.HandleFunc("GET /admin/api/v1/combos", s.handleAPICombos)
+	mux.HandleFunc("GET /admin/api/v1/quota", s.handleAPIQuota)
+	mux.HandleFunc("GET /admin/api/v1/saver", s.handleAPISaver)
+	mux.HandleFunc("GET /admin/ui/", s.handleAdminUI)
 	mux.HandleFunc("GET /", s.handleDashboard)
 	return s.withRecovery(mux)
 }
@@ -852,22 +878,31 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(out)
 }
 
+// adminOK reports whether the request may touch the admin surface: the
+// X-Admin-Password header (constant-time), a live session cookie (#45),
+// or an open gateway (no admin_password configured).
 func (s *Server) adminOK(r *http.Request) bool {
 	pw := s.cur().cfg.Server.AdminPassword
 	if pw == "" {
 		return true
 	}
-	hpw := r.Header.Get("X-Admin-Password")
-	return subtle.ConstantTimeCompare([]byte(hpw), []byte(pw)) == 1
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Password")), []byte(pw)) == 1 {
+		return true
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return s.sessions.valid(c.Value, pw)
+	}
+	return false
 }
 
+// handleDashboard keeps "/" as a friendly entry point: redirect to the
+// admin console. Unknown paths stay 404.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(dashboardHTML))
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {

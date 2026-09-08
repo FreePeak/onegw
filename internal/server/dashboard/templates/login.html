@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>onegw · sign in</title>
+<style>{{asset_css "admin.css"}}</style>
+</head>
+<body>
+<div class="layout" style="align-items:center;justify-content:center;min-height:100vh">
+  <form method="post" action="/admin/login" class="card" style="width:360px;padding:26px">
+    <div class="logo" style="font-size:22px;padding:0 0 4px">one<span>gw</span></div>
+    <h3 style="margin:0 0 6px">Admin console</h3>
+    <p class="sub" style="margin:0 0 16px;color:var(--mut)">Enter the admin password
+      (<code class="chip">admin_password</code> from <code class="chip">onegw.toml</code>).</p>
+    {{if .V.Error}}<p style="color:var(--err);margin:0 0 12px">{{.V.Error}}</p>{{end}}
+    <input type="password" name="password" autofocus autocomplete="current-password"
+           placeholder="admin password" style="width:100%;margin-bottom:12px">
+    <button type="submit" class="btn primary" style="width:100%">Sign in</button>
+  </form>
+</div>
+<script>
+(function(){
+  var t=localStorage.getItem('ogw-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
+  document.documentElement.dataset.theme=t;})();
+</script>
+</body>
+</html>

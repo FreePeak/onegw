@@ -1,0 +1,54 @@
+{{define "hdr"}}<span>request log · in-memory ring of {{.Cap}}</span>{{end}}
+{{define "content"}}
+<div class="card" style="margin-bottom:12px;display:flex;gap:14px;align-items:center">
+  <span id="logstat" class="sub" style="margin:0;color:var(--mut)">connecting…</span>
+  <label style="margin-left:auto;font-size:12.5px"><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+  <button id="pause" class="btn" style="padding:3px 10px">pause</button>
+  <a class="btn" style="padding:3px 10px" href="/admin/api/v1/logs?limit=200">raw JSON</a>
+</div>
+<div id="logpane" class="mono"></div>
+{{end}}
+{{define "scripts"}}
+<script>
+(function(){
+  const pane = document.getElementById('logpane'), stat = document.getElementById('logstat'),
+        auto = document.getElementById('autoscroll'), pauseBtn = document.getElementById('pause');
+  let paused = false, last = 0;
+  pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? 'resume' : 'pause'; };
+  function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function cls(e){ return e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
+  function line(e){
+    const d = new Date(e.ts * 1000);
+    const t = d.toTimeString().slice(0, 8);
+    const mark = e.kind ? '✗' : '✓';
+    let txt = t + '  ' + mark + '  ' + (e.provider ? e.provider + '/' + e.model : e.model || '(unresolved)') +
+      '  ' + e.code + (e.kind ? ' · ' + e.kind : '') +
+      '  · ' + kfmt(e.in) + ' in · ' + kfmt(e.out) + ' out' + (e.cache_read ? ' · ' + kfmt(e.cache_read) + ' cached' : '') +
+      (e.saved ? ' · ' + kfmt(e.saved) + ' saved' : '');
+    return txt;
+  }
+  function kfmt(n){ if(n==null||n===0)return '0'; if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M'; if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return String(n); }
+  function add(e){
+    const div = document.createElement('div');
+    div.className = 'l ' + cls(e);
+    div.textContent = line(e);
+    const stick = auto.checked && pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 8;
+    pane.appendChild(div);
+    while (pane.children.length > 500) pane.removeChild(pane.firstChild);
+    if (stick) pane.scrollTop = pane.scrollHeight;
+  }
+  fetch('/admin/api/v1/logs?limit=200').then(r => r.json()).then(j => {
+    for (const e of j.entries) add(e);
+    last = j.entries.length ? j.entries[j.entries.length - 1].seq : 0;
+    stat.textContent = 'streaming live · last seq ' + last;
+  }).catch(() => { stat.textContent = 'failed to load history'; });
+  const es = new EventSource('/admin/events?topics=logs');
+  es.addEventListener('logs', ev => {
+    if (paused) return;
+    const e = JSON.parse(ev.data);
+    if (e.seq > last) { last = e.seq; add(e); stat.textContent = 'streaming live · last seq ' + last; }
+  });
+  es.onerror = () => { stat.textContent = 'reconnecting…'; };
+})();
+</script>
+{{end}}

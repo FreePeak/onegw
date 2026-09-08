@@ -1,0 +1,22 @@
+{{define "hdr"}}<span>{{len .}} tracked windows</span>{{end}}
+{{define "content"}}
+<div class="tblwrap">
+<table>
+<thead><tr><th>provider</th><th>window</th><th class="num">tokens used</th><th class="num">limit</th><th></th><th class="num">requests</th><th class="num">limit</th><th>resets</th><th>state</th></tr></thead>
+<tbody>
+{{range .}}<tr>
+  <td><b>{{.Provider}}</b></td><td>{{.Window}}</td>
+  <td class="num">{{compact .UsedTokens}}</td>
+  <td class="num">{{if .LimitTokens}}{{compact .LimitTokens}}{{else}}<span style="color:var(--mut)">track only</span>{{end}}</td>
+  <td style="width:90px">{{if .LimitTokens}}<div class="bar"><i class="{{.BarClass}}" style="width:{{.Pct}}%"></i></div>{{end}}</td>
+  <td class="num">{{compact .UsedRequests}}</td>
+  <td class="num">{{if .LimitRequests}}{{compact .LimitRequests}}{{else}}—{{end}}</td>
+  <td title="{{.WindowStart}} → {{.WindowEnd}}">in {{.ResetIn}}</td>
+  <td>{{if .Exhausted}}<span class="pill err">exhausted</span>{{else if .LimitTokens}}<span class="pill ok">ok</span>{{else}}<span class="pill">tracking</span>{{end}}</td>
+</tr>
+{{else}}<tr><td colspan="9" class="empty">no quota windows configured — set <code class="chip">quota_window</code> on a provider</td></tr>{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
+{{define "scripts"}}{{end}}
