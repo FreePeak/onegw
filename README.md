@@ -108,6 +108,38 @@ cp onegw.toml.example onegw.toml   # add provider keys
 ./onegw                            # listens on 127.0.0.1:8080 (loopback only)
 ```
 
+### Updating
+
+`onegw update` keeps a running gateway current with zero dropped requests:
+
+```bash
+onegw update            # check + apply (zero-drop handoff restart)
+onegw update --check    # report only
+onegw version           # what is running
+```
+
+The running gateway checks GitHub releases daily (default repo
+`FreePeak/onegw`; `[update] check_interval` in `onegw.toml`, `0`/`off`
+disables, `auto = true` applies without asking). Applying is done BY the
+serving process: it downloads the platform asset (sha256-verified when
+GitHub publishes a digest), smoke-runs it, atomically renames it over the
+old binary (keeping a `.old` backup), starts the new build on the
+SO_REUSEPORT listener, waits until the new process proves it owns the port
+by answering `/admin/update` with its own pid, then drains the old pid.
+Any failed step rolls back — the old gateway never stops serving.
+
+`GET /admin/update` reports status (current/latest/pid/last check),
+`POST /admin/update` forces a check, `POST /admin/update` with
+`{"apply":true}` runs the handoff — same auth as the other admin
+endpoints (`X-Admin-Password`).
+
+Running in Docker? Self-update is deliberately disabled (the container
+filesystem belongs to the image): the gateway still checks and logs newer
+releases, and `onegw update` prints the host-side commands —
+`docker pull ghcr.io/freepeak/onegw:<tag>` plus recreate
+(`docker compose up -d` for compose). The `/data` volume keeps usage
+history across the recreate.
+
 Then point any OpenAI-, Anthropic-, or Gemini-compatible client at the
 gateway. Examples with curl:
 
