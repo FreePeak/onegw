@@ -1,6 +1,14 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (filed #41 — dashboard/admin-API revamp umbrella: 9router IA researched from source
+*Last updated: 2026-09-08 (orcarouter.ai provider added live: `config.Validate`
+now accepts the #12 custom wire kinds `openai-responses`/`commandcode`/`cursor`
+— the executor layer shipped but config Load rejected them, a boot-crash-loop
+trap (#39 pattern); four free-tier orcarouter models configured
+(`z-ai/glm-5.3-flash-free`, `deepseek/deepseek-v4-flash-free`,
+`tencent/hy3-free`, pooled `orcarouter/free` — free quota already exhausted
+upstream) and the three concrete ones verified end-to-end through the gateway
+streaming + buffered; `free` combo gained the glm + deepseek orcarouter
+fallbacks; filed #41 — dashboard/admin-API revamp umbrella: 9router IA researched from source
 (sidebar: Endpoint & Key / Providers / Combos / Usage / Quota / Token Saver / CLI Tools / Console Log),
 LiteLLM Admin UI feature set, and frontend skills identified (anthropics/skills frontend-design +
 web-artifacts-builder — single-bundled-HTML path preserves the no-external-assets constraint); scope pinned
@@ -458,8 +466,14 @@ the issue):
 - **Live providers**: B.AI (7 accounts, 48 models, round-robin + fallback
   verified), GLM (1 account), **kilocode** (1 bearer account, 371-model
   OpenRouter-style catalog incl. `kilo-auto/free`; free-model chat + SSE
-  stream + Anthropic-surface translation verified live) and **xai** (1
-  bearer account, 12 models; `grok-4.6` chat verified live). Fixes that
+  stream + Anthropic-surface translation verified live), **xai** (1
+  bearer account, 12 models; `grok-4.6` chat verified live) and
+  **orcarouter** (2026-09-08, user key; `openai-responses` kind — the first
+  configured upstream on a #12 custom wire — base
+  `https://api.orcarouter.ai/v1`, four free models incl. pooled
+  `orcarouter/free`; the three concrete free models verified live buffered +
+  streaming; upstream's pooled-free quota was already exhausted, so that id
+  answers `free_quota_exhausted` until topped up). Fixes that
   fell out: URL version-segment join (`/v1`, `/api/paas/v4` bases), upstream
   model rewrite on same-format passthrough, `developer`→`system` role
   normalization (pi CLI payloads).
