@@ -9,8 +9,14 @@ consecutive 429, 60 s cap, reset on success; upstream Retry-After wins
 verbatim), `NextAccount` returns (nil, soonest-ready) when the whole pool
 is cooling so Router/stream-fast-path/passthrough fall through to the next
 combo target or answer 429 + Retry-After without a doomed upstream call;
-post-deploy window: 71% success (51×200 / 21×429) vs 34% before;
-mutation-checked tests at pool/router/Do levels; earlier: auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
+mutation-checked tests at pool/router/Do levels. Follow-up 0bbe24f: the
+fast-fail broke quota semantics (Execute picks the account before
+attempt()'s quota gate, so a quota-cooled pool answered 429 instead of
+503) — Router.PoolEmptyError is now pluggable and the server overrides it
+with the quota check: exhausted windows answer the same 503
+provider_quota_exhausted, genuine 429-limits keep the fast-fail. Caught
+in the post-commit audit (3 quota tests red in-tree and on master at
+ac58a27), fixed, full suite green; earlier: auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
 console live — Go html/template + vendored htmx + uPlot (zero external
 assets), cookie-session login, bounded SSE live events, #19 request-log ring,
 grouped read-only /admin/api/v1, 7 agent-CLI preset cards, daily rollup
