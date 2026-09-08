@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"onegw/internal/config"
 	"onegw/internal/oauth"
+	"onegw/internal/owner"
 	"onegw/internal/provider"
 	"onegw/internal/quota"
 	"onegw/internal/ratelimit"
@@ -62,6 +63,12 @@ type Server struct {
 	// by main); it powers the admin config endpoints (masked view, reload,
 	// keys/aliases PATCH).
 	cfgPath atomic.Pointer[string]
+	// dataDir is fixed at process start (the store's directory, or the
+	// "memory" sentinel); owner.json is written here.
+	dataDir string
+	// owner records the running process (pid, build stamp, config mtime)
+	// for /admin/health and <data_dir>/owner.json (#42).
+	owner atomic.Pointer[owner.Info]
 	// cfgMu serializes admin config mutations so concurrent PATCH/reload
 	// read-modify-write cycles on the TOML file stay atomic.
 	cfgMu sync.Mutex
@@ -83,7 +90,7 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, fmt.Errorf("open store: %w", err)
 		}
 	}
-	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), m: newGatewayMetrics()}
+	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), m: newGatewayMetrics(), dataDir: dataDir}
 	if st != nil {
 		st.SetNodeID(s.nodeID)
 	}
@@ -241,11 +248,33 @@ func oldStateQuota(old *state) *quota.Tracker {
 	return old.quota
 }
 
-// Reload hot-swaps configuration (SIGHUP). Bad config is rejected by the
-// caller (config.Load) so this always applies a valid one.
+// Reload hot-swaps configuration (SIGHUP, or PUT /admin/config/reload).
+// Bad config is rejected by the caller (config.Load) so this always
+// applies a valid one.
 func (s *Server) Reload(cfg *config.Config) {
 	if err := s.apply(cfg, false); err != nil {
 		log.Printf("onegw reload rejected: %v", err)
+		return
+	}
+	// A successful reload is the "config changed underneath you" event:
+	// re-stamp the ownership record so config_mtime reflects it (#42).
+	s.StampOwner()
+}
+
+// StampOwner records the running process (pid, build stamp, listen,
+// config path + mtime, start time, argv) in <data_dir>/owner.json and in
+// memory for /admin/health. Called once after startup and after every
+// successful reload; a stale owner.json from a crashed predecessor is
+// deliberate evidence, so exit does not remove it (#42).
+func (s *Server) StampOwner() {
+	st := s.cur()
+	if st == nil {
+		return
+	}
+	info := owner.Capture(st.cfg.Server.Listen, s.configPath(), s.start)
+	s.owner.Store(&info)
+	if err := owner.Write(s.dataDir, info); err != nil {
+		log.Printf("onegw owner stamp: %v", err)
 	}
 }
 
@@ -805,8 +834,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	out := map[string]any{
 		"status":        "ok",
 		"uptime_s":      int(time.Since(s.start).Seconds()),
 		"inflight":      s.inflight.Load(),
@@ -814,7 +842,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"heap_sys_mb":   m.HeapSys >> 20,
 		"sys_mb":        m.Sys >> 20,
 		"num_gc":        m.NumGC,
-	})
+	}
+	// Ownership (#42): which process/build/config is canonical, straight
+	// from memory — answers "who is running what" without process tables.
+	if o := s.owner.Load(); o != nil {
+		out["owner"] = o
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) adminOK(r *http.Request) bool {

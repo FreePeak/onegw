@@ -56,6 +56,7 @@ func main() {
 	}
 	defer srv.Close()
 	srv.SetConfigPath(path) // powers /admin/config* (masked view, reload, keys/aliases)
+	srv.StampOwner() // writes <data_dir>/owner.json and fills /admin/health's owner block (#42); re-stamped by every successful reload
 
 	// SO_REUSEPORT lets a replacement binary bind the same port while this
 	// process is still serving, enabling zero-drop rolling restarts (start
