@@ -2,7 +2,7 @@
 
 Linked from `docs/PRD.md`. Durable task record = GitHub issues
 (https://github.com/FreePeak/onegw/issues); this file only mirrors their
-status. Status as of 2026-09-07.
+status. Status as of 2026-09-08.
 
 ## Done
 
@@ -90,7 +90,9 @@ status. Status as of 2026-09-07.
 - [x] #13 Web-search provider (SearXNG integration) — done 2026-09-08
       (9bd3594): `kind = "searxng"` virtual provider answering `search/query`
       with a SearXNG JSON search as a synthetic OpenAI completion; fail-open
-      (retryable 503) in combos; unit + E2E tests. Not yet in live onegw.toml.
+      (retryable 503) in combos; unit + E2E tests. Enabled live 2026-09-08
+      (#46/#47): local SearXNG compose stack + `search` provider +
+      `search-or-llm` fail-open combo, all surfaces live-verified.
 
 Deliberately NOT tracked (PRD non-goals): cloud sync, billing/budgets as an
 enforcement feature, guardrails/MCP/A2A gateways, response caching.
