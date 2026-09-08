@@ -264,7 +264,7 @@ func TestDashboardPagesRender(t *testing.T) {
 		"/admin/ui/quota":     "no quota windows",
 		"/admin/ui/saver":     "Input saver",
 		"/admin/ui/logs":      "logstat",
-		"/admin/ui/tools":     "OPENAI_BASE_URL",
+		"/admin/ui/tools":     "model_providers.onegw",
 		"/admin/ui/settings":  "admin auth",
 	}
 	for path, want := range pages {
@@ -426,4 +426,130 @@ func TestOverviewQuotaExhaustedBadge(t *testing.T) {
 		t.Fatalf("overview: %d", w.Code)
 	}
 	_ = srv
+}
+
+// TestCompactLadder pins the unit-preserving compact formatter: a whole
+// 1.0B must render "1B", never "1" (the #45 regression where units were
+// dropped on ".0" values made token columns look broken across all
+// usage-page filters).
+func TestCompactLadder(t *testing.T) {
+	cases := map[int64]string{
+		0:             "0",
+		999:           "999",
+		1_000:         "1K",
+		26_000:        "26K",
+		8_800:         "8.8K",
+		1_000_000:     "1M",
+		2_500_000:     "2.5M",
+		59_000_000:    "59M",
+		170_300_000:   "170.3M",
+		947_000_000:   "947M",
+		1_000_000_000: "1B",
+		1_002_000_000: "1B",
+		1_500_000_000: "1.5B",
+		1_029_555_855: "1B",
+		-2_500_000:    "-2.5M",
+	}
+	for n, want := range cases {
+		if got := dashboard.Compact(n); got != want {
+			t.Errorf("Compact(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+// TestTodayChartHourly pins the today view: HasCharts on with a dense
+// 24-hour axis (labels + epoch x values), values summed per hour.
+func TestTodayChartHourly(t *testing.T) {
+	srv, h := newAdminSrvWithStore(t, "")
+	today := todayUTC()
+	rows := []usage.Bucket{
+		{Key: usage.Key{Day: today, Hour: "05", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 4, InputTokens: 100},
+		{Key: usage.Key{Day: today, Hour: "09", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 6, InputTokens: 200},
+	}
+	if err := srv.st.FlushBuckets(rows); err != nil {
+		t.Fatal(err)
+	}
+	var cd struct {
+		Days     []string `json:"days"`
+		Xs       []int64  `json:"xs"`
+		Requests []int64  `json:"requests"`
+		Input    []int64  `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(srv.chartJSON(today, today)), &cd); err != nil {
+		t.Fatal(err)
+	}
+	if len(cd.Days) != 24 || len(cd.Xs) != 24 {
+		t.Fatalf("hour axis: %d labels, %d x", len(cd.Days), len(cd.Xs))
+	}
+	if cd.Days[5] != "05" || cd.Requests[5] != 4 || cd.Input[5] != 100 {
+		t.Fatalf("hour 05 wrong: %+v", cd)
+	}
+	if cd.Requests[9] != 6 || cd.Input[9] != 200 {
+		t.Fatalf("hour 09 wrong: %+v", cd)
+	}
+	if cd.Xs[9]-cd.Xs[5] != 4*3600 {
+		t.Fatalf("x spacing wrong: %d", cd.Xs[9]-cd.Xs[5])
+	}
+	// The page itself renders charts for today.
+	w := do(t, h, adminReq(t, "/admin/ui/usage?range=today"))
+	if !strings.Contains(w.Body.String(), "chart-tok") {
+		t.Fatal("today page missing charts")
+	}
+	if !strings.Contains(w.Body.String(), "per hour (UTC)") {
+		t.Fatal("today page missing hourly chart unit")
+	}
+}
+
+// TestUsageTodayExcludesYesterday pins the today filter with values the
+// CSS cannot accidentally match: yesterday's model must not appear.
+func TestUsageTodayExcludesYesterday(t *testing.T) {
+	srv, h := newAdminSrvWithStore(t, "")
+	today := todayUTC()
+	yday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	rows := []usage.Bucket{
+		{Key: usage.Key{Day: today, Hour: "05", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 1, InputTokens: 1_234_567},
+		{Key: usage.Key{Day: yday, Hour: "05", Provider: "p1", Model: "yesterday-only-model", APIKey: "k"}, Requests: 9, InputTokens: 9_876_543},
+	}
+	if err := srv.st.FlushBuckets(rows); err != nil {
+		t.Fatal(err)
+	}
+	w := do(t, h, adminReq(t, "/admin/ui/usage?range=today"))
+	body := w.Body.String()
+	if !strings.Contains(body, "1.2M") {
+		t.Fatal("today's distinctive input missing")
+	}
+	if strings.Contains(body, "yesterday-only-model") || strings.Contains(body, "9.9M") {
+		t.Fatal("today filter leaked yesterday's rows")
+	}
+	_ = srv
+}
+
+// TestRetentionPrunesOldRollups pins the previously-dead retention path:
+// store.Prune + [usage].retention_days existed but nothing scheduled it.
+func TestRetentionPrunesOldRollups(t *testing.T) {
+	srv, _ := newAdminSrvWithStore(t, "")
+	today := todayUTC()
+	rows := []usage.Bucket{
+		{Key: usage.Key{Day: "2000-01-01", Hour: "00", Provider: "p1", Model: "ancient", APIKey: "k"}, Requests: 5},
+		{Key: usage.Key{Day: today, Hour: "00", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 2},
+	}
+	if err := srv.st.FlushBuckets(rows); err != nil {
+		t.Fatal(err)
+	}
+	n, err := srv.pruneOnce()
+	if err != nil || n == 0 {
+		t.Fatalf("pruneOnce: %d rows, err %v", n, err)
+	}
+	left, err := srv.st.QueryRange("2000-01-01", today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range left {
+		if r.Model == "ancient" {
+			t.Fatal("retention window did not delete the ancient row")
+		}
+	}
+	if len(left) == 0 {
+		t.Fatal("prune deleted today's rows too")
+	}
 }

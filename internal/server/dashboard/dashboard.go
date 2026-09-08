@@ -63,24 +63,25 @@ func init() {
 }
 
 // compact renders n on the K/M/B ladder (≥1e9 → B, ≥1e6 → M, ≥1e3 → K),
-// one decimal, trailing ".0" trimmed.
+// one decimal with a trailing ".0" trimmed — the unit always survives
+// ("1.0B" → "1B", never "1").
 func compact(n int64) string {
 	a := n
 	if a < 0 {
 		a = -a
 	}
-	var f string
+	var num, unit string
 	switch {
 	case a >= 1e9:
-		f = strconv.FormatFloat(float64(n)/1e9, 'f', 1, 64) + "B"
+		num, unit = strconv.FormatFloat(float64(n)/1e9, 'f', 1, 64), "B"
 	case a >= 1e6:
-		f = strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64) + "M"
+		num, unit = strconv.FormatFloat(float64(n)/1e6, 'f', 1, 64), "M"
 	case a >= 1e3:
-		f = strconv.FormatFloat(float64(n)/1e3, 'f', 1, 64) + "K"
+		num, unit = strconv.FormatFloat(float64(n)/1e3, 'f', 1, 64), "K"
 	default:
 		return strconv.FormatInt(n, 10)
 	}
-	return strings.TrimSuffix(f, ".0"+f[len(f)-1:])
+	return strings.TrimSuffix(num, ".0") + unit
 }
 
 // parsed caches the combined template set per page name so steady-state

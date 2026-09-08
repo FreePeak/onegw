@@ -461,6 +461,7 @@ type usageView struct {
 	Window    string
 	Rows      []usageRowView
 	HasCharts bool
+	ChartUnit string
 	ChartJSON template.JS
 	From, To  string
 }
@@ -521,11 +522,15 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 			v.Totals.Saved += r2.Saved
 		}
 	}
-	// Charts render for bounded windows; "all time" would need the whole
-	// history on one x-axis — the table covers that view.
-	v.HasCharts = sel == "7d" || sel == "1m"
+	// "today" charts hourly; bounded windows chart per day. "all time"
+	// would need the whole history on one x-axis — the table covers that.
+	v.HasCharts = sel != "all"
 	if v.HasCharts {
 		v.ChartJSON = template.JS(s.chartJSON(from, to))
+	}
+	v.ChartUnit = "per day"
+	if from == to {
+		v.ChartUnit = "per hour (UTC)"
 	}
 	s.authedPage(w, r, "usage", "Usage", false, v)
 }
@@ -568,47 +573,77 @@ func (s *Server) usageRows(from, to string) ([]usageRowView, error) {
 	return out, nil
 }
 
-// chartJSON builds the uPlot dataset: dense day axis + per-day sums.
+// chartJSON builds the uPlot dataset. Day mode (default): dense day axis +
+// per-day sums. Hour mode (today): 24-hour axis + per-hour sums, so the
+// single-day view still shows a curve.
 func (s *Server) chartJSON(from, to string) string {
-	days := map[string][4]int64{} // day → [req, in, out, cache_read]
+	type axis struct {
+		Labels []string
+		Keys   map[string][4]int64 // label → [req, in, out, cache_read]
+	}
+	var ax axis
+	ax.Keys = map[string][4]int64{}
 	if s.st != nil {
 		if raw, err := s.st.QueryRange(from, to); err == nil {
 			for _, r := range raw {
-				d := days[r.Day]
+				label := r.Day
+				if from == to { // single-day window → hourly buckets
+					label = r.Hour
+				}
+				d := ax.Keys[label]
 				d[0] += r.Requests
 				d[1] += r.InputTok
 				d[2] += r.OutputTok
 				d[3] += r.CacheRead
-				days[r.Day] = d
+				ax.Keys[label] = d
 			}
 		}
 	}
-	var ds []string
-	for d := from; d <= to; {
-		ds = append(ds, d)
-		t, err := time.Parse("2006-01-02", d)
-		if err != nil {
-			break
+	if from == to { // dense 00..23 hour axis
+		for h := range 24 {
+			ax.Labels = append(ax.Labels, fmt.Sprintf("%02d", h))
 		}
-		d = t.AddDate(0, 0, 1).Format("2006-01-02")
-	}
-	if len(ds) > 62 {
-		ds = ds[len(ds)-62:]
+	} else { // dense day axis; cap the span
+		for d := from; d <= to; {
+			ax.Labels = append(ax.Labels, d)
+			t, err := time.Parse("2006-01-02", d)
+			if err != nil {
+				break
+			}
+			d = t.AddDate(0, 0, 1).Format("2006-01-02")
+		}
+		if len(ax.Labels) > 62 {
+			ax.Labels = ax.Labels[len(ax.Labels)-62:]
+		}
 	}
 	type chartData struct {
-		Days      []string `json:"days"`
+		Days      []string `json:"days"` // display labels
+		Xs        []int64  `json:"xs"`   // epoch seconds — uPlot needs numeric x
 		Requests  []int64  `json:"requests"`
 		Input     []int64  `json:"input"`
 		Output    []int64  `json:"output"`
 		CacheRead []int64  `json:"cache_read"`
 	}
-	cd := chartData{
-		Days:     ds,
-		Requests: make([]int64, len(ds)), Input: make([]int64, len(ds)),
-		Output: make([]int64, len(ds)), CacheRead: make([]int64, len(ds)),
+	xs := make([]int64, len(ax.Labels))
+	for i, d := range ax.Labels {
+		var t time.Time
+		if from == to { // hour label on the current day
+			h, _ := strconv.Atoi(d)
+			t, _ = time.Parse("2006-01-02", from)
+			t = t.Add(time.Duration(h) * time.Hour)
+		} else {
+			t, _ = time.Parse("2006-01-02", d)
+		}
+		xs[i] = t.Unix()
 	}
-	for i, d := range ds {
-		v := days[d]
+	cd := chartData{
+		Days:     ax.Labels,
+		Xs:       xs,
+		Requests: make([]int64, len(ax.Labels)), Input: make([]int64, len(ax.Labels)),
+		Output: make([]int64, len(ax.Labels)), CacheRead: make([]int64, len(ax.Labels)),
+	}
+	for i, d := range ax.Labels {
+		v := ax.Keys[d]
 		cd.Requests[i], cd.Input[i], cd.Output[i], cd.CacheRead[i] = v[0], v[1], v[2], v[3]
 	}
 	b, _ := json.Marshal(cd)
@@ -920,22 +955,57 @@ type toolsView struct {
 	Presets []toolsPreset
 }
 
+// toolsPage renders per-agent-CLI preset cards (9router's CLI Tools page).
+// Snippets mirror the real config schemas of each tool; the bearer key is
+// always the $ONEGW_KEY placeholder — real keys never render here.
 func (s *Server) toolsPage(w http.ResponseWriter, r *http.Request) {
 	listen := ":8080"
 	if st := s.cur(); st != nil {
 		listen = st.cfg.Server.Listen
 	}
-	v := &toolsView{BaseURL: "http://" + listenHost(listen)}
+	base := "http://" + listenHost(listen)
+	v := &toolsView{BaseURL: base}
 	add := func(id, name, code string) { v.Presets = append(v.Presets, toolsPreset{id, name, code}) }
-	base := v.BaseURL
-	add("openai", "OpenAI-compatible CLIs (Codex, Aider, …)",
-		"export OPENAI_BASE_URL="+base+"/v1\nexport OPENAI_API_KEY=$ONEGW_KEY\nmodel: use \"provider/model\" or a combo name")
-	add("anthropic", "Anthropic-compatible CLIs (Claude Code, …)",
-		"export ANTHROPIC_BASE_URL="+base+"\nexport ANTHROPIC_AUTH_KEY=$ONEGW_KEY\nmodel: use \"provider/model\" or a combo name")
-	add("gemini", "Gemini-compatible tools",
-		"export GEMINI_API_BASE="+base+"\nmodel: provider/model")
-	add("env", "Shared env",
-		"export ONEGW_KEY=<one of auth.keys from onegw.toml>")
+
+	add("env", "Shared env — every CLI below needs this",
+		"export ONEGW_KEY=<one of auth.keys from onegw.toml>\nexport ONEGW_BASE="+base+"\nmodel: use \"provider/model\" or a combo name (e.g. dev)")
+
+	add("claude-code", "Claude Code (Anthropic surface)",
+		"export ANTHROPIC_BASE_URL="+base+"\n"+
+			"export ANTHROPIC_AUTH_KEY=$ONEGW_KEY\n"+
+			"# then: claude --model <provider/model-or-combo>")
+
+	add("opencode", "opencode (~/.config/opencode/opencode.json)",
+		"{\n  \"provider\": {\n    \"onegw\": {\n      \"npm\": \"@ai-sdk/openai-compatible\",\n"+
+			"      \"name\": \"onegw\",\n      \"options\": {\n        \"baseURL\": \""+base+"/v1\",\n"+
+			"        \"apiKey\": \"{env:ONEGW_KEY}\"\n      },\n      \"models\": {\"dev\": {\"name\": \"Dev (combo)\"}}\n    }\n  }\n}")
+
+	add("grok", "grok (OpenAI-compatible surface)",
+		"export GROK_API_KEY=$ONEGW_KEY\n"+
+			"export GROK_BASE_URL="+base+"/v1\n"+
+			"# grok speaks Chat Completions; use \"provider/model\" or a combo name")
+
+	add("codex", "Codex CLI (~/.codex/config.toml)",
+		"model_provider = \"onegw\"\nmodel = \"dev\"\n\n"+
+			"[model_providers.onegw]\nname = \"onegw\"\nbase_url = \""+base+"/v1\"\n"+
+			"env_key = \"ONEGW_KEY\"\nwire_api = \"chat\"")
+
+	add("omp", "omp (~/.omp/agent/models.yml)",
+		"providers:\n  onegw:\n    baseUrl: "+base+"/v1\n    apiKey: $ONEGW_KEY\n"+
+			"    api: openai-completions\n    models:\n      - id: dev\n        name: Dev\n"+
+			"        contextWindow: 1000000\n      - id: free\n        name: Free")
+
+	add("pi", "pi (~/.pi/agent/models.json)",
+		"{\n  \"providers\": {\n    \"onegw\": {\n      \"baseUrl\": \""+base+"/v1\",\n"+
+			"      \"api\": \"openai-completions\",\n      \"apiKey\": \"${ONEGW_KEY}\",\n"+
+			"      \"models\": [\n        {\"id\": \"dev\", \"name\": \"Dev (combo)\", \"reasoning\": true,\n"+
+			"         \"contextWindow\": 1000000, \"maxTokens\": 131072}\n      ]\n    }\n  }\n}")
+
+	add("hermes", "hermes (~/.hermes/config.yaml)",
+		"providers:\n  onegw:\n    base_url: "+base+"/v1\n    key_env: ONEGW_KEY\n"+
+			"    default_model: dev\n\n# plus ONEGW_KEY in ~/.hermes/.env as OPENAI_API_KEY\n"+
+			"# if the hermes provider inherits the parent key")
+
 	s.authedPage(w, r, "tools", "CLI Tools", false, v)
 }
 
