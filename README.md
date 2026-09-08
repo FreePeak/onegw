@@ -238,8 +238,17 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 No upstream credential is needed for the kind (public instances are open);
-only `base_url` is validated. Your SearXNG instance must allow the JSON
-format (`search.format=json`).
+only `base_url` is validated.
+
+**Run one locally.** The repo ships a ready-to-run SearXNG stack — loopback
+only, JSON format enabled (upstream ships `html` only), limiter off:
+
+```bash
+docker compose --profile search up -d searxng   # serves 127.0.0.1:8888
+```
+
+then set `base_url = "http://127.0.0.1:8888"` on the provider above. A remote
+or existing instance just needs `search.format=json` in its `settings.yml`.
 
 ### Always-thinking models
 
