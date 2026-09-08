@@ -319,7 +319,11 @@ func TestQuotaRebuildFromRollups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	now := time.Now().UTC()
+	ref := time.Now().UTC()
+	// Midday anchor (issue #43): seed both buckets at 12:00 UTC of the real
+	// current day, so the daily rebuild (which reads wall clock) always sees
+	// them, regardless of when the suite runs.
+	now := time.Date(ref.Year(), ref.Month(), ref.Day(), 12, 0, 0, 0, time.UTC)
 	err = st.FlushBuckets([]usage.Bucket{
 		mkBucket("seeded", now, 700, 1),
 		mkBucket("seeded", now.Add(-time.Hour), 500, 1),
