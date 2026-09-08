@@ -1,0 +1,131 @@
+name: release
+
+# Semantic versioning from conventional commits on master:
+#   breaking (feat!/fix!:/BREAKING CHANGE:) -> major
+#   feat -> minor
+#   fix/perf -> patch
+# Other commit types (ci:, docs:, chore:, ...) never release.
+# Bootstrap: when no tag exists yet, the first master push cuts v0.1.0.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.calc.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: calc
+        name: Compute next semantic version
+        env:
+          FIRST_TAG: v0.1.0
+        run: |
+          set -euo pipefail
+          last="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "$last" ]; then
+            range="HEAD"
+            major=0; minor=0; patch=0
+          else
+            range="$last..HEAD"
+            ver="${last#v}"
+            IFS=. read -r major minor patch <<< "$ver"
+          fi
+
+          msgs="$(git log $range --pretty=%B)"
+          bump=""
+          if printf '%s\n' "$msgs" | grep -Eq '^[a-z]+(\([^)]*\))?!:' \
+            || printf '%s\n' "$msgs" | grep -q 'BREAKING CHANGE:'; then
+            bump=major
+          elif printf '%s\n' "$msgs" | grep -Eq '^feat(\([^)]*\))?:'; then
+            bump=minor
+          elif printf '%s\n' "$msgs" | grep -Eq '^(fix|perf)(\([^)]*\))?:'; then
+            bump=patch
+          fi
+
+          # First release ever: cut it regardless of the leading commit type.
+          if [ -z "$last" ] && [ -z "$bump" ]; then
+            echo "tag=$FIRST_TAG" >> "$GITHUB_OUTPUT"
+            echo "bootstrap release: $FIRST_TAG"
+            exit 0
+          fi
+
+          if [ -z "$bump" ]; then
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "no release-worthy commits since ${last:-beginning}; skipping"
+            exit 0
+          fi
+
+          case "$bump" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          tag="v$major.$minor.$patch"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "next tag: $tag ($bump)"
+
+      - name: Push tag
+        if: steps.calc.outputs.tag != ''
+        run: |
+          git tag "${{ steps.calc.outputs.tag }}"
+          git push origin "${{ steps.calc.outputs.tag }}"
+
+  assets:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: go build -trimpath -ldflags "-s -w" -o "dist/onegw-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/onegw
+      - uses: actions/upload-artifact@v4
+        with:
+          name: onegw-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  release:
+    needs: [version, assets]
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.version.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            dist/*
