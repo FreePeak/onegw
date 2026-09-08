@@ -475,9 +475,6 @@ the issue):
 - **One-click agent-CLI integration** — `onegw connect <tool>` writes
   provider/base-URL + key into omp.sh, pi.dev, Claude Code, opencode, and
   grok cli configs (pi `models.json` is the proven pattern).
-- **One-command cloud/VPS deploy** — multi-stage Dockerfile (static Go
-  binary, minimal image) published to `ghcr.io` + `docker run`/compose
-  example persisting `data/`.
 
 ## Current status (post-M5)
 - **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
