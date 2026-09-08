@@ -390,6 +390,22 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
 | #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
 | #41 | Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API (read-mostly; umbrella over #19/#11; boundary: config stays file-based) | user request |
+| #43 | TestQuotaRebuildFromRollups red on master — quota-feature regression blocks the suite gate | #37/#39 follow-up |
+| #42 | Ownership model for the live gateway + shared config (deploy discipline; owner.json in /admin/health) | incident RCA |
+| #37 | Zero-drop deploy runbook: start→verify→stop ordering; never stop before verified replacement | incident RCA |
+| #38 | Single-instance guard on data_dir: warn + peer count in health (NOT lifetime flock — must not block the #37 overlap) | incident RCA |
+| #39 | Keyless provider fails the whole boot → warn-and-skip on loopback + persisted startup diagnostics | incident RCA |
+| #40 | Buffered-path byte reservation leak across SIGHUP (fixed dbe02bd) — add pattern guard/test | incident RCA |
+
+### Recommended implementation order (2026-09-08)
+
+Tier 1 — reliability first (incident follow-ups; #43 unblocks honest suite gates):
+#43 → #39 (degraded start) → #38 (data-dir guard) → #37 (deploy runbook; gate on green suite) → #40 (guard test).
+
+Tier 2 — token saving (the PRD's biggest lever; small fixes before the umbrella):
+#31 (usage semantics) → #33 (vendor cache-usage shapes) → #32 (cache knob preservation) → #36 (xai sticky header) → #35 (saver gate cache-bust) → #34 (cache profiles umbrella).
+
+Tier 3 — product: #17 (self-healing thinking fallback) → #41 dashboard revamp (#19 console log as first slice) → remaining #14 workstreams (install script, `onegw connect`, Docker/ghcr) → #2/#3/#12.
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
@@ -411,9 +427,13 @@ Snapshot mirror with done-history: `docs/prd-task-tracker.md`.
 Requested 2026-09-07; four independently shippable workstreams (detail in
 the issue):
 
-- **Auto-release CI/CD** — every commit/merge to `master` builds static
-  multi-platform binaries (`linux`/`darwin` × `amd64`/`arm64`,
-  `CGO_ENABLED=0`) and publishes a tagged release; `latest` tracks newest.
+- **Auto-release CI/CD — done 2026-09-08** (v0.1.0 shipped). `.github/workflows/release.yml`:
+  push to master → next semver from conventional commits (breaking→major, feat→minor,
+  fix/perf→patch; other types never release; bootstrap first tag = v0.1.0) → tag pushed →
+  4 static binaries (`linux`/`darwin` × `amd64`/`arm64`, `CGO_ENABLED=0`,
+  `-trimpath -ldflags "-s -w"`) via build matrix → `gh release create --generate-notes`
+  with binaries attached; `latest` tracks newest. Verified end-to-end: first run cut
+  v0.1.0; darwin-arm64 artifact executed locally.
 - **One-command local install** — install script fetches the release
   binary, writes a starter `onegw.toml` (localhost bind), and starts the
   server; launchd/systemd unit optional.
@@ -469,3 +489,7 @@ the issue):
 - `docs/prd-task-tracker.md` — historical done-list + issue snapshot mirror.
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
+
+---
+
+*Last updated: 2026-09-08 (release CI landed: .github/workflows/release.yml, v0.1.0 published; open-work table + recommended implementation order added)*
