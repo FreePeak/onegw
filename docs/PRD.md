@@ -1,6 +1,16 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
+*Last updated: 2026-09-08 (adaptive 429 cooldown ladder — b.ai's one-api
+style upstream 429s per-key with an empty body and no Retry-After; live
+metrics showed 65% of b-ai attempts failing (666×429 vs 352×200) because
+plain round-robin re-picked spent keys every request. Shipped ac58a27,
+live-verified: per-account adaptive cooldown (10 s base, doubling per
+consecutive 429, 60 s cap, reset on success; upstream Retry-After wins
+verbatim), `NextAccount` returns (nil, soonest-ready) when the whole pool
+is cooling so Router/stream-fast-path/passthrough fall through to the next
+combo target or answer 429 + Retry-After without a doomed upstream call;
+post-deploy window: 71% success (51×200 / 21×429) vs 34% before;
+mutation-checked tests at pool/router/Do levels; earlier: auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
 console live — Go html/template + vendored htmx + uPlot (zero external
 assets), cookie-session login, bounded SSE live events, #19 request-log ring,
 grouped read-only /admin/api/v1, 7 agent-CLI preset cards, daily rollup

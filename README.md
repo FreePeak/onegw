@@ -47,7 +47,14 @@ buffering, no conversation state.
   `{provider, model}` targets: retry on 429/5xx/network errors with backoff,
   fail fast on other 4xx, per-provider concurrency caps.
 - **Account pools.** Multiple API keys per provider with weighted round-robin
-  and quota cooldown.
+  and quota cooldown. Upstream 429s trigger an adaptive per-account cooldown:
+  the first rate-limit response benches the key for 10 s, each consecutive
+  429 doubles the bench (capped at 60 s), and a successful call resets the
+  ladder — keys that keep hammering a spent limit sink to the 60 s bench
+  instead of re-entering rotation every few seconds. An upstream
+  `Retry-After` header wins verbatim. When every account of a provider is
+  cooling, the gateway answers 429 + `Retry-After` (or falls through to the
+  next combo target) instead of burning a doomed upstream attempt.
 - **Token saver (input + output).** Input side: RTK-style `tool_result`
   compression (prefix sniffing, idempotent, same-format surgical JSON walk)
   cuts prompt tokens before they reach the upstream. Output side: system-prompt
@@ -347,6 +354,16 @@ label. A failed upstream attempt unpins immediately (retries and combo
 fallback land on a different key), and a pinned account that cools on quota
 rotates to the next one and re-pins. Off by default (`sticky = ""`).
 
+
+**Adaptive 429 cooldown.** On an upstream 429 the picked account cools:
+`Retry-After` (when the upstream sends one) verbatim, otherwise an
+adaptive ladder — 10 s for the first 429, doubling per consecutive 429,
+60 s cap, reset to base by any successful call. While every account of
+the provider is cooling, requests do not reach the upstream at all: combo
+chains fall through to the next target and direct routes are answered
+429 with a `Retry-After` naming the pool's soonest recovery. This turns
+per-key burst limits (one-api/new-api style: empty-body 429, no
+`Retry-After`) from a retry storm into a self-balancing rotation.
 ```toml
 [[providers]]
 name = "orcarouter"
