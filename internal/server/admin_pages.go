@@ -187,7 +187,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// healthFrame builds the 1s health SSE event (Overview live strip).
+// healthFrame builds the 1s health SSE event (Overview live strip). The
+// payload is an HTML fragment — htmx swaps it straight into the DOM, so
+// the strip renders styled values instead of raw JSON.
 func (s *Server) healthFrame() string {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -195,16 +197,21 @@ func (s *Server) healthFrame() string {
 	if st := s.cur(); st != nil && st.budget != nil {
 		held, rejected = st.budget.Stats()
 	}
-	b, _ := json.Marshal(map[string]any{
-		"inflight":      s.inflight.Load(),
-		"uptime_s":      int(time.Since(s.start).Seconds()),
-		"heap_alloc_mb": m.HeapAlloc >> 20,
-		"heap_sys_mb":   m.HeapSys >> 20,
-		"num_gc":        m.NumGC,
-		"budget_held":   held,
-		"budget_reject": rejected,
-	})
-	return "event: health\ndata: " + string(b) + "\n\n"
+	frag := fmt.Sprintf(
+		`<div class="kv" style="grid-template-columns:repeat(4,1fr)">`+
+			`<div><div class="k">in-flight</div><div class="big" style="font-size:18px">%d</div></div>`+
+			`<div><div class="k">uptime</div><div class="mono">%s</div></div>`+
+			`<div><div class="k">heap alloc / sys</div><div class="mono">%d / %d MiB</div></div>`+
+			`<div><div class="k">GC cycles</div><div class="mono">%d</div></div>`+
+			`<div><div class="k">budget held</div><div class="mono">%s</div></div>`+
+			`<div><div class="k">budget 503s</div><div class="mono">%d</div></div>`+
+			`<div><div class="k">admin sessions</div><div class="mono">%d</div></div>`+
+			`<div><div class="k">stream</div><div class="mono" style="color:var(--ok)">live · 1s</div></div>`+
+			`</div>`,
+		s.inflight.Load(), time.Since(s.start).Round(time.Second).String(),
+		m.HeapAlloc>>20, m.HeapSys>>20, m.NumGC,
+		humanBytes(held), rejected, s.sessions.count())
+	return "event: health\ndata: " + strings.ReplaceAll(frag, "\n", " ") + "\n\n"
 }
 
 // ---------------------------------------------------------------------------
@@ -398,8 +405,8 @@ func (s *Server) overviewView() *overviewData {
 			}
 		}
 	}
-	// No-JS fallback: the raw health JSON in a <pre>; the SSE swap replaces it.
-	v.LiveJSON = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(s.healthFrame(), "\n\n"), "event: health\ndata: "))
+	// No-JS fallback text; the SSE swap replaces it with the live strip.
+	v.LiveJSON = "live metrics need JavaScript (SSE /admin/events)"
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	v.HeapAlloc = m.HeapAlloc >> 20
