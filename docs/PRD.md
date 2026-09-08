@@ -98,9 +98,11 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
 
 ### Non-goals
 
-- OAuth device flows for subscription providers (Claude Code, Codex, ...) — v1
-  accepts API keys and bearer tokens only. OAuth adapters can slot in later
-  via the same `Provider` interface (tracked: #2).
+- OAuth device flows for the remaining subscription providers (Claude Code,
+  Codex, GitHub Copilot, Cursor, Antigravity) — the framework landed with #2
+  (RFC 8628 + Kilo dialect, token store, auto-refresh, `onegw-oauth` CLI);
+  each remaining provider is a new entry in the provider registry plus its
+  dialect quirks.
 - Cloud sync, browser extension, electron tray.
 - Billing / spend enforcement. Usage tracking is informational (cost estimates
   only).
@@ -139,6 +141,7 @@ same-format passthrough). Packages:
 | `saver`    | RTK-style tool_result compression filters (prefix sniffing, idempotent, loss profile test-pinned)|
 | `usage`    | Lock-sharded atomic counters, batched periodic flush to SQLite        |
 | `store`    | SQLite (usage rollups only — config lives in TOML)                    |
+| `oauth`    | Device-flow logins (#2): RFC 8628 + Kilo dialects, token store, auto-refresh |
 | `server`   | HTTP surfaces, `/v1/*`, `/v1beta/*`, `/anthropic/*`, admin, dashboard |
 | `auth`     | Bearer-key auth, per-key model restrictions (planned, #3)             |
 
