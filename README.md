@@ -201,6 +201,46 @@ api_key = ""
 
 ### Web search (SearXNG)
 
+`kind = "searxng"` is a virtual provider: no chat model behind it, just a
+[SearXNG](https://docs.searxng.org/) instance. Any `"<name>/<x>"` model string
+routes to it (canonical id `<name>/query`, advertised via `/v1/models`); the
+last user message becomes the query. The gateway runs one SearXNG JSON search
+(`GET {base_url}/search?q=…&format=json`) and answers with a synthetic OpenAI
+completion — a markdown list of title + URL + snippet — so every existing
+surface works unchanged: OpenAI, Anthropic, and Gemini clients (cross-format
+translation included), streaming and buffered, and usage rollups carry a
+chars/4 estimate.
+
+Search failures are retryable `503 search_unavailable` errors, which makes the
+kind **fail-open in combos**: put it first and requests degrade to the real
+model when the SearXNG instance is down instead of failing:
+
+```toml
+[[providers]]
+name = "search"
+kind = "searxng"               # SearXNG JSON API at {base_url}/search
+base_url = "http://searx:8080" # required
+max_results = 5                # results formatted into the completion (0 = 5)
+timeout = "10s"                # per-search timeout (0 = 10s)
+# If the instance requires auth (SearXNG accepts X-API-Key or basic auth):
+#[providers.extra_headers]
+#X-API-Key = "..."
+
+[[combo]]
+name = "search-or-llm"         # fail-open: search down -> falls to the model
+targets = ["search/query", "openrouter/openai/gpt-5.5"]
+```
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer $ONEGW_KEY" \
+  -d '{"model":"search/query","messages":[{"role":"user","content":"onegw gateway Go"}]}'
+```
+
+No upstream credential is needed for the kind (public instances are open);
+only `base_url` is validated. Your SearXNG instance must allow the JSON
+format (`search.format=json`).
+
 ### Always-thinking models
 
 Some upstreams (e.g. GLM `glm-5.3` / `glm-5.3-flash`) reason unconditionally
