@@ -428,8 +428,10 @@ Requested 2026-09-07; four independently shippable workstreams (detail in
 the issue):
 
 - **Auto-release CI/CD — done 2026-09-08** (v0.1.0 shipped). `.github/workflows/release.yml`:
-  push to master → next semver from conventional commits (breaking→major, feat→minor,
-  fix/perf→patch; other types never release; bootstrap first tag = v0.1.0) → tag pushed →
+  push to master → next semver from commit subjects (BREAKING CHANGE/type!→major,
+  feat→minor, fix/perf→patch; any other non-merge type incl. free-form
+  `dashboard:`/`saver:`/typeless→patch; `docs:`/`test:`/`chore:`/`ci:` skip;
+  bootstrap first tag = v0.1.0) → tag pushed →
   4 static binaries (`linux`/`darwin` × `amd64`/`arm64`, `CGO_ENABLED=0`,
   `-trimpath -ldflags "-s -w"`) via build matrix → `gh release create --generate-notes`
   with binaries attached; `latest` tracks newest. Verified end-to-end: first run cut
