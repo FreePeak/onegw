@@ -1,6 +1,8 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (docs: open-work table synced with GitHub — #2-#12 struck done,
+*Last updated: 2026-09-08 (ops: SearXNG search decommissioned live per user request — container + image removed,
+`search` provider + `search-or-llm` combo dropped from live onegw.toml, gateway rebuilt from HEAD and zero-drop restarted;
+earlier: docs: open-work table synced with GitHub — #2-#12 struck done,
 close dates from the issue tracker, #17 verified landed via 7e935f2; earlier: issue #44
 research published cleanly to the
 issue — the body had been stored double-JSON-encoded and rendered on GitHub
@@ -31,11 +33,7 @@ assets), cookie-session login, bounded SSE live events, #19 request-log ring,
 grouped read-only /admin/api/v1, 7 agent-CLI preset cards, daily rollup
 retention finally wired; unit-loss compact bug fixed (1.0B → "1" → "1B") and
 today view charts hourly; README dashboard section with screenshots; RSS
-bench pre/post ≈ 88/89 MiB peak; live-verified in-browser; earlier: #46/#47: SearXNG search enabled live — repo ships
-profile-gated `searxng` compose service (loopback :8888, JSON format, limiter
-off) with settings in docker/searxng/; live onegw.toml has `search` provider +
-fail-open `search-or-llm` combo; live-verified OpenAI/Anthropic/SSE surfaces +
-fall-through with the instance down; b-ai gated-account 403s found live → #48;
+bench pre/post ≈ 88/89 MiB peak; live-verified in-browser; earlier: SearXNG search disabled live 2026-09-08 (user request) — container + image removed, live onegw.toml no longer carries the `search` provider / `search-or-llm` combo; the repo keeps the feature (kind = "searxng" provider, profile-gated compose service, docker/searxng/ settings) for re-enablement; #46/#47 had enabled it live earlier (live-verified OpenAI/Anthropic/SSE surfaces + fall-through with the instance down); b-ai gated-account 403s found live → #48;
 earlier: #42 ownership model landed: `internal/owner`
 stamps `<data_dir>/owner.json` at startup and re-stamps on every successful
 reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
@@ -689,14 +687,14 @@ the issue):
   a synthetic OpenAI completion through the normal pipeline (cross-format
   translation, combos, usage rollups). Instance failures are retryable 503
   `search_unavailable` errors, so combos fail open to the next model. Unit +
-  E2E tests (OpenAI/Anthropic surfaces). **Enabled live 2026-09-08 (#46/#47)**:
-  `docker/searxng/settings.yml` + profile-gated `searxng` compose service
-  (loopback 127.0.0.1:8888, JSON format, limiter off) run the instance; live
-  onegw.toml carries `search` + fail-open combo `search-or-llm`
-  (["search/query", "b-ai/mimo-v2.5"]). Live-verified through the
-  gateway: OpenAI surface buffered, Anthropic surface cross-format, SSE
-  streaming (usage included), and fail-open fall-through with the instance
-  stopped (search → 503 → kilo free model answered).
+  E2E tests (OpenAI/Anthropic surfaces). **Disabled live 2026-09-08 (user
+  request)**: the SearXNG container and image were removed and the live
+  onegw.toml no longer carries the `search` provider or the `search-or-llm`
+  combo (verify with `/v1/models` — no `search/…` entries); the compose
+  service, settings, and provider kind remain in-repo for re-enablement.
+  Live history: enabled 2026-09-08 (#46/#47), loopback 127.0.0.1:8888,
+  fail-open combo ["search/query", "b-ai/mimo-v2.5"], verified buffered /
+  Anthropic cross-format / SSE / fail-open fall-through.
 - self-update is built in (`onegw update` / `onegw version` commands,
   2026-09-08): background release checks (`[update] check_interval`,
   default 24h; `auto` opt-in apply), `/admin/update` status/check/apply
