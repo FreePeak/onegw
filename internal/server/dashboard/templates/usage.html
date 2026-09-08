@@ -40,11 +40,12 @@ const D = {{.ChartJSON}};
 function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';if(n>=1e6)return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';if(n>=1e3)return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';return String(n)}
 function fmtDay(u, ticks){ // x-axis: hours on the today view, dates otherwise
   const span = u.data[0][u.data[0].length-1] - u.data[0][0];
-  return ticks.map(t => {
+  const out = ticks.map(t => {
     const d = new Date(t * 1000);
     return span < 26*3600 ? String(d.getUTCHours()).padStart(2,'0')
                           : (d.getUTCMonth()+1) + '/' + d.getUTCDate();
   });
+  return out.map((v, i) => v === out[i-1] ? '' : v);
 }
 function themeCols(){
   const dark = document.documentElement.dataset.theme !== 'light';
