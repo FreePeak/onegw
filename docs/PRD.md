@@ -1,6 +1,9 @@
 # onegw PRD
 
-*Last updated: 2026-09-08 (always-thinking self-healing shipped: omp sent
+*Last updated: 2026-09-08 (model-tiering research (#44) surveyed
+LiteLLM/9router/OmniRoute/omp and landed a layered adoption plan — config-only
+role combos now, task-aware combo reordering as the feature; earlier:
+always-thinking self-healing shipped: omp sent
 `reasoning_effort: "xhigh"` to combo `free` and the raw GLM 400
 (该模型始终思考，use low/high/max) surfaced to the client — two gaps:
 `coerceEffort` passed unrecognized values through, and a 400 is
@@ -211,6 +214,48 @@ Go http server handles this on ~1 core. Translation paths are the only O(body)
 work and only run on cross-format requests; they stream event-by-event so
 memory is O(event), not O(conversation).
 
+### Model tiering / task-aware routing (issue #44)
+
+Research 2026-09-08: LiteLLM docs, 9router README + source (0.5.70),
+OmniRoute source (`open-sse/services/taskAwareRouting.ts`), omp harness docs
+(`omp://models.md`). Question: cheap model for tiny tasks, strong model for
+planning/brainstorming.
+
+| | **LiteLLM** | **9router** | **OmniRoute** | **omp (client)** |
+| --- | --- | --- | --- | --- |
+| Tier selection | client-directed (caller picks the model group) | manual 3-tier combo convention (Subscription → Cheap → Free) | **gateway-side, per request** | client-side model roles |
+| Difficulty signal | none — routing strategies are cost/latency/rpm, not content | none in 0.5.70 (task-aware is open PR #2045, unmerged) | `classifyTask`: light/standard/heavy/critical from prompt size, message/tool count, `max_tokens`, `reasoning_effort`, keyword regexes — **no LLM call** | harness knows the task type (tool role: titles vs planning vs scout) |
+| Mechanism | model groups + fallbacks; `context_window_fallbacks` = failover to another group on context overflow | ordered combo fallback across tiers | `modelPowerScore` 0–150 per model; `reorderByTaskWeight` = stable re-sort of the combo's target list per request (never removes targets) | roles `smol`/`tiny` (background tasks), `slow`/`plan` (planning), `task`, `commit`; `compactionModel` (cheap summarizer); `contextPromotionTarget` (small→large context chain) |
+
+**What exists where:** OmniRoute is the only gateway that ships the full
+feature (ported from 9router PR #2045): classify cheaply locally, score each
+combo target (`100 − |power − target|` with hard-miss penalties: vision
+missing −10000, non-reasoning model on heavy task −120, prompt > 85% context
+−200), reorder, keep full fallback. It also maps task types to auto-combo
+intents (`auto/coding`, `auto/chat:cheap`) via an LLM intent classifier — the
+part worth *not* copying. omp proves the complementary client-side shape:
+named roles wired per use, not per request.
+
+**Adoption plan (layered):**
+
+1. **Now, config-only** — define cheap `tiny` and strong `planning` combos in
+   `onegw.toml`; point omp's `smol`/`tiny` and `default`/`plan` roles at them
+   in `models.yml`. Zero gateway code; the client knows the task type.
+2. **Feature: task-aware combo reordering** — OmniRoute-style, stateless:
+   classify (few regexes + integer score, no LLM, no per-request state),
+   stable-sort the resolved combo targets inside `router.Execute` before
+   account selection, keep the full chain as fallback. Config switch
+   `task_routing = off` by default; decisions logged via `/admin/logs` (#19).
+   Fits the priority rubric: fast (O(1) bookkeeping), massive sessions
+   (nothing held per session), token saving (the point of the feature).
+3. **Deferred** — context-overflow → bigger-context tier escalation
+   (LiteLLM `context_window_fallbacks` / omp `contextPromotionTarget`
+   analog); rides the existing error-class retry path if production hits it.
+
+**Rejected:** LLM-based intent classification (OmniRoute's semantic task
+types) — an LLM call to pick a model contradicts fast/low-RAM; local signals
+are what the merged-quality implementations use.
+
 ### Prompt caching (upstream)
 
 Research 2026-09-07/08: official vendor docs, live probes against the
@@ -338,10 +383,10 @@ Compared against the two reference gateways ( LiteLLM README + docs,
   "maximize-the-subscription" pitch; deferred from v1 → #2.
 - Output-side token savers (Caveman/Ponytail/Headroom analogues) → #5.
 - Quota reset-window tracking + per-provider spending limits → #7.
-- Model aliases → #6; per-key rate limits/restrictions → #3; Prometheus
-  → #4; audio/embeddings surfaces → #9; streaming request bodies → #8;
-  multi-node rollup export → #10; runtime config writes → #11; web-search
-  provider → #13.
+- ~~Model aliases → #6~~ (done 2026-09-08); per-key rate
+  limits/restrictions → #3; Prometheus → #4; audio/embeddings surfaces → #9;
+  streaming request bodies → #8; multi-node rollup export → #10; runtime
+  config writes → #11; web-search provider → #13.
 - Install/ops friction: no prebuilt releases, manual build, manual
   agent-CLI wiring, no Docker image → #14.
 - Not pursued (non-goals): cloud sync (9router-only), billing/budget
@@ -426,6 +471,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#38~~ | ~~Single-instance guard on data_dir~~ — **done 2026-09-08**; heartbeat files + process-scan peer detection, boot warning, `onegw_data_dir_peers` gauge, no lifetime flock (cfce76f); optional `/admin/health` JSON field deferred (server.go landmine) and noted on the issue | incident RCA |
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **done 2026-09-08**; warn-and-skip on loopback binds (`Config.Skipped` recorded, `/admin/config` exposes it, skipped-provider requests fail fast), wildcard/non-loopback keeps failing hard (5d17c82) | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
+| #44 | Model tiering: cheap-model-for-tiny-tasks / strong-model-for-planning — competitor survey (LiteLLM/9router/OmniRoute/omp) + layered adoption plan | user request |
 
 ### Recommended implementation order (2026-09-08)
 
@@ -551,5 +597,5 @@ the issue):
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
 
 ---
-*Last updated: 2026-09-08 (incident follow-ups landed: #43 midnight-UTC test time-bomb, #39 keyless-provider warn-and-skip, #38 data_dir peer visibility, #37 zero-drop deploy runbook, #40 reservation-leak guard; all five issues closed; sticky account round-robin shipped same day)*
+*Last updated: 2026-09-08 (model-tiering research (#44): LiteLLM routes between tiers only client-side, 9router's task-aware routing is still an unmerged PR, OmniRoute ships gateway-side classifyTask + modelPowerScore + combo reordering, omp solves it with client model roles — adoption plan layered config-first in the new PRD section; gaps section refreshed: #5/#6 closed)*
 
