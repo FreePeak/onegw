@@ -409,17 +409,18 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
 | #36 | Forward `x-grok-conv-id` — live sticky-routing loss on xai | research 2026-09-08 |
 | #41 | Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API (read-mostly; umbrella over #19/#11; boundary: config stays file-based) | user request |
-| #43 | TestQuotaRebuildFromRollups red on master — quota-feature regression blocks the suite gate | #37/#39 follow-up |
+| ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1aa6a95) | #37/#39 follow-up |
 | #42 | Ownership model for the live gateway + shared config (deploy discipline; owner.json in /admin/health) | incident RCA |
-| #37 | Zero-drop deploy runbook: start→verify→stop ordering; never stop before verified replacement | incident RCA |
-| #38 | Single-instance guard on data_dir: warn + peer count in health (NOT lifetime flock — must not block the #37 overlap) | incident RCA |
-| #39 | Keyless provider fails the whole boot → warn-and-skip on loopback + persisted startup diagnostics | incident RCA |
-| #40 | Buffered-path byte reservation leak across SIGHUP (fixed dbe02bd) — add pattern guard/test | incident RCA |
+| ~~#37~~ | ~~Zero-drop deploy runbook: start→verify→stop ordering~~ — **done 2026-09-08**; `scripts/deploy.sh` (build → overlap-bind → health-verify NEW → SIGTERM OLD → confirm single NEW listener; setsid isolates NEW from the deploying session's process group after the freeze RCA), 5 behavioral scenarios tested on scratch ports (d14441d, 9cabbf6) | incident RCA |
+| ~~#38~~ | ~~Single-instance guard on data_dir~~ — **done 2026-09-08**; heartbeat files + process-scan peer detection, boot warning, `onegw_data_dir_peers` gauge, no lifetime flock (cfce76f); optional `/admin/health` JSON field deferred (server.go landmine) and noted on the issue | incident RCA |
+| ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **done 2026-09-08**; warn-and-skip on loopback binds (`Config.Skipped` recorded, `/admin/config` exposes it, skipped-provider requests fail fast), wildcard/non-loopback keeps failing hard (5d17c82) | incident RCA |
+| ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
 
 ### Recommended implementation order (2026-09-08)
 
-Tier 1 — reliability first (incident follow-ups; #43 unblocks honest suite gates):
-#43 → #39 (degraded start) → #38 (data-dir guard) → #37 (deploy runbook; gate on green suite) → #40 (guard test).
+Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
+~~#43~~ → ~~#39~~ → ~~#38~~ → ~~#37~~ → ~~#40~~ all landed and closed; remaining
+reliability item: #42 (ownership model, rides along with future deploys).
 
 Tier 2 — token saving (the PRD's biggest lever; small fixes before the umbrella):
 #31 (usage semantics) → #33 (vendor cache-usage shapes) → #32 (cache knob preservation) → #36 (xai sticky header) → #35 (saver gate cache-bust) → #34 (cache profiles umbrella).
@@ -540,4 +541,5 @@ the issue):
 
 ---
 *Last updated: 2026-09-08 (sticky account round-robin: per-provider `sticky` TTL pins session/key identity to one account, failed attempts unpin; orcarouter now 4 accounts sticky 5m)*
+*Last updated: 2026-09-08 (incident follow-ups landed: #43 midnight-UTC test time-bomb, #39 keyless-provider warn-and-skip, #38 data_dir peer visibility, #37 zero-drop deploy runbook, #40 reservation-leak guard; all five issues closed; sticky account round-robin shipped same day)*
 
