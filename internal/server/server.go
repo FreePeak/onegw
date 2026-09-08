@@ -77,6 +77,8 @@ type Server struct {
 	logins   *loginGuard
 	events   *sseHub
 	reqlog   *requestLog
+	// retainStop closes the daily rollup-prune loop on Close.
+	retainStop chan struct{}
 	// cfgMu serializes admin config mutations so concurrent PATCH/reload
 	// read-modify-write cycles on the TOML file stay atomic.
 	cfgMu sync.Mutex
@@ -107,6 +109,7 @@ func New(cfg *config.Config) (*Server, error) {
 		st.SetNodeID(s.nodeID)
 	}
 	s.initOAuth(cfg)
+	s.startRetention()
 	if err := s.apply(cfg, true); err != nil {
 		return nil, err
 	}
@@ -292,6 +295,9 @@ func (s *Server) StampOwner() {
 
 // Close releases resources.
 func (s *Server) Close() {
+	if s.retainStop != nil {
+		close(s.retainStop)
+	}
 	if s.events != nil {
 		s.events.shutdown()
 	}
