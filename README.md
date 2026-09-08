@@ -214,7 +214,28 @@ are rewritten instead of forwarded: `reasoning_effort`
 disable-thinking knobs are dropped so the upstream default (thinking on)
 applies.
 
-### Output-side token savers
+### Sticky account round-robin
+
+Multi-account providers (several `[[providers.accounts]]`) rotate keys
+round-robin per request by default. `sticky = "5m"` (a duration, per
+provider) instead pins one account to a request identity for that window —
+the first call picks the next account in rotation and reuses it, keeping
+upstream prompt caches warm across repeat calls. The identity is the
+`X-Opencode-Session` header when the client sends one, else the auth-key
+label. A failed upstream attempt unpins immediately (retries and combo
+fallback land on a different key), and a pinned account that cools on quota
+rotates to the next one and re-pins. Off by default (`sticky = ""`).
+
+```toml
+[[providers]]
+name = "orcarouter"
+kind = "openai-responses"
+base_url = "https://api.orcarouter.ai/v1"
+sticky = "5m" # one key per session/key identity for 5 minutes
+```
+
+ ### Output-side token savers
+
 
 Two optional knobs under `[saver]` (both also need the `enabled` flag):
 
