@@ -236,9 +236,24 @@ func (s statelessDecoder) decode(ev sseEvent) ([]StreamEvent, error) { return s.
 // newStreamDecoder returns the decoder for a format plus an optional
 // terminal check run at clean stream end (nil = no check).
 func newStreamDecoder(f Format) (streamDecoder, func() error) {
-	if f == FmtResponses {
+	switch f {
+	case FmtResponses:
 		d := newResponsesDecoder()
 		return d, d.finish
+	case FmtCommandCode:
+		return newCommandCodeDecoder(f), func() error { return nil }
+	case FmtOpenAIResponses:
+		st := &responsesStreamState{}
+		return statelessDecoder{f: f, fn: func(_ Format, ev sseEvent) ([]StreamEvent, error) {
+			return decodeResponsesStreamEvent(ev, st)
+		}}, nil
+	case FmtCursor:
+		return statelessDecoder{f: f, fn: func(_ Format, ev sseEvent) ([]StreamEvent, error) {
+			return nil, fmt.Errorf("cursor wire format is a skeleton; executor not implemented")
+		}}, nil
+	case FmtOpenAI, FmtAnthropic, FmtGemini:
+		return statelessDecoder{f: f, fn: decodeStreamEvent}, nil
+	default:
+		return errDecoder{fmt.Errorf("no stream decoder for format %s", f)}, nil
 	}
-	return statelessDecoder{f: f, fn: decodeStreamEvent}, nil
 }

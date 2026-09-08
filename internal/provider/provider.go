@@ -30,6 +30,11 @@ const (
 	KindAnthropic Kind = "anthropic" // Anthropic Messages
 	KindGemini    Kind = "gemini"    // Gemini generateContent
 	KindOpenCode  Kind = "opencode"  // OpenCode Zen Go subscription (OpenAI wire)
+	// Custom wire formats (issue #12): commandcode = CommandCode /alpha/generate
+	// NDJSON; openai-responses = Grok CLI Responses API; cursor = skeleton.
+	KindCommandCode     Kind = "commandcode"      // CommandCode NDJSON executor
+	KindOpenAIResponses Kind = "openai-responses" // Grok CLI Responses API
+	KindCursor          Kind = "cursor"           // Cursor protobuf (skeleton: fail-fast)
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
@@ -84,6 +89,12 @@ func (k Kind) Format() translat.Format {
 		return translat.FmtAnthropic
 	case KindGemini:
 		return translat.FmtGemini
+	case KindCommandCode:
+		return translat.FmtCommandCode
+	case KindOpenAIResponses:
+		return translat.FmtOpenAIResponses
+	case KindCursor:
+		return translat.FmtCursor // skeleton; fail-fast upstream
 	// KindSearXNG (searxng.go) intentionally falls through to OpenAI: its
 	// Do() returns a synthetic OpenAI completion, so clients see a normal
 	// chat response in every surface.
@@ -238,6 +249,12 @@ func (k Kind) DefaultBaseURL() string {
 		return "https://generativelanguage.googleapis.com"
 	case KindOpenCode:
 		return "https://opencode.ai/zen/go"
+	case KindOpenAIResponses:
+		return "https://cli-chat-proxy.grok.com"
+	case KindCursor:
+		return "https://api2.cursor.sh"
+	case KindCommandCode:
+		return "https://api.commandcode.ai/alpha/generate"
 	case KindSearXNG:
 		return "" // no stock endpoint: base_url is required in config
 	default:
@@ -453,6 +470,16 @@ func (d *Def) Path(op, model string) string {
 		}
 		// model + method appended by caller (needs model name)
 		return ""
+	case KindOpenAIResponses:
+		// Grok CLI answers on the Responses endpoint only.
+		return "/v1/responses"
+	case KindCommandCode:
+		if op == "models" {
+			return "/v1/models"
+		}
+		return "" // base_url IS the /alpha/generate endpoint
+	case KindCursor:
+		return "" // skeleton
 	case KindOpenCode:
 		if op == "models" {
 			return "/v1/models"
@@ -521,6 +548,17 @@ func (d *Def) Do(ctx context.Context, acct *Account, model, clientSession string
 			case KindOpenCode:
 				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientSession, acct.APIKey))
+			case KindCommandCode:
+				// 9router fingerprint: per-request session id + CLI version
+				// headers; the key is a plain bearer (user_... token).
+				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+				req.Header.Set("x-command-code-version", translat.CommandCodeVersion)
+				req.Header.Set("x-cli-environment", "cli")
+				req.Header.Set("x-session-id", newRequestUUID())
+			case KindOpenAIResponses:
+				// Grok CLI fingerprint headers on top of the bearer.
+				req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
+				req.Header.Set("x-grok-client-version", "0.2.99")
 			default:
 				req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 			}
@@ -648,6 +686,18 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	case KindOpenCode:
 		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.APIKey))
+	case KindCommandCode:
+		// 9router fingerprint: per-request session id + CLI version headers;
+		// the key is a plain bearer (user_... token).
+		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+		req.Header.Set("x-command-code-version", translat.CommandCodeVersion)
+		req.Header.Set("x-cli-environment", "cli")
+		req.Header.Set("x-session-id", newRequestUUID())
+	case KindOpenAIResponses:
+		// Grok CLI fingerprint: xai-grok-cli bearer + client headers.
+		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
+		req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
+		req.Header.Set("x-grok-client-version", "0.2.99")
 	default:
 		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
 	}
