@@ -204,11 +204,33 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 	return nil, &types.APIError{Status: 404, Type: "model_not_found", Message: "no provider for model " + model}
 }
 
+// Request identity rides the context: handlers tag each request with the
+// client session id or auth-key label so sticky account pools can pin it.
+type identityKey struct{}
+
+// WithIdentity tags ctx with the request's affinity identity ("" = none).
+func WithIdentity(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, identityKey{}, id)
+}
+
+// IdentityFrom extracts the identity tagged by WithIdentity.
+func IdentityFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	id, _ := ctx.Value(identityKey{}).(string)
+	return id
+}
+
 // Execute runs the resolution: for each target pick an account and call; on
 // retryable failure try again, then fall through to the next target.
 // onResult receives the successful result.
 func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onResult func(any)) *types.APIError {
 	var lastErr *types.APIError
+	id := IdentityFrom(ctx)
 	for _, t := range res.Targets {
 		def, ok := r.pool.Get(t.Provider)
 		if !ok {
@@ -216,13 +238,14 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			continue
 		}
 		for attempt := 0; attempt < max(1, r.MaxAttempts); attempt++ {
-			acct := def.NextAccount()
+			acct := def.NextAccount(id)
 			out, err := call(ctx, def, acct, t.Model)
 			if err == nil {
 				onResult(out)
 				return nil
 			}
 			lastErr = err
+			def.Unpin(id) // a failed attempt must not keep its pin
 			if !(err.Retryable() || err.RegionLocked()) {
 				return err
 			}

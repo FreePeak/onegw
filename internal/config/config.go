@@ -108,6 +108,11 @@ type ProviderCfg struct {
 	// search runs (internal/provider/searxng.go).
 	MaxResults int    `toml:"max_results"`
 	Timeout    string `toml:"timeout"`
+	// Sticky pins one upstream account to a request identity (the client
+	// session header, else the auth key label) for this long — "5m", "30s" —
+	// so repeat calls reuse the same key (prompt-cache friendly). A failed
+	// attempt unpins; a cooling account rotates. "" = plain round-robin.
+	Sticky string `toml:"sticky"`
 	// Quota tracking (issue #7): Window "" = off | "5h" | "daily" |
 	// "weekly". QuotaResetAnchor optionally pins the reset grid to an ISO
 	// instant (its time-of-day phases daily resets; its instant phases 5h/
@@ -285,6 +290,11 @@ func (c *Config) Validate() error {
 		}
 		if p.QuotaLimitTokens < 0 || p.QuotaLimitRequests < 0 {
 			return fmt.Errorf("provider %s quota limits must be >= 0", p.Name)
+		}
+		if p.Sticky != "" {
+			if d, err := time.ParseDuration(p.Sticky); err != nil || d <= 0 {
+				return fmt.Errorf("provider %s invalid sticky %q (want a positive duration like \"5m\")", p.Name, p.Sticky)
+			}
 		}
 		for _, pc := range p.Passthrough {
 			switch pc {
