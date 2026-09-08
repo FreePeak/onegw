@@ -629,6 +629,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (*config.Auth
 	if key ***REMOVED*** "" {
 		key = r.Header.Get("x-api-key")
 	}
+	if key ***REMOVED*** "" {
+		key = r.Header.Get("x-goog-api-key") // native Gemini clients authenticate with this
+	}
 	for i := range keys {
 		if keys[i].Key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(keys[i].Key)) ***REMOVED*** 1 {
 			return &keys[i], true
