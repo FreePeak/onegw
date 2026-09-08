@@ -137,3 +137,36 @@ func TestExecuteErrorWhenAllFail(t *testing.T) {
 	}
 	_ = errors.New
 }
+
+func TestExecuteFallbackableRetriesThenFallsThrough(t *testing.T) {
+	r := New(newTestPool())
+	r.SetCombos([]*Combo{{
+		Name:    "stack",
+		Targets: []Target{{Provider: "p1", Model: "m"}, {Provider: "p2", Model: "m"}},
+	}})
+	res, _ := r.Resolve("stack")
+	if res == nil {
+		t.Fatal("resolve stack failed")
+	}
+	var calls [2]int
+	var served string
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		i := 0
+		if def.Name == "p2" {
+			i = 1
+		}
+		calls[i]++
+		if def.Name == "p1" {
+			return nil, &types.APIError{Status: 400, Type: "invalid_request_error", Fallbackable: true,
+				Message: "该模型始终思考，不支持关闭思考"}
+		}
+		served = model
+		return "ok", nil
+	}
+	if err := r.Execute(context.Background(), res, caller, func(a any) {}); err != nil {
+		t.Fatalf("expected fall-through success: %v", err)
+	}
+	if calls != [2]int{2, 1} || served != "m" {
+		t.Fatalf("calls=%v served=%s, want [2 1] with p2 serving m (one retry, then next target)", calls, served)
+	}
+}
