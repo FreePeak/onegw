@@ -366,7 +366,7 @@ func TestTranslateStreamOpenAIToAnthropicSynthesizesBlockStarts(t *testing.T) {
 	}
 	check(5, "content_block_delta", map[string]any{"index": float64(1), "delta": map[string]any{"type": "text_delta", "text": "ok"}})
 	check(6, "content_block_stop", map[string]any{"index": float64(1)})
-	check(7, "message_delta", map[string]any{"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]any{"input_tokens": float64(9), "output_tokens": float64(5)}})
+	check(7, "message_delta", map[string]any{"delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil}, "usage": map[string]any{"input_tokens": float64(9), "output_tokens": float64(5), "cache_read_input_tokens": float64(0), "cache_creation_input_tokens": float64(0)}})
 	check(8, "message_stop", map[string]any{"type": "message_stop"})
 	if len(events) != 9 {
 		t.Fatalf("want 9 events, got %d:\n%s", len(events), sb.String())

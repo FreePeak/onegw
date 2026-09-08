@@ -77,6 +77,9 @@ type rsUsage struct {
 	PromptTokens         int64 `json:"prompt_tokens"`
 	CompletionTokens     int64 `json:"completion_tokens"`
 	CacheReadInputTokens int64 `json:"cache_read_input_tokens"`
+	// Kimi-style top-level cached token count some Responses-compatible
+	// upstreams emit alongside input_tokens (issue #33).
+	CachedTokens int64 `json:"cached_tokens"`
 }
 
 type rsRequest struct {
@@ -457,6 +460,9 @@ func rsUsageToUnified(u *rsUsage) types.Usage {
 	}
 	if unified.CacheReadTokens == 0 {
 		unified.CacheReadTokens = u.CacheReadInputTokens // legacy alias
+	}
+	if unified.CacheReadTokens == 0 {
+		unified.CacheReadTokens = u.CachedTokens // Kimi-style top level
 	}
 	if u.OutputTokensDetails != nil {
 		unified.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens

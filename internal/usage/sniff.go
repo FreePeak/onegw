@@ -9,11 +9,19 @@ import (
 // snifferRegexes extract final usage numbers from upstream payloads. The
 // LAST match of each pattern wins (final counts appear last in streams).
 var (
-	reInput      = regexp.MustCompile(`"(?:input_tokens|prompt_tokens|promptTokenCount)"\s*:\s*(\d+)`)
-	reOutput     = regexp.MustCompile(`"(?:output_tokens|completion_tokens|candidatesTokenCount)"\s*:\s*(\d+)`)
-	reCacheRead  = regexp.MustCompile(`"(?:cache_read_input_tokens|cached_tokens|cachedContentTokenCount)"\s*:\s*(\d+)`)
+	reInput  = regexp.MustCompile(`"(?:input_tokens|prompt_tokens|promptTokenCount)"\s*:\s*(\d+)`)
+	reOutput = regexp.MustCompile(`"(?:output_tokens|completion_tokens|candidatesTokenCount)"\s*:\s*(\d+)`)
+	// reCacheRead matches every vendor's cache-hit field, all of which are
+	// subsets of the (inclusive) prompt total: Anthropic's
+	// cache_read_input_tokens, OpenAI/Responses/Kimi cached_tokens, Gemini's
+	// cachedContentTokenCount, DeepSeek's prompt_cache_hit_tokens
+	// (prompt_tokens = hit + miss, so the hit is the cached subset).
+	reCacheRead  = regexp.MustCompile(`"(?:cache_read_input_tokens|cached_tokens|cachedContentTokenCount|prompt_cache_hit_tokens)"\s*:\s*(\d+)`)
 	reCacheWrite = regexp.MustCompile(`"cache_creation_input_tokens"\s*:\s*(\d+)`)
 	reReasoning  = regexp.MustCompile(`"(?:reasoning_tokens|thoughtsTokenCount)"\s*:\s*(\d+)`)
+	// anthropicCacheField marks a payload as Anthropic-shaped: those field
+	// names exist only where input_tokens EXCLUDES cache read/write.
+	anthropicCacheField = regexp.MustCompile(`"(?:cache_read_input_tokens|cache_creation_input_tokens)"\s*:\s*`)
 )
 
 const sniffWindow = 64 << 10 // 64 KiB rolling tail
@@ -24,7 +32,8 @@ var triggers = []string{"usage", "tokens", "TokenCount"}
 // Sniffer wraps an upstream response body, scans a bounded rolling window,
 // and passes bytes through untouched. It never buffers more than
 // sniffWindow+chunk bytes. Usage() reports the best-effort final counts
-// after EOF.
+// after EOF, already normalized to the unified convention (cache-inclusive
+// input).
 type Sniffer struct {
 	r        io.Reader
 	tail     []byte
@@ -35,8 +44,12 @@ type Sniffer struct {
 	rs       int64
 	seen     bool
 	allZeros bool
-	limit    int64
-	scanned  int64
+	// anthropic marks the payload as Anthropic-shaped (it carried
+	// cache_read_input_tokens/cache_creation_input_tokens), meaning the
+	// sniffed input_tokens EXCLUDES cache read/write.
+	anthropic bool
+	limit     int64
+	scanned   int64
 }
 
 // NewSniffer wraps r. limit caps how many bytes are scanned (0 = unlimited);
@@ -113,6 +126,9 @@ func (s *Sniffer) extract() {
 	if m := lastMatch(reReasoning, s.tail); m > s.rs {
 		s.rs = m
 	}
+	if anthropicCacheField.Match(s.tail) {
+		s.anthropic = true
+	}
 }
 
 func lastMatch(re *regexp.Regexp, b []byte) int64 {
@@ -128,7 +144,14 @@ func lastMatch(re *regexp.Regexp, b []byte) int64 {
 	return v
 }
 
-// Usage returns sniffed counts and whether any usage marker was seen.
+// Usage returns sniffed counts and whether any usage marker was seen, in the
+// unified convention: InputTokens is the TOTAL prompt size, cache-inclusive.
+// Anthropic-shaped payloads report input_tokens exclusive of cache
+// read/write, so the subsets are folded in here (issue #31).
 func (s *Sniffer) Usage() (in, out, cacheRead, cacheWrite, reasoning int64, seen bool) {
-	return s.in, s.out, s.cr, s.cw, s.rs, s.seen
+	in = s.in
+	if s.anthropic {
+		in += s.cr + s.cw
+	}
+	return in, s.out, s.cr, s.cw, s.rs, s.seen
 }

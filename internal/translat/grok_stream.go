@@ -50,6 +50,8 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 				OutputTokensDetails *struct {
 					ReasoningTokens int64 `json:"reasoning_tokens"`
 				} `json:"output_tokens_details"`
+				// Kimi-style top-level cached subset (issue #33).
+				CachedTokens int64 `json:"cached_tokens"`
 			} `json:"usage"`
 		} `json:"response"`
 	}
@@ -134,6 +136,9 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 				if u.InputTokensDetails != nil {
 					usage.CacheReadTokens = u.InputTokensDetails.CachedTokens
 				}
+				if usage.CacheReadTokens == 0 {
+					usage.CacheReadTokens = u.CachedTokens // Kimi top level
+				}
 				if u.OutputTokensDetails != nil {
 					usage.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
 				}
@@ -147,11 +152,12 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 			stop = types.StopMaxTokens
 		}
 		if obj.Response != nil && obj.Response.Error != nil && obj.Response.Error.Message != "" {
+			e := obj.Response.Error
 			return nil, &types.APIError{
-				Status:  502,
+				Status:  statusFromOAErr(e.Code, "", e.Message),
 				Type:    "upstream_error",
-				Code:    orDefault(obj.Response.Error.Code, ""),
-				Message: obj.Response.Error.Message,
+				Code:    orDefault(e.Code, ""),
+				Message: e.Message,
 			}
 		}
 		if !st.started {

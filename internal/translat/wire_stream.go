@@ -88,7 +88,8 @@ func decodeOpenAIStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 	if c.Error != nil {
 		return []StreamEvent{{
 			Kind: EvError,
-			Err:  &types.APIError{Status: 502, Type: orDefault(c.Error.Type, "upstream_error"), Code: errCodeString(c.Error.Code), Message: c.Error.Message},
+			Err: &types.APIError{Status: statusFromOAErr(c.Error.Code, c.Error.Type, c.Error.Message),
+				Type: orDefault(c.Error.Type, "upstream_error"), Code: errCodeString(c.Error.Code), Message: c.Error.Message},
 		}}, nil
 	}
 	var out []StreamEvent
@@ -190,8 +191,11 @@ func decodeAnthropicStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 			out.Model = m.Message.Model
 			if m.Message.Usage != nil {
 				u := m.Message.Usage
+				// Normalize: fold cache read/write into InputTokens
+				// (unified InputTokens is cache-inclusive; Anthropic's
+				// input_tokens is exclusive).
 				out.Usage = &types.Usage{
-					InputTokens:      u.InputTokens,
+					InputTokens:      u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputToken,
 					CacheReadTokens:  u.CacheReadInputTokens,
 					CacheWriteTokens: u.CacheCreationInputToken,
 					OutputTokens:     u.OutputTokens,
@@ -672,7 +676,9 @@ func (e *anthropicEncoder) ensureStart(w io.Writer, ev StreamEvent) error {
 	if ev.Usage != nil {
 		e.usage.Merge(*ev.Usage)
 	}
-	usage["input_tokens"] = e.usage.InputTokens
+	// Unified InputTokens is cache-inclusive; Anthropic's input_tokens
+	// excludes cache read/write — denormalize (never below 0).
+	usage["input_tokens"] = anthropicInputTokens(e.usage)
 	if e.usage.CacheReadTokens > 0 {
 		usage["cache_read_input_tokens"] = e.usage.CacheReadTokens
 	}
@@ -832,7 +838,12 @@ func (e *anthropicEncoder) finish(w io.Writer) error {
 	if err := e.raw(w, "message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": unmapAnthropicStop(e.stopReason), "stop_sequence": stopSeqOrNull(e.stopSeq)},
-		"usage": map[string]any{"input_tokens": e.usage.InputTokens, "output_tokens": maxI64(e.usage.OutputTokens, 1)},
+		"usage": map[string]any{
+			"input_tokens":                anthropicInputTokens(e.usage),
+			"output_tokens":               maxI64(e.usage.OutputTokens, 1),
+			"cache_read_input_tokens":     e.usage.CacheReadTokens,
+			"cache_creation_input_tokens": e.usage.CacheWriteTokens,
+		},
 	}); err != nil {
 		return err
 	}
@@ -886,6 +897,11 @@ func (e *geminiEncoder) encode(w io.Writer, ev StreamEvent) error {
 	case EvStart:
 		if ev.Model != "" {
 			e.model = ev.Model
+		}
+		// Anthropic upstreams report prompt usage at message_start; keep
+		// it so finish() can still emit it when no later event repeats it.
+		if ev.Usage != nil {
+			e.usage.Merge(*ev.Usage)
 		}
 	case EvPartStart:
 		if ev.PartType == types.PartToolUse {
