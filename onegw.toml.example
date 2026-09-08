@@ -96,6 +96,17 @@ api_key = ""                    # fill or use env
 name = "key-2"
 api_key = ""                    # fill or use env
 
+# OpenAI Responses-wire upstream (e.g. orcarouter.ai): clients keep using
+# /v1/chat/completions; onegw translates to {base_url}/responses.
+[[providers]]
+name = "orcarouter"
+kind = "openai-responses"
+base_url = "https://api.orcarouter.ai/v1"
+models = ["z-ai/glm-5.3-flash-free", "deepseek/deepseek-v4-flash-free"]
+[[providers.accounts]]
+name = "me"
+api_key = ""                    # fill or use env
+
 # --- Web search (virtual provider) ------------------------------------------
 
 [[providers]]

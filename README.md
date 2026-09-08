@@ -113,7 +113,7 @@ env overrides:
 | `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup (90 MiB soft limit, GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
-providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "searxng"`, optional
+providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "searxng" | "openai-responses"`, optional
 `base_url`, models, multiple `[[providers.accounts]]` or the `keys = [...]`
 multi-key shortcut), combos, server limits, saver and usage settings.
 `data_dir = "memory"` disables persistence.
@@ -146,6 +146,27 @@ between the Responses wire and whichever client surface asked — so
 clients, streaming and non-streaming alike. A Responses stream that closes
 without `response.completed` is surfaced as an upstream error, never a
 clean finish.
+
+### OpenAI Responses-wire upstreams
+
+`kind = "openai-responses"` fronts upstreams speaking the OpenAI Responses
+API at `{base_url}/responses` (e.g. orcarouter.ai). Clients keep using the
+normal chat-completions surface; onegw translates the request and re-encodes
+the SSE stream back (buffered aggregation for non-streaming clients). Note
+that cross-format translation drops upstream prompt-caching knobs (see the
+PRD's prompt-caching matrix).
+
+```toml
+[[providers]]
+name = "orcarouter"
+kind = "openai-responses"
+base_url = "https://api.orcarouter.ai/v1"
+models = ["z-ai/glm-5.3-flash-free", "deepseek/deepseek-v4-flash-free"]
+[[providers.accounts]]
+name = "me"
+api_key = ""
+```
+
 
 ### Web search (SearXNG)
 
