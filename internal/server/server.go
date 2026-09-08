@@ -525,6 +525,18 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	res, apiErr := def.Do(ctx, acct, model, clientSession, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, apiErr.Status)
+		if alwaysThinking400(apiErr) {
+			// Runtime self-healing for providers whose config lacks the
+			// always_thinking globs (a combo can mix models with different
+			// thinking modes): remember the model, and let Execute retry
+			// this target once — attempt now coerces upfront because
+			// AlwaysThinkingModel consults learned state — then fall
+			// through to the next combo target if it still refuses.
+			if def.LearnAlwaysThinking(model) {
+				log.Printf("server: learned always-thinking %s/%s from upstream 400; future requests coerce effort upfront", def.Name, model)
+			}
+			apiErr.Fallbackable = true
+		}
 		return nil, apiErr
 	}
 	return nil, s.relayResponse(w, res, def, model, clientFmt, upstreamFmt, stream, len(body), savedTokens, ak, ctx)
@@ -969,17 +981,47 @@ func normalizeRoles(body []byte) ([]byte, error) {
 	return out, nil
 }
 
-// coerceEffort maps reasoning_effort values an always-thinking upstream
-// rejects onto the closest accepted one. GLM (error 1210) accepts only
-// low|high|max: "none"/"minimal"/"medium" become "low"; other values pass
-// through unchanged.
+// coerceEffort maps reasoning_effort values onto the enum an
+// always-thinking upstream accepts (GLM, error 1210 family: only
+// low|high|max). "none"/"minimal"/"medium" become "low"; "xhigh" (client
+// ladders above high) becomes "max"; any unrecognized value falls back to
+// "high" — always accepted, capability-preserving, and deterministic.
 func coerceEffort(effort string) string {
 	switch effort {
 	case "none", "minimal", "medium":
 		return "low"
-	default:
+	case "xhigh":
+		return "max"
+	case "low", "high", "max":
 		return effort
+	default:
+		return "high"
 	}
+}
+
+// alwaysThinking400 reports whether an upstream 400 is the GLM-family
+// "this model always thinks" rejection. Seen shapes: error code 1210
+// (Zhipu direct), code 400001 carrying the Chinese message (B.AI and
+// other proxies pass it through), and English phrasings of the same
+// "use low, high, or max" instruction. Kept deliberately narrow — a
+// plain invalid-request 400 must not be classified as one.
+func alwaysThinking400(e *types.APIError) bool {
+	if e == nil || e.Status != 400 {
+		return false
+	}
+	if e.Code == "1210" {
+		return true
+	}
+	msg := e.Message
+	switch {
+	case strings.Contains(msg, "始终思考"), // "always thinks"
+		strings.Contains(msg, "不支持关闭思考"), // "does not support disabling thinking"
+		strings.Contains(msg, "low、high 或 max"),
+		strings.Contains(msg, "low, high or max"),
+		strings.Contains(msg, "low, high, or max"):
+		return true
+	}
+	return false
 }
 
 // adaptAlwaysThinking rewrites disable-thinking knobs out of a raw
