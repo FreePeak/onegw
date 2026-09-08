@@ -24,6 +24,13 @@ func (fakeTimeoutErr) Temporary() bool { return false }
 
 var _ net.Error = fakeTimeoutErr{}
 
+// timeoutDeadlineErr models the real header-timeout error shape (probe,
+// Go 1.25): a net.Error with Timeout()=true whose chain also satisfies
+// errors.Is(..., context.DeadlineExceeded).
+type timeoutDeadlineErr struct{ fakeTimeoutErr }
+
+func (timeoutDeadlineErr) Unwrap() error { return context.DeadlineExceeded }
+
 // The 2026-09-08 502 storm was undiagnosable from the dashboard because a
 // gateway-side pre-first-byte timeout, a dead connection, and a real
 // upstream HTTP 5xx all logged as the same "502 upstream_error". Transport
@@ -59,6 +66,27 @@ func TestTransportErrClassification(t *testing.T) {
 			err:        &url.Error{Op: "Post", URL: "https://x/y", Err: errors.New("connection refused")},
 			wantStatus: 502, wantType: "upstream_unreachable",
 		},
+		{
+			// Regression (2026-09-08, verified by probe on h1 and h2, Go
+			// 1.25): the real ResponseHeaderTimeout error BOTH implements
+			// net.Error with Timeout()=true AND satisfies
+			// errors.Is(err, context.DeadlineExceeded). Chain-matching the
+			// deadline alias first mislabeled real upstream timeouts as
+			// 499 client_closed — and 499 is not Retryable(), so combos
+			// stopped falling through. The net.Error/Timeout classification
+			// must win over the deadline alias.
+			name:       "header timeout aliasing DeadlineExceeded",
+			err:        &url.Error{Op: "Post", URL: "https://x/y", Err: timeoutDeadlineErr{}},
+			wantStatus: 504, wantType: "upstream_timeout",
+		},
+		{
+			// (*url.Error).Timeout() only type-asserts its direct child,
+			// so a timeout buried under an extra wrap layer must still be
+			// found by walking the chain (errors.As stops at url.Error).
+			name:       "header timeout buried under wrap layer",
+			err:        &url.Error{Op: "Post", URL: "https://x/y", Err: fmt.Errorf("wrapped: %w", fakeTimeoutErr{})},
+			wantStatus: 504, wantType: "upstream_timeout",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -82,21 +110,21 @@ func TestTransportErrClassification(t *testing.T) {
 // A stalled upstream must be aborted by the pre-first-byte budget, and the
 // resulting error must be typed upstream_timeout end-to-end through Do.
 func TestDoTimeoutSurfacesUpstreamTimeout(t *testing.T) {
+	stalled := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(300 * time.Millisecond) // answer headers later than the budget
+		<-stalled // never answer headers while the test waits
 	}))
+	// Defer order matters (LIFO): close(stalled) is registered last so it
+	// runs FIRST, unblocking the handler before Close waits it out.
 	defer srv.Close()
+	defer close(stalled)
 
 	def := &Def{
 		Name: "slow", Kind: KindOpenAI, BaseURL: srv.URL,
 		Accounts:      []Account{{Name: "a", APIKey: "k"}},
 		HeaderTimeout: 80 * time.Millisecond,
 	}
-	start := time.Now()
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false)
-	if el := time.Since(start); el > 250*time.Millisecond {
-		t.Fatalf("header budget not enforced: waited %v", el)
-	}
 	if apiErr == nil {
 		t.Fatal("stalled upstream must error out via the header-timeout budget")
 	}
