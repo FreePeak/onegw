@@ -363,7 +363,11 @@ the provider is cooling, requests do not reach the upstream at all: combo
 chains fall through to the next target and direct routes are answered
 429 with a `Retry-After` naming the pool's soonest recovery. This turns
 per-key burst limits (one-api/new-api style: empty-body 429, no
-`Retry-After`) from a retry storm into a self-balancing rotation.
+`Retry-After`) from a retry storm into a self-balancing rotation. The same
+ladder benches an account on a premium-gating 403 (`access_denied` /
+"Deposit required" — the credential lacks access to the model, issue #48):
+the pool rotates to the next account or combo target instead of surfacing
+the 403, and a fully-gated pool answers the cooling-pool 429 + `Retry-After`.
 ```toml
 [[providers]]
 name = "orcarouter"
@@ -371,6 +375,69 @@ kind = "openai-responses"
 base_url = "https://api.orcarouter.ai/v1"
 sticky = "5m" # one key per session/key identity for 5 minutes
 ```
+
+### Session affinity (per-key session headers)
+
+When the client sends none of the forwarded identity headers
+(`x-grok-conv-id`, `x-grok-session-id`, `x-session-id`, `session_id` —
+client-sent values are always relayed verbatim), a provider can opt into a
+derived one: the gateway sends a stable per-key opaque id (`ses_` + hex) in
+the configured header, so repeat calls with one credential land on a warm
+upstream prompt cache:
+
+```toml
+[[providers]]
+name = "xai"
+kind = "openai"
+# ...
+session_header = "x-grok-conv-id"   # e.g. xAI per-server prompt cache
+```
+
+Default is off (no header is ever invented); the OpenCode Zen kind does the
+same for its upstream with `x-opencode-session` automatically.
+
+### Model tiering (config-only)
+
+Agent CLIs pick models per task type; the gateway just routes. Define two
+combos — a cheap one and a strong one — and point the CLI's role slots at
+them:
+
+```toml
+[[combo]]
+name = "tiny"      # free/flash-tier upstreams for background + filler work
+targets = ["orcarouter/z-ai/glm-5.3-flash-free", "orcarouter/deepseek/deepseek-v4-flash-free"]
+
+[[combo]]
+name = "planning"  # frontier models for planning and default work
+targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro"]
+```
+
+For omp, pin the combos as models of the `onegw` provider in
+`~/.omp/agent/models.yml`, then map the role slots in
+`~/.omp/agent/config.yml` (`modelRoles`) — cheap roles to `tiny`, default
+and planning roles to `planning`:
+
+```yaml
+# models.yml (provider onegw, baseUrl http://127.0.0.1:8080/v1)
+models:
+  - id: tiny
+  - id: planning
+
+# config.yml
+modelRoles:
+  tiny: onegw/tiny
+  smol: onegw/tiny
+  commit: onegw/tiny
+  default: onegw/planning
+  plan: onegw/planning
+```
+
+Other agent CLIs follow the same shape: wherever the tool distinguishes a
+small/fast model from a main one (env vars, `settings.json`, `models.json`),
+point the cheap slot at the `tiny` combo and the strong slot at `planning`
+via the same gateway base URL. Task-aware combo reordering on the gateway
+side (auto-picking the tier from request content) is not built — it is
+tracked in [issue #44](https://github.com/FreePeak/onegw/issues/44).
 
  ### Output-side token savers
 
