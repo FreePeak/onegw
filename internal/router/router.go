@@ -343,13 +343,25 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				}
 				continue
 			}
-			if err.NoSameTargetRetry {
-				// Pre-first-byte budget spent (the gateway's own
-				// ResponseHeaderTimeout — e.g. a slow aggregator queue):
-				// the request's pre-first-byte demand is fixed, so a
-				// second attempt can only burn a second full budget.
-				// Fall through to the next combo target now; a direct
-				// route (no next target) surfaces the 504 as-is.
+			if err.NoSameTargetRetry || err.SharedConcurrency() {
+				// NoSameTargetRetry: pre-first-byte budget spent (the
+				// gateway's own ResponseHeaderTimeout — e.g. a slow
+				// aggregator queue): the request's pre-first-byte
+				// demand is fixed, so a second attempt can only burn
+				// a second full budget. Fall through to the next combo
+				// target now; a direct route (no next target) surfaces
+				// the 504 as-is.
+				//
+				// SharedConcurrency: the 429 is the upstream's
+				// model-wide wall shared by ALL of the provider's
+				// traffic — a different key hits the same wall, so
+				// rotating accounts is pointless, and a 1s in-target
+				// backoff only pays when the window happens to clear.
+				// A different MODEL (the next combo target) sits in a
+				// different concurrency bucket, so fall through
+				// immediately instead of retrying the same saturated
+				// model. Direct routes surface the wall with an
+				// honest Retry-After (2s, below).
 				break
 			}
 			attempt++
