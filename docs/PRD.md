@@ -9,8 +9,8 @@ resolves a relative data_dir against the config FILE's directory (one config fil
 means exactly one data dir regardless of launcher cwd; absolute paths, "memory"
 sentinel, and the absolute default untouched); both live configs pinned absolute;
 zero-drop redeployed (pid 19071, archive-built 47e2984, /admin/update auth re-synced).
-Recovery copy: /tmp/onegw-recover/usage.db. Follow-up: peer WIP check_markers in
-scripts/deploy.sh false-fails under pipefail — strings|grep -q SIGPIPEs on match.)*
+Recovery copy: /tmp/onegw-recover/usage.db. Filed as issue #62. Follow-up: peer WIP
+check_markers in scripts/deploy.sh false-fails under pipefail (strings|grep -q SIGPIPEs on match).)*
 
 *Last updated: 2026-09-09 (dashboard update button, #61: Settings page gains a
 Version card — running vs latest release, Check now / Update now — backed by new
