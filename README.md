@@ -510,6 +510,12 @@ per event — N+M decoders/encoders instead of N×M pairwise adapters.
 
 ## Operations
 
+### Deploying on a VPS
+
+For a remote/personal-server deployment — hardened systemd unit, zero-drop
+deploy script, TLS proxy setup, SQLite backup, and 429 guardrails — see
+[docs/vps-deploy.md](docs/vps-deploy.md).
+
 ### Ownership: who is running what
 
 The gateway records itself at startup — pid, listen address, start time,
