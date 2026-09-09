@@ -20,6 +20,7 @@ import (
 	"onegw/internal/ratelimit"
 	"onegw/internal/router"
 	"onegw/internal/saver"
+	"onegw/internal/server/dashboard"
 	"onegw/internal/store"
 	"onegw/internal/translat"
 	"onegw/internal/types"
@@ -357,6 +358,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/v1/combos", s.handleAPICombos)
 	mux.HandleFunc("GET /admin/api/v1/quota", s.handleAPIQuota)
 	mux.HandleFunc("GET /admin/api/v1/saver", s.handleAPISaver)
+	mux.HandleFunc("GET /admin/assets/fonts/", s.handleAdminFont)
 	mux.HandleFunc("GET /admin/ui/", s.handleAdminUI)
 	mux.HandleFunc("GET /", s.handleDashboard)
 	return s.withRecovery(mux)
@@ -615,12 +617,12 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	}
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
-		s.m.invalidBody(def.Name, mdl, err.Error())
+		s.m.invalidBody(def.Name, mdl, acctName(acct), err.Error())
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
-		s.m.upstreamErr(def.Name, mdl, apiErr)
+		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
 		if alwaysThinking400(apiErr) {
 			// Runtime self-healing for providers whose config lacks the
 			// always_thinking globs (a combo can mix models with different
@@ -658,11 +660,11 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		head, herr, err = translat.InspectCommandCodeHead(res.Resp.Body)
 		if err != nil {
 			herr := errAPI(502, "upstream_unreachable", err.Error())
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 		if herr != nil {
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 	}
@@ -695,13 +697,13 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 			if herr.RegionLocked() && res.Acct != nil {
 				def.Cool(res.Acct, 5*time.Minute)
 			}
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 		rb, merr := translat.EncodeResponse(clientFmt, resp)
 		if merr != nil {
 			herr := errAPI(501, "response_encode_failed", merr.Error())
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -729,7 +731,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
 		if rerr != nil {
 			herr := errAPI(502, "upstream_read_failed", rerr.Error())
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 		if int64(len(raw)) > maxResp {
@@ -738,13 +740,13 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		cr, derr := translat.DecodeResponse(upstreamFmt, raw)
 		if derr != nil {
 			herr := errAPI(501, "response_translate_failed", derr.Error())
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 		out, eerr := translat.EncodeResponse(clientFmt, cr)
 		if eerr != nil {
 			herr := errAPI(501, "response_encode_failed", eerr.Error())
-			s.m.upstreamErr(def.Name, model, herr)
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 			return herr
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -800,7 +802,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				if herr.RegionLocked() && res.Acct != nil {
 					def.Cool(res.Acct, 5*time.Minute)
 				}
-				s.m.upstreamErr(def.Name, model, herr)
+				s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 				return herr
 			}
 			rec = u
@@ -820,7 +822,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 	if q := s.cur().quota; q != nil {
 		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
 	}
-	s.m.success(def.Name, model, rec, savedTokens)
+	s.m.success(def.Name, model, acctName(res.Acct), rec, savedTokens)
 	return nil
 }
 
@@ -976,6 +978,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
+// handleAdminFont serves a vendored woff2 from the dashboard embed.
+// Public static bytes (no session data) — the login page loads fonts
+// before any cookie exists.
+func (s *Server) handleAdminFont(w http.ResponseWriter, r *http.Request) {
+	dashboard.ServeFont(w, strings.TrimPrefix(r.URL.Path, "/admin/assets/fonts/"))
+}
 func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
 		w.WriteHeader(http.StatusUnauthorized)
