@@ -37,60 +37,27 @@
 <script>{{asset_js "uPlot.iife.min.js"}}</script>
 <script>
 const D = {{.ChartJSON}};
-function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';if(n>=1e6)return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';if(n>=1e3)return (n/1e3).toFixed(1).replace(/\.0$/,'')+'K';return String(n)}
-function fmtDay(u, ticks){ // x-axis labels in the BROWSER's locale time
-  const span = u.data[0][u.data[0].length-1] - u.data[0][0];
-  const out = ticks.map(t => {
-    const d = new Date(t * 1000);
-    return span < 26*3600
-      ? String(d.getHours()).padStart(2,'0')
-      : (d.getMonth()+1) + '/' + d.getDate();
-  });
-  return out.map((v, i) => v === out[i-1] ? '' : v);
-}
-function themeCols(){
-  const dark = document.documentElement.dataset.theme !== 'light';
-  return { text: dark ? '#b6c2cf' : '#57606a', grid: dark ? 'rgba(139,148,158,.14)' : 'rgba(0,0,0,.08)' };
-}
-function axes(){
-  const c = themeCols();
-  return [
-    { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid }, values: fmtDay },
-    { stroke: c.text, grid: { stroke: c.grid }, ticks: { stroke: c.grid }, size: 62,
-      values: (u, splits) => splits.map((v, i) => (v === splits[i-1] ? '' : kmb(v))) },
-  ];
-}
-
+function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'K';return String(n)}
 function draw(id, series, title){
   const el = document.getElementById(id);
   if(!el || !D.xs.length) return;
-  const u = new uPlot({
+  new uPlot({
     width: el.clientWidth || 600, height: 230, title,
     series: [{}, ...series.map(s => ({label: s.label, stroke: s.color, width: 1.6,
       fill: s.fill ? s.color+'2e' : undefined, points: {show: false}}))],
-    axes: axes(),
+    axes: [{}, {values: (u2, v) => v.map(kmb)}]
   }, [D.xs, ...series.map(s => s.vals)], el);
-  built.push(u);
 }
-// Theme toggle re-skins the canvas (tick text is painted with axis stroke,
-// not CSS) — rebuild the charts with the new palette.
-const built = [];
-function buildAll(){
-  built.forEach(u => u.destroy());
-  built.length = 0;
-  // stacked areas: cumulative input → +output → +cache_read
-  const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
-  draw('chart-tok', [
-    {label:'cache read', vals: cr, color:'#58a6ff', fill:true},
-    {label:'output', vals: out, color:'#3fb950', fill:true},
-    {label:'input', vals: inp, color:'#d29922', fill:true},
-  ], 'tokens · {{.ChartUnit}} (cumulative stack — read bottom label as the layer value)');
-  draw('chart-req', [
-    {label:'requests', vals: D.requests, color:'#bc8cff', fill:true},
-  ], 'requests · {{.ChartUnit}}');
-}
-new MutationObserver(buildAll).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
-buildAll();
+// stacked areas: cumulative input → +output → +cache_read
+const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
+draw('chart-tok', [
+  {label:'cache read', vals: cr, color:'#58a6ff', fill:true},
+  {label:'output', vals: out, color:'#3fb950', fill:true},
+  {label:'input', vals: inp, color:'#d29922', fill:true},
+], 'tokens · {{.ChartUnit}} (cumulative stack — read bottom label as the layer value)');
+draw('chart-req', [
+  {label:'requests', vals: D.requests, color:'#bc8cff', fill:true},
+], 'requests · {{.ChartUnit}}');
 </script>
 {{end}}
 {{end}}
