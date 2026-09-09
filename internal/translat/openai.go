@@ -34,10 +34,12 @@ const (
 // ---------------------------------------------------------------------------
 // OpenAI Chat Completions wire shapes
 // ---------------------------------------------------------------------------
-
 type oaContentText struct {
 	Type string `json:"type"` // "text" | "image_url" | ...
 	Text string `json:"text,omitempty"`
+	// CacheControl preserves an Anthropic-style breakpoint riding on this
+	// content part (OpenRouter dialect); nil = absent (issue #32).
+	CacheControl *anCacheControl `json:"cache_control,omitempty"`
 	// image_url
 	ImageURL *struct {
 		URL    string `json:"url"`
@@ -104,6 +106,11 @@ type oaRequest struct {
 	ServiceTier       string         `json:"service_tier,omitempty"`
 	Store             *bool          `json:"store,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
+	// Cache-affinity knobs (issue #32). Tolerated by the live fleet: b-ai
+	// and glm ignore them (200); kilocode/OpenRouter uses them for sticky
+	// prompt-cache routing. Forwarded only when the client sent one.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
 }
 
 type oaRespFmt struct {
@@ -206,6 +213,10 @@ func DecodeOpenAIRequest(body []byte) (*types.ChatRequest, error) {
 	if req.User != "" {
 		u.SessionID = sessionKey(req.User)
 	}
+	// Cache-affinity knobs ride through verbatim (issue #32): empty means
+	// the client sent none; encoders never invent one.
+	u.PromptCacheKey = req.PromptCacheKey
+	u.StickySessionID = req.SessionID
 	for k, v := range req.Metadata {
 		if s, ok := v.(string); ok {
 			setMeta(u, k, s)
@@ -284,7 +295,11 @@ func decodeOAUserContent(raw json.RawMessage) []types.Part {
 	for _, c := range arr {
 		switch c.Type {
 		case "text":
-			parts = append(parts, types.Part{Type: types.PartText, Text: c.Text})
+			parts = append(parts, types.Part{
+				Type:            types.PartText,
+				Text:            c.Text,
+				CacheBreakpoint: c.CacheControl != nil && c.CacheControl.Type == "ephemeral",
+			})
 		case "image_url":
 			if c.ImageURL == nil {
 				continue
@@ -404,6 +419,10 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 		Temperature:       u.Temperature,
 		TopP:              u.TopP,
 		ParallelToolCalls: u.ParallelToolCalls,
+		// Cache-affinity knobs: re-emit only what the client sent (issue
+		// #32); omitempty drops absent fields, never invented.
+		PromptCacheKey: u.PromptCacheKey,
+		SessionID:      u.StickySessionID,
 	}
 	if u.MaxTokens > 0 {
 		mt := u.MaxTokens
@@ -447,6 +466,15 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 		req.Stop, _ = json.Marshal(u.StopSequences)
 	}
 	for _, p := range u.System {
+		if p.CacheBreakpoint {
+			// A marked system block must keep its part shape so the
+			// cache_control marker has something to ride on (issue #32).
+			req.Messages = append(req.Messages, oaMessage{
+				Role:    "system",
+				Content: mustJSON([]oaContentText{{Type: "text", Text: p.Text, CacheControl: cacheControlOf(p)}}),
+			})
+			continue
+		}
 		req.Messages = append(req.Messages, oaMessage{Role: "system", Content: mustJSON(p.Text)})
 	}
 	for _, m := range u.Messages {
@@ -543,7 +571,7 @@ func encodeOAUserContent(parts []types.Part) json.RawMessage {
 	if len(parts) == 0 {
 		return nil
 	}
-	if len(parts) == 1 && parts[0].Type == types.PartText {
+	if len(parts) == 1 && parts[0].Type == types.PartText && !parts[0].CacheBreakpoint {
 		return mustJSON(parts[0].Text)
 	}
 	arr := make([]oaContentText, 0, len(parts))
@@ -551,7 +579,11 @@ func encodeOAUserContent(parts []types.Part) json.RawMessage {
 	for _, p := range parts {
 		switch p.Type {
 		case types.PartText:
-			arr = append(arr, oaContentText{Type: "text", Text: p.Text})
+			arr = append(arr, oaContentText{
+				Type:         "text",
+				Text:         p.Text,
+				CacheControl: cacheControlOf(p),
+			})
 		case types.PartImage:
 			texts = false
 			c := oaContentText{Type: "image_url"}
@@ -580,6 +612,16 @@ func isToolResultMsg(m *types.Message) bool {
 		}
 	}
 	return false
+}
+
+// cacheControlOf converts a unified part's breakpoint flag into the wire
+// marker for dialects that accept Anthropic-style cache_control on content
+// parts (OpenRouter); nil = absent, never invented (issue #32).
+func cacheControlOf(p types.Part) *anCacheControl {
+	if p.CacheBreakpoint {
+		return &anCacheControl{Type: "ephemeral"}
+	}
+	return nil
 }
 
 func mustJSON(v any) json.RawMessage {
