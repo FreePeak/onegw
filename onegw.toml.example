@@ -82,6 +82,20 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # Keeps upstream prompt caches warm (issue #36; e.g. xAI x-grok-conv-id).
 # Default "" never invents a header; client-sent values always win.
 # session_header = "x-grok-conv-id"
+#
+# Prompt-cache profile (issue #34): opts this provider into upstream
+# cache anchoring, applied last after every body mutation (model rewrite,
+# token saver, always-thinking adaptation, cross-format translation).
+#   "" / "none"          byte-identical passthrough (default; GLM,
+#                        DeepSeek and b-ai ignore cache fields — nothing
+#                        is invented)
+#   "sticky-key"         inject the session identity as prompt_cache_key
+#                        (xAI, OpenRouter, Kimi)
+#   "dashscope-marker"   keep client cache_control markers (Qwen, max 4)
+#   "claude-anchor"      strip + re-anchor ephemeral markers on the last
+#                        system block / cache-eligible tool / last
+#                        assistant turn (Anthropic-format upstreams)
+# cache_profile = "sticky-key"
 
 [[providers]]
 name = "anthropic"

@@ -138,7 +138,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		// Mirror the JSON path: splice the routed model into the streamed
 		// prefix so "provider/model" never leaks upstream.
 		mp.retarget(t.Model)
-		id := requestIdentity(r, ak)
+		id := requestIdentity(r.Header, ak)
 		acct, poolReady := def.NextAccount(id)
 		if acct == nil {
 			// Pool cooling from upstream 429s: answer 429 + Retry-After
@@ -165,7 +165,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		return
 	}
 
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		if !def.AllowsPassthrough(sf.cap) {
 			return nil, errAPI(http.StatusNotFound, "passthrough_not_supported",
 				"provider "+def.Name+" does not declare passthrough \""+sf.cap+"\"")
@@ -173,6 +173,9 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		// Rewrite the routed model into the JSON body (surgical: every other
 		// byte is preserved) so the client's "provider/model" never leaks.
 		out, _ := rewriteModel(body, m)
+		// Issue #34: anchor after the model rewrite so cache markers
+		// never point at pre-rewrite offsets.
+		out = anchorCacheProfile(out, m, def, translat.FmtOpenAI, requestIdentity(r.Header, ak))
 		return nil, s.passthroughCall(ctx, w, def, acct, sf, m, bytes.NewReader(out), int64(len(out)), contentType, r.Header)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
