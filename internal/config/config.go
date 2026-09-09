@@ -117,6 +117,18 @@ type ProviderCfg struct {
 	// disable-thinking knobs; see README.
 	AlwaysThinking []string `toml:"always_thinking"`
 
+	// CacheProfile opts the provider into upstream prompt-cache anchoring
+	// (issue #34): "" or "none" (default) forwards request bodies
+	// untouched — byte-identical, since GLM/DeepSeek/b-ai-style upstreams
+	// ignore cache fields entirely; "claude-anchor" strips client
+	// cache_control markers and re-anchors {"type":"ephemeral"} at
+	// canonical positions on Anthropic-format bodies; "dashscope-marker"
+	// keeps Qwen/DashScope cache_control markers but caps them at the
+	// documented 4-marker ceiling on OpenAI-format bodies; "sticky-key"
+	// injects the gateway session identity as prompt_cache_key for
+	// implicit sticky-routing upstreams (xai, OpenRouter, Kimi).
+	CacheProfile string `toml:"cache_profile"`
+
 	// SearXNG virtual provider (kind = "searxng"): web search surfaced as
 	// a chat model. max_results caps how many results are formatted into
 	// the completion; timeout bounds the search call (Go duration). If the
@@ -353,6 +365,12 @@ func (c *Config) Validate() error {
 		}
 		if p.QuotaWindow == "" && (p.QuotaLimitTokens != 0 || p.QuotaLimitRequests != 0) {
 			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
+		}
+
+		switch p.CacheProfile {
+		case "", "none", "claude-anchor", "dashscope-marker", "sticky-key":
+		default:
+			return fmt.Errorf("provider %s unknown cache_profile %q (want none, claude-anchor, dashscope-marker or sticky-key)", p.Name, p.CacheProfile)
 		}
 		if p.QuotaLimitTokens < 0 || p.QuotaLimitRequests < 0 {
 			return fmt.Errorf("provider %s quota limits must be >= 0", p.Name)
