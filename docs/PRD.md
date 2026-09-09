@@ -1,3 +1,32 @@
+*Last updated: 2026-09-10 (b-ai HTML-502 flap breaker live, 2f8c180, pid 41359: deepdive of the
+22:54:38–22:55:03 burst — every b-ai account (all 7) answered the STOCK nginx page
+"<html><head><title>502 Bad Gateway</title>" simultaneously for ~25s while traffic before and
+after served 100% 200. RCA: provider-WIDE origin-pool flap at api.b.ai's edge, not per-key
+throttling (429 ladder can't see it) and not onegw (the HTML is their nginx, generated upstream
+of any JSON API). Fixes: (1) Do classifies HTML error bodies as upstream_html_error with a
+bounded one-line message (page title extracted) instead of leaking raw markup to clients/logs;
+(2) provider-wide flap breaker on the account pool: 4 consecutive edge-class faults (HTML page,
+empty body, transport unreachable, timeout, plain 502/503/504/52x — never auth-verify/parse-
+reject rewrites, shared-concurrency walls, or 4xx) park the WHOLE pool for 15s, so Router.
+Execute falls through to the next combo target with zero doomed upstream calls and direct
+routes answer pool-empty 429 + Retry-After=window end; a success heals instantly, the window
+half-opens exactly one probe, a failed probe re-arms. Cost today: ~1-2 requests pay the retry
+before the breaker trips; sustained flaps pay ≤1 probe per 15s instead of a 7-account fan per
+request (this burst: 17 doomed attempts → would have been ~5). Mutation-checked (neuter →
+breaker suite fails); full suite green; zero-drop deployed from archive HEAD. Earlier:)*
+*Last updated: 2026-09-10 (tokenrouter 8/min window — fix live, b6c08bc+aa91d07, pid 16156: ring
+*Last updated: 2026-09-10 (tokenrouter 8/min window — fix live, b6c08bc+aa91d07, pid 16156: ring
+proof the "Maximum 8 requests within 1 minutes" budget is SHARED across keys (harvey 429ed with
+~5 attempts in its trailing window while linh served 200s). Two changes: (1) `[[providers]] rpm`
+is now a provider-wide shared token bucket gating every account (onegw.toml: rpm = 6, worst
+rolling minute 2+6 = 8 = at-limit); drained budget answers pool-empty with an honest
+Retry-After = refill instant instead of feeding the shared window doomed attempts. (2) A 429 body
+stating a request-count window (APIError.RateWindow) benches the account verbatim for that window
+(was: 10s ladder base that re-entered the closed window — ring: 429 @:46, retry @:57 429 again)
+and rides the client Retry-After (60s, not generic 10). Mutation-checked ×3; archive HEAD
+17/17 packages; live probes: 10/12 rapid hits governed locally (ms-fast 429s), 1 upstream
+window 429 absorbed post-restart, 200s resume at 1/10s refill. Remaining ceiling: ≤1 window 429
+per gateway restart (upstream window outlives process memory). See issue #67. Earlier:)*
 *Last updated: 2026-09-10 (install.sh credential preservation, #66: the installer minted a
 fresh gateway key on every run and pinned it as ONEGW_KEYS env — which replaces config-file
 keys entirely — so reinstall/update rotated the API key out from under wired clients and a
