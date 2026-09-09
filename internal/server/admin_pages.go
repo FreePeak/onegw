@@ -198,16 +198,14 @@ func (s *Server) healthFrame() string {
 		held, rejected = st.budget.Stats()
 	}
 	frag := fmt.Sprintf(
-		`<div class="kv" style="grid-template-columns:repeat(4,1fr)">`+
-			`<div><div class="k">in-flight</div><div class="big" style="font-size:18px">%d</div></div>`+
-			`<div><div class="k">uptime</div><div class="mono">%s</div></div>`+
-			`<div><div class="k">heap alloc / sys</div><div class="mono">%d / %d MiB</div></div>`+
-			`<div><div class="k">GC cycles</div><div class="mono">%d</div></div>`+
-			`<div><div class="k">budget held</div><div class="mono">%s</div></div>`+
-			`<div><div class="k">budget 503s</div><div class="mono">%d</div></div>`+
-			`<div><div class="k">admin sessions</div><div class="mono">%d</div></div>`+
-			`<div><div class="k">stream</div><div class="mono" style="color:var(--ok)">live · 1s</div></div>`+
-			`</div>`,
+		`<div class="metric"><div class="k">in-flight</div><div class="v hi">%d</div></div>`+
+			`<div class="metric"><div class="k">uptime</div><div class="v">%s</div></div>`+
+			`<div class="metric"><div class="k">heap alloc / sys</div><div class="v">%d / %d MiB</div></div>`+
+			`<div class="metric"><div class="k">GC cycles</div><div class="v">%d</div></div>`+
+			`<div class="metric"><div class="k">budget held</div><div class="v">%s</div></div>`+
+			`<div class="metric"><div class="k">budget 503s</div><div class="v">%d</div></div>`+
+			`<div class="metric"><div class="k">admin sessions</div><div class="v">%d</div></div>`+
+			`<div class="metric"><div class="k">stream</div><div class="v text-ok">live · 1s</div></div>`,
 		s.inflight.Load(), time.Since(s.start).Round(time.Second).String(),
 		m.HeapAlloc>>20, m.HeapSys>>20, m.NumGC,
 		humanBytes(held), rejected, s.sessions.count())
@@ -219,12 +217,15 @@ func (s *Server) healthFrame() string {
 // ---------------------------------------------------------------------------
 
 // logEntry is one completed request in the #19 ring. Kind marks the
-// no-route failure paths; code is the client-visible status.
+// no-route failure paths; code is the client-visible status. Account is
+// the provider account (key name) the attempt ran on — empty when the
+// request never got as far as an account pick (no_route, saturated).
 type logEntry struct {
 	Seq       int64  `json:"seq"`
 	TS        int64  `json:"ts"` // unix seconds
 	Model     string `json:"model,omitempty"`
 	Provider  string `json:"provider,omitempty"`
+	Account   string `json:"account,omitempty"`
 	Code      int    `json:"code"`
 	Kind      string `json:"kind,omitempty"` // "" ok | upstream_error | budget_saturated | no_route
 	In        int64  `json:"in,omitempty"`
@@ -244,6 +245,12 @@ type requestLog struct {
 
 const logRingCap = 512
 
+// logMaxAge is how long a request-log entry stays visible: entries older
+// than 7 days are dropped at read time (API + initial page load). The
+// ring already bounds memory at 512 entries; the age window keeps a
+// long-idle gateway from serving week-old rows as if they were current.
+const logMaxAge = 7 * 24 * time.Hour
+
 func newRequestLog() *requestLog {
 	return &requestLog{ring: make([]logEntry, logRingCap)}
 }
@@ -261,11 +268,14 @@ func (l *requestLog) record(e logEntry) {
 	}
 }
 
-// latest returns up to n most recent entries, oldest first.
+// latest returns up to n most recent entries, oldest first. Entries older
+// than logMaxAge are treated as cleared: the scan walks newest→oldest, so
+// the first stale entry ends it.
 func (l *requestLog) latest(n int) []logEntry {
 	if n > logRingCap {
 		n = logRingCap
 	}
+	cutoff := time.Now().Add(-logMaxAge).Unix()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := make([]logEntry, 0, n)
@@ -273,6 +283,9 @@ func (l *requestLog) latest(n int) []logEntry {
 		idx := (l.head - 1 - i + len(l.ring)) % len(l.ring)
 		e := l.ring[idx]
 		if e.Seq == 0 {
+			break
+		}
+		if e.TS < cutoff {
 			break
 		}
 		out = append(out, e)
@@ -299,12 +312,12 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // observeLog is the single hook the proxy paths call on completion.
-func (s *Server) observeLog(provider, model string, code int, kind string, u types.Usage, saved int64, errMsg string) {
+func (s *Server) observeLog(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string) {
 	if s.reqlog == nil {
 		return
 	}
 	s.reqlog.record(logEntry{
-		TS: time.Now().Unix(), Model: model, Provider: provider, Code: code, Kind: kind,
+		TS: time.Now().Unix(), Model: model, Provider: provider, Account: acct, Code: code, Kind: kind,
 		In: u.InputTokens, Out: u.OutputTokens, CacheRead: u.CacheReadTokens, Saved: saved, Err: errMsg,
 	})
 }
@@ -314,15 +327,15 @@ func (s *Server) observeLog(provider, model string, code int, kind string, u typ
 // ---------------------------------------------------------------------------
 
 var navItems = []dashboard.NavItem{
-	{ID: "overview", Href: "/admin", Label: "Overview"},
-	{ID: "usage", Href: "/admin/ui/usage", Label: "Usage"},
-	{ID: "providers", Href: "/admin/ui/providers", Label: "Providers"},
-	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos"},
-	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota"},
-	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver"},
-	{ID: "logs", Href: "/admin/ui/logs", Label: "Console Log"},
-	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools"},
-	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings"},
+	{ID: "overview", Href: "/admin", Label: "Overview", Group: "Monitor"},
+	{ID: "usage", Href: "/admin/ui/usage", Label: "Usage", Group: "Monitor"},
+	{ID: "logs", Href: "/admin/ui/logs", Label: "Console Log", Group: "Monitor"},
+	{ID: "providers", Href: "/admin/ui/providers", Label: "Providers", Group: "Routing"},
+	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos", Group: "Routing"},
+	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota", Group: "Routing"},
+	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver", Group: "Routing"},
+	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools", Group: "Gateway"},
+	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings", Group: "Gateway"},
 }
 
 // authedPage renders a dashboard page after the gate; unauthenticated
