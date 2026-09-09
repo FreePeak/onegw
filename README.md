@@ -18,7 +18,6 @@
 
 </div>
 
-
 **Single-binary LLM gateway in Go.** One process fronts OpenAI-, Anthropic-, and
 Gemini-compatible providers behind any of those three API surfaces — with
 cross-format translation, fallback routing, token saving, and usage tracking —
@@ -55,6 +54,16 @@ buffering, no conversation state.
   `Retry-After` header wins verbatim. When every account of a provider is
   cooling, the gateway answers 429 + `Retry-After` (or falls through to the
   next combo target) instead of burning a doomed upstream attempt.
+- **Upstream fault intelligence.** Transient upstream faults — proxied
+  auth-verify outages (401), one-api distributor parse-reject 400s,
+  response-header timeouts (504), model-wide concurrency 429s — are
+  reclassified as retryable `502`/`504` so combo chains fall through
+  instead of surfacing a lying status; genuine schema errors still fail
+  fast.
+- **Sticky accounts & session affinity.** A per-provider `sticky` window
+  pins one key to a request identity to keep upstream prompt caches warm,
+  and an opt-in `session_header` derives a stable per-key session id when
+  the client sends none.
 - **Token saver (input + output).** Input side: RTK-style `tool_result`
   compression (prefix sniffing, idempotent, same-format surgical JSON walk)
   cuts prompt tokens before they reach the upstream. Output side: system-prompt
@@ -66,9 +75,6 @@ buffering, no conversation state.
   injects it as the upstream bearer credential at request time — with a
   per-account refresher that tops up the token before expiry (single-flight
   per account) and cools the account when a refresh fails.
-- **Token saver.** RTK-style `tool_result` compression (prefix sniffing,
-  idempotent, same-format surgical JSON walk) cuts prompt tokens before they
-  reach the upstream.
 - **Usage tracking.** Lock-sharded atomic counters flushed to SQLite on a
   timer; per `provider / model / key / day / hour` rollups; admin API and
   built-in dashboard.
@@ -178,41 +184,31 @@ with `admin_password` from your config (a 12-hour HttpOnly cookie; the
 Go `html/template` + htmx + uPlot, vendored inline: zero external assets, no
 CDN, no Node toolchain — the console ships inside the single binary.
 
-![Overview](docs/screenshots/dashboard-overview.png)
+![Dashboard overview](docs/screenshots/dashboard-overview.png)
 
 **Overview** — today's request/token/saver totals, the byte-budget meter
 (`503` rejection count included), and a live SSE strip (in-flight, uptime,
 heap, GC) refreshing every second. Every page renders fully without
 JavaScript; SSE only adds the live updates.
 
-![Usage](docs/screenshots/dashboard-usage.png)
+Eight more pages complete the console:
 
-**Usage** — per `provider/model` rollups over today / 7 days / 1 month /
-all time, with uPlot charts (stacked tokens and request counts, hourly
-axis on the today view). The same data is cursor-paginated at
-`GET /admin/api/v1/usage/daily` and CSV-exportable.
-
-![Providers](docs/screenshots/dashboard-providers.png)
-
-**Providers / Combos / Quota / Token Saver** — read-only views over the
-live config: accounts and advertised models per provider, fallback chains,
-quota windows with reset countdowns, saver stats. Keys are always masked.
-
-![Console Log](docs/screenshots/dashboard-logs.png)
-
-**Console Log** — a live request feed (in-memory ring, newest request
-highlighted, errors in red): model, status, tokens in/out/cached/saved per
-line, streamed over the same SSE endpoint. Also available as JSON at
-`GET /admin/api/v1/logs?limit=N`.
-
-![CLI Tools](docs/screenshots/dashboard-tools.png)
-
-**CLI Tools** — copy-paste preset cards for wiring agent CLIs to the
-gateway: Claude Code, opencode, grok, Codex CLI, omp, pi, and hermes —
-each snippet mirrors that tool's real config schema, with the bearer key
-as a `$ONEGW_KEY` placeholder (real keys never render in the UI).
-
-![Login](docs/screenshots/dashboard-login.png)
+- **Usage** — per `provider/model` rollups over today / 7 days / 1 month /
+  all time, with uPlot charts (stacked tokens and request counts). The same
+  data is cursor-paginated at `GET /admin/api/v1/usage/daily` and
+  CSV-exportable.
+- **Console Log** — a live request feed (in-memory ring, newest request
+  highlighted, errors in red): model, status, tokens in/out/cached/saved
+  per line. Also available as JSON at `GET /admin/api/v1/logs?limit=N`.
+- **Providers / Combos / Quota / Token Saver** — read-only views over the
+  live config: accounts and advertised models per provider, fallback
+  chains, quota windows with reset countdowns, saver stats. Keys are
+  always masked.
+- **CLI Tools** — copy-paste preset cards for wiring agent CLIs to the
+  gateway: Claude Code, opencode, grok, Codex CLI, omp, pi, and hermes —
+  the bearer key renders as a `$ONEGW_KEY` placeholder, never a real key.
+- **Settings** — a reference of the admin API surface (endpoints, auth,
+  SSE topics) as served by the running gateway.
 
 The grouped read-only API lives under `/admin/api/v1/`
 (`providers`, `combos`, `quota`, `saver`, `logs`, `usage/daily`); the flat
@@ -354,6 +350,14 @@ label. A failed upstream attempt unpins immediately (retries and combo
 fallback land on a different key), and a pinned account that cools on quota
 rotates to the next one and re-pins. Off by default (`sticky = ""`).
 
+```toml
+[[providers]]
+name = "orcarouter"
+kind = "openai-responses"
+base_url = "https://api.orcarouter.ai/v1"
+sticky = "5m" # one key per session/key identity for 5 minutes
+```
+
 
 **Adaptive 429 cooldown.** On an upstream 429 the picked account cools:
 `Retry-After` (when the upstream sends one) verbatim, otherwise an
@@ -368,13 +372,6 @@ ladder benches an account on a premium-gating 403 (`access_denied` /
 "Deposit required" — the credential lacks access to the model, issue #48):
 the pool rotates to the next account or combo target instead of surfacing
 the 403, and a fully-gated pool answers the cooling-pool 429 + `Retry-After`.
-```toml
-[[providers]]
-name = "orcarouter"
-kind = "openai-responses"
-base_url = "https://api.orcarouter.ai/v1"
-sticky = "5m" # one key per session/key identity for 5 minutes
-```
 
 ### Session affinity (per-key session headers)
 
@@ -439,7 +436,7 @@ via the same gateway base URL. Task-aware combo reordering on the gateway
 side (auto-picking the tier from request content) is not built — it is
 tracked in [issue #44](https://github.com/FreePeak/onegw/issues/44).
 
- ### Output-side token savers
+### Output-side token savers
 
 
 Two optional knobs under `[saver]` (both also need the `enabled` flag):
