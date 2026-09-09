@@ -442,8 +442,8 @@ func TestOverviewQuotaExhaustedBadge(t *testing.T) {
 	_ = srv
 	// no quota configured → zero badge; renders fine
 	w := do(t, h, adminReq(t, "/admin"))
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SSE 1s") {
-		t.Fatalf("overview: %d", w.Code)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "hx-ext=\"sse\"") {
+		t.Fatalf("overview: %d (missing live SSE wiring)", w.Code)
 	}
 	_ = srv
 }

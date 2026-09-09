@@ -3,57 +3,80 @@
  * Build:  scripts/dashboard-css.sh   (standalone Tailwind CLI, no Node)
  * Output: static/admin.css (committed; inlined into pages via go:embed).
  *
- * Design language (revamped per the ui-ux-pro-max design system for a
- * real-time ops console): deep-slate glassmorphism — translucent frosted
- * surfaces over soft radial glows, 1px hairline borders, emerald
- * interactive accent with status-green success semantics, Fira Sans body
- * / Fira Code data. Dark-first; light theme flips the same tokens.
- * Modals, toasts, and form fields follow the skill's accessibility
- * rules: visible focus rings, 4.5:1 text contrast, reduced-motion guard,
- * errors announced inline.
+ * Design language — M.O.N.K.Y OS revamp (freepeak/dashboard-m-o-n-k-y.zip
+ * template, oklch values kept verbatim): flat warm-ink canvas (near-black
+ * with a faint rose cast), vivid indigo interactive accent, structured
+ * "double panel" cards done without markup changes: the card carries a
+ * 6px pop-colored gutter (border) plus a 2px pop ring, around a flat
+ * inner panel — the template's Card(frame) > CardContent(panel) read.
+ * Square bullet markers before titles, uppercase bold buttons, monospace
+ * body (template body rule), and the vendored "Rebels" display face for
+ * headings and big numbers. Dark-first; light theme flips the same
+ * tokens. Accessibility rules carried over: visible focus rings, 4.5:1
+ * text contrast in both themes, reduced-motion guard, errors announced
+ * inline.
+ *
+ * Vocabulary contract (do not rename): Go-rendered SSE fragments
+ * (admin_pages.go healthFrame) emit .metric .k .v .hi .text-ok; page
+ * templates share .card .grid .pill .btn .bar .kv .chip .codeblock
+ * .metrics .tblwrap .mono .num .sub .big .empty .rowact .field .ferr
+ * .merr .msub .mfoot .skip; usage.html's chart script reads CSS custom
+ * properties --color-chart2..4, --color-ok, --line, --mut at runtime and
+ * the markup uses text-acc / text-ok / text-err / text-warn / text-mut
+ * utility classes (token names --color-acc etc. must therefore exist).
  */
 @import "tailwindcss" source(none);
 @source "./templates/*.html";
 
 @theme {
-  --font-sans: "Fira Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Fira Sans", "Fira Code", ui-sans-serif, system-ui, sans-serif;
+  /* M.O.N.K.Y data-console type: monospace body, display headings. */
+  --font-sans: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: "Rebels", "Fira Code", ui-monospace, monospace;
   --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* dark (default) — slate glass palette */
-  --color-bg: #0f172a;      /* page canvas */
-  --color-card: #1e293b;    /* surfaces: cards, sidebar, header */
-  --color-canvas: #0b1220;  /* code blocks, log pane (theme-invariant feel) */
-  --color-fg: #f8fafc;
-  --color-mut: #a8b6cd;
-  --color-soft: #ffffff0f;  /* hover / inset surfaces (white 6%) */
-  --color-line: #ffffff1a;  /* hairline borders (white 10%) */
-  --color-acc: #34d399;     /* interactive accent (emerald-400) */
-  --color-ok: #22c55e;
-  --color-warn: #fbbf24;
-  --color-err: #f87171;
-  --color-info: #60a5fa;
-  --color-chart2: #60a5fa;
-  --color-chart3: #a78bfa;
-  --color-chart4: #fbbf24;
-  --color-chart5: #fb7185;
+  /* dark (default) — M.O.N.K.Y dark tokens (template oklch values) */
+  --color-bg: oklch(0.2029 0.0037 345.62);      /* canvas: warm near-black */
+  --color-card: oklch(0.2029 0.0037 345.62);    /* inner panel = canvas */
+  --color-canvas: oklch(0.2393 0);              /* code blocks, log pane */
+  --color-fg: oklch(0.9851 0 0);
+  --color-mut: oklch(0.708 0);                  /* muted foreground */
+  --color-soft: oklch(0.9851 0 0 / 5%);         /* hover / inset surfaces */
+  --color-line: oklch(1 0 0 / 10%);             /* hairline borders */
+  --color-pop: oklch(0.9851 0 0 / 2.5%);        /* card frame gutter+ring */
+  --color-input: oklch(1 0 0 / 15%);            /* field borders */
+  --color-acc: oklch(0.52 0.2364 263.19);       /* template indigo, L nudged 0.47→0.52: ≥3:1 as large text / UI fill, labels ≥4.5:1 */
+  --color-accfg: oklch(0.9851 0 0);             /* text on accent */
+  --color-ok: oklch(0.7775 0.2447 144.9);
+  --color-warn: oklch(0.769 0.188 70.08);
+  --color-err: oklch(0.65 0.19 36.48);           /* template hue, lightened for ≥4.5:1 on bg+canvas */
+  /* chart layers are semantically pinned by usage.html's script:
+   * cache read → chart2 (blue), requests → chart3 (purple),
+   * input → chart4 (amber), chart5 spare. Values from the template's
+   * dark chart ramp, assigned so stacked layers stay distinguishable. */
+  --color-chart2: oklch(0.70 0.14 230);          /* cyan — UUPM dark neon ramp; ≥3:1 on canvas */
+  --color-chart3: oklch(0.68 0.24 303.9);        /* violet */
+  --color-chart4: oklch(0.769 0.188 70.08);
+  --color-chart5: oklch(0.70 0.20 16.439);       /* rose */
 }
 
 html[data-theme="light"] {
-  /* light counterpart (slate-50 canvas, white glass) */
-  --color-bg: #f1f5f9;
-  --color-card: #ffffff;
-  --color-canvas: #f8fafc;
-  --color-fg: #0f172a;
-  --color-mut: #4f5d73;
-  --color-soft: #0f172a0a;
-  --color-line: #0f172a1f;
-  --color-acc: #059669;
-  --color-ok: #16a34a;
-  --color-warn: #d97706;
-  --color-err: #dc2626;
-  --color-info: #2563eb;
-  --color-chart2: #2563eb;
+  /* light counterpart — template light tokens; semantic colors anchored
+   * to AA-contrast hexes (the template's light green/amber fail 4.5:1). */
+  --color-bg: oklch(1 0 0);
+  --color-card: oklch(1 0 0);
+  --color-canvas: oklch(0.97 0 0);
+  --color-fg: oklch(0.145 0 0);
+  --color-soft: oklch(0.97 0 0);
+  --color-line: oklch(0.922 0 0);
+  --color-pop: oklch(0.922 0 0);                 /* card frame gutter+ring */
+  --color-acc: oklch(0.205 0 0);                 /* near-black accent (template light primary) */
+  --color-mut: oklch(0.545 0 0);                 /* 4.9:1 on white, 4.5:1 on canvas */
+  --color-input: oklch(0.556 0 0);               /* field borders: ≥3:1 (WCAG 1.4.11) */
+  --color-err: oklch(0.53 0.21 27.325);          /* ≥4.5:1 on bg+canvas */
+  --color-accfg: oklch(0.985 0 0);
+  --color-ok: #15803d;
+  --color-warn: #b45309;
+  --color-chart2: #0284c7;                       /* sky-600 */
   --color-chart3: #7c3aed;
   --color-chart4: #d97706;
   --color-chart5: #e11d48;
@@ -77,35 +100,15 @@ html[data-theme="light"] {
 html[data-theme="dark"] { color-scheme: dark; }
 html[data-theme="light"] { color-scheme: light; }
 
-/* Vendored variable/static fonts (latin subsets, OFL) — served by
- * GET /admin/assets/fonts/{name}, never fetched from a CDN. */
+/* Vendored fonts (latin subsets) — served by GET /admin/assets/fonts/{name},
+ * never fetched from a CDN. "Rebels" is the template's display face;
+ * Fira Code covers body, data, and the display fallback stack. */
 @font-face {
-  font-family: "Fira Sans";
+  font-family: "Rebels";
   font-style: normal;
-  font-weight: 400;
+  font-weight: normal;
   font-display: swap;
-  src: url("/admin/assets/fonts/FiraSans-400.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Fira Sans";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("/admin/assets/fonts/FiraSans-500.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Fira Sans";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("/admin/assets/fonts/FiraSans-600.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Fira Sans";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/admin/assets/fonts/FiraSans-700.woff2") format("woff2");
+  src: url("/admin/assets/fonts/Rebels-Fett.woff2") format("woff2");
 }
 @font-face {
   font-family: "Fira Code";
@@ -117,26 +120,10 @@ html[data-theme="light"] { color-scheme: light; }
 
 @layer base {
   html { font-size: 14px; scroll-behavior: smooth; }
-  body {
-    @apply bg-bg font-sans text-fg antialiased;
-  }
-  /* Layered depth behind the frosted surfaces: two soft radial glows. */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    background:
-      radial-gradient(640px 420px at 85% -10%, rgb(52 211 153 / 0.09), transparent 62%),
-      radial-gradient(760px 520px at -10% 112%, rgb(96 165 250 / 0.08), transparent 62%);
-  }
-  html[data-theme="light"] body::before {
-    background:
-      radial-gradient(640px 420px at 85% -10%, rgb(5 150 105 / 0.07), transparent 62%),
-      radial-gradient(760px 520px at -10% 112%, rgb(37 99 235 / 0.06), transparent 62%);
-  }
-  ::selection { background: color-mix(in srgb, var(--color-acc) 30%, transparent); }
-  :focus-visible { outline: 2px solid var(--color-acc); outline-offset: 2px; border-radius: 4px; }
+  body { @apply bg-bg font-sans text-fg antialiased; }
+  ::selection { background: color-mix(in srgb, var(--color-acc) 40%, transparent); }
+  /* neutral ring: visible on every surface incl. accent-filled buttons */
+  :focus-visible { outline: 2px solid color-mix(in srgb, var(--color-fg) 60%, transparent); outline-offset: 2px; border-radius: 4px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb {
     background: color-mix(in srgb, var(--color-fg) 14%, transparent);
@@ -150,8 +137,8 @@ html[data-theme="light"] { color-scheme: light; }
   }
 }
 
-/* Motion tokens (ui-ux-pro-max: 150-300ms, ease-out arrivals) and the
- * reduced-motion guard. */
+/* Motion tokens (150-300ms, ease-out arrivals) and the reduced-motion
+ * guard carried over from the previous revamp. */
 :root { --ogw-dur: 170ms; --ogw-ease: cubic-bezier(0.22, 1, 0.36, 1); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -171,69 +158,146 @@ html[data-theme="light"] { color-scheme: light; }
   .sidebar {
     @apply sticky top-0 flex h-screen w-56 shrink-0 flex-col overflow-y-auto
            border-r border-line px-3 py-5;
-    background: color-mix(in srgb, var(--color-card) 72%, transparent);
-    backdrop-filter: blur(14px);
+    background: var(--color-bg);
   }
   .logo {
     font-family: var(--font-display);
-    @apply px-3 pb-5 text-[17px] font-semibold tracking-[-0.02em];
+    @apply px-3 pb-5 text-[20px] leading-none tracking-[0.02em];
   }
-  .logo span { @apply text-acc; }
+  .logo span { @apply text-fg; } /* header wordmark: acc text is sub-3:1 */
   .nav { @apply flex flex-col; }
   .navgrp {
-    @apply px-3 pb-1.5 pt-4 text-[10.5px] font-medium uppercase tracking-[0.14em] text-mut;
+    @apply flex items-center gap-2 px-3 pb-1.5 pt-4 text-[10.5px] font-bold uppercase tracking-[0.14em] text-mut;
+  }
+  /* square bullet marker before each group label (template Bullet) */
+  .navgrp::before {
+    content: "";
+    display: inline-block;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 1.5px;
+    background: var(--color-acc);
   }
   .nav a {
-    @apply rounded-md border-l-2 border-transparent px-3 py-1.5 text-[13.5px] text-mut
+    @apply rounded-md px-3 py-1.5 text-[13px] font-medium text-mut
            no-underline transition-colors duration-(--ogw-dur) hover:bg-soft hover:text-fg;
   }
   .nav a.active {
-    @apply border-acc bg-soft font-medium text-fg;
+    @apply bg-soft font-bold text-fg;
   }
 
   .hdr {
-    @apply sticky top-0 z-10 flex items-center gap-4 border-b border-line
-           px-6 py-3 backdrop-blur-md;
-    background: color-mix(in srgb, var(--color-bg) 72%, transparent);
+    @apply sticky top-0 z-10 flex items-center gap-4 px-6 py-2.5;
+    border-bottom: 2px solid var(--color-pop);
+    background: color-mix(in srgb, var(--color-bg) 55%, transparent);
   }
   .hdr h1 {
     font-family: var(--font-display);
-    @apply m-0 mr-auto text-[15px] font-semibold tracking-[-0.01em];
+    @apply m-0 mr-auto text-[22px] leading-[1.1] tracking-[0.01em];
   }
-  .hdr .dot { @apply size-2 shrink-0 rounded-full bg-err; }
+  .hdr .dot { @apply size-2 shrink-0 rounded-[1.5px] bg-err; }
   .hdr .dot.ok { @apply bg-ok; }
   .hdr .hactions { @apply ml-auto flex items-center gap-3 text-[12px] text-fg/75; }
   .hdr .hactions a { @apply text-[12.5px] text-fg underline decoration-line underline-offset-4 hover:decoration-acc; }
-  .hdr .hactions b { @apply font-semibold text-fg; }
+  .hdr .hactions b { @apply font-bold text-fg; }
 
-  .content { @apply w-full max-w-[1240px] flex-1 px-6 py-6; }
+  .content { @apply w-full flex-1 px-6 py-6; } /* full-width: cards stretch dynamically */
 
   footer { @apply border-t border-line px-6 py-4 text-[11.5px] text-fg/75; }
+
+  /* right rail (M.O.N.K.Y layout): clock widget + live status + ranking */
+  .bodyrow { @apply flex min-w-0 flex-1 items-start gap-3; }
+  .rail {
+    @apply sticky top-[52px] hidden w-[300px] shrink-0 flex-col gap-3;
+  }
+  @media (min-width: 1280px) { .rail { @apply flex; } }
+
+  .brand { @apply flex items-center gap-2.5 px-2 pb-4; }
+  .brand .btile {
+    @apply inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-line;
+    background: #050505;
+  }
+  .brand .bname {
+    font-family: var(--font-display);
+    @apply flex flex-col leading-none;
+  }
+  .brand .bname em {
+    font-family: var(--font-mono);
+    font-style: normal;
+    @apply mt-1.5 text-[9.5px] uppercase tracking-[0.16em] text-mut;
+  }
+
+  /* clock widget */
+  .widget .wrow {
+    @apply flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.14em] text-mut;
+  }
+  .widget .wtime {
+    font-family: var(--font-display);
+    @apply my-3 text-center text-[34px] leading-none tracking-[0.02em];
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ranking list */
+  .ranklist { @apply m-0 flex list-none flex-col gap-2 p-0; }
+  .ranklist li { @apply flex min-w-0 items-center gap-2.5; }
+  .ranklist .rn {
+    @apply inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-soft text-[12px] font-bold text-fg;
+  }
+  .ranklist .rn.feat { @apply bg-acc text-accfg; }
+  .ranklist .rname { @apply min-w-0 flex-1 truncate text-[12.5px]; }
+  .ranklist .rreq { font-family: var(--font-mono); @apply text-[11.5px] text-mut; }
+
+
+  /* stat cards: inset body panel behind the big number (template CardContent) */
+  .card.stat .statbody { @apply rounded-md bg-soft px-2 py-3 -mx-1; }
+  .card.stat .big { @apply text-[32px] leading-[1.05]; }
+  .railmetrics { grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .railmetrics .metric .v.hi { @apply text-[18px]; }
 
   .grid { @apply mb-4 grid gap-3; }
   .grid.c4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
   .grid.c3 { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
 
+  /* M.O.N.K.Y card, no markup change: a 6px pop gutter (border) inside a
+   * 2px pop ring around the flat inner panel. */
   .card {
-    @apply rounded-xl border border-line p-4;
-    background: color-mix(in srgb, var(--color-card) 72%, transparent);
-    backdrop-filter: blur(14px);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.18), 0 8px 24px rgb(0 0 0 / 0.10);
+    @apply rounded-[10px] p-3 text-fg;
+    border: 6px solid var(--color-pop);
+    background: var(--color-card);
+    box-shadow: 0 0 0 2px var(--color-pop);
   }
-  html[data-theme="light"] .card { box-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 8px 24px rgb(15 23 42 / 0.05); }
   .card h3 {
-    @apply mb-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-mut;
+    @apply mb-2.5 flex flex-wrap items-center gap-2.5 text-[13px] font-medium leading-none
+           normal-case tracking-normal text-fg;
   }
+  /* square bullet before card titles (template Bullet, primary) */
+  .card h3::before {
+    content: "";
+    display: inline-block;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 1.5px;
+    background: var(--color-acc);
+    flex-shrink: 0;
+  }
+  /* inputs: fg/25 failed 3:1 vs bg (WCAG 1.4.11 non-text); composed
+   * --color-input clears it in both themes */
+  input[type="text"], input[type="password"], input[type="number"], select, textarea {
+    border-color: var(--color-input);
+  }
+  /* flex h3 ignores float — keep edit buttons pinned right */
+  .card h3 .rowact { margin-left: auto; }
   .card h3 .sub, .card .sub { @apply text-[11.5px] normal-case tracking-normal; }
   .big {
-    @apply text-[24px] font-semibold leading-tight tracking-[-0.02em];
+    font-family: var(--font-display);
+    @apply text-[30px] leading-tight tracking-[0.01em];
     font-variant-numeric: tabular-nums;
   }
   .sub { @apply mt-0.5 text-[12px] text-mut; }
 
   table { @apply w-full border-collapse text-[13px]; }
   th {
-    @apply border-b border-line px-3 py-2.5 text-left text-[11px] font-medium
+    @apply border-b border-line px-3 py-2.5 text-left text-[11px] font-bold
            uppercase tracking-[0.08em] text-mut;
   }
   td { @apply border-b border-line/60 px-3 py-2; }
@@ -242,46 +306,49 @@ html[data-theme="light"] { color-scheme: light; }
   td.num, th.num { @apply text-right font-mono tabular-nums; }
   td .mono, .mono { font-family: var(--font-mono); font-size: 12px; }
   .tblwrap {
-    @apply mb-4 overflow-x-auto rounded-xl border border-line;
-    background: color-mix(in srgb, var(--color-card) 72%, transparent);
-    backdrop-filter: blur(14px);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.18), 0 8px 24px rgb(0 0 0 / 0.10);
+    @apply mb-4 overflow-x-auto rounded-[10px] p-1;
+    border: 6px solid var(--color-pop);
+    background: var(--color-card);
+    box-shadow: 0 0 0 2px var(--color-pop);
   }
   .tblwrap > table { @apply m-0; }
   .tblwrap .empty, td.empty { @apply px-3 py-5 text-[13px] text-mut; }
 
-  .bar { @apply h-1.5 overflow-hidden rounded-full bg-soft; }
+  .bar { @apply h-1.5 overflow-hidden rounded-full bg-fg/10; }
   .bar > i { @apply block h-full rounded-full bg-acc; }
   .bar > i.warn { @apply bg-warn; }
   .bar > i.err { @apply bg-err; }
 
+  /* badges: template badge shapes (square-ish, outline status variants) */
   .pill {
-    @apply inline-flex items-center gap-1 rounded-full border border-line px-2 py-px
+    @apply inline-flex items-center gap-1 rounded border border-line bg-soft px-2 py-px
            align-middle text-[11px] font-medium leading-5 text-fg/80;
   }
-  .pill.ok { @apply border-ok/40 text-ok; }
-  .pill.err { @apply border-err/40 text-err; }
-  .pill.warn { @apply border-warn/40 text-warn; }
+  .pill.ok { @apply border-ok/40 bg-ok/10 text-ok; }
+  .pill.err { @apply border-err/40 bg-err/10 text-err; }
+  .pill.warn { @apply border-warn/40 bg-warn/10 text-warn; }
 
+  /* buttons: template button base — uppercase bold; unfilled by default,
+   * accent-filled for .primary (semantic mapping of the onegw markup). */
   .btn {
-    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line
-           bg-soft px-3 py-1.5 text-[13px] font-medium text-fg no-underline
+    @apply inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md
+           border border-fg/15 bg-soft px-3 py-1.5 text-[12px] font-bold uppercase
+           text-fg no-underline
            transition-[color,background-color,border-color,filter] duration-(--ogw-dur)
-           hover:border-fg/30;
+           hover:border-fg/30 hover:bg-line disabled:pointer-events-none disabled:opacity-50;
   }
   .btn:active { filter: brightness(0.9); }
   .btn.primary {
-    @apply border-transparent bg-acc font-semibold text-[#052e16] hover:border-transparent;
+    @apply border-transparent bg-acc text-accfg hover:border-transparent hover:bg-acc/90;
   }
-  html[data-theme="light"] .btn.primary { @apply text-white; }
-  .btn.danger { @apply border-err/40 bg-transparent text-err hover:border-err hover:bg-err/10; }
-  .btn.ghost { @apply border-transparent bg-transparent text-mut hover:text-fg; }
-  .btn.sm { @apply px-2 py-1 text-[12px]; }
+  .btn.danger { @apply border-transparent bg-err text-white hover:bg-err/90; }
+  .btn.ghost { @apply border-transparent bg-transparent text-mut hover:bg-soft hover:text-fg; }
+  .btn.sm { @apply px-2 py-1.5 text-[11px]; } /* ≥24px target height (WCAG 2.2) */
   .btn[disabled] { @apply cursor-not-allowed opacity-50; }
   .btn[aria-busy="true"] { @apply cursor-progress opacity-70; }
 
   input[type="text"], input[type="password"], input[type="number"], select, textarea {
-    @apply w-full rounded-lg border border-fg/25 bg-soft px-2.5 py-1.5 text-[13px] text-fg
+    @apply w-full rounded-md border border-input bg-soft px-2.5 py-1.5 text-[13px] text-fg
            outline-none transition-colors duration-(--ogw-dur)
            placeholder:text-mut/80 focus:border-acc;
   }
@@ -290,34 +357,34 @@ html[data-theme="light"] { color-scheme: light; }
   /* modal form fields (visible labels, errors near the field) */
   .field { @apply mb-3 grid gap-1; }
   .field > label { @apply text-[12px] font-medium text-mut; }
-  .field > label b { @apply text-acc; } /* required marker */
+  .field > label b { @apply text-fg; } /* required marker: acc text is sub-3:1 */
   .ferr { @apply text-[12px] text-err; }
   .ferr[hidden] { @apply hidden; }
 
-  /* modal dialog (native <dialog>): glass panel + dimmed scrim */
+  /* modal dialog (native <dialog>): double panel + dimmed scrim */
   dialog.modal {
-    @apply m-auto w-[min(560px,92vw)] rounded-2xl border border-line p-5 text-fg;
-    background: color-mix(in srgb, var(--color-card) 88%, transparent);
-    backdrop-filter: blur(20px);
-    box-shadow: 0 24px 64px rgb(0 0 0 / 0.45);
-  }
-  dialog.modal::backdrop {
-    background: rgb(2 6 23 / 0.55);
-    backdrop-filter: blur(3px);
-  }
-  dialog.modal[open] { animation: ogw-pop var(--ogw-dur) var(--ogw-ease); }
-  @keyframes ogw-pop {
-    from { opacity: 0; transform: translateY(6px) scale(0.98); }
-    to { opacity: 1; transform: none; }
+    @apply m-auto w-[min(560px,92vw)] rounded-[12px] p-5 text-fg;
+    border: 6px solid var(--color-pop);
+    background: var(--color-card);
+    box-shadow: 0 0 0 2px var(--color-pop), 0 24px 64px rgb(0 0 0 / 0.45);
   }
   dialog.modal h2 {
     font-family: var(--font-display);
-    @apply m-0 mb-1 text-[16px] font-semibold tracking-[-0.01em];
+    @apply m-0 mb-1 flex items-center gap-2.5 text-[18px] leading-none tracking-[0.01em];
+  }
+  dialog.modal h2::before {
+    content: "";
+    display: inline-block;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 1.5px;
+    background: var(--color-acc);
+    flex-shrink: 0;
   }
   .msub { @apply mb-4 text-[12px] text-mut; }
   .mfoot { @apply mt-4 flex items-center justify-end gap-2; }
   .merr {
-    @apply mb-3 rounded-lg border border-err/40 bg-err/10 px-3 py-2 text-[12.5px] text-err;
+    @apply mb-3 rounded-md border border-err/40 bg-err/10 px-3 py-2 text-[12.5px] text-err;
   }
   .merr[hidden] { @apply hidden; }
 
@@ -328,8 +395,7 @@ html[data-theme="light"] { color-scheme: light; }
   .toast {
     @apply pointer-events-auto rounded-lg border border-line px-3.5 py-2.5 text-[13px]
            shadow-lg;
-    background: color-mix(in srgb, var(--color-card) 92%, transparent);
-    backdrop-filter: blur(14px);
+    background: var(--color-card);
     animation: ogw-pop var(--ogw-dur) var(--ogw-ease);
   }
   .toast.ok { @apply border-ok/40 text-ok; }
@@ -343,7 +409,7 @@ html[data-theme="light"] { color-scheme: light; }
   }
   .rowact svg { @apply size-4; }
 
-  .kv { @apply grid grid-cols-[170px_1fr] gap-y-1 text-[13px]; }
+  .kv { @apply grid grid-cols-[170px_minmax(0,1fr)] gap-y-1 text-[13px]; } /* minmax(0,1fr): long link text wraps, never overflows */
   .kv .k { @apply text-mut; }
 
   code.chip {
@@ -353,32 +419,31 @@ html[data-theme="light"] { color-scheme: light; }
 
   .codeblock {
     font-family: var(--font-mono);
-    @apply m-0 overflow-x-auto rounded-xl border border-line bg-canvas p-3 text-[12px]
+    @apply m-0 overflow-x-auto rounded-lg border border-line bg-canvas p-3 text-[12px]
            leading-relaxed text-fg;
   }
 
   /* live health strip (SSE-swapped from admin_pages.go healthFrame) */
   .metrics { @apply grid gap-x-6 gap-y-4; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
   .metric .k {
-    @apply text-[10.5px] font-medium uppercase tracking-[0.14em] text-mut;
+    @apply text-[10.5px] font-bold uppercase tracking-[0.14em] text-mut;
   }
   .metric .v {
     font-family: var(--font-mono);
     @apply mt-1 text-[13px];
-    font-variant-numeric: tabular-nums;
   }
   .metric .v.hi {
     font-family: var(--font-display);
-    @apply text-[20px] font-semibold tracking-[-0.02em];
+    @apply text-[26px] leading-tight tracking-[0.01em];
   }
 
   /* console log pane (#19) */
   #logpane {
-    @apply min-h-[320px] overflow-y-auto rounded-xl border border-line bg-canvas py-2
+    @apply min-h-[320px] overflow-y-auto rounded-lg border border-line bg-canvas py-2
            font-mono text-[12px] leading-[1.6];
     max-height: 70vh;
   }
-  #logpane .l { @apply whitespace-pre-wrap break-all px-3; }
+  #logpane .l { @apply whitespace-pre-wrap px-3; overflow-wrap: anywhere; } /* anywhere, not break-all: words stay whole unless they must break */
   #logpane .l:hover { @apply bg-soft; }
   #logpane .t { @apply text-mut; }
   #logpane .code-2xx { @apply text-ok; }
@@ -397,10 +462,10 @@ html[data-theme="light"] { color-scheme: light; }
   padding: 8px 14px;
   border-radius: 8px;
   background: var(--color-acc);
-  color: #052e16;
-  font-weight: 600;
+  color: var(--color-accfg);
+  font-weight: 700;
 }
-  .skip:focus { left: 8px; top: 8px; color: #052e16; background: #34d399; }
+  .skip:focus { left: 8px; top: 8px; color: var(--color-accfg); background: var(--color-acc); }
 
 /* Narrow screens: the sidebar folds into a horizontal top strip. */
 @media (max-width: 767px) {
@@ -421,7 +486,7 @@ html[data-theme="light"] { color-scheme: light; }
   .sidebar .logo { @apply shrink-0 px-2 pb-0; }
   .nav { @apply flex-row overflow-x-auto; }
   .navgrp { @apply hidden; }
-  .nav a { @apply whitespace-nowrap border-b-2 border-l-0; }
+  .nav a { @apply whitespace-nowrap; }
   .content { @apply px-4 py-4; }
   .hdr { @apply px-4; }
 }

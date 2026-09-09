@@ -4,14 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>onegw · {{.Title}}</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f172a'/%3E%3Crect x='6' y='6' width='9' height='20' rx='2' fill='%23f8fafc'/%3E%3Crect x='17' y='6' width='9' height='20' rx='2' fill='%2334d399'/%3E%3C/svg%3E">
+<link rel="preload" href="/admin/assets/fonts/Rebels-Fett.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23050505'/%3E%3Crect x='6' y='6' width='9' height='20' fill='%23f8fafc'/%3E%3Crect x='17' y='6' width='9' height='20' fill='%2362b3ff'/%3E%3C/svg%3E">
 <style>{{asset_css "admin.css"}}</style>
 </head>
 <body>
 <a class="skip" href="#content">Skip to content</a>
 <div class="layout">
 <aside class="sidebar">
-  <div class="logo">one<span>gw</span></div>
+  <div class="brand">
+    <span class="btile" aria-hidden="true"><svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="6" fill="#050505"/><rect x="6" y="6" width="9" height="20" fill="#f8fafc"/><rect x="17" y="6" width="9" height="20" fill="#62b3ff"/></svg></span>
+    <span class="bname">one<span>gw</span><em>the llm gateway</em></span>
+  </div>
   <nav class="nav" aria-label="admin sections">
     {{$prev := ""}}{{range .Nav}}{{if ne .Group $prev}}<div class="navgrp" aria-hidden="true">{{.Group}}</div>{{$prev = .Group}}{{end}}<a href="{{.Href}}"{{if eq .ID $.Active}} class="active" aria-current="page"{{end}}>{{.Label}}</a>{{end}}
   </nav>
@@ -22,8 +26,29 @@
   <div class="hactions">{{block "hdr" .V}}{{end}}</div>
   <button id="theme" class="btn ghost sm" title="toggle dark/light" aria-label="toggle dark or light theme">◐</button>
 </header>
+<div class="bodyrow">
 <div class="content" id="content">
 {{block "content" .V}}{{end}}
+</div>
+<aside class="rail">
+  <div class="card widget">
+    <div class="wrow"><span>local time</span><span id="clk-tz">—</span></div>
+    <div class="wtime" id="clk-time">--:--:--</div>
+    <div class="wrow"><span id="clk-date">—</span><span class="pill">onegw</span></div>
+  </div>
+  {{if .Live}}<div class="card">
+    <h3>Live status</h3>
+    <div class="metrics railmetrics" hx-ext="sse" sse-connect="/admin/events?topics=health" sse-swap="health">connecting…</div>
+  </div>{{end}}
+  {{if .Ranks}}<div class="card">
+    <h3>Top providers · 7d</h3>
+    <ol class="ranklist">
+      {{range .Ranks}}<li><span class="rn{{if .Featured}} feat{{end}}">{{.Rank}}</span>
+        <span class="rname">{{.Name}}</span>
+        <span class="rreq">{{compact .Req}}</span></li>{{end}}
+    </ol>
+  </div>{{end}}
+</aside>
 </div>
 <footer>onegw admin · read-mostly views · config stays in onegw.toml · reload via Settings</footer>
 </main>
@@ -49,6 +74,19 @@
     box.appendChild(el);
     setTimeout(function(){ el.remove(); },4000);
   };
+  // Rail clock (M.O.N.K.Y widget analogue): 1s local-time ticker.
+  (function(){
+    var time=document.getElementById('clk-time'); if(!time) return;
+    function tick(){
+      var d=new Date();
+      time.textContent=d.toLocaleTimeString('en-GB',{hour12:false});
+      var dd=document.getElementById('clk-date');
+      if(dd) dd.textContent=d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+    }
+    tick(); setInterval(tick,1000);
+    var tz=document.getElementById('clk-tz');
+    if(tz){ try{ tz.textContent=(Intl.DateTimeFormat().resolvedOptions().timeZone||'local').split('/').pop().replace(/_/g,' '); }catch(e){ tz.textContent='local'; } }
+  })();
 })();
 </script>
 {{block "scripts" .V}}{{end}}
