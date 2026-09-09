@@ -205,3 +205,30 @@ func TestEdgeFaultPredicate(t *testing.T) {
 		}
 	}
 }
+
+// The consolidation's reason to exist: a plain JSON 502 body — the common
+// one-api error shape, NOT an HTML/empty page — must trip the breaker too.
+// Before the single exit-site strike, only the HTML/empty/transport
+// branches struck, so a JSON 502 storm never parked the provider.
+func TestFlapBreakerTripsOnPlainJSON502(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"The server is overloaded","type":"server_error"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	_, def := newDef(t, srv.URL)
+	for range flapThreshold {
+		apiErr := doErr(t, def)
+		if apiErr.Type != "server_error" {
+			// The upstream's own type rides verbatim; edgeFault still
+			// counts the fault via the 502 status fallback.
+			t.Fatalf("JSON body must keep its decoded type, got %q", apiErr.Type)
+		}
+		if apiErr.Message != "The server is overloaded" {
+			t.Fatalf("upstream's own message must survive, got %q", apiErr.Message)
+		}
+	}
+	if acct, _ := def.NextAccount(""); acct != nil {
+		t.Fatal("4 consecutive JSON 502s must open the breaker")
+	}
+}
