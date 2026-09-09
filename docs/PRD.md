@@ -1,3 +1,20 @@
+*Last updated: 2026-09-09 (ponytail inject mode live, 6ca71ab, issue #65: onegw now
+  ships the [ponytail](https://github.com/DietrichGebert/ponytail) lazy-senior-dev
+  ruleset (MIT, adapted) as `[[saver.inject]] mode = "ponytail"` — the gateway
+  prepends the YAGNI → reuse → stdlib → native → dependency → one-line → minimum
+  ladder to the system prompt of matching requests, so every coding agent behind
+  the gateway (Claude Code, Codex, hermes, omp…) gets it with zero per-client
+  installs. Idempotent via the existing `onegw-terse-directive` marker; a client
+  that already runs the ponytail plugin (tagline "lazy senior dev" detected in
+  the body) is NOT stacked a second time. Tests: ladder injection + client-plugin
+  skip + config validation, all mutation-checked. Live: injected rule visible in
+  /admin/config (pid 72826, hot-reloaded via SIGHUP; live binary = peer 401fix
+  build which includes 6ca71ab, marker count 3), and end-to-end behavioral proof
+  through the live gateway — model reasoning quotes the injected ladder's
+  rung 3 verbatim. Live config note: during the session a peer redeploy rotated
+  the live config from ~/.onegw/onegw.toml to the repo onegw.toml; the ponytail
+  rule was added to BOTH files so the rule survives either config path.)*
+
 *Last updated: 2026-09-09 (update check 401 fix, 96c1fd3: the environment's stale
   GITHUB_TOKEN made every release check fail with "HTTP 401 Bad credentials" even though
   FreePeak/onegw is PUBLIC and anonymous reads work. internal/update now sends the token
