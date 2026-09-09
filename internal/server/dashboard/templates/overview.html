@@ -1,20 +1,20 @@
 {{define "hdr"}}<span class="dot ok"></span><span>live via SSE</span>{{end}}
 {{define "content"}}
 <div class="grid c4">
-  <div class="card"><h3>Requests · today</h3><div class="big">{{compact .TodayReq}}</div></div>
-  <div class="card"><h3>Tokens in / out · today</h3><div class="big">{{compact .TodayIn}} <span class="text-mut">/</span> {{compact .TodayOut}}</div></div>
-  <div class="card"><h3>Saved by saver · today</h3><div class="big text-ok">{{compact .TodaySaved}}</div></div>
-  <div class="card"><h3>Providers</h3><div class="big">{{.Providers}}{{if .QuotaExhausted}}
+  <div class="card stat"><h3>Requests · today</h3><div class="statbody"><div class="big">{{compact .TodayReq}}</div></div></div>
+  <div class="card stat"><h3>Tokens in / out · today</h3><div class="statbody"><div class="big">{{compact .TodayIn}} <span class="text-mut">/</span> {{compact .TodayOut}}</div></div></div>
+  <div class="card stat"><h3>Saved by saver · today</h3><div class="statbody"><div class="big text-ok">{{compact .TodaySaved}}</div></div></div>
+  <div class="card stat"><h3>Providers</h3><div class="statbody"><div class="big">{{.Providers}}{{if .QuotaExhausted}}
     <span class="pill err">{{.QuotaExhausted}} quota out</span>{{end}}</div>
-    <div class="sub">{{.Models}} advertised models · {{.Combos}} combos</div></div>
+    <div class="sub">{{.Models}} advertised models · {{.Combos}} combos</div></div></div>
 </div>
 
-<div class="card">
-  <h3>Live process <span class="pill ok ml-2 normal-case">SSE 1s</span></h3>
-  <div id="live" class="metrics" hx-ext="sse" sse-connect="/admin/events?topics=health" sse-swap="health">{{.LiveJSON}}</div>
+<div class="card mb-4">
+  <h3>Tokens · today <span class="sub normal-case">hourly · stacked: input → output → cache read</span></h3>
+  <div id="chart-tok"></div>
 </div>
 
-<div class="grid c3 mt-4">
+<div class="grid c3">
   <div class="card"><h3>Memory budget</h3>
     <div class="big" id="lv-budget">{{.Budget}}</div>
     <div class="sub">held bytes of {{.BudgetCap}} cap · {{.BudgetWaiting}} waiting · {{.BudgetRejected}} rejected (503)</div>
@@ -29,4 +29,44 @@
     <span class="k">cli presets</span><a href="/admin/ui/tools">wire up an agent CLI</a></div></div>
 </div>
 {{end}}
-{{define "scripts"}}{{end}}
+{{define "scripts"}}
+<style>{{asset_css "uPlot.min.css"}}</style>
+<script>{{asset_js "uPlot.iife.min.js"}}</script>
+<script>
+const D = {{.ChartJSON}};
+const CSS = getComputedStyle(document.documentElement);
+function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(0)+'M';if(n>=1e3)return (n/1e3).toFixed(0)+'K';return String(n)}
+function cv(name, fallback){ const v = CSS.getPropertyValue(name).trim(); return v || fallback; }
+const FONTS = '11px "Fira Code", ui-monospace, monospace';
+let chart = null;
+function tokSeries(s){
+  return {label: s.label, stroke: s.color, width: 1.6,
+    fill: s.fill ? `color-mix(in srgb, ${s.color} 18%, transparent)` : undefined,
+    points: {show: false},
+    value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])};
+}
+function draw(){
+  const el = document.getElementById('chart-tok');
+  if(!el || !D.xs.length) return;
+  const grid = cv('--line', '#ffffff1a');
+  const text = cv('--fg', '#fafafa'); // axis ticks: fg (UUPM contrast)
+  if (chart) chart.destroy();
+  // stacked areas: cumulative input → +output → +cache read
+  const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
+  const S = [
+    {label:'cache read', vals: cr, color: cv('--color-chart2', '#0284c7'), fill:true, layer: D.cache_read},
+    {label:'output', vals: out, color: cv('--color-ok', '#22c55e'), fill:true, layer: D.output},
+    {label:'input', vals: inp, color: cv('--color-chart4', '#fbbf24'), fill:true, layer: D.input},
+  ];
+  chart = new uPlot({
+    width: el.clientWidth || 600, height: 220,
+    series: [{}, ...S.map(tokSeries)],
+    axes: [{stroke: text, grid: {stroke: grid}, font: FONTS, size: 60},
+           {stroke: text, grid: {stroke: grid}, font: FONTS, size: 60, values: (u2, v) => v.map(kmb)}]
+  }, [D.xs, ...S.map(s => s.vals)], el);
+}
+draw();
+document.addEventListener('ogw-theme', draw);
+window.addEventListener('resize', () => { clearTimeout(window.__ogw_rs); window.__ogw_rs = setTimeout(draw, 150); });
+</script>
+{{end}}
