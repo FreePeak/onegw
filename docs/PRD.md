@@ -793,7 +793,10 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 
 ---
 *Last updated: 2026-09-09 (request log diagnosability: rows carry the upstream
-  account name + 7-day auto-clear, ab62468; earlier: dashboard Tailwind v4 revamp to the UnoRouter design
+  account name (@account in the console line, account JSON field) + 7-day
+  auto-clear, ab62468 — committed from a clean archive of HEAD (full suite green
+  in /tmp), zero-drop deployed live (pid 67617), end-to-end verified: b-ai rows
+  show per-request accounts clone3/clone2/harvey; earlier: dashboard Tailwind v4 revamp to the UnoRouter design
   language, 0b6202d — standalone-CLI pipeline, vendored OFL fonts, grouped sidebar,
   themed uPlot axes; browser-verified dark/light, commit green from clean archive,
   pushed; earlier: usage-chart hover fix: per-layer values + units,
