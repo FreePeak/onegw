@@ -1,5 +1,5 @@
-*Last updated: 2026-09-09 (dashboard M.O.N.K.Y OS revamp caf93bf — flat ink/indigo/neon design,
-branded sidebar, right-rail clock/status/ranking, overview chart — zero-drop deployed pid 26764.
+*Last updated: 2026-09-09 (dashboard M.O.N.K.Y OS revamp 74fbff2 — flat ink/indigo/neon design,
+branded sidebar, right-rail clock/status/ranking, overview chart — zero-drop deployed pid 91238 (rebased onto origin as 74fbff2).
 Earlier: commandcode-520 + glm-empty-500 RCA 289cd47+d41d078.)*
 **2026-09-09 — commandcode 520 terminal + glm empty-500 RCA (289cd47, test fix d41d078):** the
 dashboard showed `commandcode/unresolved 520 server_error` (transient; "Upstream model provider is

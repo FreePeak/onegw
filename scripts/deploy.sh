@@ -19,6 +19,11 @@
 #     watch and re-kill in case it is.
 #   - Never pkill -f: the pattern matches the replacement too.
 set -euo pipefail
+# The invalid GITHUB_TOKEN in a caller's env shadows the keyring and makes the
+# NEW process's /admin/update 401 with "Bad credentials" (the gateway prefers
+# env credentials over the keyring). Scrub both token vars so the spawned
+# gateway falls back to the keyring / public API, unconditionally.
+unset GITHUB_TOKEN ONEGW_GITHUB_TOKEN
 cd "$(dirname "$0")/.."
 
 BIN=""

@@ -431,6 +431,7 @@ html[data-theme="light"] { color-scheme: light; }
   .metric .v {
     font-family: var(--font-mono);
     @apply mt-1 text-[13px];
+    font-variant-numeric: tabular-nums; /* uptime/GC digits must not jitter width every second */
   }
   .metric .v.hi {
     font-family: var(--font-display);
