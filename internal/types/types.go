@@ -69,6 +69,19 @@ type ChatRequest struct {
 	// Metadata passthrough (user ids etc), format-specific keys preserved.
 	Metadata map[string]string `json:"metadata,omitempty"`
 
+	// Cache-affinity knobs captured verbatim from the incoming wire
+	// (issue #32): empty means the client never sent it, and encoders
+	// re-emit only on wires that accept the knob — never invented.
+	// PromptCacheKey is the OpenAI-dialect prompt_cache_key (sticky
+	// prompt-cache routing); StickySessionID is OpenRouter's session_id
+	// body knob (unified tag differs from the wire name to avoid
+	// colliding with SessionID's usage-rollup tag; each decoder/encoder
+	// maps the wire name explicitly). Both are deliberately separate
+	// from SessionID above, which keys usage rollups and must never
+	// travel upstream.
+	PromptCacheKey  string `json:"prompt_cache_key,omitempty"`
+	StickySessionID string `json:"session_affinity_key,omitempty"`
+
 	// ParallelToolCalls nil = unset. Upstreams that lack the knob ignore it.
 	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
 }
@@ -113,6 +126,13 @@ type Part struct {
 
 	// Thinking.
 	Signature string `json:"signature,omitempty"`
+
+	// CacheBreakpoint marks an Anthropic-style prompt-cache breakpoint:
+	// the client put cache_control {type: ephemeral} on this content
+	// block, and the same marker must re-anchor at the same logical
+	// block when the request re-encodes to a wire that supports it
+	// (issue #32).
+	CacheBreakpoint bool `json:"cache_breakpoint,omitempty"`
 }
 
 type Tool struct {
