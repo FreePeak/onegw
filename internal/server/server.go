@@ -177,6 +177,14 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			SessionHeader:    p.SessionHeader,
 			HeaderTimeout:    cfg.ResponseHeaderTimeoutDur(),
 		}
+		// Task-routing model metadata (issue #54): per-model power and
+		// capability declarations from [[providers.tier]] tables.
+		for _, tier := range p.Tiers {
+			def.Tiers = append(def.Tiers, provider.ModelTier{
+				Model: tier.Model, Power: tier.Power, Vision: tier.Vision,
+				Reasoning: tier.Reasoning, Context: tier.Context, MaxOut: tier.MaxOut,
+			})
+		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
 				def.Accounts = append(def.Accounts, provider.Account{
@@ -217,6 +225,15 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets})
 	}
 	rt.SetCombos(combos)
+	rt.SetTaskRouting(cfg.TaskRoutingOn())
+	if cfg.TaskRoutingOn() {
+		// #19 ring: one decision row per request whose combo order the
+		// classifier changed (model field = client model, kind =
+		// "task_routing", err = decision detail).
+		rt.TaskLog = func(model, detail string) {
+			s.observeLog("", model, "", 0, "task_routing", types.Usage{}, 0, detail)
+		}
+	}
 	rt.SetAliases(cfg.Aliases)
 
 	var sink usage.Sink
@@ -443,7 +460,11 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execCtx := router.WithIdentity(r.Context(), requestIdentity(r.Header, ak))
+	if st.cfg.TaskRoutingOn() {
+		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
+	}
+	execErr := st.router.Execute(execCtx, res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -512,7 +533,11 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execCtx := router.WithIdentity(r.Context(), requestIdentity(r.Header, ak))
+	if st.cfg.TaskRoutingOn() {
+		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
+	}
+	execErr := st.router.Execute(execCtx, res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {

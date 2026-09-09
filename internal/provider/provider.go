@@ -185,6 +185,13 @@ type Def struct {
 	// upstreams. ""/"none" forwards bodies untouched.
 	CacheProfile string
 
+	// Tiers declares per-model task-routing metadata (issue #54):
+	// power scores, capability flags, and context/output limits used
+	// by the router's local classifier to reorder combo targets. Set
+	// from ProviderCfg.Tiers in server.apply; nil = no tier data for
+	// this provider (targets use neutral defaults when task-routing on).
+	Tiers []ModelTier `toml:"tiers"`
+
 	// SearXNG virtual-kind settings (kind = "searxng" only); zero values
 	// fall back to the defaults in searxng.go.
 	SearchMaxResults int
