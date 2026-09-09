@@ -247,10 +247,6 @@ func newStreamDecoder(f Format) (streamDecoder, func() error) {
 		return statelessDecoder{f: f, fn: func(_ Format, ev sseEvent) ([]StreamEvent, error) {
 			return decodeResponsesStreamEvent(ev, st)
 		}}, nil
-	case FmtCursor:
-		return statelessDecoder{f: f, fn: func(_ Format, ev sseEvent) ([]StreamEvent, error) {
-			return nil, fmt.Errorf("cursor wire format is a skeleton; executor not implemented")
-		}}, nil
 	case FmtOpenAI, FmtAnthropic, FmtGemini:
 		return statelessDecoder{f: f, fn: decodeStreamEvent}, nil
 	default:
