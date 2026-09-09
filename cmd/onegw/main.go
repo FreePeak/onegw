@@ -112,6 +112,10 @@ func runGateway() {
 	})
 	upd.Start()
 	srv.SetUpdater(upd) // dashboard Settings card reads GET/POST /admin/api/v1/update (#61)
+	// Dashboard-driven reloads (PUT /admin/config/reload) swap the server
+	// state without a signal; the hook keeps this outer-mux update
+	// handler's config copy in sync so its credential never goes stale (#63).
+	srv.SetOnConfigReload(curCfg.Store)
 	defer upd.Stop()
 
 	// srv.Handler() wraps its mux (recovery), so /admin/update mounts on
