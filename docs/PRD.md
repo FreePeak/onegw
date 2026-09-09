@@ -773,6 +773,8 @@ budget aborted massive thinking-model prefills (`http2: timeout awaiting respons
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
 ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
 h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall through; branch
-fix/upstream-header-timeout)*
+fix/upstream-header-timeout; earlier: admin login lockout aligned to spec (24h after 5 failures,
+6790dba) — master pushed through 6790dba and live gateway redeployed zero-drop from it (pid in
+/admin/health); xai OAuth token still expired — re-auth in 9router then re-import)*
 
 
