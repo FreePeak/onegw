@@ -7,11 +7,18 @@
   explicit SIGTERM, single listener verified (health owner.pid=70282 ×3, /v1/models 200,
   ~21 inflight across the swap). Crash semantics now: on-failure restarts crashes;
   graceful SIGTERM stays down by design (deploys deliberately stop it); reboot needs a
-  launchd KeepAlive (not yet installed). Wedged names onegw/onegw-live abandoned —
-  future deploys should hub-start under onegw-sup or a fresh name. Binary path is
-  volatile: /tmp/onegw-lt-bin today, /tmp/onegw-admission earlier — the hub record's
-  retained spec must be updated (hub restart reuses the OLD spec) or the record
-  re-created after every deploy.sh generation.)*
+  launchd KeepAlive (not yet installed). Wedged names onegw/onegw-live abandoned. DEPLOY
+  HANDOFF (the recipe for the next deploying session): onegw-sup is LIVE, not wedged —
+  hub-start on that name fails until 70282 exits. Correct sequence after spawning your
+  new binary overlap-bound: (1) poll /admin/health owner.pid == YOUR new pid; (2) SIGTERM
+  the old 70282 explicitly; (3) `hub stop onegw-sup` clears the exited record (hub stop
+  on an already-exited record can wedge — if it does, use a FRESH name with restart=
+  on-failure persist detached, same spec); (4) hub-start under the cleared/fresh name so
+  supervision survives this generation. Do NOT leave your replacement unsupervised: a
+  PPID-1 setsid child has NO crash auto-restart. Binary path is volatile (/tmp/onegw-*
+  per deploy generation): the hub record's retained spec re-execs the OLD path on
+  auto-restart — re-create the record with the NEW path if the old /tmp file was
+  replaced.)*
 
 *Last updated: 2026-09-09 (docker anonymous-volume fork closed, 2d6f08d: dropped
 VOLUME ["/data"] from the Dockerfile — it allocated an anonymous volume on every
