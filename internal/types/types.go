@@ -298,12 +298,35 @@ func (e *APIError) RegionLocked() bool {
 // window clears by itself in seconds, so the account ladder must NOT
 // bench keys for it and retries should wait ~1s steps instead of the
 // 250ms fast backoff.
+//
+// Also matches engine cold-prefill admission walls (new-api aggregators
+// fronting z-ai/SGLang: 429 "BackendAdmissionRejected: Engine
+// cold-request admission rejected … policies=prefill_pressure …", live
+// 2026-09-09): the budget is the ENGINE's outstanding-uncached-prefill
+// pool shared by all traffic, and the same request body succeeds seconds
+// later on a different account — the credential is innocent. 503
+// variants ("cache-only admission rejected a cold, unavailable, or
+// overloaded request", "gateway overloaded: hard concurrency limit
+// reached", "gateway overloaded: cache-aware admission is unavailable")
+// carry the same medicine and are matched here too: Retryable() already
+// lets 503s fall through, but the ladder and the Retry-After stamping
+// must also treat them as shared-wall, not per-key load.
 func (e *APIError) SharedConcurrency() bool {
-	if e == nil || e.Status != 429 {
+	if e == nil {
+		return false
+	}
+	if e.Status == 503 {
+		probe := strings.ToLower(e.Code + " " + e.Message)
+		return strings.Contains(probe, "cache-only admission") ||
+			strings.Contains(probe, "gateway overloaded")
+	}
+	if e.Status != 429 {
 		return false
 	}
 	probe := strings.ToLower(e.Code + " " + e.Message)
-	return strings.Contains(probe, "concurrency limit")
+	return strings.Contains(probe, "concurrency limit") ||
+		strings.Contains(probe, "backendadmissionrejected") ||
+		strings.Contains(probe, "cold-request admission rejected")
 }
 
 // EstimateTokens gives a rough char/4 estimate for text content; used only
