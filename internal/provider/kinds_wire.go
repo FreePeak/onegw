@@ -16,7 +16,10 @@ import (
 // one completion for non-streaming clients.
 func (k Kind) ForcedStream() bool {
 	switch k {
-	case KindCommandCode, KindOpenAIResponses:
+	case KindCommandCode, KindOpenAIResponses, KindCursor:
+		// Cursor (issue #12 follow-up): both services stream Connect-RPC
+		// frames only; the synthetic OpenAI SSE body doCursor returns is
+		// aggregated for non-streaming clients.
 		return true
 	default:
 		return false

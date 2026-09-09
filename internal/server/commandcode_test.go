@@ -2,7 +2,9 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	"onegw/internal/config"
+	"onegw/internal/provider"
 )
 
 // commandCodeUpstream speaks the CommandCode /alpha/generate NDJSON wire
@@ -313,27 +316,156 @@ func TestGrokResponsesStreamingE2E(t *testing.T) {
 	}
 }
 
-// kind=cursor validates in config but fails fast at request time.
-func TestCursorKindFailsFast(t *testing.T) {
-	cfg := makeCfg(t, "sk-client", "", false, providerSpec{name: "cur", up: "http://127.0.0.1:1", model: "m1"})
+// kind=cursor speaks Connect-RPC protobuf upstream and answers OpenAI shape
+// (issue #12 follow-up). The mock serves AgentService frames; the request
+// carries a system message, which must NOT appear in run_request field 8
+// (upstream kills such turns) — it must ride folded in the user message.
+func TestCursorKindEndToEnd(t *testing.T) {
+	// Build the upstream response: one text frame + one done frame.
+	textDelta := pbBytesForTest(nil, 1, pbBytesForTest(nil, 1, pbStringForTest("pong from cursor")))
+	var update []byte
+	update = pbBytesForTest(update, 1, textDelta)
+	var usage []byte
+	usage = pbUvarintForTest(usage, 1, 12)
+	usage = pbUvarintForTest(usage, 2, 3)
+	update = pbBytesForTest(update, 14, usage)
+	var agentMsg []byte
+	agentMsg = pbBytesForTest(agentMsg, 1, update)
+	// exec_server_request{10: request_server_info} — the context question.
+	var exec []byte
+	exec = pbBytesForTest(exec, 10, nil)
+	var execQuestion []byte
+	execQuestion = pbBytesForTest(execQuestion, 2, exec)
+
+	frame := func(payload []byte) []byte {
+		out := make([]byte, 5+len(payload))
+		out[1] = byte(len(payload) >> 24)
+		out[2] = byte(len(payload) >> 16)
+		out[3] = byte(len(payload) >> 8)
+		out[4] = byte(len(payload))
+		copy(out[5:], payload)
+		return out
+	}
+
+	captured := make(chan []byte, 4)
+	// HTTP/2 is REQUIRED: the agent path is full-duplex (pipe-backed
+	// request body), and Go's h1 transport cannot stream a request while
+	// reading the response — h1 tests deadlock. The live upstream is h2.
+	up := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-cursor-checksum") == "" {
+			t.Errorf("upstream: x-cursor-checksum header missing")
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer up-key" {
+			t.Errorf("upstream: Authorization = %q", got)
+		}
+		// MIRROR THE LIVE UPSTREAM: respond with headers + the exec
+		// question IMMEDIATELY, before the request body ends (the real
+		// AgentService asks while the request half is still open). The
+		// gateway answers via the pipe; then the mock reads one frame
+		// (the run request) and later the reply, then streams the turn.
+		w.Header().Set("Content-Type", "application/connect+proto")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = w.Write(frame(execQuestion))
+		w.(http.Flusher).Flush()
+		// Read exactly one reply frame from the (still-open) request body:
+		// the constant RequestContext answer.
+		reply := make([]byte, 5)
+		if _, err := io.ReadFull(r.Body, reply); err != nil {
+			t.Errorf("upstream: no handshake reply: %v", err)
+			return
+		}
+		n := int(reply[1])<<24 | int(reply[2])<<16 | int(reply[3])<<8 | int(reply[4])
+		payload := make([]byte, n)
+		if _, err := io.ReadFull(r.Body, payload); err != nil {
+			t.Errorf("upstream: short reply: %v", err)
+			return
+		}
+		// The reply IS the captured payload; write the turn frames now —
+		// END_STREAM (pump finishing) follows once the client drains.
+		captured <- payload
+		_, _ = w.Write(frame(agentMsg))
+	}))
+	up.EnableHTTP2 = true
+	up.StartTLS()
+	defer up.Close()
+
+	cfg := makeCfg(t, "sk-client", "", false, providerSpec{name: "cur", up: up.URL, model: "m1"})
+	// Trust the test server's self-signed cert for this provider Def.
+	provider.SetCursorTLSOverrideForTest(up.Client().Transport.(*http.Transport).TLSClientConfig)
+	t.Cleanup(provider.ResetCursorTLSOverrideForTest)
 	cfg.Providers[0] = config.ProviderCfg{
-		Name: "cur", Kind: "cursor", BaseURL: "https://api2.cursor.sh",
-		APIKey: "test", Models: []string{"m1"},
+		Name: "cur", Kind: "cursor", BaseURL: up.URL,
+		APIKey: "up-key", Models: []string{"m1"},
 	}
 	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := `{"model":"cur/m1","messages":[{"role":"user","content":"hi"}]}`
+	body := `{"model":"cur/m1","messages":[{"role":"system","content":"Be terse."},{"role":"user","content":"Reply PONG"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer sk-client")
 	w := do(t, s.Handler(), req)
-	if w.Code == http.StatusOK {
-		t.Fatalf("cursor skeleton must not serve requests: %s", w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("want 400 invalid_request, got %d: %s", w.Code, w.Body.String())
+	if !strings.Contains(w.Body.String(), "pong from cursor") {
+		t.Fatalf("answer missing: %s", w.Body.String())
 	}
+
+	select {
+	case sent := <-captured:
+		// run_request must NOT carry field 8 (system prompt kills the turn).
+		if bytes.Contains(sent, []byte{0x40}) && pbHasField8System(sent) {
+			t.Fatalf("run request must not carry a system prompt in field 8: %x", sent[:64])
+		}
+	default:
+		t.Fatal("upstream saw no request")
+	}
+}
+
+// --- cursor test protobuf helpers (mirror translat's codec; minimal) ---
+
+func pbTagForTest(b []byte, field, wire int) []byte {
+	tag := uint64(field)<<3 | uint64(wire)
+	for tag >= 0x80 {
+		b = append(b, byte(tag)|0x80)
+		tag >>= 7
+	}
+	return append(b, byte(tag))
+}
+
+func pbBytesForTest(b []byte, field int, v []byte) []byte {
+	b = pbTagForTest(b, field, 2)
+	l := uint64(len(v))
+	for l >= 0x80 {
+		b = append(b, byte(l)|0x80)
+		l >>= 7
+	}
+	b = append(b, byte(l))
+	return append(b, v...)
+}
+
+func pbStringForTest(s string) []byte { return []byte(s) }
+
+func pbUvarintForTest(b []byte, field int, v uint64) []byte {
+	b = pbTagForTest(b, field, 0)
+	for v >= 0x80 {
+		b = append(b, byte(v)|0x80)
+		v >>= 7
+	}
+	return append(b, byte(v))
+}
+
+// pbHasField8System reports whether a run_request frame carries field 8
+// (0x40 tag with non-empty payload) — the forbidden system prompt.
+func pbHasField8System(sent []byte) bool {
+	for i := 0; i+1 < len(sent); i++ {
+		if sent[i] == 0x42 && i+2 < len(sent) && sent[i+1] > 0 { // field 8, wire 2, len>0
+			return true
+		}
+	}
+	return false
 }
 
 var _ = bufio.NewReader // keep bufio import if assertions change
