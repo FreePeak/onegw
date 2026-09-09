@@ -4,7 +4,9 @@ live gateway cut over zero-drop to **v0.13.1** (pid 75149) through its own
 POST /admin/update apply path — the dashboard Version card's Update button, live-proven
 end to end. Found + filed #63: the dashboard's PUT /admin/config/reload does not sync
 the outer-mux /admin/update handler's config (SIGHUP does) — dashboard reload leaves
-update endpoints 401ing until SIGHUP/restart; fix pending on master.)*
+update endpoints 401ing until SIGHUP/restart — FIXED same day: Server.SetOnConfigReload
+hook fired by Server.Reload, main passes curCfg.Store (regression test
+TestDashboardReloadKeepsUpdateEndpointAuthed in cmd/onegw/update_admin_test.go).)*
 
 *Last updated: 2026-09-09 (relative data_dir data-loss incident, fixed 47e2984: a
 relative `data_dir` resolved against the process cwd, so when the update-feature

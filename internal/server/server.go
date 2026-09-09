@@ -74,6 +74,9 @@ type Server struct {
 	// upd is the dashboard-visible update service (#61), wired once by
 	// main via SetUpdater. Nil-safe: the endpoints answer 409 without it.
 	upd atomic.Pointer[*update.Service]
+	// cfgReloadHook is the wiring-layer callback fired after every
+	// successful config swap (see SetOnConfigReload, #63).
+	cfgReloadHook atomic.Pointer[func(*config.Config)]
 	// sessions/logins power the dashboard cookie login (#45); events is
 	// the bounded SSE fan-out hub; reqlog is the #19 request ring. All
 	// live on the Server (not the reloadable state) so reloads neither
@@ -307,6 +310,7 @@ func (s *Server) Reload(cfg *config.Config) {
 	// A successful reload is the "config changed underneath you" event:
 	// re-stamp the ownership record so config_mtime reflects it (#42).
 	s.StampOwner()
+	s.fireOnConfigReload(cfg) // outer-mux /admin/update sync (#63)
 }
 
 // StampOwner records the running process (pid, build stamp, listen,

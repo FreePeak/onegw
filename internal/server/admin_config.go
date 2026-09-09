@@ -40,6 +40,23 @@ import (
 	"onegw/internal/config"
 )
 
+// SetOnConfigReload registers a wiring-layer callback fired after every
+// successful config swap: main syncs the outer-mux /admin/update handler's
+// config copy from it. Without the hook, the first dashboard reload freezes
+// the update handler's credential and [update] settings at their
+// process-start values while every other admin route sees the reload (#63).
+func (s *Server) SetOnConfigReload(fn func(*config.Config)) {
+	if fn != nil {
+		s.cfgReloadHook.Store(&fn)
+	}
+}
+
+func (s *Server) fireOnConfigReload(cfg *config.Config) {
+	if p := s.cfgReloadHook.Load(); p != nil {
+		(*p)(cfg)
+	}
+}
+
 // SetConfigPath records the TOML file the process was started from. Called
 // once by main; without it the mutating endpoints refuse to run.
 func (s *Server) SetConfigPath(path string) {
@@ -293,10 +310,7 @@ func editFailed(w http.ResponseWriter, err error) {
 
 // patchConfigFile runs one read-modify-write cycle on the TOML file:
 // mutate the lines, round-trip check + atomic write, then Load+Reload —
-// the exact SIGHUP application path. Splice (request) errors come back as
-// badConfigEdit; on any other error the on-disk file is untouched, and the
-// live state is only reloaded after the new content has passed
-// config.Load.
+// and the caller gets the fresh config back (nil error) to hand onward.
 func (s *Server) patchConfigFile(mutate func(lines []string) ([]string, error)) (*config.Config, error) {
 	path := s.configPath()
 	if path == "" {
