@@ -263,9 +263,12 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 		return nil, &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + prov}
 	}
-	// Bare model: try providers in order that could serve it.
+	// Bare model: try providers in order that could serve it. Disabled
+	// providers (paused via the dashboard toggle) never win this
+	// fallback — a paused provider must not silently absorb passthrough
+	// traffic that an enabled provider could serve.
 	for _, name := range r.pool.Names() {
-		if _, ok := r.pool.Get(name); ok {
+		if d, ok := r.pool.Get(name); ok && !d.Disabled {
 			return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
 		}
 	}
@@ -310,6 +313,15 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		def, ok := r.pool.Get(t.Provider)
 		if !ok {
 			lastErr = &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + t.Provider}
+			continue
+		}
+		if def.Disabled {
+			// Paused provider (dashboard toggle, persisted as
+			// `disabled = true` in its [[providers]] block): the target
+			// is skipped so a combo falls through to the next leg; a
+			// direct route surfaces an honest 503, not a 404 that would
+			// claim the route never existed.
+			lastErr = &types.APIError{Status: 503, Type: "provider_disabled", Message: "provider " + t.Provider + " is disabled"}
 			continue
 		}
 		benched := 0 // gated 403s rotated this target (each benches one account)

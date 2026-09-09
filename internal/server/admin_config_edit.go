@@ -23,6 +23,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -104,6 +105,50 @@ func (s *Server) handleAdminProviderEdit(w http.ResponseWriter, r *http.Request)
 	s.events.publish("config", `{"provider":`+jsonString(req.Name)+`}`)
 	log.Printf("admin: provider %s %s (config reloaded)", req.Name, action)
 	writeJSON(w, map[string]any{"action": action, "name": req.Name, "reload": true})
+}
+
+// handleAdminProviderDisabled answers PATCH
+// /admin/config/providers/{name}/disabled with {"disabled": bool} — the
+// dashboard grid's quick on/off toggle. A full-field PUT would echo the
+// whole provider; this endpoint splices ONLY the `disabled` key of the
+// named block, so a toggle can never clobber another field's value or a
+// key held elsewhere. Persists through the same validate + atomic write
+// + Load/Reload path as every other config edit.
+func (s *Server) handleAdminProviderDisabled(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOK(r) {
+		adminUnauthorized(w)
+		return
+	}
+	name := r.PathValue("name")
+	if strings.TrimSpace(name) == "" {
+		adminError(w, http.StatusBadRequest, "provider name is required")
+		return
+	}
+	body, err := s.readBody(r)
+	if err != nil {
+		adminError(w, http.StatusBadRequest, "unreadable body: "+err.Error())
+		return
+	}
+	var req struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
+	if _, err := s.patchConfigFile(func(lines []string) ([]string, error) {
+		return spliceProviderDisabled(lines, name, req.Disabled)
+	}); err != nil {
+		editFailed(w, err)
+		return
+	}
+	s.events.publish("config", `{"provider":`+jsonString(name)+`}`)
+	log.Printf("admin: provider %s disabled=%v (config reloaded)", name, req.Disabled)
+	writeJSON(w, map[string]any{"name": name, "disabled": req.Disabled, "reload": true})
 }
 
 func (s *Server) handleAdminComboEdit(w http.ResponseWriter, r *http.Request) {
@@ -518,6 +563,33 @@ func renderProviderBlock(req providerEditReq) []string {
 		block = append(block, renderAccountTable(a, a.APIKey)...)
 	}
 	return block
+}
+
+// spliceProviderDisabled flips the `disabled` key of one existing
+// [[providers]] block (true = upsert, false = remove so the default
+// enabled state is explicit). Every other line of the block — comments,
+// keys, nested accounts — is preserved byte-for-byte. The edited config
+// is round-trip validated by the caller's patchConfigFile before the
+// atomic write.
+func spliceProviderDisabled(lines []string, name string, disabled bool) ([]string, error) {
+	for _, b := range scanBlocks(lines, "[[providers]]") {
+		n, ok := blockName(lines, b)
+		if !ok || n != name {
+			continue
+		}
+		edited := cloneLines(lines[b.start:b.end])
+		if disabled {
+			edited = upsertScalar(edited, "disabled", "disabled = true")
+		} else {
+			edited = removeScalar(edited, "disabled")
+		}
+		candidate := append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...)
+		if err := validateLines(candidate); err != nil {
+			return nil, err
+		}
+		return append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...), nil
+	}
+	return nil, fmt.Errorf("provider %s not found in config", name)
 }
 
 // ---------------------------------------------------------------------------

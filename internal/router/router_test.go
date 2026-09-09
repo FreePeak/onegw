@@ -355,3 +355,68 @@ func TestExecuteGated403RotatesWholePool(t *testing.T) {
 		t.Fatalf("calls=%d, want 2 (both accounts benched, then pool-empty)", calls)
 	}
 }
+
+// Disabled providers (dashboard on/off toggle, ProviderCfg.Disabled →
+// Def.Disabled) are gated at target lookup: a combo target whose provider
+// is paused produces NO upstream call — the loop falls through to the
+// next leg — and a direct route surfaces an honest 503 provider_disabled
+// instead of a 404 that would claim the route never existed.
+func TestExecuteSkipsDisabledProvider(t *testing.T) {
+	pool := newTestPool()
+	if d, ok := pool.Get("p1"); !ok || d == nil {
+		t.Fatal("p1 missing from test pool")
+	} else {
+		d.Disabled = true
+	}
+	r := New(pool)
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		return "ok", nil
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("combo should succeed via the enabled target, got %v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want exactly 1 — a disabled target must never be attempted", calls)
+	}
+
+	// Direct route: 503 provider_disabled, not a raw upstream attempt.
+	res1, err := r.Resolve("p1/m1")
+	if err != nil {
+		t.Fatalf("disabled provider must still resolve (Execute gates, not Resolve): %v", err)
+	}
+	got := r.Execute(context.Background(), res1, caller, func(a any) {})
+	if got == nil || got.Status != 503 || got.Type != "provider_disabled" {
+		t.Fatalf("direct disabled route: got %v, want 503 provider_disabled", got)
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d after direct attempt — disabled route must not reach a caller", calls)
+	}
+}
+
+// The bare-model fallback (no "provider/" prefix, no combo/alias match)
+// must skip paused providers: with p1 disabled, "anything" routes to p2,
+// not to the provider that can no longer serve.
+func TestResolveBareModelSkipsDisabled(t *testing.T) {
+	pool := newTestPool()
+	if d, ok := pool.Get("p1"); !ok || d == nil {
+		t.Fatal("p1 missing from test pool")
+	} else {
+		d.Disabled = true
+	}
+	r := New(pool)
+	res, err := r.Resolve("unadvertised-model")
+	if err != nil || len(res.Targets) != 1 || res.Targets[0].Provider != "p2" {
+		t.Fatalf("bare model must skip the disabled p1: %v %v", res, err)
+	}
+}

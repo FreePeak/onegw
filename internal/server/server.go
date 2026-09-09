@@ -174,6 +174,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			BaseURL:          p.BaseURL,
 			MaxConc:          p.MaxConc,
 			RPM:              p.RPM,
+			Disabled:         p.Disabled,
 			ExtraHeaders:     p.ExtraHeader,
 			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
@@ -361,6 +362,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /admin/config/keys", s.handleAdminKeys)
 	mux.HandleFunc("PATCH /admin/config/aliases", s.handleAdminAliases)
 	mux.HandleFunc("PUT /admin/config/providers", s.handleAdminProviderEdit)
+	mux.HandleFunc("PATCH /admin/config/providers/{name}/disabled", s.handleAdminProviderDisabled)
 	mux.HandleFunc("PUT /admin/config/combos", s.handleAdminComboEdit)
 	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAI)
 	mux.HandleFunc("POST /v1/completions", s.handleOpenAI)
@@ -951,6 +953,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.cur().cfg
 	for _, p := range cfg.Providers {
+		if p.Disabled {
+			continue // paused: not advertised, direct hits answer 503
+		}
 		if p.Kind == "searxng" {
 			// Virtual search surface: any "<name>/<x>" model string
 			// routes to it; advertise the canonical id so agent CLIs

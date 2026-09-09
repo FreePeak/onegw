@@ -2,52 +2,134 @@
 {{define "content"}}
 <div class="card mb-3 flex items-center gap-3">
   <span id="logstat" class="sub mt-0">connecting…</span>
-  <label class="ml-auto text-[12.5px]"><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
-  <button id="pause" class="btn sm">pause</button>
-  <a class="btn sm" href="/admin/api/v1/logs?limit=200">raw JSON</a>
+  <div class="ml-auto flex items-center gap-3">
+    <input id="logfilter" class="w-64" type="text" placeholder="filter — model, provider, error…" autocomplete="off" spellcheck="false" aria-label="filter log rows">
+    <label class="text-[12.5px] whitespace-nowrap"><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+    <button id="pause" class="btn sm">pause</button>
+    <a class="btn sm" href="/admin/api/v1/logs?limit=200">raw JSON</a>
+  </div>
 </div>
-<div id="logpane" class="mono"></div>
+<div class="tblwrap logwrap">
+<table id="logtbl">
+  <thead>
+    <tr>
+      <th class="w-[92px]">time</th>
+      <th class="num w-[70px]">status</th>
+      <th>provider / model</th>
+      <th class="w-[130px]">account</th>
+      <th class="w-[110px]">kind</th>
+      <th class="num w-[76px]">in</th>
+      <th class="num w-[76px]">out</th>
+      <th class="num w-[80px]">cached</th>
+      <th class="num w-[76px]">saved</th>
+      <th>error</th>
+    </tr>
+  </thead>
+  <tbody id="logbody"><tr><td colspan="10" class="empty">loading…</td></tr></tbody>
+</table>
+</div>
 {{end}}
 {{define "scripts"}}
 <script>
 (function(){
-  const pane = document.getElementById('logpane'), stat = document.getElementById('logstat'),
-        auto = document.getElementById('autoscroll'), pauseBtn = document.getElementById('pause');
+  const body = document.getElementById('logbody'), stat = document.getElementById('logstat'),
+        auto = document.getElementById('autoscroll'), pauseBtn = document.getElementById('pause'),
+        filter = document.getElementById('logfilter'), wrap = document.querySelector('.logwrap');
   let paused = false, last = 0;
-  pauseBtn.onclick = () => { paused =! paused; pauseBtn.textContent = paused ? 'resume' : 'pause'; };
+  const entries = []; // newest appended; trimmed to 500 entries
+  pauseBtn.onclick = () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'resume' : 'pause';
+    if (!paused) rebuild(); // backfill rows that arrived while paused
+  };
   function cls(e){ return e.kind === 'task_routing' ? 'code-2xx' : e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
-  function line(e){
-    const d = new Date(e.ts * 1000);
-    const t = d.toTimeString().slice(0, 8);
-    const mark = e.kind === 'task_routing' ? '⇄' : (e.kind ? '✗' : '✓');
-    const acct = e.account ? ' @' + e.account : '';
-    let txt = t + '  ' + mark + '  ' + (e.provider ? e.provider + '/' + e.model : e.model || '(unresolved)') + acct +
-      '  ' + e.code + (e.kind ? ' · ' + e.kind : '') +
-      '  · ' + kfmt(e.in) + ' in · ' + kfmt(e.out) + ' out' + (e.cache_read ? ' · ' + kfmt(e.cache_read) + ' cached' : '') +
-      (e.saved ? ' · ' + kfmt(e.saved) + ' saved' : '') +
-      (e.err ? '  — ' + (e.err.length > 160 ? e.err.slice(0, 160) + '…' : e.err) : '');
-    return txt;
-  }
   function kfmt(n){ if(n==null||n===0)return '0'; if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M'; if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return String(n); }
-  function add(e){
-    const div = document.createElement('div');
-    div.className = 'l ' + cls(e);
-    div.textContent = line(e);
-    const stick = auto.checked && pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 8;
-    pane.appendChild(div);
-    while (pane.children.length > 500) pane.removeChild(pane.firstChild);
-    if (stick) pane.scrollTop = pane.scrollHeight;
+  function route(e){ return e.provider ? e.provider + '/' + e.model : (e.model || '(unresolved)'); }
+  function short(s){ return s.length > 140 ? s.slice(0, 140) + '…' : s; }
+  function esc(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function escq(s){ return esc(s).replace(/"/g, '&quot;'); } // attribute-safe (title="")
+  function matches(e){
+    const q = filter.value.trim().toLowerCase();
+    if (!q) return true;
+    return (route(e) + ' ' + (e.account||'') + ' ' + (e.kind||'') + ' ' + e.code + ' ' + (e.err||'')).toLowerCase().includes(q);
   }
+  function detText(e){
+    const t = new Date(e.ts * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+    const parts = ['seq ' + e.seq, 'ts ' + t, 'code ' + e.code];
+    if (e.kind) parts.push('kind ' + e.kind);
+    if (e.provider) parts.push('provider ' + e.provider);
+    if (e.model) parts.push('model ' + e.model);
+    if (e.account) parts.push('account ' + e.account);
+    parts.push('in ' + e.in + ' · out ' + e.out + ' · cached ' + e.cache_read + ' · saved ' + e.saved);
+    if (e.err) parts.push('error ' + e.err);
+    return esc(parts.join('\n'));
+  }
+  // One entry → main row + hidden detail row, as a fragment (a detached
+  // node has no parent, so insertAdjacentElement would silently drop the
+  // detail row — the fragment keeps the pair atomic).
+  function tr(e){
+    const frag = document.createDocumentFragment();
+    const row = document.createElement('tr');
+    row.className = cls(e);
+    row.title = 'click to expand';
+    const t = new Date(e.ts * 1000).toTimeString().slice(0, 8);
+    row.innerHTML = '<td class="mono text-mut">' + t + '</td>' +
+      '<td class="num mono"><b>' + e.code + '</b></td>' +
+      '<td class="mono">' + esc(route(e)) + '</td>' +
+      '<td class="mono text-mut">' + esc(e.account || '') + '</td>' +
+      '<td class="text-mut">' + (e.kind ? esc(e.kind) : '') + '</td>' +
+      '<td class="num mono">' + kfmt(e.in) + '</td>' +
+      '<td class="num mono">' + kfmt(e.out) + '</td>' +
+      '<td class="num mono">' + kfmt(e.cache_read) + '</td>' +
+      '<td class="num mono">' + kfmt(e.saved) + '</td>' +
+      '<td class="err mono">' + (e.err ? '<span title="' + escq(e.err) + '">' + esc(short(e.err)) + '</span>' : '') + '</td>';
+    const det = document.createElement('tr');
+    det.className = 'det';
+    det.style.display = 'none';
+    det.innerHTML = '<td colspan="10"><div class="detbody mono">' + detText(e) + '</div></td>';
+    row.onclick = () => { det.style.display = det.style.display === 'none' ? '' : 'none'; };
+    frag.appendChild(row);
+    frag.appendChild(det);
+    return frag;
+  }
+  function rebuild(){
+    body.innerHTML = '';
+    let shown = 0;
+    for (const e of entries) { if (matches(e)) { body.appendChild(tr(e)); shown++; } }
+    if (!shown) body.innerHTML = '<tr><td colspan="10" class="empty">' + (entries.length ? 'no rows match the filter' : 'no requests logged yet') + '</td></tr>';
+    stat.textContent = (paused ? 'paused · ' : 'streaming live · ') + entries.length + ' rows · last seq ' + last;
+    stick();
+  }
+  function add(e){
+    entries.push(e);
+    while (entries.length > 500) entries.shift();
+    if (paused || !matches(e)) return;
+    body.appendChild(tr(e));
+    // trim DOM to match the entries cap (each entry owns main + detail row)
+    while (body.children.length > entries.length * 2) body.removeChild(body.firstChild);
+    const empty = body.querySelector('td.empty');
+    if (empty) empty.parentElement.remove();
+    stick();
+  }
+  function stick(){
+    if (!auto.checked) return;
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+  let fT = 0;
+  filter.addEventListener('input', () => {
+    clearTimeout(fT);
+    fT = setTimeout(rebuild, 120); // cheap debounce on keystroke bursts
+  });
   fetch('/admin/api/v1/logs?limit=200').then(r => r.json()).then(j => {
-    for (const e of j.entries) add(e);
-    last = j.entries.length ? j.entries[j.entries.length - 1].seq : 0;
-    stat.textContent = 'streaming live · last seq ' + last;
+    for (const e of j.entries) { entries.push(e); if (entries.length > 500) entries.shift(); }
+    last = entries.length ? entries[entries.length - 1].seq : 0;
+    rebuild();
   }).catch(() => { stat.textContent = 'failed to load history'; });
   const es = new EventSource('/admin/events?topics=logs');
   es.addEventListener('logs', ev => {
     if (paused) return;
     const e = JSON.parse(ev.data);
-    if (e.seq > last) { last = e.seq; add(e); stat.textContent = 'streaming live · last seq ' + last; }
+    if (e.seq > last) { last = e.seq; add(e); }
   });
   es.onerror = () => { stat.textContent = 'reconnecting…'; };
 })();
