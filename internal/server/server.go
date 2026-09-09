@@ -24,6 +24,7 @@ import (
 	"onegw/internal/store"
 	"onegw/internal/translat"
 	"onegw/internal/types"
+	"onegw/internal/update"
 	"onegw/internal/usage"
 	"runtime"
 	"runtime/debug"
@@ -70,6 +71,9 @@ type Server struct {
 	// owner records the running process (pid, build stamp, config mtime)
 	// for /admin/health and <data_dir>/owner.json (#42).
 	owner atomic.Pointer[owner.Info]
+	// upd is the dashboard-visible update service (#61), wired once by
+	// main via SetUpdater. Nil-safe: the endpoints answer 409 without it.
+	upd atomic.Pointer[*update.Service]
 	// sessions/logins power the dashboard cookie login (#45); events is
 	// the bounded SSE fan-out hub; reqlog is the #19 request ring. All
 	// live on the Server (not the reloadable state) so reloads neither
@@ -378,6 +382,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/v1/combos", s.handleAPICombos)
 	mux.HandleFunc("GET /admin/api/v1/quota", s.handleAPIQuota)
 	mux.HandleFunc("GET /admin/api/v1/saver", s.handleAPISaver)
+	mux.HandleFunc("GET /admin/api/v1/update", s.handleUpdateStatus)
+	mux.HandleFunc("POST /admin/api/v1/update", s.handleUpdateApply)
 	mux.HandleFunc("GET /admin/assets/fonts/", s.handleAdminFont)
 	mux.HandleFunc("GET /admin/ui/", s.handleAdminUI)
 	mux.HandleFunc("GET /", s.handleDashboard)
