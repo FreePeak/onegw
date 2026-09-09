@@ -100,7 +100,10 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	}
 	t := res.Targets[0]
 	def, ok := st.pool.Get(t.Provider)
-	if !ok || def.UpstreamFormat(t.Model) != clientFmt || def.AlwaysThinkingModel(t.Model) {
+	if !ok || def.UpstreamFormat(t.Model) != clientFmt || def.AlwaysThinkingModel(t.Model) ||
+		// Cache-profile anchoring requires the buffered pipeline
+		// (issue #34): the raw fast path bypasses prepareUpstreamBody.
+		(def.CacheProfile != "" && def.CacheProfile != "none") {
 		return s.streamFallback(r, prefix, whole)
 	}
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
@@ -138,7 +141,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	}
 	src := &countingReader{r: io.MultiReader(bytes.NewReader(relayPrefix), r.Body)}
 
-	id := requestIdentity(r, ak)
+	id := requestIdentity(r.Header, ak)
 	acct, poolReady := def.NextAccount(id)
 	if acct == nil {
 		// Whole account pool cooling from upstream 429s: never send a
