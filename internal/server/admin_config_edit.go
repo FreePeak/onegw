@@ -43,6 +43,7 @@ type acctEdit struct {
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url"`
 	Weight  int    `json:"weight"`
+	RPM     int    `json:"rpm"`
 }
 
 type providerEditReq struct {
@@ -475,6 +476,9 @@ func renderAccountTable(a acctEdit, key string) []string {
 	}
 	if a.Weight != 0 {
 		out = append(out, "weight = "+strconv.Itoa(a.Weight))
+	}
+	if a.RPM != 0 {
+		out = append(out, "rpm = "+strconv.Itoa(a.RPM))
 	}
 	return out
 }
