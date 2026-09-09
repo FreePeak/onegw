@@ -252,6 +252,21 @@ func (e *APIError) RegionLocked() bool {
 	return e != nil && e.Status == 403 && strings.Contains(strings.ToLower(e.Type), "region")
 }
 
+// SharedConcurrency reports whether a 429 is the upstream's model-wide
+// concurrency limit (resellers fronting Tencent GLM: "The request rate
+// exceeds the current model Concurrency limit 1200") rather than a
+// per-key rate/quota limit. Every account hits the same wall and the
+// window clears by itself in seconds, so the account ladder must NOT
+// bench keys for it and retries should wait ~1s steps instead of the
+// 250ms fast backoff.
+func (e *APIError) SharedConcurrency() bool {
+	if e == nil || e.Status != 429 {
+		return false
+	}
+	probe := strings.ToLower(e.Code + " " + e.Message)
+	return strings.Contains(probe, "concurrency limit")
+}
+
 // EstimateTokens gives a rough char/4 estimate for text content; used only
 // when upstream usage is missing.
 func (r *ChatRequest) EstimateTokens() int64 {
