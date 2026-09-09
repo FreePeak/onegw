@@ -1,6 +1,10 @@
 # onegw PRD
-*Last updated: 2026-09-09 (shared-wall fall-through 359e5a0 + glm demotion/rpm cap live,
-pid 39967 — earlier: Merlin research #58 + RPM governor #56, below.)*
+*Last updated: 2026-09-09 (live config: `[server] buffered_budget_bytes` raised 48→100 MiB (104857600) on
+  the running gateway — global in-flight buffered-bytes budget, the "RSS contract" (not a hard RSS cap;
+  total-process memory is GOMEMLIMIT, not config-exposed). Edit in gitignored onegw.toml; fresh pid 39967
+  loaded it at startup after the peer's zero-drop deploy — verify-then-trust, no second redeploy; verified
+  via /admin/config, double health, /v1/models 200. Earlier: shared-wall fall-through 359e5a0 + glm demotion/rpm cap live,
+  pid 39967 — earlier: Merlin research #58 + RPM governor #56, below.)*
 
 **2026-09-09 — shared-wall fall-through + glm direct demotion (359e5a0, deployed pid 39967):**
 with >=20 sessions in flight the Tencent model-wide "Concurrency limit 1200" wall kept
