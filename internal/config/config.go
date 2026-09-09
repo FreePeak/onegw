@@ -179,6 +179,10 @@ type Acct struct {
 	APIKey  string `toml:"api_key"`
 	BaseURL string `toml:"base_url"`
 	Weight  int    `toml:"weight"`
+	// RPM proactively caps upstream attempts per minute for this account
+	// (token bucket, 0 = uncapped) so the pool rotates before the
+	// upstream's per-account rate limit benches the key reactively.
+	RPM int `toml:"rpm"`
 }
 
 // TierCfg is one model's task-routing metadata (issue #54), declared as
