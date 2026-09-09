@@ -1,4 +1,23 @@
 # onegw PRD
+*Last updated: 2026-09-09 (four-lane wave landed + merged on origin/master, full suite green on
+the merged tree: #54 task-aware combo reordering (d94921d) — local stateless classifier
+(light/standard/heavy/critical, no LLM) + config-declared model power ([[providers.tier]], 0-150)
++ stable re-sort of combo targets inside router.Execute before account selection (never removes
+targets), `task_routing = off` default, decision rows to the #19 log ring only when order changes;
+#32/#34/#35 (dd6d92b, reconciled from the earlier encode-layer WIP): cache_control /
+prompt_cache_key / session_id survive cross-format translation and re-emit only on accepting
+wires, never invented; per-provider `cache_profile` (claude-anchor | dashscope-marker |
+sticky-key) anchors LAST at the attempt choke point with profiled providers herded off the
+stream fast path; saver sticky gate no longer flips the request prefix (all-or-nothing global
+gate only when the canonical form is already cache-stable); duplicate #50 coercion deleted in
+favor of master's coerceAlwaysThinkingUnified + EncodeAnthropicRequest TopK-drop regression
+restored; #55 VPS deploy foundation (bb023d3) — docs/vps-deploy.md runbook, scripts/deploy_vps.sh
+zero-drop VPS analog (build from git archive HEAD, NEW-before-OLD takeover, live-tested on
+scratch port incl. abort paths), hardened contrib/systemd/onegw.service; #14 follow-through
+(7bd9d9b) — release workflow publishes SHA256SUMS, install.sh verifies downloads and proves
+the install with `onegw version`, Dockerfile bounded GO_BUILD_JOBS. Integration merge be699f6
+over peer's 987a849 dashboard revamp; conflicts resolved: server.go identity+task ctx wiring
+unified, config.go/provider.go additive both-sides.)*
 *Last updated: 2026-09-09 (dashboard revamp 987a849: ui-ux-pro-max design pass — slate
 glassmorphism tokens, Fira Sans/Fira Code vendored, contrast-fixed both themes — PLUS the
 provider/combo config editor: PUT /admin/config/providers and /admin/config/combos popup
