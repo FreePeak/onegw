@@ -16,7 +16,7 @@ func TestNewKindsFormatAndDefaults(t *testing.T) {
 	}{
 		{KindCommandCode, translat.FmtCommandCode, "https://api.commandcode.ai/alpha/generate", "", true},
 		{KindOpenAIResponses, translat.FmtOpenAIResponses, "https://cli-chat-proxy.grok.com", "/v1/responses", true},
-		{KindCursor, translat.FmtCursor, "https://api2.cursor.sh", "", false},
+		{KindCursor, translat.FmtOpenAI, "https://api2.cursor.sh", "", true},
 		{KindOpenAI, translat.FmtOpenAI, "https://api.openai.com", "/v1/chat/completions", false},
 	}
 	for _, c := range cases {
