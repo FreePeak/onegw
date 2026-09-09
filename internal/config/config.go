@@ -34,6 +34,12 @@ type Server struct {
 	// legitimately exceed the historical fixed 60s; empty/invalid keeps
 	// 60s. Applied when providers are built (startup and SIGHUP reload).
 	ResponseHeaderTimeout string `toml:"response_header_timeout"`
+	// TaskRouting enables per-request task-aware combo reordering
+	// (issue #54): local difficulty classifier sorts combo targets so
+	// the best-fit model is tried first; full fallback chain preserved.
+	// "off" (default) = no-op; "on" = active. Env ONEGW_TASK_ROUTING
+	// overrides. Applied on startup and SIGHUP reload.
+	TaskRouting string `toml:"task_routing"`
 }
 
 // Auth holds gateway API keys clients authenticate with. Keys may be
@@ -162,6 +168,9 @@ type ProviderCfg struct {
 	// Passthrough opts the provider into the narrow OpenAI-format surfaces
 	// served without translation: "embeddings", "stt", "tts".
 	Passthrough []string `toml:"passthrough"`
+	// Tiers declares per-model task-routing metadata (issue #54):
+	// power 0–150, vision/reasoning flags, context/output limits.
+	Tiers []TierCfg `toml:"tier"`
 }
 
 // Acct is one provider account.
@@ -170,6 +179,21 @@ type Acct struct {
 	APIKey  string `toml:"api_key"`
 	BaseURL string `toml:"base_url"`
 	Weight  int    `toml:"weight"`
+}
+
+// TierCfg is one model's task-routing metadata (issue #54), declared as
+// [[providers.tier]]. Power is the capability score on a 0–150 scale —
+// higher = more capable; the router tries the combo target whose power
+// is closest to the classified task's target first. Vision/Reasoning
+// gate hard-miss penalties; Context/MaxOut are token limits for the
+// prompt-overflow guard (0 = unknown, no size penalty).
+type TierCfg struct {
+	Model     string `toml:"model"`     // exact model id or path.Match glob
+	Power     int    `toml:"power"`     // 0–150 capability score
+	Vision    bool   `toml:"vision"`    // handles image inputs
+	Reasoning bool   `toml:"reasoning"` // reasoning model
+	Context   int    `toml:"context"`   // token context window (0 = unknown)
+	MaxOut    int    `toml:"max_out"`   // max output tokens (0 = unknown)
 }
 
 // ComboCfg is an ordered fallback chain.
@@ -274,6 +298,9 @@ func (c *Config) Defaults() {
 			}
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("ONEGW_TASK_ROUTING")); v != "" {
+		c.Server.TaskRouting = v
+	}
 }
 
 // FlushEvery parses the flush interval.
@@ -293,6 +320,12 @@ func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
 		return 60 * time.Second
 	}
 	return d
+}
+
+// TaskRoutingOn reports whether task-aware combo reordering (issue #54)
+// is enabled. Anything other than "on" (case-insensitive) is off.
+func (c *Config) TaskRoutingOn() bool {
+	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) == "on"
 }
 
 // UpdateEvery parses the release-check interval; 0 means disabled.
@@ -372,6 +405,17 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("provider %s unknown cache_profile %q (want none, claude-anchor, dashscope-marker or sticky-key)", p.Name, p.CacheProfile)
 		}
+		for _, tier := range p.Tiers {
+			if tier.Model == "" {
+				return fmt.Errorf("provider %s: [[tier]] missing model", p.Name)
+			}
+			if tier.Power < 0 || tier.Power > 150 {
+				return fmt.Errorf("provider %s: tier %q power %d out of range (0-150)", p.Name, tier.Model, tier.Power)
+			}
+			if tier.Context < 0 || tier.MaxOut < 0 {
+				return fmt.Errorf("provider %s: tier %q context/max_out must be >= 0", p.Name, tier.Model)
+			}
+		}
 		if p.QuotaLimitTokens < 0 || p.QuotaLimitRequests < 0 {
 			return fmt.Errorf("provider %s quota limits must be >= 0", p.Name)
 		}
@@ -390,6 +434,12 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("provider %s unknown passthrough capability %q", p.Name, pc)
 			}
 		}
+	}
+	// Task routing: accept "" (default off) plus "off" and "on", case-insensitive.
+	switch strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) {
+	case "", "off", "on":
+	default:
+		return fmt.Errorf("server.task_routing %q is not \"off\" or \"on\"", c.Server.TaskRouting)
 	}
 	comboNames := map[string]bool{}
 	for _, cb := range c.Combos {
