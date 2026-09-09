@@ -163,3 +163,69 @@ func TestAdaptAlwaysThinkingPreservesNumbers(t *testing.T) {
 		t.Errorf("numeric fidelity broken: %s", got)
 	}
 }
+
+func TestPrepareUpstreamBodyCrossFormatAlwaysThinking(t *testing.T) {
+	def := &provider.Def{AlwaysThinking: []string{"glm-*"}}
+
+	// OpenAI-surface effort values reach the Responses wire on the
+	// cross-format path — every rejected value must arrive coerced
+	// (EncodeResponsesRequest emits reasoning.effort from u.ReasoningEffort).
+	for in, want := range map[string]string{
+		// xhigh coerces to max on the unified struct; the Responses
+		// encoder then clamps max→high (its enum tops out at high).
+		"none": "low", "minimal": "low", "medium": "low", "xhigh": "high",
+	} {
+		body := []byte(`{"model":"m","reasoning_effort":"` + in + `","messages":[]}`)
+		out, err := prepareUpstreamBody(translat.FmtResponses, translat.FmtOpenAI, body, "glm-5.3-flash", def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(out, &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		r, _ := m["reasoning"].(map[string]any)
+		if got, _ := r["effort"].(string); got != want {
+			t.Errorf("effort %q → reasoning.effort = %q, want %q (body %s)", in, got, want, out)
+		}
+	}
+
+	// An Anthropic-surface thinking budget encodes to a Responses upstream
+	// as a derived effort that can violate the low|high|max enum; the
+	// unified knob must be dropped instead (upstream default applies).
+	body := []byte(`{"model":"m","max_tokens":100,"thinking":{"type":"enabled","budget_tokens":2048},"messages":[]}`)
+	out, err := prepareUpstreamBody(translat.FmtResponses, translat.FmtAnthropic, body, "glm-5.3-flash", def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), `"reasoning"`) {
+		t.Errorf("thinking budget leaked onto an always-thinking Responses upstream: %s", out)
+	}
+
+	// No knob present → nothing invented.
+	out, err = prepareUpstreamBody(translat.FmtResponses, translat.FmtOpenAI,
+		[]byte(`{"model":"m","messages":[]}`), "glm-5.3-flash", def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), `"reasoning"`) {
+		t.Errorf("knob invented on an always-thinking upstream: %s", out)
+	}
+
+	// Non-listed model / nil def → effort passes through untouched.
+	for _, d := range []*provider.Def{nil, {AlwaysThinking: []string{"glm-*"}}} {
+		out, err = prepareUpstreamBody(translat.FmtResponses, translat.FmtOpenAI,
+			[]byte(`{"model":"m","reasoning_effort":"medium","messages":[]}`), "gpt-5.4-mini", d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(out, &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		r, _ := m["reasoning"].(map[string]any)
+		if got, _ := r["effort"].(string); got != "medium" {
+			t.Errorf("non-listed model effort = %q, want medium passthrough (def %v, body %s)", got, d, out)
+		}
+	}
+}
