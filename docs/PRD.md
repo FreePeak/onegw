@@ -1,5 +1,8 @@
 # onegw PRD
-*Last updated: 2026-09-09 (#52 follow-up 51ccf1e: NormalizeInStreamError now also rewrites the
+*Last updated: 2026-09-09 (docs: README revamped — assets/logo.svg replaced with the dashboard favicon mark (dark tile + white/blue bars), dashboard section rewritten around a single freshly re-shot live Overview screenshot (login/tools/usage/providers/logs PNGs removed, those pages now described as text), duplicate token-saver bullet merged, upstream-fault-classification + sticky/session-affinity feature bullets added, misplaced sticky TOML block re-homed. earlier: housekeeping: #53 closed fixed (84fd1c9 + 51ccf1e), #51 closed delivered, #44 closed
+research-delivered + step-1-shipped — follow-ups opened: #54 task-aware combo reordering (#44 step 2), #55
+omp+onegw VPS deploy; open-work table synced with struck rows; next up: #50 cross-format always-thinking
+coercion. earlier: #52 follow-up 51ccf1e: NormalizeInStreamError now also rewrites the
 in-stream variant of the distributor parse-reject 400 (84fd1c9 shape) to retryable
 upstream_parse_rejected — the helper had shipped claiming "the same transient-fault rewrites"
 while only carrying auth-verify, leaving streaming paths surfacing that fault as a terminal
@@ -281,8 +284,9 @@ same-format passthrough). Packages:
   session, so massive session counts cost nothing. Note: `session_id` keys
   nothing today either — `ChatRequest.SessionID` is parsed from `user` /
   `metadata.user_id` (`openai.go:192`, `anthropic.go:123`) but read nowhere,
-  and rollups key on day/hour/provider/model/api_key. Forwarding it as a
-  cache-affinity hint is open work (#34, #36).
+  and rollups key on day/hour/provider/model/api_key. Header affinity landed (#36, 242f303:
+  x-grok-conv-id/x-grok-session-id/x-session-id/session_id forwarded verbatim, per-provider opt-in derived
+  id); cache-affinity breakpoint/key-forwarding remains open work (#34).
 - `GOGC=60` (set at startup if `GOGC` env unset); soft memory limit
   `GOMEMLIMIT=90MiB` set at startup if unset. Allocation-heavy JSON reuse in
   hot loops.
@@ -603,12 +607,16 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in cfce76f, reverted at user decision in 9049dd4 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
 | ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
 | ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
-| #44 | Model tiering: step 1 (config-only tiny/planning combos) shipped 2026-09-09 as README + onegw.toml.example examples (e797986) — applying to the live toml is operator config, not code; step 2 (task-aware combo reordering) unbuilt | user request |
+| ~~#44~~ | ~~Model tiering / task-aware routing research~~ — **done 2026-09-09**; research deliverable verified vs LiteLLM/9router/OmniRoute/omp (verdict: client-side roles now, gateway feature = task-aware combo reordering); step 1 config-only tiny/planning combos shipped (e797986); step 2 tracks as #54 | user request |
 | ~~#45~~ | ~~Dashboard build approach for #41~~ — **done 2026-09-08**; decision held: Go html/template + vendored htmx 2.0.6 + uPlot 1.6.32, stdlib SSE with bounded fan-out, cookie sessions; health strip fixed to server-rendered HTML in fe2d532; RSS bench pre/post ≈ 88/89 MiB peak | #41 deep dive |
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
 | ~~#48~~ | ~~b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down~~ — **done 2026-09-09** (242f303): narrow gated-403 signature (403 + access_denied/"Deposit required") benches the ACCOUNT on the adaptive 429 ladder (deposit-clearing success resets via pool.ok), marks Fallbackable — buffered rotates accounts→combo targets, router rotates pool-bounded without spending retry budget, all-gated pools answer 429+Retry-After, stream fast path answers pre-body; non-gated 403s fail fast unchanged; quota-503 untouched | found live testing #47 |
 | #50 | Cross-format encode path never coerces always-thinking effort (residual from #17) — fix shape verified: coerce `u.ReasoningEffort`/`u.Thinking` in `prepareUpstreamBody`'s cross-format branches via `AlwaysThinkingModel` before `encodeFor`; natural to land with #32 | #17 residual |
+| ~~#51~~ | ~~Baseline research: peer gateways + free-model inventory (omp+onegw VPS foundation)~~ — **done 2026-09-09**; deliverable in the issue body (six tools verified vs source/docs/live endpoints); follow-up #55 tracks the actual VPS deploy | user request |
+| ~~#53~~ | ~~b-ai distributor nodes parse-reject large valid bodies as terminal 400~~ — **done 2026-09-09** (84fd1c9 + 51ccf1e): translat.UpstreamParseRejected (narrow 400 + api_error + "Invalid request body" + request-id trailer) rewrites to retryable 502 upstream_parse_rejected, no bench, Router retries / combo falls through; NormalizeInStreamError covers the in-stream variant; genuine schema 400s stay terminal (test-pinned); zero-drop deployed pid 53121, live-verified | #52 follow-up |
+| #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
+| #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 
 ### Recommended implementation order (2026-09-08)
 
@@ -617,11 +625,11 @@ Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
 features were later deliberately reverted, 9049dd4); ~~#42~~ ownership model
 landed 2026-09-08 (`owner.json` + `/admin/health` owner block). Tier 1 complete.
 
-Tier 3 — remaining 2026-09-09: #32 + #50 (encode-layer work area: cache-field
-preservation + cross-format effort coercion) → #34/#35 (per-provider cache
-profiles; candidates to merge into one feature) → #44 step 2 (task-aware combo
-reordering) → #14 remainder (`onegw connect <tool>`, launchd/systemd unit).
-#31/#33/#36/#48 landed 2026-09-09; #44 step 1 documented (config examples).
+Tier 3 — remaining 2026-09-09: #50 (cross-format effort coercion, in progress) → #32 + #34/#35
+(encode-layer cache-field preservation + per-provider cache profiles; candidates to merge into one
+feature) → #54 (task-aware combo reordering, #44 step 2) → #55 (VPS deploy) → #14 remainder
+(`onegw connect <tool>`, launchd/systemd unit).
+#31/#33/#36/#48 landed 2026-09-09; #44 closed (research + step 1, step 2 → #54); #51/#53 closed 2026-09-09.
 
 ### Always-thinking effort coercion (#16, done 2026-09-07)
 
