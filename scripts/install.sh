@@ -3,10 +3,16 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/FreePeak/onegw/master/scripts/install.sh | sh
 #
-# What it does: downloads the latest release binary for your OS/arch, installs
-# it, writes a starter config (loopback bind) with a generated admin password,
-# and starts the gateway on 127.0.0.1:8080. A fresh gateway key is generated on
-# each start and printed in the summary (clients send it as their API key).
+# What it does: downloads the latest release binary for your OS/arch, verifies
+# it against the release's SHA256SUMS, installs it, writes a starter config
+# (loopback bind) with a generated admin password, and starts the gateway on
+# 127.0.0.1:8080. A fresh gateway key is generated on each start and printed
+# in the summary (clients send it as their API key).
+#
+# If the release for your platform is missing, build from source instead:
+#   git clone https://github.com/FreePeak/onegw && cd onegw
+#   go build -o onegw ./cmd/onegw   (then set ONEGW_BIN=/path/to/onegw, or copy
+#   it into PATH and run with ONEGW_START=0)
 #
 # Env overrides:
 #   ONEGW_BIN              install this local binary instead of downloading
@@ -49,7 +55,36 @@ else
     [ -n "$VERSION" ] || die "could not resolve latest release"
   fi
   say "downloading onegw $VERSION ($os/$arch)..."
-  curl -fL --retry 3 -o "$tmp/onegw" "https://github.com/$REPO/releases/download/$VERSION/onegw-$os-$arch"
+  if ! curl -fL --retry 3 -o "$tmp/onegw" \
+      "https://github.com/$REPO/releases/download/$VERSION/onegw-$os-$arch"; then
+    die "no release asset for $os/$arch at $VERSION; build from source instead:
+  git clone https://github.com/$REPO && cd onegw && go build -o onegw ./cmd/onegw
+  (see README 'Build from source'; then re-run with ONEGW_BIN=/path/to/onegw)"
+  fi
+  # Verify against the release's SHA256SUMS when it exists (published by the
+  # release workflow). Missing file or missing tool: verify what we can.
+  want=""
+  got=""
+  if curl -fL --retry 3 -o "$tmp/SHA256SUMS" \
+      "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS" 2>/dev/null; then
+    want=$(grep " onegw-$os-$arch\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)
+    if [ -n "${want:-}" ]; then
+      if command -v sha256sum >/dev/null 2>&1; then
+        got=$(sha256sum "$tmp/onegw" | cut -d' ' -f1)
+      elif command -v shasum >/dev/null 2>&1; then
+        got=$(shasum -a 256 "$tmp/onegw" | cut -d' ' -f1)
+      fi
+      if [ -z "$got" ]; then
+        say "note: no sha256 tool found; skipping checksum verification"
+      elif [ "$got" != "$want" ]; then
+        die "checksum mismatch for onegw-$os-$arch (got sha256:$got, want sha256:$want)"
+      else
+        say "checksum verified (sha256:$got)"
+      fi
+    else
+      say "note: SHA256SUMS has no entry for onegw-$os-$arch; skipping verification"
+    fi
+  fi
 fi
 chmod 0755 "$tmp/onegw"
 
@@ -61,6 +96,13 @@ if ! mkdir -p "$BINDIR" 2>/dev/null || [ ! -w "$BINDIR" ]; then
   say "note: $PREFIX not writable, installing to $BINDIR (add it to PATH)"
 fi
 install -m 0755 "$tmp/onegw" "$BINDIR/onegw"
+
+# Verify the installed binary actually runs and reports the expected version
+# (the release binaries are version-stamped by the release workflow).
+if ! out=$("$BINDIR/onegw" version 2>/dev/null) || [ -z "$out" ]; then
+  die "installed binary failed to run 'onegw version'; see README 'Build from source'"
+fi
+say "installed: $out"
 
 # --- starter config ----------------------------------------------------------
 mkdir -p "$CONFHOME/data"
