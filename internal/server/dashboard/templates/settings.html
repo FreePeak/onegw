@@ -10,6 +10,21 @@
   <span class="k">admin auth</span><span>{{if .AdminSet}}password set{{else}}<span class="pill warn">open — no admin_password</span>{{end}}</span>
 </div></div>
 
+<div class="card mb-3"><h3>Version</h3>
+<div class="kv">
+  <span class="k">running</span><span class="mono" id="upd-current">{{.UpdCurrent}}</span>
+  <span class="k">latest release</span><span class="mono" id="upd-latest">{{or .UpdLatest "—"}}</span>
+  <span class="k">last check</span><span class="mono" id="upd-checked">{{or .UpdChecked "—"}}{{if .UpdErr}} · <span class="pill err">check failed</span>{{end}}</span>
+  <span class="k">status</span><span id="upd-state">{{if .UpdOutdated}}<span class="pill warn">update available → {{.UpdLatest}}</span>{{else}}<span class="pill ok">up to date</span>{{end}}{{if .UpdInDocker}} <span class="pill">docker container</span>{{end}}</span>
+</div>
+<div class="flex items-center gap-2.5 mt-2.5">
+  <button class="btn" id="upd-check">Check now</button>
+  <button class="btn primary" id="upd-apply">Update now</button>
+  <span class="text-mut" id="upd-hint"></span>
+</div>
+<pre id="upd-res" class="mono mt-2.5 text-mut">{{if .UpdErr}}last error: {{.UpdErr}}{{end}}{{if .UpdApply}} · last apply: {{.UpdApply}}{{end}}</pre>
+</div>
+
 <div class="card mb-3"><h3>Maintenance</h3>
 <div class="flex items-center gap-2.5">
   <button class="btn" hx-put="/admin/config/reload" hx-target="#reload-res" hx-swap="innerHTML">Reload config (SIGHUP)</button>
@@ -25,4 +40,81 @@
   <span class="k">auth</span><span class="mono">X-Admin-Password header · or session cookie via POST /admin/login</span>
 </div></div>
 {{end}}
-{{define "scripts"}}{{end}}
+{{define "scripts"}}
+<script>
+(function(){
+  var res = document.getElementById('upd-res'),
+      hint = document.getElementById('upd-hint'),
+      applyBtn = document.getElementById('upd-apply'),
+      checkBtn = document.getElementById('upd-check'),
+      startPid = {{.PID}};
+  function show(msg){ res.textContent = msg; }
+  function render(j){
+    document.getElementById('upd-current').textContent = j.current || '';
+    document.getElementById('upd-latest').textContent = j.latest || '—';
+    var d;
+    if (j.last_check) {
+      d = new Date(j.last_check);
+      document.getElementById('upd-checked').textContent = d.toLocaleString();
+    }
+    var state = document.getElementById('upd-state');
+    state.innerHTML = j.outdated
+      ? '<span class="pill warn">update available → ' + (j.latest||'') + '</span>'
+      : '<span class="pill ok">up to date</span>';
+    if (j.in_container) state.innerHTML += ' <span class="pill">docker container</span>';
+    if (j.last_apply) show('last apply: ' + j.last_apply);
+    else if (j.last_error) show('last error: ' + j.last_error);
+  }
+  function get(){ return fetch('/admin/api/v1/update').then(r=>r.json()); }
+  get().then(render).catch(()=>{});
+
+  checkBtn.onclick = async function(){
+    checkBtn.disabled = true; hint.textContent = 'checking…';
+    try { render(await (await fetch('/admin/api/v1/update', {method:'POST', body:''})).json()); }
+    catch(e){ show('check failed: ' + e.message); }
+    finally { checkBtn.disabled = false; hint.textContent = ''; }
+  };
+
+  applyBtn.onclick = async function(){
+    applyBtn.disabled = true; checkBtn.disabled = true;
+    hint.textContent = 'starting update…';
+    var j;
+    try { j = await (await fetch('/admin/api/v1/update', {method:'POST', body: JSON.stringify({apply:true})})).json(); }
+    catch(e){ show('apply failed: ' + e.message); reset(); return; }
+    if (j.guidance){ // container: image owns the filesystem
+      show(j.guidance);
+      hint.innerHTML = 'run on the host, then recreate the container';
+      reset(); return;
+    }
+    if (j.error){ show('apply failed: ' + j.error); reset(); return; }
+    // Handoff started (202): poll until this session's evidence breaks —
+    // a different pid answered (new build owns the port), the session
+    // 401s (new process starts with an empty session table), or the
+    // endpoint 404s (new build predates the dashboard update routes).
+    // Any of the three means the old gateway is gone; reload to meet it.
+    hint.textContent = 'update in progress — handing over to the new build…';
+    var deadline = Date.now() + 90000;
+    (function poll(){
+      fetch('/admin/api/v1/update').then(function(r){
+        if (r.status === 401 || r.status === 404){ location.reload(); return null; } // new process
+        return r.json();
+      }).then(function(st){
+        if (!st) return;
+        if (st.pid && st.pid !== startPid){ location.reload(); return; } // new build owns the port
+        if (st.last_apply && st.last_apply.indexOf('failed') === 0){
+          show('update failed: ' + st.last_apply);
+          statePill(st); reset(); return;
+        }
+        if (Date.now() > deadline){ show('handoff timed out — the old gateway is still serving; check logs'); reset(); return; }
+        setTimeout(poll, 1500);
+      }).catch(function(){ setTimeout(poll, 1500); });
+    })();
+  };
+  function statePill(st){
+    var el = document.getElementById('upd-state');
+    el.innerHTML = st.outdated ? '<span class="pill warn">update available</span>' : '<span class="pill ok">up to date</span>';
+  }
+  function reset(){ applyBtn.disabled = false; checkBtn.disabled = false; hint.textContent = ''; }
+})();
+</script>
+{{end}}
