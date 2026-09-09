@@ -169,6 +169,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			ExtraHeaders:     p.ExtraHeader,
 			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
+			CacheProfile:     p.CacheProfile,
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
 			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
@@ -440,7 +441,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -509,7 +510,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -570,9 +571,10 @@ func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIEr
 
 // requestIdentity derives the sticky-account identity for a request: the
 // client session header when present, else the auth key label. Empty
-// disables affinity (plain round-robin).
-func requestIdentity(r *http.Request, ak *config.AuthKey) string {
-	if sid := r.Header.Get(provider.OpenCodeSessionHeader); sid != "" {
+// disables affinity (plain round-robin). Takes the header map so
+// headerless callers (attempt tests) can pass a bare http.Header.
+func requestIdentity(h http.Header, ak *config.AuthKey) string {
+	if sid := h.Get(provider.OpenCodeSessionHeader); sid != "" {
 		return "s:" + sid
 	}
 	if ak != nil {
@@ -620,6 +622,13 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		s.m.invalidBody(def.Name, mdl, acctName(acct), err.Error())
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
+	// Issue #34: anchor cache markers LAST — after every body mutation
+	// including cross-format translation — so anchors never sit at
+	// pre-normalization offsets (a stale anchor costs a full prefix
+	// rewrite). sessionKey is the same identity sticky-account pinning
+	// uses; "" (no session header, no key label) skips sticky-key
+	// injection. clientHdr may be nil (headerless tests).
+	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak))
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
