@@ -180,3 +180,29 @@ func TestExecuteAdmissionWallDirectRouteSurfacesWithRetryAfter(t *testing.T) {
 		})
 	}
 }
+
+// Live 2026-09-09 22:56 (tokenrouter/z-ai/glm-5.3-free @harvey): a windowed
+// request-count 429 ("Maximum 8 requests within 1 minutes") surfaced to the
+// client with Retry-After 10 — the generic default — sending the client
+// straight back into the still-closed 60s window. The final error must
+// stamp the upstream-stated window instead.
+func TestExecuteWindowed429StampsStatedWindowRetryAfter(t *testing.T) {
+	r := New(newTestPool())
+	res, _ := r.Resolve("p1/m1")
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		return nil, &types.APIError{Status: 429, Type: "api_error",
+			Message: "You have reached the request limit[z-ai/glm-5.3-free]: Maximum 8 requests within 1 minutes."}
+	}
+	got := r.Execute(context.Background(), res, caller, func(a any) {})
+	if got == nil || got.Status != 429 {
+		t.Fatalf("expected the 429 to surface, got %+v", got)
+	}
+	if got.RetryAfter != "60" {
+		t.Fatalf("Retry-After = %q, want 60 (the stated window, not the generic 10)", got.RetryAfter)
+	}
+	if calls != 2 { // windowed limits are per-key: rotation still helps
+		t.Fatalf("windowed per-key 429 must keep same-target retries, calls=%d", calls)
+	}
+}

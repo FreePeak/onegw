@@ -5,6 +5,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -173,6 +175,16 @@ type Def struct {
 	// Concurrency cap for in-flight upstream calls (0 = unlimited).
 	MaxConc int `toml:"max_concurrency"`
 
+	// Shared request-rate budget for the WHOLE provider (0 = uncapped):
+	// one token bucket gating every account of this provider. For
+	// upstreams whose rate limit is per-user/per-model-lane rather than
+	// per-key (live tokenrouter 2026-09-09: 8 req/min shared across both
+	// keys — harvey 429ed with only ~5 attempts in its trailing window),
+	// per-account RPM cannot express the wall; this gates the pool as
+	// one, so the pool reports an honest fall-through instead of feeding
+	// the shared window doomed attempts. Set from ProviderCfg.RPM.
+	RPM int
+
 	// Headers added to every upstream request (auth handled separately).
 	ExtraHeaders map[string]string `toml:"extra_headers"`
 
@@ -296,7 +308,7 @@ func NewPool() *Pool { return &Pool{byName: map[string]*Def{}} }
 // Set (re)registers a provider definition.
 func (p *Pool) Set(d *Def) {
 	if d.pool == nil {
-		d.pool = newAccountPool(d.Accounts, d.StickyTTL)
+		d.pool = newAccountPool(d.Accounts, d.StickyTTL, d.RPM)
 	}
 	if d.MaxConc > 0 {
 		d.inflight = make(chan struct{}, d.MaxConc)
@@ -317,7 +329,7 @@ func (p *Pool) Replace(defs []*Def) {
 	order := make([]string, 0, len(defs))
 	for _, d := range defs {
 		if d.pool == nil {
-			d.pool = newAccountPool(d.Accounts, d.StickyTTL)
+			d.pool = newAccountPool(d.Accounts, d.StickyTTL, d.RPM)
 		}
 		if d.MaxConc > 0 {
 			d.inflight = make(chan struct{}, d.MaxConc)
@@ -454,11 +466,82 @@ var versionRe = regexp.MustCompile(`^v\d+$`)
 // clear, short enough not to starve a healthy pool. Each consecutive 429
 // doubles the bench (the key is sinking into longer upstream blocks, not
 // just a burst window), capped at coolCap. A successful call resets the
-// ladder (pool.ok). A Retry-After header, when present, always wins.
+// ladder (pool.ok). A Retry-After header, when present, always wins — as
+// does a request-count window the 429 BODY names (APIError.RateWindow,
+// e.g. "Maximum 8 requests within 1 minutes"): that bench rides the same
+// verbatim, uncapped path as a header hint, because coolBase's 10s
+// re-enters the still-closed window (live tokenrouter 2026-09-09: 429 at
+// :46, ladder retry at :57 429s again, success only ~30-40s later).
 const (
 	coolBase = 10 * time.Second
 	coolCap  = 60 * time.Second
 )
+
+// Flap breaker (b-ai edge 502 storms, live 2026-09-09 22:54): when a
+// provider-wide fault strikes every account at once — an HTML "502 Bad
+// Gateway" page served by an nginx-style edge while the origin pool flaps —
+// per-account ladders cannot see it: the error indicts the provider, not the
+// key. consecutive edge-class faults (HTML body, empty body, unreachable,
+// timeout) trip a provider-wide breaker that parks the whole pool for
+// flapOpen, so combos fall through instantly instead of fanning N accounts
+// into a dead edge (a 7-account fan wastes ~14 attempts and 2 retries before
+// a single 200 survives). A success resets the strike count (pool.ok). Sizing
+// fits the observed ~25s windows; sustained outages keep re-tripping, one
+// probe per window at most.
+const (
+	flapThreshold = 4                // consecutive edge-class faults before opening
+	flapOpen      = 15 * time.Second // whole-pool park when the breaker opens
+)
+
+// edgeFault reports whether an upstream error indicts the provider's edge
+// rather than the request or the credential: the nginx/CDN Bad Gateway
+// page, an empty error body, an unreachable transport, a timeout, or a
+// plain 502/503/504/52x status. These faults are independent of which key
+// sent the request — exactly what the flap breaker counts. Shared-
+// concurrency walls and 4xx answers are load/request-shaped, not
+// edge-fault-shaped, and never strike.
+func edgeFault(apiErr *types.APIError) bool {
+	if apiErr == nil || apiErr.Status < 500 || apiErr.SharedConcurrency() {
+		return false
+	}
+	switch apiErr.Type {
+	case "upstream_html_error", "upstream_empty_body", "upstream_unreachable", "upstream_timeout":
+		return true
+	}
+	return edgeFaultStatus(apiErr.Status)
+}
+
+// edgeFaultStatus matches the edge-fault status family for callers that
+// only have an HTTP code (passthrough surfaces relay errors undecoded).
+func edgeFaultStatus(status int) bool {
+	switch status {
+	case 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527:
+		return true
+	}
+	return false
+}
+
+var htmlTitleRe = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
+
+// htmlErrPage reports whether an upstream error body is an HTML page —
+// the stock nginx/CDN edge rendering ("502 Bad Gateway") served during
+// origin outages — and extracts its <title> as a bounded one-line hint.
+// JSON API errors never start with '<', so the check cannot misfire on
+// a decoded body.
+func htmlErrPage(body []byte) (title string, ok bool) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '<' {
+		return "", false
+	}
+	if m := htmlTitleRe.FindSubmatch(trimmed); m != nil {
+		title = strings.TrimSpace(string(m[1]))
+		if len(title) > 100 {
+			title = title[:100] + "…"
+		}
+		return ": " + title, true
+	}
+	return "", true
+}
 
 // NextAccount picks the next available account (weighted round-robin with
 // adaptive rate-limit cooldowns). With a sticky TTL configured, the identity
@@ -567,6 +650,17 @@ type accountPool struct {
 	ttl     time.Duration // sticky affinity window; 0 = plain round-robin
 	sticky  map[string]stickyPin
 	now     func() time.Time // injectable clock (tests)
+
+	// Shared provider-wide request budget (Def.RPM): one bucket gating
+	// every account. nil = uncapped (the default; per-account buckets
+	// still apply).
+	shared *tokenBucket
+
+	// Flap breaker (provider-wide edge faults): consecutive edge-class
+	// failures park the whole pool until flapOpenUntil, after which the
+	// next request probes normally. See edgeFault.
+	flapStrikes   int
+	flapOpenUntil time.Time
 }
 
 // stickyPin is one identity's pinned account, matched by Name+APIKey like
@@ -576,11 +670,14 @@ type stickyPin struct {
 	expires   time.Time
 }
 
-func newAccountPool(accts []Account, sticky time.Duration) *accountPool {
+func newAccountPool(accts []Account, sticky time.Duration, sharedRPM int) *accountPool {
 	if len(accts) == 0 {
 		accts = []Account{{Name: "default"}}
 	}
 	p := &accountPool{ttl: sticky, now: time.Now}
+	if sharedRPM > 0 {
+		p.shared = newTokenBucket(sharedRPM)
+	}
 	buckets := make(map[string]*tokenBucket) // one bucket per account, shared by weighted slots
 	for _, a := range accts {
 		w := a.Weight
@@ -602,21 +699,32 @@ func newAccountPool(accts []Account, sticky time.Duration) *accountPool {
 // expired or cooling pin is dropped and rotation starts after that
 // account's slot, re-pinning the winner.
 //
-// When every account is cooling it returns (nil, ready) instead of
-// handing out a doomed pick: the caller falls through to the next combo
-// target or answers 429 with Retry-After, rather than burning a ~1s
-// upstream attempt that extends the pool's rate-limit damage.
+// When every account is blocked — cooling, own-bucket drained, or the
+// shared provider budget empty (Def.RPM) — it returns (nil, ready) instead
+// of handing out a doomed pick: the caller falls through to the next combo
+// target or answers pool-empty (breaker-open or cooling) with the honest
+// Retry-After, rather than burning a ~1s upstream attempt that digs the
+// provider's fault state deeper.
 func (p *accountPool) next(id string) (*Account, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
+	if !p.flapOpenUntil.IsZero() && now.Before(p.flapOpenUntil) {
+		// Flap breaker open: a provider-wide edge fault is striking every
+		// account — no doomed upstream call. The caller falls through to
+		// the next combo target or answers pool-empty with
+		// Retry-After = seconds until the breaker half-opens (one probe
+		// window, not one probe per queued request).
+		return nil, p.flapOpenUntil
+	}
 	n := len(p.accts)
 	start := int(p.rr)
 	if p.ttl > 0 && id != "" {
 		if pin, ok := p.sticky[id]; ok && now.Before(pin.expires) {
 			for i := range p.accts {
 				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
-					if ok, _ := p.available(s, now); ok {
+					if ok, _ := p.available(s, now); ok && p.sharedReady(now).IsZero() {
+						p.grant(s, now)
 						return &s.acct, time.Time{}
 					}
 					start = i + 1 // pinned account cooling or governed: rotate past it
@@ -627,26 +735,69 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 		delete(p.sticky, id)
 	}
 	var ready time.Time // soonest cooldown expiry / bucket refill among blocked accounts
+	anyOpen := false    // some slot passes its own gates but the shared budget is empty
+	sharedReady := p.sharedReady(now)
 	for i := range n {
 		s := &p.accts[(start+i)%n]
 		if ok, r := p.available(s, now); ok {
-			p.rr = (uint64(start+i) + 1) % uint64(n)
-			p.pin(id, &s.acct, now)
-			return &s.acct, time.Time{}
+			if sharedReady.IsZero() {
+				p.grant(s, now)
+				p.rr = (uint64(start+i) + 1) % uint64(n)
+				p.pin(id, &s.acct, now)
+				return &s.acct, time.Time{}
+			}
+			anyOpen = true // could serve at the shared refill — but not before
 		} else if !r.IsZero() {
 			if ready.IsZero() || r.Before(ready) {
 				ready = r
 			}
 		}
 	}
+	if !sharedReady.IsZero() {
+		// Shared budget empty: no account can attempt before the refill.
+		// With an own-open slot the pool serves AT the refill; otherwise
+		// the earliest own gate clamps the wait longer.
+		if anyOpen || ready.IsZero() || sharedReady.After(ready) {
+			ready = sharedReady
+		}
+	}
 	return nil, ready
 }
 
+// sharedReady reports (zero) when the shared provider bucket holds a token
+// for a pick, else (non-zero) the refill instant. Consumes nothing — take()
+// runs in grant() so examined slots never spend the pool's budget.
+func (p *accountPool) sharedReady(now time.Time) time.Time {
+	if p.shared == nil {
+		return time.Time{}
+	}
+	if r := p.shared.refillAt(now); r.After(now) {
+		return r
+	}
+	return time.Time{}
+}
+
+// grant consumes the admission gates a pick passes: one token from the
+// shared provider bucket (Def.RPM) and one from the account's own bucket
+// (Account.RPM). Called under p.mu with every gate verified open — a pick
+// examined but not granted must not spend anything.
+func (p *accountPool) grant(s *accountState, now time.Time) {
+	if p.shared != nil {
+		p.shared.take(now)
+	}
+	if s.bucket != nil {
+		s.bucket.take(now)
+	}
+}
+
 // available reports whether slot s may take an upstream attempt now: past
-// its cooldown AND, when governed by an RPM bucket, holding a token. When
-// blocked it yields the instant the slot can serve — max(cooldown, refill),
-// both gates must pass — so a fully blocked pool reports an honest
-// soonest-ready for the fall-through Retry-After.
+// its cooldown AND, when governed by an RPM bucket, holding a token —
+// WITHOUT consuming anything; grant() spends the tokens once a pick is
+// final (available() also runs on slots the caller never grants, so a
+// consuming check would silently burn budget on every examined sibling).
+// When blocked it yields the instant the slot can serve —
+// max(cooldown, refill), both gates must pass — so a fully blocked pool
+// reports an honest soonest-ready for the fall-through Retry-After.
 func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time) {
 	cool := !s.cooldown.IsZero() && !now.After(s.cooldown)
 	if s.bucket == nil {
@@ -662,11 +813,10 @@ func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time
 		}
 		return false, serve
 	}
-	readyAt := s.bucket.take(now)
-	if readyAt.IsZero() {
-		return true, time.Time{}
+	if r := s.bucket.refillAt(now); r.After(now) {
+		return false, r
 	}
-	return false, readyAt
+	return true, time.Time{}
 }
 
 // ok records a successful call on a: the account is healthy, so both its
@@ -684,6 +834,51 @@ func (p *accountPool) ok(a *Account) {
 			p.accts[i].strikes = 0
 			p.accts[i].cooldown = time.Time{}
 		}
+	}
+}
+
+// flapStrike records one edge-class fault (HTML page, empty body,
+// unreachable, timeout — see edgeFault) and opens the breaker when
+// flapThreshold consecutive faults have struck. Not tied to an account:
+// the fault indicts the provider's edge, so every key counts once.
+func (p *accountPool) flapStrike() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.flapStrikes++
+	if p.flapStrikes >= flapThreshold {
+		if t := p.now().Add(flapOpen); t.After(p.flapOpenUntil) {
+			p.flapOpenUntil = t
+		}
+	}
+}
+
+// flapHeal records one successful call: the edge is serving again, so the
+// breaker closes immediately and the strike count resets — a short blip
+// inside a longer serving period must not accumulate toward the next trip.
+// Any successful account clears it: the edge fault was provider-wide.
+func (p *accountPool) flapHeal() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.flapStrikes = 0
+	p.flapOpenUntil = time.Time{}
+}
+
+// flapOpenFor parks the whole pool for d — flapStrike's automatic trip,
+// exposed for tests and future explicit operator control.
+func (p *accountPool) flapOpenFor(d time.Duration) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if t := p.now().Add(d); t.After(p.flapOpenUntil) {
+		p.flapOpenUntil = t
 	}
 }
 
@@ -1047,7 +1242,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 	d.applySessionAffinity(req.Header, clientHdr, acct.bearerToken())
 	resp, err := d.httpClient().Do(req)
 	if err != nil {
-		return nil, transportErr(ctx, err)
+		apiErr := transportErr(ctx, err)
+		if edgeFault(apiErr) {
+			// Dial/TLS failures and timeouts are provider-edge shaped:
+			// they count toward the flap breaker, not the account ladder.
+			d.pool.flapStrike()
+		}
+		return nil, apiErr
 	}
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
@@ -1060,9 +1261,25 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		// with an EMPTY Message — a dashboard row and a client error that
 		// say nothing. Name the actual observation instead: the status is
 		// real, the body is not.
-		if len(limited) == 0 && apiErr.Message == "" && apiErr.Type == "upstream_error" {
+		if hint, isHTML := htmlErrPage(limited); isHTML {
+			// nginx/CDN edge placeholder (b-ai live 2026-09-09 22:54:
+			// "<html><head><title>502 Bad Gateway</title>…" served by ALL
+			// seven accounts at once while the origin pool flapped): the
+			// page says nothing about the request. Surface a bounded
+			// honest message instead of raw HTML and strike the
+			// provider-wide flap breaker — this fault indicts the edge,
+			// not any key (pool.open-until falls through instantly).
+			apiErr.Type = "upstream_html_error"
+			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an HTML error page%s", d.Name, resp.StatusCode, hint)
+			if edgeFault(apiErr) {
+				d.pool.flapStrike()
+			}
+		} else if len(limited) == 0 && apiErr.Message == "" && apiErr.Type == "upstream_error" {
 			apiErr.Type = "upstream_empty_body"
 			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an empty error body", d.Name, resp.StatusCode)
+			if edgeFault(apiErr) {
+				d.pool.flapStrike()
+			}
 		}
 		if translat.UpstreamAuthVerifyFailed(apiErr.Status, apiErr.Type, apiErr.Message) {
 			// Transient failure of the upstream's own auth/verify service
@@ -1097,8 +1314,12 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// over an upstream-provided hint.
 			if ra := resp.Header.Get("Retry-After"); ra != "" {
 				apiErr.RetryAfter = ra
+			} else if w := apiErr.RateWindow(); w > 0 {
+				// Same contract as a header hint, carried in the body:
+				// Router.Execute must not stamp its generic 10s over an
+				// upstream-stated window.
+				apiErr.RetryAfter = strconv.FormatInt(int64((w+time.Second-1)/time.Second), 10)
 			}
-			// Otherwise the adaptive ladder benches the account (10s
 			// doubling to 60s per consecutive 429 — empty-body one-api
 			// style limits recover fast but re-trigger immediately under
 			// sustained load). Shared-limit 429s are the exception and
@@ -1110,7 +1331,16 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// shared window clears by itself. Dampening happens in the
 			// retry backoff.
 			if !sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message) {
-				d.pool.rateLimited(acct, coolDuration(resp.Header.Get("Retry-After")))
+				dDur := coolDuration(resp.Header.Get("Retry-After"))
+				if dDur == 0 {
+					// No header hint: bench for the request-count window
+					// the body names ("Maximum 8 requests within 1
+					// minutes" — live tokenrouter 2026-09-09) instead of
+					// the 10s ladder base, which only digs deeper into
+					// the still-closed window.
+					dDur = apiErr.RateWindow()
+				}
+				d.pool.rateLimited(acct, dDur)
 			}
 		}
 		if apiErr.RegionLocked() && acct != nil {
@@ -1133,7 +1363,8 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		}
 		return nil, apiErr
 	}
-	d.pool.ok(acct) // success resets the 429 ladder
+	d.pool.ok(acct)   // success resets the 429 ladder
+	d.pool.flapHeal() // and closes the flap breaker: the edge is serving
 	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct}, nil
 }
 
