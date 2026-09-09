@@ -187,10 +187,13 @@ CDN, no Node toolchain — the console ships inside the single binary.
 
 ![Dashboard overview](docs/screenshots/dashboard-overview.png)
 
-**Overview** — today's request/token/saver totals, the byte-budget meter
-(`503` rejection count included), and a live SSE strip (in-flight, uptime,
-heap, GC) refreshing every second. Every page renders fully without
-JavaScript; SSE only adds the live updates.
+**Overview** — today's request/token/saver totals, an hourly token chart,
+  a top-providers rail, the byte-budget meter (`503` rejection count
+  included), and a live SSE strip (in-flight, uptime, heap, GC)
+  refreshing every second. Every page renders fully without JavaScript;
+  SSE only adds the live updates. The console is dark by default, follows
+  your OS preference on first visit, and the `◐` header button persists
+  your choice — the screenshot shows the dark theme.
 
 Eight more pages complete the console:
 
@@ -201,15 +204,19 @@ Eight more pages complete the console:
 - **Console Log** — a live request feed (in-memory ring, newest request
   highlighted, errors in red): model, status, tokens in/out/cached/saved
   per line. Also available as JSON at `GET /admin/api/v1/logs?limit=N`.
-- **Providers / Combos / Quota / Token Saver** — read-only views over the
-  live config: accounts and advertised models per provider, fallback
-  chains, quota windows with reset countdowns, saver stats. Keys are
-  always masked.
+- **Providers / Combos** — live config views with in-page editing: add or
+  edit a provider (kind, base URL, models, sticky window, account pool) or
+  a combo's fallback chain; each save is spliced into `onegw.toml`,
+  validated, and hot-reloaded into the running gateway. Keys are always
+  masked.
+- **Quota / Token Saver** — read-only: quota windows with reset
+  countdowns, and token-saver stats.
 - **CLI Tools** — copy-paste preset cards for wiring agent CLIs to the
   gateway: Claude Code, opencode, grok, Codex CLI, omp, pi, and hermes —
   the bearer key renders as a `$ONEGW_KEY` placeholder, never a real key.
-- **Settings** — a reference of the admin API surface (endpoints, auth,
-  SSE topics) as served by the running gateway.
+- **Settings** — build/pid/uptime/listen info and a Maintenance card
+  (config reload, sign out), plus a reference of the admin API surface
+  (endpoints, auth, SSE topics) as served by the running gateway.
 
 The grouped read-only API lives under `/admin/api/v1/`
 (`providers`, `combos`, `quota`, `saver`, `logs`, `usage/daily`); the flat
