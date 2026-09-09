@@ -1,4 +1,41 @@
 # onegw PRD
+*Last updated: 2026-09-09 (commandcode-520 + glm-empty-500 RCA landed 289cd47+d41d078 —
+provenance recipe in the entry below; live pid raced by a peer deploy loop from a stale
+pre-fix staging tree, see deploy-loop note.)*
+**2026-09-09 — commandcode 520 terminal + glm empty-500 RCA (289cd47, test fix d41d078):** the
+dashboard showed `commandcode/unresolved 520 server_error` (transient; "Upstream model provider is
+temporarily unavailable. Please try again in a moment.") killing combo chains, and
+`glm/glm-5.3-flash 500 upstream_error` rows with NO message. Root causes + fixes, all
+regression-tested and mutation-checked: (1) Cloudflare 52x (520-527) missing from
+`types.Retryable` — commandcode's own edge answers 520 while ITS model-provider pool flaps; a
+terminal 520 ended the chain instead of falling through; now retryable
+(TestExecuteFallsThroughOnCloudflare520). (2) Zero-byte upstream error bodies decoded to an EMPTY
+message — live glm evidence: api.z.ai /api/v1 returned 500s with no payload during model
+deprovisioning (key lost access mid-day: 123 ok at hour 06 → 500-empty burst → clean 403
+model_access_denied). provider.Do now surfaces type=upstream_empty_body with an honest message.
+(3) Router.Execute's pool-empty 429 keeps status/Retry-After (#48 contract) but names the last
+real upstream cause in the message instead of claiming "rate-limited" when the pool was drained
+by per-model 403s (TestExecutePoolEmptyMessageNamesCause). (4) KnownModel: slash-models
+advertised in a provider models table ("z-ai/glm-5.3-flash") stay resolved in failure-row labels
+— they collapsed to "unresolved" because the provider-prefix branch returned early (that is why
+the console read commandcode/unresolved; TestKnownModelAdvertisedSlashModel). (5) Stale
+TestBufferedPathSharedConcurrency429RetriesThenHints was red on pristine origin/master (pinned
+pre-359e5a0 two-attempt behavior); renamed ...SurfacesOnceWithHint, hits=1 per the landed
+contract (d41d078). glm/harvey key state is upstream-owned: 403 model_access_denied on /api/v1,
+429 code 1113 insufficient-balance on /api/paas/v4 — combo targets fall through; direct requests
+surface the pool-empty 429 with the honest cause until the key is re-provisioned.
+**Deploy-loop incident + provenance recipe:** the live pid churned 38299→791→30474→89605→26764
+in ~10 min while a peer session redeployed from /tmp/onegw-mk — a NON-git staging tree exported
+~16:29 (before the 16:44-16:47 pushes) whose loop re-archives a pinned pre-fix snapshot each
+cycle, overwriting refreshed sources and rebuilding a binary WITHOUT these fixes. Not a crash
+loop: every cycle is a deliberate deploy.sh-style takeover (/tmp/onegw-new.log). Any session can
+re-prove provenance in one command:
+`strings "$(curl -s -H 'X-Admin-Password: <pw>' http://127.0.0.1:8080/admin/health | jq -r .owner.argv[0])" | grep -c upstream_empty_body`
+— ≥1 = fixes live; 0 = the serving binary predates 289cd47, deploy origin tip (a stable
+origin-tip binary is kept at /tmp/onegw-rca-tip-bin). Live serving verified: commandcode 200
+through the gateway post-deploy.
+Earlier:
+
 *Last updated: 2026-09-09 (tokenrouter free-lane capped at rpm = 7 — user-stated limit,
 one under the upstream's "Maximum 8 requests within 1 minutes" wall, same governor sizing
 discipline as the b-ai keys; overflow rotates to commandcode/opencode without logging 429s.)*
