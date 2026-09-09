@@ -1,3 +1,20 @@
+*Last updated: 2026-09-09 (update check 401 fix, 96c1fd3: the environment's stale
+  GITHUB_TOKEN made every release check fail with "HTTP 401 Bad credentials" even though
+  FreePeak/onegw is PUBLIC and anonymous reads work. internal/update now sends the token
+  when configured and, on 401, retries the SAME request once without credentials — both
+  the release check and the binary download (issueGET). Public users need no token;
+  private forks keep single-request valid-token reads; the error hint now says when the
+  anonymous fallback itself failed (private repo behind a bad token). Regression tests
+  TestLatestStaleTokenFallsBackToPublic + TestDownloadStaleTokenFallsBackToPublic
+  (mutation-verified) + live proof against real GitHub with the actual stale token.
+  Zero-drop deployed as v0.13.5-401fix under fresh hub record **onegw-live2** (the
+  onegw-sup record was exited/wedged again): pid 72826, restart=on-failure, persist
+  detached, env token vars scrubbed in the record, single listener verified, /admin/update
+  last_error cleared (latest=v0.13.6, no 401). DEPLOY HANDOFF for the next session: the
+  live record name is now **onegw-live2** with binary /tmp/onegw-401fix-bin — overlap-bind
+  your new pid, poll health owner.pid == yours, SIGTERM 72826, re-create/adopt the record
+  with YOUR binary path.)*
+
 *Last updated: 2026-09-09 (live supervision: the gateway had NO auto-restart — every
   deploy.sh generation left a setsid orphan (PPID 1) and the hub daemon records
   (onegw/onegw-live) that could have supervised it were exited/wedged ("unacknowledged
