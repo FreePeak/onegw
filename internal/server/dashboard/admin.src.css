@@ -1,0 +1,264 @@
+/* onegw admin dashboard — Tailwind v4 source.
+ *
+ * Build:  scripts/dashboard-css.sh   (standalone Tailwind CLI, no Node)
+ * Output: static/admin.css (committed; inlined into pages via go:embed).
+ *
+ * Design language follows unorouter.com/en/compare: near-black canvas,
+ * hairline white/10 borders, sharp corners (radius 0), inverted primary
+ * buttons, Space Grotesk body / Plus Jakarta Sans display / JetBrains
+ * Mono data. Dark-first; light theme flips the same tokens.
+ */
+@import "tailwindcss" source(none);
+@source "./templates/*.html";
+
+@theme {
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Plus Jakarta Sans", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* dark (default) — unorouter .dark palette */
+  --color-bg: #050505;      /* page canvas */
+  --color-card: #0a0a0a;    /* surfaces: cards, sidebar, header */
+  --color-canvas: #08080a;  /* code blocks, log pane (theme-invariant) */
+  --color-fg: #f8fafc;
+  --color-mut: #9ca3af;
+  --color-soft: #ffffff0d;  /* hover / inset surfaces (white 5%) */
+  --color-line: #ffffff1a;  /* hairline borders (white 10%) */
+  --color-acc: #62b3ff;
+  --color-ok: #10b981;
+  --color-warn: #f59e0b;
+  --color-err: #ef4444;
+  --color-info: #3b82f6;
+  --color-chart2: #00c47f;
+  --color-chart3: #ad87ed;
+  --color-chart4: #e6ad00;
+  --color-chart5: #e17363;
+}
+
+html[data-theme="light"] {
+  /* unorouter light palette (zinc) */
+  --color-bg: #ffffff;
+  --color-card: #ffffff;
+  --color-canvas: #0a0a0c;
+  --color-fg: #09090b;
+  --color-mut: #71717a;
+  --color-soft: #f4f4f5;
+  --color-line: #e4e4e7;
+  --color-acc: #0073d2;
+}
+
+:root {
+  /* legacy aliases — Go-rendered fragments (healthFrame, SSE) and any
+   * inline style="" still reference these names. */
+  --bg: var(--color-bg);
+  --panel: var(--color-card);
+  --panel2: var(--color-soft);
+  --line: var(--color-line);
+  --fg: var(--color-fg);
+  --mut: var(--color-mut);
+  --acc: var(--color-acc);
+  --ok: var(--color-ok);
+  --warn: var(--color-warn);
+  --err: var(--color-err);
+}
+
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+
+/* Vendored variable fonts (latin subsets, OFL) — served by
+ * GET /admin/assets/fonts/{name}, never fetched from a CDN. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("/admin/assets/fonts/SpaceGrotesk-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/admin/assets/fonts/PlusJakartaSans-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/admin/assets/fonts/JetBrainsMono-latin.woff2") format("woff2");
+}
+
+@layer base {
+  html { font-size: 14px; }
+  body {
+    @apply bg-bg font-sans text-fg antialiased;
+    font-feature-settings: "ss01";
+  }
+  ::selection { background: color-mix(in srgb, var(--color-acc) 30%, transparent); }
+  :focus-visible { outline: 2px solid var(--color-acc); outline-offset: 1px; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-fg) 12%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-fg) 22%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* Component vocabulary — every page and the Go-rendered SSE fragments
+ * share these classes, so tokens flip dark/light in one place. */
+@layer components {
+  .layout { @apply flex min-h-screen; }
+  .main { @apply flex min-w-0 flex-1 flex-col; }
+
+  .sidebar {
+    @apply sticky top-0 flex h-screen w-56 shrink-0 flex-col overflow-y-auto
+           border-r border-line bg-card px-3 py-5;
+  }
+  .logo {
+    font-family: var(--font-display);
+    @apply px-3 pb-5 text-[17px] font-semibold tracking-[-0.02em];
+  }
+  .logo span { @apply text-acc; }
+  .nav { @apply flex flex-col; }
+  .navgrp {
+    @apply px-3 pb-1.5 pt-4 text-[10.5px] font-medium uppercase tracking-[0.14em] text-mut/60;
+  }
+  .nav a {
+    @apply border-l-2 border-transparent px-3 py-1.5 text-[13.5px] text-mut
+           no-underline transition-colors hover:bg-soft hover:text-fg;
+  }
+  .nav a.active {
+    @apply border-acc bg-soft font-medium text-fg;
+  }
+
+  .hdr {
+    @apply sticky top-0 z-10 flex items-center gap-4 border-b border-line
+           bg-bg/85 px-6 py-3 backdrop-blur;
+  }
+  .hdr h1 {
+    font-family: var(--font-display);
+    @apply m-0 mr-auto text-[15px] font-semibold tracking-[-0.01em];
+  }
+  .hdr .dot { @apply size-2 shrink-0 rounded-full bg-err; }
+  .hdr .dot.ok { @apply bg-ok; }
+  .hdr .hactions { @apply ml-auto flex items-center gap-3 text-[12px] text-mut; }
+  .hdr .hactions a { @apply text-[12.5px] text-fg underline decoration-line underline-offset-4 hover:decoration-fg; }
+  .hdr .hactions b { @apply font-semibold text-fg; }
+
+  .content { @apply w-full max-w-[1240px] flex-1 px-6 py-6; }
+
+  footer { @apply border-t border-line px-6 py-4 text-[11.5px] text-mut; }
+
+  .grid { @apply mb-4 grid gap-3; }
+  .grid.c4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .grid.c3 { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+
+  .card {
+    @apply border border-line bg-card p-4;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+  }
+  html[data-theme="light"] .card { box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); }
+  .card h3 {
+    @apply mb-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-mut;
+  }
+  .card h3 .sub, .card .sub { @apply text-[11.5px] normal-case tracking-normal; }
+  .big {
+    @apply text-[24px] font-semibold leading-tight tracking-[-0.02em];
+    font-variant-numeric: tabular-nums;
+  }
+  .sub { @apply mt-0.5 text-[12px] text-mut; }
+
+  table { @apply w-full border-collapse text-[13px]; }
+  th {
+    @apply border-b border-line px-3 py-2.5 text-left text-[11px] font-medium
+           uppercase tracking-[0.08em] text-mut;
+  }
+  td { @apply border-b border-line/60 px-3 py-2; }
+  tbody tr:hover { @apply bg-soft; }
+  td.num, th.num { @apply text-right font-mono tabular-nums; }
+  td .mono, .mono { font-family: var(--font-mono); font-size: 12px; }
+  .tblwrap {
+    @apply mb-4 overflow-x-auto border border-line bg-card;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+  }
+  .tblwrap > table { @apply m-0; }
+  .tblwrap .empty, td.empty { @apply px-3 py-5 text-[13px] text-mut; }
+
+  .bar { @apply h-1.5 overflow-hidden bg-soft; }
+  .bar > i { @apply block h-full bg-acc; }
+  .bar > i.warn { @apply bg-warn; }
+  .bar > i.err { @apply bg-err; }
+
+  .pill {
+    @apply inline-flex items-center gap-1 border border-line px-1.5 py-px
+           align-middle text-[11px] font-medium leading-5 text-mut;
+  }
+  .pill.ok { @apply border-ok/40 text-ok; }
+  .pill.err { @apply border-err/40 text-err; }
+  .pill.warn { @apply border-warn/40 text-warn; }
+
+  .btn {
+    @apply inline-flex cursor-pointer items-center gap-1.5 border border-line
+           bg-soft px-3 py-1.5 text-[13px] font-medium text-fg no-underline
+           transition-colors hover:border-fg/30;
+  }
+  .btn.primary { @apply border-fg bg-fg text-bg hover:opacity-85 hover:border-fg; }
+  .btn.danger { @apply border-err/40 bg-transparent text-err hover:border-err hover:bg-err/10; }
+  .btn.ghost { @apply border-transparent bg-transparent text-mut hover:text-fg; }
+  .btn.sm { @apply px-2 py-0.5 text-[12px]; }
+
+  input[type="text"], input[type="password"], select {
+    @apply border border-line bg-soft px-2.5 py-1.5 text-[13px] text-fg
+           outline-none focus:border-acc;
+  }
+
+  .kv { @apply grid grid-cols-[170px_1fr] gap-y-1 text-[13px]; }
+  .kv .k { @apply text-mut; }
+
+  code.chip {
+    font-family: var(--font-mono);
+    @apply border border-line bg-soft px-1.5 py-0.5 text-[11.5px] text-fg;
+  }
+
+  .codeblock {
+    font-family: var(--font-mono);
+    @apply m-0 overflow-x-auto border border-line bg-canvas p-3 text-[12px]
+           leading-relaxed text-fg;
+  }
+
+  /* live health strip (SSE-swapped from admin_pages.go healthFrame) */
+  .metrics { @apply grid gap-x-6 gap-y-4; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+  .metric .k {
+    @apply text-[10.5px] font-medium uppercase tracking-[0.14em] text-mut/70;
+  }
+  .metric .v {
+    font-family: var(--font-mono);
+    @apply mt-1 text-[13px];
+    font-variant-numeric: tabular-nums;
+  }
+  .metric .v.hi {
+    font-family: var(--font-display);
+    @apply text-[20px] font-semibold tracking-[-0.02em];
+  }
+
+  /* console log pane (#19) */
+  #logpane {
+    @apply min-h-[320px] overflow-y-auto border border-line bg-canvas py-2
+           font-mono text-[12px] leading-[1.6];
+    max-height: 70vh;
+  }
+  #logpane .l { @apply whitespace-pre-wrap break-all px-3; }
+  #logpane .l:hover { @apply bg-soft; }
+  #logpane .t { @apply text-mut; }
+  #logpane .code-2xx { @apply text-ok; }
+  #logpane .code-4xx { @apply text-warn; }
+  #logpane .code-5xx, #logpane .code-err { @apply text-err; }
+
+  details > summary { @apply cursor-pointer text-[12.5px] text-mut hover:text-fg; }
+}

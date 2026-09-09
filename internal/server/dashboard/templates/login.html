@@ -4,21 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>onegw · sign in</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23050505'/%3E%3Crect x='6' y='6' width='9' height='20' fill='%23f8fafc'/%3E%3Crect x='17' y='6' width='9' height='20' fill='%2362b3ff'/%3E%3C/svg%3E">
 <style>{{asset_css "admin.css"}}</style>
 </head>
 <body>
-<div class="layout" style="align-items:center;justify-content:center;min-height:100vh">
-  <form method="post" action="/admin/login" class="card" style="width:360px;padding:26px">
-    <div class="logo" style="font-size:22px;padding:0 0 4px">one<span>gw</span></div>
-    <h3 style="margin:0 0 6px">Admin console</h3>
-    <p class="sub" style="margin:0 0 16px;color:var(--mut)">Enter the admin password
+<main class="flex min-h-screen items-center justify-center px-4">
+  <form method="post" action="/admin/login" class="card w-[360px] p-7">
+    <div class="logo p-0 pb-1 text-[22px]">one<span>gw</span></div>
+    <h1 class="mb-1 mt-2 text-[16px] font-semibold tracking-[-0.01em]">Admin console</h1>
+    <p class="sub mt-0 mb-5">Enter the admin password
       (<code class="chip">admin_password</code> from <code class="chip">onegw.toml</code>).</p>
-    {{if .V.Error}}<p style="color:var(--err);margin:0 0 12px">{{.V.Error}}</p>{{end}}
+    {{if .V.Error}}<p class="mb-3 text-[12.5px] text-err">{{.V.Error}}</p>{{end}}
     <input type="password" name="password" autofocus autocomplete="current-password"
-           placeholder="admin password" style="width:100%;margin-bottom:12px">
-    <button type="submit" class="btn primary" style="width:100%">Sign in</button>
+           placeholder="admin password" class="w-full">
+    <button type="submit" class="btn primary mt-3 w-full justify-center">Sign in</button>
   </form>
-</div>
+</main>
 <script>
 (function(){
   var t=localStorage.getItem('ogw-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');

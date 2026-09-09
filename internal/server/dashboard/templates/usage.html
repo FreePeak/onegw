@@ -2,21 +2,22 @@
 {{define "content"}}
 <div class="grid c4">
   <div class="card"><h3>Requests</h3><div class="big">{{compact .Totals.Req}}</div></div>
-  <div class="card"><h3>Tokens in / out</h3><div class="big">{{compact .Totals.In}} / {{compact .Totals.Out}}</div></div>
-  <div class="card"><h3>Cache read</h3><div class="big" style="color:var(--acc)">{{compact .Totals.CacheRead}}</div></div>
-  <div class="card"><h3>Saved</h3><div class="big" style="color:var(--ok)">{{compact .Totals.Saved}}</div></div>
+  <div class="card"><h3>Tokens in / out</h3><div class="big">{{compact .Totals.In}} <span class="text-mut">/</span> {{compact .Totals.Out}}</div></div>
+  <div class="card"><h3>Cache read</h3><div class="big text-acc">{{compact .Totals.CacheRead}}</div></div>
+  <div class="card"><h3>Saved</h3><div class="big text-ok">{{compact .Totals.Saved}}</div></div>
 </div>
 
-<div class="card" style="margin-bottom:14px">
-  <div style="display:flex;gap:4px;align-items:center">
-    {{range .Ranges}}<a class="btn{{if .On}} primary{{end}}" href="/admin/ui/usage?range={{.ID}}">{{.Label}}</a>{{end}}
-    <span class="sub" style="margin-left:auto;color:var(--mut)">{{.Window}}</span>
-  </div>
+<div class="card mb-4 flex items-center gap-1.5">
+  {{range .Ranges}}<a class="btn{{if .On}} primary{{end}}" href="/admin/ui/usage?range={{.ID}}">{{.Label}}</a>{{end}}
+  <span class="sub mt-0 ml-auto">{{.Window}}</span>
 </div>
 
 {{if .HasCharts}}
-<div class="card" style="margin-bottom:14px"><h3>Tokens · {{.ChartUnit}} <span class="sub" style="text-transform:none">stacked: input → output → cache read</span></h3><div id="chart-tok"></div></div>
-<div class="card" style="margin-bottom:14px"><h3>Requests · {{.ChartUnit}}</h3><div id="chart-req"></div></div>
+<div class="card mb-4">
+  <h3>Tokens · {{.ChartUnit}} <span class="sub normal-case">stacked: input → output → cache read</span></h3>
+  <div id="chart-tok"></div>
+</div>
+<div class="card mb-4"><h3>Requests · {{.ChartUnit}}</h3><div id="chart-req"></div></div>
 {{end}}
 
 <div class="tblwrap">
@@ -25,7 +26,7 @@
 <tbody>
 {{range .Rows}}<tr><td>{{.Provider}}</td><td class="mono">{{.Model}}</td>
   <td class="num">{{compact .Req}}</td><td class="num">{{compact .In}}</td><td class="num">{{compact .Out}}</td>
-  <td class="num">{{compact .CacheRead}}</td><td class="num">{{compact .CacheWrite}}</td><td class="num">{{compact .Saved}}</td></tr>
+  <td class="num">{{compact .CacheRead}}</td><td class="num">{{compact .CacheWrite}}</td><td class="num text-ok">{{compact .Saved}}</td></tr>
 {{else}}<tr><td colspan="8" class="empty">no usage in this window</td></tr>{{end}}
 </tbody>
 </table>
@@ -37,27 +38,35 @@
 <script>{{asset_js "uPlot.iife.min.js"}}</script>
 <script>
 const D = {{.ChartJSON}};
-function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(1)+'K';return String(n)}
+function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(0)+'M';if(n>=1e3)return (n/1e3).toFixed(0)+'K';return String(n)}
+const CSS = getComputedStyle(document.documentElement);
+function tokSeries(s){
+  return {label: s.label, stroke: s.color, width: 1.6,
+    fill: s.fill ? s.color+'2e' : undefined, points: {show: false},
+    value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])};
+}
 function draw(id, series, title){
   const el = document.getElementById(id);
   if(!el || !D.xs.length) return;
+  const grid = (CSS.getPropertyValue('--line') || '#ffffff1a').trim();
+  const text = (CSS.getPropertyValue('--mut') || '#9ca3af').trim();
+  const font = '11px "JetBrains Mono", ui-monospace, monospace';
   new uPlot({
     width: el.clientWidth || 600, height: 230, title,
-    series: [{}, ...series.map(s => ({label: s.label, stroke: s.color, width: 1.6,
-      fill: s.fill ? s.color+'2e' : undefined, points: {show: false},
-      value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])}))],
-    axes: [{}, {values: (u2, v) => v.map(kmb)}]
+    series: [{}, ...series.map(tokSeries)],
+    axes: [{stroke: text, grid: {stroke: grid}, font, size: 60},
+           {stroke: text, grid: {stroke: grid}, font, size: 60, values: (u2, v) => v.map(kmb)}]
   }, [D.xs, ...series.map(s => s.vals)], el);
 }
 // stacked areas: cumulative input → +output → +cache_read
 const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
 draw('chart-tok', [
-  {label:'cache read', vals: cr, color:'#58a6ff', fill:true, layer: D.cache_read},
-  {label:'output', vals: out, color:'#3fb950', fill:true, layer: D.output},
-  {label:'input', vals: inp, color:'#d29922', fill:true, layer: D.input},
+  {label:'cache read', vals: cr, color:'#62b3ff', fill:true, layer: D.cache_read},
+  {label:'output', vals: out, color:'#10b981', fill:true, layer: D.output},
+  {label:'input', vals: inp, color:'#e6ad00', fill:true, layer: D.input},
 ], "tokens · {{.ChartUnit}} (stacked areas — legend shows each layer's own value)");
 draw('chart-req', [
-  {label:'requests', vals: D.requests, color:'#bc8cff', fill:true, layer: D.requests},
+  {label:'requests', vals: D.requests, color:'#ad87ed', fill:true, layer: D.requests},
 ], 'requests · {{.ChartUnit}}');
 </script>
 {{end}}

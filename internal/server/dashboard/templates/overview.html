@@ -2,23 +2,23 @@
 {{define "content"}}
 <div class="grid c4">
   <div class="card"><h3>Requests · today</h3><div class="big">{{compact .TodayReq}}</div></div>
-  <div class="card"><h3>Tokens in / out · today</h3><div class="big">{{compact .TodayIn}} / {{compact .TodayOut}}</div></div>
-  <div class="card"><h3>Saved by saver · today</h3><div class="big" style="color:var(--ok)">{{compact .TodaySaved}}</div></div>
+  <div class="card"><h3>Tokens in / out · today</h3><div class="big">{{compact .TodayIn}} <span class="text-mut">/</span> {{compact .TodayOut}}</div></div>
+  <div class="card"><h3>Saved by saver · today</h3><div class="big text-ok">{{compact .TodaySaved}}</div></div>
   <div class="card"><h3>Providers</h3><div class="big">{{.Providers}}{{if .QuotaExhausted}}
     <span class="pill err">{{.QuotaExhausted}} quota out</span>{{end}}</div>
     <div class="sub">{{.Models}} advertised models · {{.Combos}} combos</div></div>
 </div>
 
 <div class="card">
-  <h3>Live process <span class="pill ok">SSE 1s</span></h3>
-  <div id="live" hx-ext="sse" sse-connect="/admin/events?topics=health" sse-swap="health">{{.LiveJSON}}</div>
+  <h3>Live process <span class="pill ok ml-2 normal-case">SSE 1s</span></h3>
+  <div id="live" class="metrics" hx-ext="sse" sse-connect="/admin/events?topics=health" sse-swap="health">{{.LiveJSON}}</div>
 </div>
 
-<div class="grid c3" style="margin-top:16px">
+<div class="grid c3 mt-4">
   <div class="card"><h3>Memory budget</h3>
     <div class="big" id="lv-budget">{{.Budget}}</div>
     <div class="sub">held bytes of {{.BudgetCap}} cap · {{.BudgetWaiting}} waiting · {{.BudgetRejected}} rejected (503)</div>
-    <div class="bar" style="margin-top:8px"><i style="width:{{.BudgetPct}}%"></i></div></div>
+    <div class="bar mt-3"><i style="width:{{.BudgetPct}}%"></i></div></div>
   <div class="card"><h3>Go runtime</h3>
     <div class="kv"><span class="k">heap alloc</span><span class="mono">{{.HeapAlloc}} MiB</span>
     <span class="k">heap sys</span><span class="mono">{{.HeapSys}} MiB</span>
