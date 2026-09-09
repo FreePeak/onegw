@@ -39,7 +39,14 @@ ENV ONEGW_CONFIG=/etc/onegw/onegw.toml \
 WORKDIR /data
 USER onegw
 EXPOSE 8080
-VOLUME ["/data"]
+
+# No VOLUME ["/data"] on purpose: a VOLUME declaration makes every plain
+# `docker run` (without -v) allocate an ANONYMOUS volume, and the documented
+# update path — pull a new image then recreate the container — would start
+# the new container on a FRESH anonymous volume while the old data survives
+# only as an orphaned volume: usage.db silently re-homes. Persistence is
+# explicit instead: docker-compose.yml mounts the onegw-data named volume,
+# and plain `docker run` users pass -v <name>:/data themselves (see README).
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/ >/dev/null || exit 1
