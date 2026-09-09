@@ -1,5 +1,10 @@
 # onegw PRD
-*Last updated: 2026-09-09 (#52 follow-up 0a76838: the same transient-fault downgrades now also apply to IN-STREAM error objects — one-api proxies can deliver the auth-verify 401 as an error object inside a 200 body or a mid-stream chunk, and those paths built APIErrors directly via statusFromOAErr, bypassing the HTTP-level rewrite; translat.NormalizeInStreamError applies the identical 502 upstream_auth_verify_failed downgrade at all three in-stream construction sites (DecodeOpenAIResponse, decodeOpenAIStreamEvent, grok response.failed), real in-band invalid-key 401s stay terminal; test mutation-checked, isolation build green, zero-drop redeployed pid 36916 + live smoke verified; earlier: RCA + fix: third b-ai transient-fault class — distributor node parse-rejects of large
+*Last updated: 2026-09-09 (#52 follow-up 51ccf1e: NormalizeInStreamError now also rewrites the
+in-stream variant of the distributor parse-reject 400 (84fd1c9 shape) to retryable
+upstream_parse_rejected — the helper had shipped claiming "the same transient-fault rewrites"
+while only carrying auth-verify, leaving streaming paths surfacing that fault as a terminal
+400; mutation-checked, isolation green, zero-drop redeployed pid 53121, live smoke verified;
+smaller #52 follow-up 0a76838: the same transient-fault downgrades now also apply to IN-STREAM error objects — one-api proxies can deliver the auth-verify 401 as an error object inside a 200 body or a mid-stream chunk, and those paths built APIErrors directly via statusFromOAErr, bypassing the HTTP-level rewrite; translat.NormalizeInStreamError applies the identical 502 upstream_auth_verify_failed downgrade at all three in-stream construction sites (DecodeOpenAIResponse, decodeOpenAIStreamEvent, grok response.failed), real in-band invalid-key 401s stay terminal; test mutation-checked, isolation build green, zero-drop redeployed pid 36916 + live smoke verified; earlier: RCA + fix: third b-ai transient-fault class — distributor node parse-rejects of large
 valid bodies no longer surface as terminal 400s (84fd1c9, zero-drop deployed, live-verified). Client-side omp dumps
 (~/.omp/logs/http-400-requests) showed 22 "400 Invalid request body. (request id: …c955d568…)" (type=api_error)
 in ~40 h, all combo free/dev to b-ai/glm-5.3-flash, bodies 228 KB-2.3 MB; forensics: every failing request id
