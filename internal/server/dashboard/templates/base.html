@@ -4,29 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>onegw · {{.Title}}</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23050505'/%3E%3Crect x='6' y='6' width='9' height='20' fill='%23f8fafc'/%3E%3Crect x='17' y='6' width='9' height='20' fill='%2362b3ff'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f172a'/%3E%3Crect x='6' y='6' width='9' height='20' rx='2' fill='%23f8fafc'/%3E%3Crect x='17' y='6' width='9' height='20' rx='2' fill='%2334d399'/%3E%3C/svg%3E">
 <style>{{asset_css "admin.css"}}</style>
 </head>
 <body>
+<a class="skip" href="#content">Skip to content</a>
 <div class="layout">
 <aside class="sidebar">
   <div class="logo">one<span>gw</span></div>
-  <nav class="nav">
-    {{$prev := ""}}{{range .Nav}}{{if ne .Group $prev}}<div class="navgrp">{{.Group}}</div>{{$prev = .Group}}{{end}}<a href="{{.Href}}"{{if eq .ID $.Active}} class="active"{{end}}>{{.Label}}</a>{{end}}
+  <nav class="nav" aria-label="admin sections">
+    {{$prev := ""}}{{range .Nav}}{{if ne .Group $prev}}<div class="navgrp" aria-hidden="true">{{.Group}}</div>{{$prev = .Group}}{{end}}<a href="{{.Href}}"{{if eq .ID $.Active}} class="active" aria-current="page"{{end}}>{{.Label}}</a>{{end}}
   </nav>
 </aside>
 <main class="main">
 <header class="hdr">
   <h1>{{.Title}}</h1>
   <div class="hactions">{{block "hdr" .V}}{{end}}</div>
-  <button id="theme" class="btn ghost sm" title="toggle dark/light">◐</button>
+  <button id="theme" class="btn ghost sm" title="toggle dark/light" aria-label="toggle dark or light theme">◐</button>
 </header>
-<div class="content">
+<div class="content" id="content">
 {{block "content" .V}}{{end}}
 </div>
 <footer>onegw admin · read-mostly views · config stays in onegw.toml · reload via Settings</footer>
 </main>
 </div>
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 <script>{{asset_js "htmx.min.js"}}</script>
 {{if .Live}}<script>{{asset_js "sse.min.js"}}</script>{{end}}
 <script>
@@ -35,7 +37,18 @@
   document.documentElement.dataset.theme=t;
   document.getElementById('theme').onclick=function(){
     var n=document.documentElement.dataset.theme==='dark'?'light':'dark';
-    document.documentElement.dataset.theme=n;localStorage.setItem('ogw-theme',n);};
+    document.documentElement.dataset.theme=n;localStorage.setItem('ogw-theme',n);
+    document.dispatchEvent(new CustomEvent('ogw-theme'));
+  };
+  // Toast helper: transient feedback for admin actions (auto-dismiss 4s).
+  window.ogwToast=function(msg,ok){
+    var box=document.getElementById('toasts');
+    var el=document.createElement('div');
+    el.className='toast'+(ok===false?' err':' ok');
+    el.textContent=msg;
+    box.appendChild(el);
+    setTimeout(function(){ el.remove(); },4000);
+  };
 })();
 </script>
 {{block "scripts" .V}}{{end}}
