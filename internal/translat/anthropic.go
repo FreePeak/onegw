@@ -13,10 +13,22 @@ import (
 // Anthropic Messages wire shapes
 // ---------------------------------------------------------------------------
 
+// anCacheControl is the Anthropic prompt-cache breakpoint marker. Only the
+// ephemeral type exists today; the named type keeps encoder re-anchoring
+// (same marker, same logical block) explicit.
+type anCacheControl struct {
+	Type string `json:"type"`
+}
+
 type anBlock struct {
 	Type string `json:"type"` // text | image | tool_use | tool_result | thinking
 
 	Text string `json:"text,omitempty"`
+
+	// CacheControl captures cache_control {type: ephemeral} breakpoints
+	// the client anchored on this block (issue #32). Only the ephemeral
+	// type exists; anything else is treated as absent.
+	CacheControl *anCacheControl `json:"cache_control,omitempty"`
 
 	Source *struct {
 		Type      string `json:"type"` // base64 | url
@@ -72,6 +84,17 @@ type anRequest struct {
 	Metadata *struct {
 		UserID string `json:"user_id,omitempty"`
 	} `json:"metadata,omitempty"`
+
+	// ReasoningEffort is not native Anthropic wire, but Anthropic-surface
+	// clients (Claude Code through proxies) send it as an extension field;
+	// it must survive decode to be coercible upstream (issue #50). It is
+	// never re-emitted onto the Anthropic wire.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
+	// Cache-affinity extension fields some Anthropic-surface clients send
+	// (issue #32); forwarded onto accepting upstream wires, never invented.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
 }
 
 // DecodeAnthropicRequest parses an Anthropic Messages body into unified form.
@@ -81,13 +104,16 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 		return nil, fmt.Errorf("anthropic request: %w", err)
 	}
 	u := &types.ChatRequest{
-		Model:         req.Model,
-		Stream:        req.Stream,
-		MaxTokens:     req.MaxTokens,
-		Temperature:   req.Temperature,
-		TopP:          req.TopP,
-		TopK:          req.TopK,
-		StopSequences: req.StopSequences,
+		Model:           req.Model,
+		Stream:          req.Stream,
+		MaxTokens:       req.MaxTokens,
+		Temperature:     req.Temperature,
+		TopP:            req.TopP,
+		TopK:            req.TopK,
+		StopSequences:   req.StopSequences,
+		ReasoningEffort: req.ReasoningEffort,
+		PromptCacheKey:  req.PromptCacheKey,
+		StickySessionID: req.SessionID,
 	}
 	if req.System != nil && string(req.System) != "null" {
 		var blocks []anBlock
@@ -99,7 +125,11 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 		} else {
 			for _, b := range blocks {
 				if b.Type == "text" {
-					u.System = append(u.System, types.Part{Type: types.PartText, Text: b.Text})
+					u.System = append(u.System, types.Part{
+						Type:            types.PartText,
+						Text:            b.Text,
+						CacheBreakpoint: hasEphemeralCacheControl(b.CacheControl),
+					})
 				}
 			}
 		}
@@ -138,9 +168,13 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 		for _, b := range blocks {
 			switch b.Type {
 			case "text":
-				msg.Content = append(msg.Content, types.Part{Type: types.PartText, Text: b.Text})
+				msg.Content = append(msg.Content, types.Part{
+					Type:            types.PartText,
+					Text:            b.Text,
+					CacheBreakpoint: hasEphemeralCacheControl(b.CacheControl),
+				})
 			case "image":
-				p := types.Part{Type: types.PartImage}
+				p := types.Part{Type: types.PartImage, CacheBreakpoint: hasEphemeralCacheControl(b.CacheControl)}
 				if b.Source != nil {
 					if b.Source.Type == "base64" {
 						p.MIMEType = b.Source.MediaType
@@ -152,10 +186,14 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 				msg.Content = append(msg.Content, p)
 			case "tool_use":
 				msg.Content = append(msg.Content, types.Part{
-					Type: types.PartToolUse, ID: b.ID, Name: b.Name, Args: normalizeArgs(b.Input),
+					Type:            types.PartToolUse,
+					ID:              b.ID,
+					Name:            b.Name,
+					Args:            normalizeArgs(b.Input),
+					CacheBreakpoint: hasEphemeralCacheControl(b.CacheControl),
 				})
 			case "tool_result":
-				msg.Content = append(msg.Content, decodeToolResultBlock(b)...)
+				msg.Content = append(msg.Content, decodeToolResultBlock(b, hasEphemeralCacheControl(b.CacheControl))...)
 			case "thinking", "redacted_thinking":
 				msg.Content = append(msg.Content, types.Part{
 					Type: types.PartThinking, Text: b.Thinking, Signature: b.Signature,
@@ -173,13 +211,15 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 }
 
 // decodeToolResultBlock flattens a tool_result block (whose content may nest
-// more blocks) into tool_result parts.
-func decodeToolResultBlock(b anBlock) []types.Part {
+// more blocks) into tool_result parts. breakpoint re-anchors the client's
+// cache_control marker if it was set on the block (issue #32).
+func decodeToolResultBlock(b anBlock, breakpoint bool) []types.Part {
 	p := types.Part{
-		Type:      types.PartToolResult,
-		ID:        "", // carried by message pairing, not needed upstream
-		ToolUseID: b.ToolUseID,
-		IsError:   b.IsError,
+		Type:            types.PartToolResult,
+		ID:              "", // carried by message pairing, not needed upstream
+		ToolUseID:       b.ToolUseID,
+		IsError:         b.IsError,
+		CacheBreakpoint: breakpoint,
 	}
 	var texts []string
 	var raw = b.Content
@@ -210,6 +250,13 @@ func decodeToolResultBlock(b anBlock) []types.Part {
 	return []types.Part{p}
 }
 
+// hasEphemeralCacheControl reports whether a block carried a cache_control
+// marker of the ephemeral type. Any other (future) type is treated as
+// absent — markers are preserved, not interpreted.
+func hasEphemeralCacheControl(cc *anCacheControl) bool {
+	return cc != nil && cc.Type == "ephemeral"
+}
+
 func decodeBase64Loose(s string) []byte {
 	s = strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\r' || r == ' ' {
@@ -233,11 +280,14 @@ func EncodeAnthropicRequest(u *types.ChatRequest) ([]byte, error) {
 		MaxTokens:     orInt(u.MaxTokens, 8192),
 		Temperature:   u.Temperature,
 		TopP:          u.TopP,
-		TopK:          u.TopK,
 		StopSequences: u.StopSequences,
 	}
 	for _, p := range u.System {
-		req.System = appendJSON(req.System, anBlock{Type: "text", Text: p.Text})
+		blk := anBlock{Type: "text", Text: p.Text}
+		if p.CacheBreakpoint {
+			blk.CacheControl = &anCacheControl{Type: "ephemeral"}
+		}
+		req.System = appendJSON(req.System, blk)
 	}
 	switch tc := u.ToolChoice.(type) {
 	case types.ToolChoiceMode:
@@ -287,16 +337,17 @@ func EncodeAnthropicRequest(u *types.ChatRequest) ([]byte, error) {
 				switch p.Type {
 				case types.PartToolResult:
 					blocks = append(blocks, anBlock{
-						Type:      "tool_result",
-						ToolUseID: orDefault(p.ToolUseID, m.ToolCallID),
-						Content:   mustJSON(p.Text),
-						IsError:   p.IsError,
+						Type:         "tool_result",
+						ToolUseID:    orDefault(p.ToolUseID, m.ToolCallID),
+						Content:      mustJSON(p.Text),
+						IsError:      p.IsError,
+						CacheControl: anCacheControlOf(p),
 					})
 				case types.PartImage:
 					blocks = append(blocks, imageBlock(p))
 				case types.PartText:
 					if p.Text != "" {
-						blocks = append(blocks, anBlock{Type: "text", Text: p.Text})
+						blocks = append(blocks, textBlock(p))
 					}
 				}
 			}
@@ -311,7 +362,7 @@ func EncodeAnthropicRequest(u *types.ChatRequest) ([]byte, error) {
 				switch p.Type {
 				case types.PartText:
 					if p.Text != "" {
-						blocks = append(blocks, anBlock{Type: "text", Text: p.Text})
+						blocks = append(blocks, textBlock(p))
 					}
 				case types.PartToolUse:
 					blocks = append(blocks, anBlock{
@@ -337,8 +388,28 @@ func EncodeAnthropicRequest(u *types.ChatRequest) ([]byte, error) {
 	return json.Marshal(req)
 }
 
+// textBlock renders a unified text part as an Anthropic text block,
+// re-anchoring a cache breakpoint at the same logical block the client
+// marked on the way in (issue #32).
+func textBlock(p types.Part) anBlock {
+	blk := anBlock{Type: "text", Text: p.Text}
+	if p.CacheBreakpoint {
+		blk.CacheControl = &anCacheControl{Type: "ephemeral"}
+	}
+	return blk
+}
+
+// anCacheControlOf returns the cache_control marker for a part, or nil when
+// the part carries no breakpoint.
+func anCacheControlOf(p types.Part) *anCacheControl {
+	if p.CacheBreakpoint {
+		return &anCacheControl{Type: "ephemeral"}
+	}
+	return nil
+}
+
 func imageBlock(p types.Part) anBlock {
-	b := anBlock{Type: "image"}
+	b := anBlock{Type: "image", CacheControl: anCacheControlOf(p)}
 	b.Source = &struct {
 		Type      string `json:"type"`
 		MediaType string `json:"media_type,omitempty"`
@@ -356,10 +427,17 @@ func imageBlock(p types.Part) anBlock {
 	return b
 }
 
+// appendJSON appends v to arr interpreted as a JSON array, creating the
+// array when arr is empty. The previous form returned a bare object for
+// the first element and invalid JSON ("{a},{b}]") for the second — caught
+// by the issue #32 breakpoint round-trip test.
 func appendJSON(arr json.RawMessage, v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	if len(arr) == 0 {
-		return b
+		out := make(json.RawMessage, 0, len(b)+2)
+		out = append(out, '[')
+		out = append(out, b...)
+		return append(out, ']')
 	}
 	trimmed := strings.TrimRight(strings.TrimSpace(string(arr)), "]")
 	trimmed = strings.TrimRight(trimmed, " \t\n")
