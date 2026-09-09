@@ -79,6 +79,75 @@ func TestExecuteFallbackOnQuota(t *testing.T) {
 	}
 }
 
+// A pre-first-byte budget exhaustion (the gateway's own ResponseHeaderTimeout,
+// e.g. the 2026-09-09 tokenrouter glm-5.3-free free-lane stalls: two
+// consecutive silent 120s waits before the client saw the 504) must not burn
+// a second full budget on the same target. The router falls through to the
+// next combo target immediately; a direct route surfaces the 504 after a
+// single attempt.
+func TestExecuteBudgetTimeoutSkipsSameTargetRetry(t *testing.T) {
+	r := New(newTestPool())
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+	calls := map[string]int{}
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls[def.Name]++
+		if def.Name == "p1" {
+			return nil, &types.APIError{
+				Status: 504, Type: "upstream_timeout",
+				Message:           `Post "https://x/v1/chat/completions": net/http: timeout awaiting response headers`,
+				NoSameTargetRetry: true,
+			}
+		}
+		return "ok", nil
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("expected success via the next combo target, got %v", got)
+	}
+	if calls["p1"] != 1 || calls["p2"] != 1 {
+		t.Fatalf("budget timeout must skip the same-target retry: %v", calls)
+	}
+
+	// Direct route (single target): one attempt, then the 504 surfaces.
+	res, _ = r.Resolve("p1/m1")
+	p1 := 0
+	caller = func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		p1++
+		return nil, &types.APIError{Status: 504, Type: "upstream_timeout", Message: "budget", NoSameTargetRetry: true}
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got == nil || got.Status != 504 || got.Type != "upstream_timeout" {
+		t.Fatalf("direct route must surface the budget-exhausted 504: %v", got)
+	}
+	if p1 != 1 {
+		t.Fatalf("direct route must not retry a spent budget, calls=%d", p1)
+	}
+}
+
+// An ordinary upstream 504 (no budget marker) keeps the historical
+// MaxAttempts retry on the same target — the skip is reserved for the
+// gateway's own header-budget aborts.
+func TestExecutePlainTimeoutStillRetries(t *testing.T) {
+	r := New(newTestPool())
+	res, _ := r.Resolve("p1/m1")
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		return nil, &types.APIError{Status: 504, Type: "upstream_timeout", Message: "gateway timeout"}
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got == nil || got.Status != 504 {
+		t.Fatalf("expected the 504 to surface: %v", got)
+	}
+	if calls != 2 { // MaxAttempts
+		t.Fatalf("plain 504 must keep the same-target retry, calls=%d", calls)
+	}
+}
+
 func TestExecuteNoRetryOnBadRequest(t *testing.T) {
 	r := New(newTestPool())
 	r.SetCombos([]*Combo{{

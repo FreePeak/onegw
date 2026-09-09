@@ -805,6 +805,23 @@ the issue):
   only type-asserts its direct child). Zero-drop deployed (pid verified);
   post-deploy the same failure class logs `504 upstream_timeout` and falls
   through the combo.
+- **Budget-exhausted timeouts no longer burn a second budget — RCA + fix**
+  (2026-09-09, this entry): a direct `tokenrouter/z-ai/glm-5.3-free`
+  request logged `504 upstream_timeout — net/http: timeout awaiting
+  response headers` (0 in / 0 out) after TWO silent 120s waits. Root
+  causes: (1) the tokenrouter free lane's pre-first-byte latency is
+  bimodal — live probes on identical ~296 KB streaming bodies measured
+  17-37s TTFB, and the failing attempt saw >120s (aggregator queue
+  saturation, upstream side, nothing to fix there); (2) the gateway
+  treated that budget exhaustion like a cheap 5xx and re-attacked the
+  SAME target (`MaxAttempts=2`), doubling the dead latency before the
+  client saw the 504 — pointless, because the pre-first-byte demand is
+  a property of the request, not of the attempt. Fix: `transportErr`
+  flags the ResponseHeaderTimeout flavor (exact net/http abort text;
+  dial/TLS timeouts stay retryable) with `NoSameTargetRetry`, and
+  `Router.Execute` falls through to the next combo target immediately
+  (a direct route surfaces the 504 after ONE budget). Regression tests
+  pin both flavors; the ordinary 504 keeps its retry.
 - **9router importer** (`cmd/import9r`): reads 9router's data.sqlite, imports
   API-key connections as onegw providers (accounts, upstream model discovery,
   gateway auth keys) and OAuth bearer-token connections whose upstream
@@ -932,7 +949,12 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   visuals unchanged. Cards/table were always correct (Go compact).
 
 ---
-*Last updated: 2026-09-09 (request log diagnosability: rows carry the upstream
+
+*Last updated: 2026-09-09 (tokenrouter 504 budget fix: pre-first-byte
+  exhaustion marked NoSameTargetRetry, Router.Execute falls through instead
+  of a second silent 120s retry on the same target; dial/TLS timeouts stay
+  retryable; live TTFB probes 6-37s nominal, bimodal free-lane queue events
+  past 120s; earlier: request log diagnosability: rows carry the upstream
   account name (@account in the console line, account JSON field) + 7-day
   auto-clear, ab62468 — committed from a clean archive of HEAD (full suite green
   in /tmp), zero-drop deployed live (pid 67617), end-to-end verified: b-ai rows

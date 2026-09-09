@@ -281,7 +281,9 @@ func IdentityFrom(ctx context.Context) string {
 }
 
 // Execute runs the resolution: for each target pick an account and call; on
-// retryable failure try again, then fall through to the next target.
+// retryable failure try again, then fall through to the next target. A
+// pre-first-byte budget exhaustion (NoSameTargetRetry) skips the same-target
+// retry — the pre-first-byte demand is fixed, only fall-through can help.
 // onResult receives the successful result.
 func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onResult func(any)) *types.APIError {
 	// Task-aware combo reordering (issue #54): stable re-sort of the
@@ -340,6 +342,15 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				default:
 				}
 				continue
+			}
+			if err.NoSameTargetRetry {
+				// Pre-first-byte budget spent (the gateway's own
+				// ResponseHeaderTimeout — e.g. a slow aggregator queue):
+				// the request's pre-first-byte demand is fixed, so a
+				// second attempt can only burn a second full budget.
+				// Fall through to the next combo target now; a direct
+				// route (no next target) surfaces the 504 as-is.
+				break
 			}
 			attempt++
 			if err.RegionLocked() || err.Fallbackable {
