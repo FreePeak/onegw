@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -573,6 +574,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
+	anchorDataDir(&cfg, path)
 	cfg.Defaults()
 	if err := cfg.Auth.decodeKeys(md); err != nil {
 		return nil, err
@@ -581,6 +583,26 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// anchorDataDir resolves a relative data_dir against the config file's
+// directory, never the process working directory. A gateway relaunched
+// elsewhere — install.sh's nohup, an `onegw update` handoff, a manual
+// restart from another shell — used to inherit a different cwd and
+// silently open a fresh, empty usage.db while the real history sat in the
+// directory the config was written for. Anchoring to the config location
+// makes one config file mean exactly one data dir. "memory" (in-store test
+// sentinel) is left untouched.
+func anchorDataDir(c *Config, path string) {
+	dd := c.Server.DataDir
+	if dd == "" || dd == "memory" || filepath.IsAbs(dd) {
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	c.Server.DataDir = filepath.Join(filepath.Dir(abs), dd)
 }
 
 func defaultDataDir() string {
