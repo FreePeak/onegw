@@ -1,3 +1,17 @@
+*Last updated: 2026-09-09 (relative data_dir data-loss incident, fixed 47e2984: a
+relative `data_dir` resolved against the process cwd, so when the update-feature
+install.sh restart launched the gateway from ~/.onegw with a copy of the user's
+config, it silently opened a FRESH EMPTY usage.db — usage history "disappeared".
+Data was never deleted: repo data/usage.db held it all; merged 153 rollup rows
+into the live ~/.onegw/data/usage.db (INSERT OR IGNORE; PK includes node_id so
+old/new rows can't collide) while serving. Hardening: internal/config anchorDataDir
+resolves a relative data_dir against the config FILE's directory (one config file
+means exactly one data dir regardless of launcher cwd; absolute paths, "memory"
+sentinel, and the absolute default untouched); both live configs pinned absolute;
+zero-drop redeployed (pid 19071, archive-built 47e2984, /admin/update auth re-synced).
+Recovery copy: /tmp/onegw-recover/usage.db. Follow-up: peer WIP check_markers in
+scripts/deploy.sh false-fails under pipefail — strings|grep -q SIGPIPEs on match.)*
+
 *Last updated: 2026-09-09 (dashboard update button, #61: Settings page gains a
 Version card — running vs latest release, Check now / Update now — backed by new
 cookie-gated GET/POST /admin/api/v1/update in internal/server/admin_update.go
