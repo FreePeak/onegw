@@ -1,3 +1,22 @@
+*Last updated: 2026-09-09 (cursor provider live — KindCursor promoted from
+fail-fast skeleton to a full AgentService+ChatService executor (issue #12
+follow-up, commit 12fd081): Connect-RPC/protobuf port of 9router's cursor
+executor, Jyh-cipher checksum (JS shift masking emulated), full-duplex
+handshake over net/http (pre-answering the context question does NOT work —
+live-proven), system text folded into the user turn (field 8 kills the turn,
+live-proven 3/3), stop-frame termination (upstream never EOFs, 10s
+keepalives). Live: binary 12fd081 zero-drop deployed (pid 8774 → 10264),
+onegw.toml kind="cursor" provider hot-reloaded (9 providers), cursor/gpt-5.2
+answers PONG with real upstream usage (11859/6) through the live gateway,
+streaming verified; token from 9router DB (exp 2026-11-02, no refresh —
+re-import when rotated). Tools path: Cursor's ChatService does not register
+MCP tool defs upstream today (same as 9router production).)*
+
+*Last updated: 2026-09-09 (README dashboard section synced to the editable
+console — Providers/Combos in-page editing, Quota/Token Saver split out,
+Settings maintenance card — overview screenshot re-shot after redeploying
+master 46936d1 zero-drop (pid 91238 → 8774; old binary predated the
+dashboard tabular-nums commit); docs-only, no code change.)*
 *Last updated: 2026-09-09 (dashboard M.O.N.K.Y OS revamp 74fbff2 — flat ink/indigo/neon design,
 branded sidebar, right-rail clock/status/ranking, overview chart — zero-drop deployed pid 91238 (rebased onto origin as 74fbff2).
 Earlier: commandcode-520 + glm-empty-500 RCA 289cd47+d41d078.)*
