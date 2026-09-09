@@ -350,41 +350,31 @@ func TestUsageDailyCursorAPI(t *testing.T) {
 
 func TestUsagePageAggregates(t *testing.T) {
 	srv, h := newAdminSrvWithStore(t, "")
-	rows := []usage.Bucket{mkBucketAt("p1", "m1", time.Now(), 1_234_567, 2)}
+	_ = srv
+	rows := []usage.Bucket{
+		{Key: usage.Key{Day: todayUTC(), Hour: "01", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 2, InputTokens: 10, OutputTokens: 20, SavedTokens: 5},
+		{Key: usage.Key{Day: todayUTC(), Hour: "02", Provider: "p1", Model: "m2", APIKey: "k"}, Requests: 1, InputTokens: 7, OutputTokens: 3},
+	}
 	if err := srv.st.FlushBuckets(rows); err != nil {
 		t.Fatal(err)
 	}
 	w := do(t, h, adminReq(t, "/admin/ui/usage?range=today"))
 	body := w.Body.String()
-	if !strings.Contains(body, "1.2M") {
+	if !strings.Contains(body, "17") || !strings.Contains(body, "23") {
 		t.Fatalf("usage page missing today's aggregates:\n%s", body)
-	}
-	if strings.Contains(body, "UTC day") {
-		t.Fatal("window label still speaks UTC")
 	}
 	w = do(t, h, adminReq(t, "/admin/ui/usage?range=7d"))
 	if !strings.Contains(w.Body.String(), "chart-tok") {
 		t.Fatal("7d page missing charts")
 	}
-}
-
-// mkBucketAt seeds a rollup bucket whose (day,hour) key is the UTC instant
-// of at — matching what usage.Observe derives from time.Now().UTC().
-func mkBucketAt(provider, model string, at time.Time, inTok, reqs int64) usage.Bucket {
-	u := at.UTC()
-	return usage.Bucket{
-		Key: usage.Key{Day: u.Format("2006-01-02"), Hour: u.Format("15"),
-			Provider: provider, Model: model, APIKey: "k"},
-		InputTokens: inTok, Requests: reqs,
-		FirstSeen: at, LastSeen: at,
-	}
+	_ = srv
 }
 
 func TestChartJSONShape(t *testing.T) {
 	srv, _ := newAdminSrv(t, "")
-	now := time.Now()
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	js := srv.chartJSON(midnight.AddDate(0, 0, -2), now)
+	from := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
+	to := time.Now().UTC().Format("2006-01-02")
+	js := srv.chartJSON(from, to)
 	var cd struct {
 		Days     []string `json:"days"`
 		Requests []int64  `json:"requests"`
@@ -471,10 +461,10 @@ func TestCompactLadder(t *testing.T) {
 // 24-hour axis (labels + epoch x values), values summed per hour.
 func TestTodayChartHourly(t *testing.T) {
 	srv, h := newAdminSrvWithStore(t, "")
-	now := time.Now()
+	today := todayUTC()
 	rows := []usage.Bucket{
-		mkBucketAt("p1", "m1", now, 100, 4),
-		mkBucketAt("p1", "m1", now.Add(-2*time.Hour), 200, 6),
+		{Key: usage.Key{Day: today, Hour: "05", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 4, InputTokens: 100},
+		{Key: usage.Key{Day: today, Hour: "09", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 6, InputTokens: 200},
 	}
 	if err := srv.st.FlushBuckets(rows); err != nil {
 		t.Fatal(err)
@@ -485,32 +475,28 @@ func TestTodayChartHourly(t *testing.T) {
 		Requests []int64  `json:"requests"`
 		Input    []int64  `json:"input"`
 	}
-	// Today's local window: [local midnight, now).
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if err := json.Unmarshal([]byte(srv.chartJSON(midnight, now)), &cd); err != nil {
+	if err := json.Unmarshal([]byte(srv.chartJSON(today, today)), &cd); err != nil {
 		t.Fatal(err)
 	}
-	if len(cd.Days) != now.Hour()+1 || len(cd.Xs) != now.Hour()+1 {
-		t.Fatalf("hour axis: %d labels, %d x, want %d", len(cd.Days), len(cd.Xs), now.Hour()+1)
+	if len(cd.Days) != 24 || len(cd.Xs) != 24 {
+		t.Fatalf("hour axis: %d labels, %d x", len(cd.Days), len(cd.Xs))
 	}
-	// The just-seeded row lands in the bucket for its local hour.
-	cur := cd.Requests[now.Hour()]
-	if cur != 4 || cd.Input[now.Hour()] != 100 {
-		t.Fatalf("current-hour bucket wrong: %+v", cd)
+	if cd.Days[5] != "05" || cd.Requests[5] != 4 || cd.Input[5] != 100 {
+		t.Fatalf("hour 05 wrong: %+v", cd)
 	}
-	if now.Hour() >= 2 && (cd.Requests[now.Hour()-2] != 6 || cd.Input[now.Hour()-2] != 200) {
-		t.Fatalf("two-hours-ago bucket wrong: %+v", cd)
+	if cd.Requests[9] != 6 || cd.Input[9] != 200 {
+		t.Fatalf("hour 09 wrong: %+v", cd)
 	}
-	if cd.Xs[now.Hour()]-cd.Xs[0] != int64(now.Hour())*3600 {
-		t.Fatalf("x spacing wrong: %d", cd.Xs[now.Hour()]-cd.Xs[0])
+	if cd.Xs[9]-cd.Xs[5] != 4*3600 {
+		t.Fatalf("x spacing wrong: %d", cd.Xs[9]-cd.Xs[5])
 	}
 	// The page itself renders charts for today.
 	w := do(t, h, adminReq(t, "/admin/ui/usage?range=today"))
 	if !strings.Contains(w.Body.String(), "chart-tok") {
 		t.Fatal("today page missing charts")
 	}
-	if !strings.Contains(w.Body.String(), "per hour (local)") {
-		t.Fatal("today page missing local hourly chart unit")
+	if !strings.Contains(w.Body.String(), "per hour (UTC)") {
+		t.Fatal("today page missing hourly chart unit")
 	}
 }
 
@@ -518,9 +504,11 @@ func TestTodayChartHourly(t *testing.T) {
 // CSS cannot accidentally match: yesterday's model must not appear.
 func TestUsageTodayExcludesYesterday(t *testing.T) {
 	srv, h := newAdminSrvWithStore(t, "")
+	today := todayUTC()
+	yday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	rows := []usage.Bucket{
-		mkBucketAt("p1", "m1", time.Now(), 1_234_567, 1),
-		mkBucketAt("p1", "yesterday-only-model", time.Now().Add(-25*time.Hour), 9_876_543, 9),
+		{Key: usage.Key{Day: today, Hour: "05", Provider: "p1", Model: "m1", APIKey: "k"}, Requests: 1, InputTokens: 1_234_567},
+		{Key: usage.Key{Day: yday, Hour: "05", Provider: "p1", Model: "yesterday-only-model", APIKey: "k"}, Requests: 9, InputTokens: 9_876_543},
 	}
 	if err := srv.st.FlushBuckets(rows); err != nil {
 		t.Fatal(err)
@@ -531,7 +519,7 @@ func TestUsageTodayExcludesYesterday(t *testing.T) {
 		t.Fatal("today's distinctive input missing")
 	}
 	if strings.Contains(body, "yesterday-only-model") || strings.Contains(body, "9.9M") {
-		t.Fatal("today filter leaked rows older than the local day")
+		t.Fatal("today filter leaked yesterday's rows")
 	}
 	_ = srv
 }

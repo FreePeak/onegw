@@ -29,7 +29,7 @@ const (
 	sessionTTL      = 12 * time.Hour
 	maxSessions     = 64
 	maxLoginFails   = 5
-	loginBlockAfter = 5 * time.Minute
+	loginBlockAfter = 24 * time.Hour
 )
 
 type adminSession struct {

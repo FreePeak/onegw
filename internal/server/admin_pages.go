@@ -369,16 +369,14 @@ type overviewData struct {
 func (s *Server) overviewView() *overviewData {
 	v := &overviewData{}
 	st := s.cur()
-	// Overview "today" = the operator's local day (see usageWindow).
-	now := time.Now()
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	today := time.Now().UTC().Format("2006-01-02")
 	if s.st != nil {
-		if rows, err := s.usageRows(midnight, now); err == nil {
+		if rows, err := s.st.QueryRange(today, today); err == nil {
 			for _, r := range rows {
-				v.TodayReq += r.Req
-				v.TodayIn += r.In
-				v.TodayOut += r.Out
-				v.TodaySaved += r.Saved
+				v.TodayReq += r.Requests
+				v.TodayIn += r.InputTok
+				v.TodayOut += r.OutputTok
+				v.TodaySaved += r.SavedTok
 			}
 		}
 	}
@@ -479,53 +477,20 @@ var usageRanges = []struct {
 	{"all", "All time", 3650},
 }
 
-// usageWindow resolves ?range= to a [start,end) window in server-local
-// time — the gateway and the operator's browser share this machine, so
-// local here is the locale the dashboard should speak. It also returns
-// the UTC day span the rollup query must cover: a local day straddles two
-// UTC day keys (rows are UTC-keyed in the store), so "today" before the
-// UTC offset kicks in still counts the early-morning local hours stored
-// under yesterday's key.
-func usageWindow(sel string) (start, end time.Time, fromDay, toDay, label string) {
-	now := time.Now()
-	end = now
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+// rangeWindow resolves ?range= to a from/to day pair ("all" has no lower
+// bound: from = "" queries everything stored).
+func rangeWindow(sel string) (from, to string) {
+	to = time.Now().UTC().Format("2006-01-02")
 	switch sel {
 	case "today":
-		start = midnight
+		return to, to
 	case "7d":
-		start = midnight.AddDate(0, 0, -6)
+		return time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02"), to
 	case "1m":
-		start = midnight.AddDate(0, 0, -30)
-	default: // all: no lower bound
+		return time.Now().UTC().AddDate(0, 0, -31).Format("2006-01-02"), to
+	default:
+		return "", to
 	}
-	if !start.IsZero() {
-		fromDay = start.UTC().Format("2006-01-02")
-		label = start.Format("2006-01-02") + " → " + midnight.Format("2006-01-02")
-	}
-	if sel == "today" {
-		label = "day " + midnight.Format("2006-01-02")
-	}
-	if label != "" {
-		label += " · " + midnight.Format("UTC-07:00")
-	} else {
-		label = "all stored rollups"
-	}
-	toDay = end.UTC().Format("2006-01-02")
-	return
-}
-
-// inWindow reports whether a rollup row's UTC (day,hour) instant falls in
-// [start,end). Zero start = unbounded.
-func inWindow(r store.UsageRow, start, end time.Time) bool {
-	if start.IsZero() {
-		return true
-	}
-	t, err := time.ParseInLocation("2006-01-02 15", r.Day+" "+r.Hour, time.UTC)
-	if err != nil {
-		return false
-	}
-	return !t.Before(start) && t.Before(end)
 }
 
 func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
@@ -533,12 +498,20 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 	if sel == "" {
 		sel = "all"
 	}
-	start, end, fromDay, toDay, label := usageWindow(sel)
-	v := &usageView{From: fromDay, To: toDay, Window: label}
+	from, to := rangeWindow(sel)
+	v := &usageView{From: from, To: to}
 	for _, rg := range usageRanges {
 		v.Ranges = append(v.Ranges, usageRange{ID: rg.ID, Label: rg.Label, On: rg.ID == sel})
 	}
-	rows, err := s.usageRows(start, end)
+	switch sel {
+	case "today":
+		v.Window = "UTC day " + to
+	case "7d", "1m":
+		v.Window = from + " → " + to
+	default:
+		v.Window = "all stored rollups"
+	}
+	rows, err := s.usageRows(from, to)
 	if err == nil {
 		v.Rows = rows
 		for _, r2 := range rows {
@@ -553,25 +526,19 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 	// would need the whole history on one x-axis — the table covers that.
 	v.HasCharts = sel != "all"
 	if v.HasCharts {
-		v.ChartJSON = template.JS(s.chartJSON(start, end))
+		v.ChartJSON = template.JS(s.chartJSON(from, to))
 	}
-	v.ChartUnit = "per day (local)"
-	if start.Local().Format("2006-01-02") == end.Local().Format("2006-01-02") {
-		v.ChartUnit = "per hour (local)"
+	v.ChartUnit = "per day"
+	if from == to {
+		v.ChartUnit = "per hour (UTC)"
 	}
 	s.authedPage(w, r, "usage", "Usage", false, v)
 }
 
-// usageRows aggregates store rollups (UTC-keyed) to one row per
-// provider+model, counting only rows whose (day,hour) instant falls in
-// the [start,end) local window.
-func (s *Server) usageRows(start, end time.Time) ([]usageRowView, error) {
+// usageRows aggregates store rollups to one row per provider+model.
+func (s *Server) usageRows(from, to string) ([]usageRowView, error) {
 	if s.st == nil {
 		return nil, nil
-	}
-	from, to := "", end.UTC().Format("2006-01-02")
-	if !start.IsZero() {
-		from = start.UTC().Format("2006-01-02")
 	}
 	raw, err := s.st.QueryRange(from, to)
 	if err != nil {
@@ -580,9 +547,6 @@ func (s *Server) usageRows(start, end time.Time) ([]usageRowView, error) {
 	type key struct{ p, m string }
 	agg := map[key]*usageRowView{}
 	for _, r := range raw {
-		if !inWindow(r, start, end) {
-			continue
-		}
 		k := key{r.Provider, r.Model}
 		v := agg[k]
 		if v == nil {
@@ -609,81 +573,78 @@ func (s *Server) usageRows(start, end time.Time) ([]usageRowView, error) {
 	return out, nil
 }
 
-// chartJSON builds the uPlot dataset over the local window. Day mode
-// (default): one bucket per local day. Hour mode (window within a single
-// local day): one bucket per local hour. Buckets are local-labeled; the
-// x values stay epoch seconds so uPlot spaces them correctly across the
-// UTC day-key straddle.
-func (s *Server) chartJSON(start, end time.Time) string {
-	hourly := start.Local().Format("2006-01-02") == end.Local().Format("2006-01-02")
-	if start.IsZero() {
-		hourly = false
+// chartJSON builds the uPlot dataset. Day mode (default): dense day axis +
+// per-day sums. Hour mode (today): 24-hour axis + per-hour sums, so the
+// single-day view still shows a curve.
+func (s *Server) chartJSON(from, to string) string {
+	type axis struct {
+		Labels []string
+		Keys   map[string][4]int64 // label → [req, in, out, cache_read]
 	}
-	// Build the bucket grid in local time.
-	var buckets []time.Time
-	var labels []string
-	if hourly {
-		h0 := start.Local().Truncate(time.Hour)
-		for t := h0; t.Before(end); t = t.Add(time.Hour) {
-			buckets = append(buckets, t)
-			labels = append(labels, t.Format("15"))
-		}
-	} else if !start.IsZero() {
-		d0 := start.Local()
-		midnight := time.Date(d0.Year(), d0.Month(), d0.Day(), 0, 0, 0, 0, d0.Location())
-		for t := midnight; !t.After(end); t = t.AddDate(0, 0, 1) {
-			buckets = append(buckets, t)
-			labels = append(labels, t.Format("1/2"))
-		}
-		if len(labels) > 62 {
-			labels, buckets = labels[len(labels)-62:], buckets[len(buckets)-62:]
-		}
-	}
-	// Aggregate rows into buckets by their UTC instant.
-	vals := map[int][4]int64{} // bucket index → [req, in, out, cache_read]
-	if s.st != nil && len(buckets) > 0 {
-		from, to := start.UTC().Format("2006-01-02"), end.UTC().Format("2006-01-02")
+	var ax axis
+	ax.Keys = map[string][4]int64{}
+	if s.st != nil {
 		if raw, err := s.st.QueryRange(from, to); err == nil {
 			for _, r := range raw {
-				t, err := time.ParseInLocation("2006-01-02 15", r.Day+" "+r.Hour, time.UTC)
-				if err != nil {
-					continue
+				label := r.Day
+				if from == to { // single-day window → hourly buckets
+					label = r.Hour
 				}
-				// bucket = floor to grid step relative to the first bucket
-				step := time.Hour
-				if !hourly {
-					step = 24 * time.Hour
-				}
-				idx := int(t.Sub(buckets[0]) / step)
-				if idx < 0 || idx >= len(buckets) {
-					continue
-				}
-				d := vals[idx]
+				d := ax.Keys[label]
 				d[0] += r.Requests
 				d[1] += r.InputTok
 				d[2] += r.OutputTok
 				d[3] += r.CacheRead
-				vals[idx] = d
+				ax.Keys[label] = d
 			}
 		}
 	}
+	if from == to { // dense 00..23 hour axis
+		for h := range 24 {
+			ax.Labels = append(ax.Labels, fmt.Sprintf("%02d", h))
+		}
+	} else { // dense day axis; cap the span
+		for d := from; d <= to; {
+			ax.Labels = append(ax.Labels, d)
+			t, err := time.Parse("2006-01-02", d)
+			if err != nil {
+				break
+			}
+			d = t.AddDate(0, 0, 1).Format("2006-01-02")
+		}
+		if len(ax.Labels) > 62 {
+			ax.Labels = ax.Labels[len(ax.Labels)-62:]
+		}
+	}
 	type chartData struct {
-		Days      []string `json:"days"` // local display labels
+		Days      []string `json:"days"` // display labels
 		Xs        []int64  `json:"xs"`   // epoch seconds — uPlot needs numeric x
 		Requests  []int64  `json:"requests"`
 		Input     []int64  `json:"input"`
 		Output    []int64  `json:"output"`
 		CacheRead []int64  `json:"cache_read"`
 	}
-	cd := chartData{Days: labels, Xs: make([]int64, len(buckets))}
-	cd.Requests = make([]int64, len(buckets))
-	cd.Input = make([]int64, len(buckets))
-	cd.Output = make([]int64, len(buckets))
-	cd.CacheRead = make([]int64, len(buckets))
-	for i := range buckets {
-		cd.Xs[i] = buckets[i].Unix()
-		d := vals[i]
-		cd.Requests[i], cd.Input[i], cd.Output[i], cd.CacheRead[i] = d[0], d[1], d[2], d[3]
+	xs := make([]int64, len(ax.Labels))
+	for i, d := range ax.Labels {
+		var t time.Time
+		if from == to { // hour label on the current day
+			h, _ := strconv.Atoi(d)
+			t, _ = time.Parse("2006-01-02", from)
+			t = t.Add(time.Duration(h) * time.Hour)
+		} else {
+			t, _ = time.Parse("2006-01-02", d)
+		}
+		xs[i] = t.Unix()
+	}
+	cd := chartData{
+		Days:     ax.Labels,
+		Xs:       xs,
+		Requests: make([]int64, len(ax.Labels)), Input: make([]int64, len(ax.Labels)),
+		Output: make([]int64, len(ax.Labels)), CacheRead: make([]int64, len(ax.Labels)),
+	}
+	for i, d := range ax.Labels {
+		v := ax.Keys[d]
+		cd.Requests[i], cd.Input[i], cd.Output[i], cd.CacheRead[i] = v[0], v[1], v[2], v[3]
 	}
 	b, _ := json.Marshal(cd)
 	return string(b)
