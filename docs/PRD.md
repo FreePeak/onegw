@@ -1028,7 +1028,18 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 
 ---
 
-*Last updated: 2026-09-09 (tokenrouter 504 budget fix: pre-first-byte
+*Last updated: 2026-09-09 (rate-limit error-log RCA + governor restoration deploy: deep-dive
+  on the live request ring during a high-throughput burst (16:43-16:48, ~130 req/min) showed
+  168 of 512 ring rows were 429s — 140 upstream per-account (up to 11 429s/min on ONE key,
+  impossible under the #56 rpm=5 token bucket) + 16 Tencent shared-wall + 12 tokenrouter
+  8/min-wall; root cause: FOUR successive peer deploy generations (pids 15538/89605/26764,
+  /tmp/onegw-mk-binary) shipped binaries built from stale refs predating 729c190/9a3dbc0 —
+  strings check: newTokenBucket/refillAt/upstream_empty_body all 0; fix: archive-built
+  origin/master d41d078 and zero-drop deployed (scripts/deploy.sh --binary, pid 996);
+  post-deploy verification: per-account attempts capped ≤6/min and ≤2/sec (burst-2 governor
+  observable), 8 residual 429s in 3 min vs 168 in 5 — all residual rows are the two by-design
+  classes (shared-wall fall-through per 359e5a0 + burst-edge per-account); no code change,
+  ops-only; earlier: tokenrouter 504 budget fix: pre-first-byte
   exhaustion marked NoSameTargetRetry, Router.Execute falls through instead
   of a second silent 120s retry on the same target; dial/TLS timeouts stay
   retryable; live TTFB probes 6-37s nominal, bimodal free-lane queue events
