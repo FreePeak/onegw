@@ -8,6 +8,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -271,3 +272,94 @@ func diffLines(a, b string) string {
 }
 
 var _ = os.Getenv // keep os import if unused after refactors
+
+// PATCH /admin/config/providers/{name}/disabled — the grid's quick
+// on/off toggle. Behavior observed by consumers: the on-disk block gains
+// (true) or loses (false) exactly a `disabled` key, everything else in
+// the block survives byte-for-byte, and the live pool reconfigures.
+func TestProviderDisabledTogglePersistsAndReloads(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editTestToml)
+
+	// toggle OFF
+	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":true}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH disable: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if !strings.Contains(file, "disabled = true") {
+		t.Fatalf("file missing disabled = true:\n%s", file)
+	}
+	for _, keep := range []string{
+		"# p1 comment that must survive an update",
+		`"X-Custom" = "keep-me"`,
+		"rpm = 6",
+		`api_key = "sk-test-p1-secret"`,
+	} {
+		if !strings.Contains(file, keep) {
+			t.Fatalf("disable toggle dropped %q:\n%s", keep, file)
+		}
+	}
+	if st := srv.cur().cfg.Providers[0]; !st.Disabled {
+		t.Fatalf("live config not disabled after toggle: %+v", st)
+	}
+
+	// toggle back ON: the key is removed again (enabled = default, explicit)
+	w = adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":false}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH enable: %d %s", w.Code, w.Body.String())
+	}
+	file = mustReadFile(t, path)
+	if strings.Contains(file, "disabled") {
+		t.Fatalf("enable toggle left a disabled key behind:\n%s", file)
+	}
+	if st := srv.cur().cfg.Providers[0]; st.Disabled {
+		t.Fatalf("live config still disabled after re-enable: %+v", st)
+	}
+}
+
+func TestProviderDisabledToggleUnknownProvider(t *testing.T) {
+	_, h, path := newTestServerFromFile(t, editTestToml)
+	before := mustReadFile(t, path)
+	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/ghost/disabled", `{"disabled":true}`, true)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown provider: want 400, got %d %s", w.Code, w.Body.String())
+	}
+	if got := mustReadFile(t, path); got != before {
+		t.Fatalf("file mutated on rejected toggle:\n%s", diffLines(before, got))
+	}
+}
+
+func TestProviderDisabledToggleUnauthorized(t *testing.T) {
+	_, h, _ := newTestServerFromFile(t, editTestToml)
+	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":true}`, false)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", w.Code)
+	}
+}
+
+// A paused provider stops being advertised: its model ids (and any
+// searxng canonical id) vanish from /v1/models, while combos and aliases
+// stay listed (a combo still resolves — it just falls through its
+// disabled legs).
+func TestDisabledProviderNotAdvertised(t *testing.T) {
+	srv, h, _ := newTestServerFromFile(t, editTestToml)
+	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":true}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH disable: %d %s", w.Code, w.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer key-a")
+	w = do(t, h, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /v1/models: %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `"p1/m1"`) {
+		t.Fatalf("disabled provider still advertised: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"c1"`) {
+		t.Fatalf("combo must stay advertised: %s", w.Body.String())
+	}
+	if st := srv.cur().cfg.Providers[0]; !st.Disabled {
+		t.Fatalf("live config not disabled: %+v", st)
+	}
+}
