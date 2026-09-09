@@ -48,6 +48,10 @@ func TestSharedConcurrencySignature(t *testing.T) {
 		{Status: 429, Message: "rate limit exceeded for key sk-xxx"},
 		{Status: 429, Code: "insufficient_quota", Message: "quota exhausted"},
 		{Status: 429, Message: ""}, // empty
+		// Guard the 503 substring probes against over-widening: a plain
+		// upstream 503 must stay ordinary-retryable, never shared-wall.
+		{Status: 503, Message: "down"},
+		{Status: 503, Message: "overloaded upstream, try another endpoint"},
 	}
 	for i, e := range negatives {
 		if e.SharedConcurrency() {
