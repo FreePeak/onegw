@@ -1,5 +1,5 @@
 *Last updated: 2026-09-09 (docker anonymous-volume fork closed, 2d6f08d: dropped
-VOLUME["/data"] from the Dockerfile — it allocated an anonymous volume on every
+VOLUME ["/data"] from the Dockerfile — it allocated an anonymous volume on every
 plain docker run, so the documented pull+recreate update path silently re-homed
 usage.db onto a fresh volume (the containerized variant of #62's data-loss class);
 persistence is explicit (compose onegw-data named volume / -v onegw-data:/data).
@@ -1112,7 +1112,20 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 ---
 
 
-*Last updated: 2026-09-09 (tokenrouter engine admission walls are shared, not per-key
+*Last updated: 2026-09-09 (zai glm provider outage RCA + config fix: glm/glm-5.3-flash
+  direct routes and the dev-combo last rung returned 500 upstream_empty_body from ~06:32Z
+  after Z.AI repurposed https://api.z.ai/api/v1 into a dedicated Codex (OpenAI Responses
+  protocol) endpoint for GLM Coding Plan keys (docs.z.ai/devpack/tool/codex) — chat
+  completions there now 403 model_access_denied, or 500 + empty body under the SSE
+  Accept header onegw sends, which masked the denial as upstream_empty_body (an earlier
+  same-day peer session had named the empty-body symptom but attributed it to model
+  deprovisioning); root-caused by direct-key probes: same coding-plan key 200 OK on
+  https://api.z.ai/api/coding/paas/v4/chat/completions, 403 on /api/v1; fix = glm
+  provider base_url → https://api.z.ai/api/coding/paas/v4 in BOTH the live
+  ~/.onegw/onegw.toml (SIGHUP hot-reloaded, zero-drop) and the repo onegw.toml;
+  end-to-end verified via /v1/messages stream + request ring 200 @harvey; the 22:33
+  key rotation (15d3854e→ac679568) was a red herring — both keys are valid coding-plan
+  keys; earlier: tokenrouter engine admission walls are shared, not per-key
   — issue #64, fix 5f365b2 pushed: the 21:37 client 503 "cache-only admission rejected a
   cold, unavailable, or overloaded request" is tokenrouter's z-ai engine cache-aware
   cold-prefill admission rejecting ~180K-token all-uncached requests when concurrent
