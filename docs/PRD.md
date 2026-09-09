@@ -1,6 +1,24 @@
 # onegw PRD
-
-*Last updated: 2026-09-09 (three-lane parallel implementation wave landed, merged with the
+*Last updated: 2026-09-09 (RCA + fix #52: b-ai transient faults no longer surface as terminal
+client errors — 9fb6e69, zero-drop deployed, live-verified. Live dashboard showed two raw 429s
+("model Concurrency limit 1200" — Tencent GLM's model-WIDE limit shared across all of the
+reseller's traffic, not per-key) and a terminal 401 whose body was the upstream's own internal
+auth/verify service failing (鉴权服务请求失败: read tcp ... connection reset). Fixes:
+(1) types.APIError.SharedConcurrency signature (narrow "concurrency limit" phrasing) — those
+429s skip the per-account ladder (benching healthy keys only shrank the serving pool while the
+~2-5s upstream window self-cleared; live evidence: the window 429ed two keys, every other
+request succeeded); (2) translat.UpstreamAuthVerifyFailed — the proxied verify-outage 401 is
+rewritten to retryable 502 upstream_auth_verify_failed keeping the upstream diagnostic, real
+invalid-key 401s stay terminal (test-pinned); (3) streaming fast path: whole-body requests
+replay through the buffered pipeline (full retry + combo fall-through), unreplayable chunked
+bodies get a managed retryable answer with honest Retry-After (a replay would be truncated —
+middle bytes consumed by the transport); (4) Router.Execute 1s/2s backoff tiers for shared
+concurrency (rotating keys is pointless against a shared wall) + surfaced OverQuota errors
+carry Retry-After (2s shared / 10s default; upstream header wins verbatim); (5) coolDuration("")
+flat-30s bug fixed — empty/garbage Retry-After now engages the documented adaptive ladder
+(10s base doubling to 60s), which previously never ran for headerless HTTP 429s. All regression
+tests mutation-checked; isolation build of the committed tree green; issue #52 opened + closed;
+earlier: three-lane parallel implementation wave landed, merged with the
 concurrent 502-storm RCA work (3e3e87b) — all attribution split by hunk in the merge commit
 7e28aa0; full suite green on the merged tree before push: #48 b-ai premium-gating 403
 (403 + access_denied/"Deposit required" signature) benches the ACCOUNT on the adaptive 429
