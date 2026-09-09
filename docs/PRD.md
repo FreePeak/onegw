@@ -1137,7 +1137,11 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   extended to the admission family (429 BackendAdmissionRejected + 503 cache-only/
   gateway-overloaded variants): no benching, immediate combo fall-through, 2s Retry-After
   on direct routes, 503 preserved; tests in translat/provider/router, mutation-checked;
-  live redeploy pending; earlier: rate-limit error-log RCA + governor restoration deploy: deep-dive
+  zero-drop deployed live (pid 98253, ~14 inflight at swap); post-deploy ring: admission
+  events now one attempt each — 429 @harvey 15:52:16 → 200 @harvey 15:52:26 (was: 1s-apart
+  same-target retry), no pool-empty, healthy keys stay on the ladder; also fixed in the
+  shared tree (uncommitted, peer #59 WIP): deploy.sh check_markers grep -q SIGPIPE false-fail
+  (issue #62 follow-up); earlier: rate-limit error-log RCA + governor restoration deploy: deep-dive
   on the live request ring during a high-throughput burst (16:43-16:48, ~130 req/min) showed
   168 of 512 ring rows were 429s — 140 upstream per-account (up to 11 429s/min on ONE key,
   impossible under the #56 rpm=5 token bucket) + 16 Tencent shared-wall + 12 tokenrouter
