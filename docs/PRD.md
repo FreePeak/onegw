@@ -1,3 +1,11 @@
+*Last updated: 2026-09-09 (live ops: `[update] check_interval = "12h"` set in the live
+config — 2×/day background checks, confirmed interval_seconds=43200 on /admin/update;
+live gateway cut over zero-drop to **v0.13.1** (pid 75149) through its own
+POST /admin/update apply path — the dashboard Version card's Update button, live-proven
+end to end. Found + filed #63: the dashboard's PUT /admin/config/reload does not sync
+the outer-mux /admin/update handler's config (SIGHUP does) — dashboard reload leaves
+update endpoints 401ing until SIGHUP/restart; fix pending on master.)*
+
 *Last updated: 2026-09-09 (relative data_dir data-loss incident, fixed 47e2984: a
 relative `data_dir` resolved against the process cwd, so when the update-feature
 install.sh restart launched the gateway from ~/.onegw with a copy of the user's
