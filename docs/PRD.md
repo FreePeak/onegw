@@ -1,3 +1,13 @@
+*Last updated: 2026-09-09 (docker anonymous-volume fork closed, 2d6f08d: dropped
+VOLUME["/data"] from the Dockerfile — it allocated an anonymous volume on every
+plain docker run, so the documented pull+recreate update path silently re-homed
+usage.db onto a fresh volume (the containerized variant of #62's data-loss class);
+persistence is explicit (compose onegw-data named volume / -v onegw-data:/data).
+ContainerGuidance now prints the exact volume-preserving recreate commands +
+docker cp escape hatch. Local volumes re-verified all Postgres — this Mac's incident
+ran through the native path fixed by 47e2984; issue #62 carries the full RCA +
+docker note)*
+
 *Last updated: 2026-09-09 (live ops: `[update] check_interval = "12h"` set in the live
 config — 2×/day background checks, confirmed interval_seconds=43200 on /admin/update;
 live gateway cut over zero-drop to **v0.13.1** (pid 75149) through its own
