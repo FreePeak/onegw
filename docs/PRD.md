@@ -1,4 +1,37 @@
 # onegw PRD
+
+*Last updated: 2026-09-09 (b-ai per-account 429 RCA + RPM governor 729c190 + free/dev
+rotation, zero-drop deployed pid 96925, closes #56 — earlier: four-lane wave
+#54/#32/#34/#35/#55/#14, below.)*
+
+**2026-09-09 — b-ai per-account 429 RCA + RPM governor (729c190, zero-drop deployed pid 96925):**
+the console showed two distinct b-ai 429 classes: `gateway_error` "Concurrency limit 1200"
+(Tencent GLM model-wide limit shared by ALL of the reseller's traffic — already handled by #52's
+shared-wall backoff, honest per client) vs `upstream_error` 您的账户已达到速率限制 — the
+PER-ACCOUNT limit, which the pool only handled reactively: the adaptive ladder benches a key
+AFTER the upstream already rejected an attempt. Live log (200 requests, 284 s, 42.3 req/min,
+92% glm-5.3-flash): every one of the 7 b-ai keys failed its per-account 429 at 4.3-6.5
+attempts/min while the pool kept rotating into doomed attempts. Fix (proactive governor):
+`Account.RPM` (toml `rpm`, 0 = uncapped) caps attempts/min with a refill token bucket
+(burst capacity 2, rate rpm/60, take() the sole consumer, refillAt() hints without
+consuming) — next() and sticky pins rotate past a drained bucket like a cooldown, so the
+pool spreads load BEFORE the upstream limit strikes; weighted slots share one bucket; a
+fully blocked pool reports the honest soonest-serve (max cooldown/refill) for fall-through
+Retry-After (cooldown-only hint regression pinned). Live config: rpm = 5 on all 7 b-ai keys
+(observed per-key ceiling: failures onset at ~6/min, so the cap runs at ~85% of the observed
+limit), free/dev combos retargeted with model rotation — free: b-ai/glm-5.3-flash →
+tokenrouter/z-ai/glm-5.3-free → b-ai/qwen3.8-flash → commandcode/z-ai/glm-5.3-flash →
+commandcode/deepseek/deepseek-v4-flash → opencode/mimo-v2.5; dev: b-ai/glm-5.3-flash →
+b-ai/qwen3.8-flash → glm/glm-5.3-flash → tokenrouter/z-ai/glm-5.3-free →
+commandcode/z-ai/glm-5.3-flash (b-ai limits are model-scoped, so glm-5.3-flash saturation no
+longer blocks qwen3.8-flash on the same key; xai/grok-4.6 — dead 403 terminal target —
+removed from dev). Rate-limit research: b.ai publishes no numeric per-key limits ("retry
+with exponential backoff and reduce concurrency"); Zhipu GLM coding plans gate by
+per-account concurrent sessions, tiered — consistent with the observed ~6/min onset at
+150-300K-token inputs. Verification: 7 governor regression tests mutation-checked; full
+./... green on the rebased tree; deploy zero-drop; live burst 20/20 dev-combo requests OK
+with the governor active. (closes #56)
+
 *Last updated: 2026-09-09 (four-lane wave landed + merged on origin/master, full suite green on
 the merged tree: #54 task-aware combo reordering (d94921d) — local stateless classifier
 (light/standard/heavy/critical, no LLM) + config-declared model power ([[providers.tier]], 0-150)
