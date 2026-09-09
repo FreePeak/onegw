@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 )
 
 //go:embed templates/*.html static/*.css static/*.js static/LICENSES.md
+//go:embed static/fonts/*.woff2
 var files embed.FS
 
 // assets holds the minified vendor files; read once at package init and
@@ -22,8 +24,9 @@ var files embed.FS
 // serving).
 var assets map[string][]byte
 
-// NavItem is one sidebar entry.
-type NavItem struct{ ID, Href, Label string }
+// NavItem is one sidebar entry. Group names render as section runs —
+// consecutive items sharing a Group get one heading.
+type NavItem struct{ ID, Href, Label, Group string }
 
 // Shell is the data every page template sees at the top level. V carries
 // the page-specific view (content/scripts/hdr blocks execute with V as dot).
@@ -53,7 +56,11 @@ func Compact(n int64) string { return compact(n) }
 
 func init() {
 	assets = map[string][]byte{}
-	for _, name := range []string{"htmx.min.js", "sse.min.js", "uPlot.iife.min.js", "uPlot.min.css", "admin.css"} {
+	for _, name := range []string{
+		"htmx.min.js", "sse.min.js", "uPlot.iife.min.js", "uPlot.min.css", "admin.css",
+		"fonts/SpaceGrotesk-latin.woff2", "fonts/PlusJakartaSans-latin.woff2",
+		"fonts/JetBrainsMono-latin.woff2",
+	} {
 		b, err := fs.ReadFile(files, "static/"+name)
 		if err != nil {
 			panic("dashboard: missing vendored asset " + name + ": " + err.Error())
@@ -123,4 +130,27 @@ func Render(page string, data Shell) (string, error) {
 func Asset(name string) ([]byte, bool) {
 	b, ok := assets[name]
 	return b, ok
+}
+
+// fontTypes maps served font extensions to content types.
+var fontTypes = map[string]string{".woff2": "font/woff2", ".woff": "font/woff"}
+
+// ServeFont writes a vendored woff2 font (name is the base filename, e.g.
+// "SpaceGrotesk-latin.woff2"). Unauthenticated by design: fonts are static
+// bytes, and the login page loads them before any session exists. Long
+// cache — embedded bytes never change for a given binary.
+func ServeFont(w http.ResponseWriter, name string) {
+	if strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.NotFound(w, nil)
+		return
+	}
+	b, ok := assets["fonts/"+name]
+	if !ok {
+		http.NotFound(w, nil)
+		return
+	}
+	ext := strings.ToLower(name[strings.LastIndex(name, "."):])
+	w.Header().Set("Content-Type", fontTypes[ext])
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	_, _ = w.Write(b)
 }

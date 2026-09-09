@@ -1,12 +1,12 @@
 {{define "hdr"}}<span>base URL <code class="chip">{{.BaseURL}}</code></span>{{end}}
 {{define "content"}}
-<p class="sub" style="color:var(--mut);margin-top:0">Point an agent CLI at the gateway. The bearer key is one of the
+<p class="sub mt-0">Point an agent CLI at the gateway. The bearer key is one of the
 <code class="chip">auth.keys</code> from your onegw.toml (never shown here) — export it as <code class="chip">ONEGW_KEY</code>.</p>
 {{range .Presets}}
-<div class="card" style="margin-bottom:14px">
-  <h3 style="font-size:13.5px;text-transform:none">{{.Name}}</h3>
-  <pre class="mono" style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px;overflow-x:auto;margin:0 0 8px" id="c-{{.ID}}">{{.Code}}</pre>
-  <button class="btn copy" data-t="c-{{.ID}}" style="padding:3px 10px">copy</button>
+<div class="card mb-3">
+  <h3 class="normal-case text-[13.5px]">{{.Name}}</h3>
+  <pre class="codeblock mb-3" id="c-{{.ID}}">{{.Code}}</pre>
+  <button class="btn copy sm" data-t="c-{{.ID}}">copy</button>
 </div>
 {{end}}
 {{end}}
