@@ -766,6 +766,25 @@ the issue):
   companion to #41): stack, SSE plumbing, auth prerequisite, API shape,
   landing order.
 
+Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
+  pages to the UnoRouter design language (user-selected reference,
+  unorouter.com/en/compare) — near-black canvas, hairline white/10 borders,
+  sharp corners, inverted primary buttons, zinc muted grays, status
+  emerald/amber/red, chart palette 1–5. Pipeline researched and pinned:
+  Tailwind v4 standalone CLI (single static binary, no Node/npm; fits the
+  no-package.json zero-external-assets constraint) compiles
+  `internal/server/dashboard/admin.src.css` (@theme tokens + @layer
+  components shared with Go-rendered SSE fragments) to the committed,
+  go:embed'ed `static/admin.css` — regenerate via
+  `scripts/dashboard-css.sh`. Vendored OFL variable fonts (Space Grotesk,
+  Plus Jakarta Sans, JetBrains Mono latin woff2) served from
+  `GET /admin/assets/fonts/{name}`. Sidebar grouped Monitor/Routing/
+  Gateway; usage charts got themed uPlot axes (JetBrains Mono ticks,
+  reserved gutters fixing left-clipped labels). Browser-verified dark/
+  light on a scratch instance; targeted suite green in-tree and from a
+  clean git-archive build of the commit. Peer metrics work (acct-labeled
+  log entries) remains uncommitted in the tree by design.
+
 Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   cumulative raw integers (stack accumulation without a per-series `value`
   formatter) — cache read/output/input read as wrong values with no K/M/B
@@ -773,7 +792,10 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   visuals unchanged. Cards/table were always correct (Go compact).
 
 ---
-*Last updated: 2026-09-09 (usage-chart hover fix: per-layer values + units,
+*Last updated: 2026-09-09 (dashboard Tailwind v4 revamp to the UnoRouter design
+  language, 0b6202d — standalone-CLI pipeline, vendored OFL fonts, grouped sidebar,
+  themed uPlot axes; browser-verified dark/light, commit green from clean archive,
+  pushed; earlier: usage-chart hover fix: per-layer values + units,
   9e1e5a4, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
 budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
 `[server] response_header_timeout` knob (live: 120s) + transport-error classification
@@ -783,5 +805,3 @@ h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall t
 fix/upstream-header-timeout; earlier: admin login lockout aligned to spec (24h after 5 failures,
 6790dba) — master pushed through 6790dba and live gateway redeployed zero-drop from it (pid in
 /admin/health); xai OAuth token still expired — re-auth in 9router then re-import)*
-
-
