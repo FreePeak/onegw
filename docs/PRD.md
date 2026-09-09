@@ -1,4 +1,7 @@
 # onegw PRD
+*Last updated: 2026-09-09 (tokenrouter free-lane capped at rpm = 7 — user-stated limit,
+one under the upstream's "Maximum 8 requests within 1 minutes" wall, same governor sizing
+discipline as the b-ai keys; overflow rotates to commandcode/opencode without logging 429s.)*
 *Last updated: 2026-09-09 (tokenrouter free-lane capped rpm = 8 — upstream "Maximum 8 requests
 within 1 minutes" per their own 429 body; same governor mechanism as b-ai keys.)*
 *Last updated: 2026-09-09 (live config: `[server] buffered_budget_bytes` raised 48→100 MiB (104857600) on
