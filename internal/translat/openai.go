@@ -628,12 +628,12 @@ func DecodeOpenAIResponse(body []byte) (*types.ChatResponse, error) {
 		return nil, fmt.Errorf("openai response: %w", err)
 	}
 	if r.Error != nil {
-		return nil, &types.APIError{
+		return nil, NormalizeInStreamError(&types.APIError{
 			Status:  statusFromOAErr(r.Error.Code, r.Error.Type, r.Error.Message),
 			Type:    orDefault(r.Error.Type, "upstream_error"),
 			Code:    errCodeString(r.Error.Code),
 			Message: r.Error.Message,
-		}
+		})
 	}
 	out := &types.ChatResponse{ID: r.ID, Model: r.Model}
 	if len(r.Choices) > 0 {

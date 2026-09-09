@@ -153,12 +153,12 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 		}
 		if obj.Response != nil && obj.Response.Error != nil && obj.Response.Error.Message != "" {
 			e := obj.Response.Error
-			return nil, &types.APIError{
+			return nil, NormalizeInStreamError(&types.APIError{
 				Status:  statusFromOAErr(e.Code, "", e.Message),
 				Type:    "upstream_error",
 				Code:    orDefault(e.Code, ""),
 				Message: e.Message,
-			}
+			})
 		}
 		if !st.started {
 			st.started = true
