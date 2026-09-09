@@ -158,7 +158,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	}
 	cres, apiErr := def.Do(r.Context(), acct, t.Model, r.Header, src, sc.stream)
 	if apiErr != nil {
-		s.m.upstreamErr(def.Name, t.Model, apiErr)
+		s.m.upstreamErr(def.Name, t.Model, acctName(acct), apiErr)
 		def.Unpin(id) // failed fast-path attempt must not keep its pin
 		if apiErr.Fallbackable {
 			// Pre-body gated 403 (issue #48): Do benched the account, but

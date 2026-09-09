@@ -46,6 +46,11 @@ func TestUpstreamErrorMessageReachesRequestLog(t *testing.T) {
 	if !strings.Contains(e.Err, "upstream is having a bad day") {
 		t.Fatalf("log entry must carry the upstream message, got %q", e.Err)
 	}
+	// makeCfg uses APIKey (single-account): the default account name must
+	// ride the row — the console log answers "which key did this".
+	if e.Account != "default" {
+		t.Fatalf("log entry must carry the account name, got %q", e.Account)
+	}
 
 	// The JSON surface the console-log view consumes must include it too.
 	w := httptest.NewRequest(http.MethodGet, "/admin/api/v1/logs?limit=10", nil)
@@ -66,6 +71,9 @@ func TestUpstreamErrorMessageReachesRequestLog(t *testing.T) {
 	last := payload.Entries[len(payload.Entries)-1]
 	if !strings.Contains(last.Err, "upstream is having a bad day") {
 		t.Fatalf("logs API must expose the upstream message, got %q", last.Err)
+	}
+	if last.Account != "default" {
+		t.Fatalf("logs API must expose the account name, got %q", last.Account)
 	}
 }
 

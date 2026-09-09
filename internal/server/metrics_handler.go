@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"onegw/internal/metrics"
+	"onegw/internal/provider"
 	"onegw/internal/types"
 )
 
@@ -45,7 +46,7 @@ func newGatewayMetrics() *gatewayMetrics {
 
 // success records one completed upstream attempt and its token accounting.
 // Called exactly where usage.Observe runs so /metrics and /admin/usage agree.
-func (m *gatewayMetrics) success(provider, model string, u types.Usage, savedTokens int64) {
+func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, savedTokens int64) {
 	m.requests.Inc(provider, model, "200")
 	for _, e := range [...]struct {
 		typ string
@@ -62,7 +63,7 @@ func (m *gatewayMetrics) success(provider, model string, u types.Usage, savedTok
 			m.tokens.Add(e.n, provider, model, e.typ)
 		}
 	}
-	m.logReq(provider, model, 200, "", u, savedTokens, "")
+	m.logReq(provider, model, acct, 200, "", u, savedTokens, "")
 }
 
 // logReq routes one completion into the #19 ring; nil-safe because tests
@@ -70,9 +71,9 @@ func (m *gatewayMetrics) success(provider, model string, u types.Usage, savedTok
 // explanation (upstream body / failure text) so the console log answers
 // "why" and not just "what" — it is diagnostic payload, not a secret:
 // it can contain model names, request ids, and upstream error prose.
-func (m *gatewayMetrics) logReq(provider, model string, code int, kind string, u types.Usage, saved int64, errMsg string) {
+func (m *gatewayMetrics) logReq(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string) {
 	if m.srv != nil {
-		m.srv.observeLog(provider, model, code, kind, u, saved, truncErr(errMsg))
+		m.srv.observeLog(provider, model, acct, code, kind, u, saved, truncErr(errMsg))
 	}
 }
 
@@ -90,13 +91,23 @@ func truncErr(s string) string {
 	return s[:cut] + "…"
 }
 
+// acctName nil-safely renders the account name for log rows: entries from
+// paths that never picked an account (or hand-built CallResults in tests)
+// carry an empty account.
+func acctName(a *provider.Account) string {
+	if a == nil {
+		return ""
+	}
+	return a.Name
+}
+
 // upstreamErr records one failed upstream attempt. The error object drives
 // the row: status from herr.Status, kind from herr.Type — so the console
 // log distinguishes upstream_unreachable / upstream_timeout / the
 // upstream's own error type instead of lumping every failure as
 // upstream_error — and the message rides as the err field. The Prometheus
 // label stays the coarse "upstream_error" bucket (label contract).
-func (m *gatewayMetrics) upstreamErr(provider, model string, herr *types.APIError) {
+func (m *gatewayMetrics) upstreamErr(provider, model, acct string, herr *types.APIError) {
 	status := 502
 	kind := "upstream_error"
 	msg := ""
@@ -111,7 +122,7 @@ func (m *gatewayMetrics) upstreamErr(provider, model string, herr *types.APIErro
 	}
 	m.requests.Inc(provider, model, strconv.Itoa(status))
 	m.errors.Inc(provider, "upstream_error")
-	m.logReq(provider, model, status, kind, types.Usage{}, 0, msg)
+	m.logReq(provider, model, acct, status, kind, types.Usage{}, 0, msg)
 }
 
 // boundedModel clamps a routed model string to config-defined routes
@@ -133,7 +144,7 @@ func (s *Server) boundedModel(model string) string {
 func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 	m.requests.Inc("", "unresolved", strconv.Itoa(status))
 	m.errors.Inc("", "no_route")
-	m.logReq("", "", status, "no_route", types.Usage{}, 0, errMsg)
+	m.logReq("", "", "", status, "no_route", types.Usage{}, 0, errMsg)
 }
 
 // saturated records a request rejected because the buffered-memory budget
@@ -141,21 +152,21 @@ func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 func (m *gatewayMetrics) saturated() {
 	m.requests.Inc("", "", "503")
 	m.errors.Inc("", "budget_saturated")
-	m.logReq("", "", 503, "budget_saturated", types.Usage{}, 0, "")
+	m.logReq("", "", "", 503, "budget_saturated", types.Usage{}, 0, "")
 }
 
 // tooLarge records a request rejected because its body exceeded the body cap.
 func (m *gatewayMetrics) tooLarge() {
 	m.requests.Inc("", "", "413")
-	m.logReq("", "", 413, "no_route", types.Usage{}, 0, "")
+	m.logReq("", "", "", 413, "no_route", types.Usage{}, 0, "")
 }
 
 // invalidBody records an attempt aborted before the upstream call because
 // the request body could not be prepared (translation/model rewrite failed).
 // It is a client-side 400, not one of the three error kinds.
-func (m *gatewayMetrics) invalidBody(provider, model string, errMsg string) {
+func (m *gatewayMetrics) invalidBody(provider, model, acct, errMsg string) {
 	m.requests.Inc(provider, model, "400")
-	m.logReq(provider, model, 400, "", types.Usage{}, 0, errMsg)
+	m.logReq(provider, model, acct, 400, "", types.Usage{}, 0, errMsg)
 }
 
 // handleMetrics serves GET /metrics in the Prometheus text exposition

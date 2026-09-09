@@ -214,8 +214,9 @@ func TestSSEStreamServesHealth(t *testing.T) {
 func TestRequestLogRingAndAPI(t *testing.T) {
 	srv, h := newAdminSrv(t, "")
 	_ = srv
+	now := time.Now().Unix()
 	for i := range logRingCap + 10 {
-		srv.reqlog.record(logEntry{TS: int64(i), Model: "m1", Provider: "p1", Code: 200, In: int64(i)})
+		srv.reqlog.record(logEntry{TS: now - logRingCap + int64(i), Model: "m1", Provider: "p1", Code: 200, In: int64(i)})
 	}
 	entries := srv.reqlog.latest(5)
 	if entries[0].Seq != logRingCap+5+1 {
@@ -236,12 +237,31 @@ func TestRequestLogRingAndAPI(t *testing.T) {
 	}
 }
 
+// Entries older than 7 days are auto-cleared: latest() never serves them
+// (the ring bounds memory; the age window bounds the view). An entry just
+// inside the window must survive.
+func TestRequestLogAgeClear(t *testing.T) {
+	srv, _ := newAdminSrv(t, "")
+	now := time.Now().Unix()
+	srv.reqlog.record(logEntry{TS: now - 8*24*3600, Model: "stale"})
+	srv.reqlog.record(logEntry{TS: now, Model: "fresh"})
+	entries := srv.reqlog.latest(10)
+	if len(entries) != 1 || entries[0].Model != "fresh" {
+		t.Fatalf("stale entry not cleared: %+v", entries)
+	}
+	srv.reqlog.record(logEntry{TS: now - 7*24*3600 + 3600, Model: "edge"})
+	entries = srv.reqlog.latest(10)
+	if len(entries) != 2 || entries[0].Model != "fresh" || entries[1].Model != "edge" {
+		t.Fatalf("in-window entry dropped: %+v", entries)
+	}
+}
+
 func TestObserveLogClassifiesKinds(t *testing.T) {
 	srv, _ := newAdminSrv(t, "")
-	srv.observeLog("p1", "m1", 200, "", typesUsage(3, 9), 7, "")
-	srv.observeLog("", "", 503, "budget_saturated", types.Usage{}, 0, "")
+	srv.observeLog("p1", "m1", "acct-1", 200, "", typesUsage(3, 9), 7, "")
+	srv.observeLog("", "", "", 503, "budget_saturated", types.Usage{}, 0, "")
 	entries := srv.reqlog.latest(2)
-	if entries[0].Code != 200 || entries[0].Out != 9 || entries[0].Saved != 7 {
+	if entries[0].Code != 200 || entries[0].Out != 9 || entries[0].Saved != 7 || entries[0].Account != "acct-1" {
 		t.Fatalf("ok entry wrong: %+v", entries[0])
 	}
 	if entries[1].Kind != "budget_saturated" {
