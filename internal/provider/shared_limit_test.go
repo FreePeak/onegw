@@ -159,3 +159,27 @@ func TestUpstreamRetryAfterRidesErrorObject(t *testing.T) {
 		t.Fatalf("got %+v, want RetryAfter=7 propagated verbatim", apiErr)
 	}
 }
+
+// Live 2026-09-09 (tokenrouter/z-ai/glm-5.3-free): the engine's
+// cold-prefill admission wall ("BackendAdmissionRejected: Engine
+// cold-request admission rejected … policies=prefill_pressure …") is a
+// shared engine budget, not a per-key limit — the identical request
+// succeeded seconds later on the OTHER account. It must skip the
+// cooldown ladder exactly like the Tencent concurrency wall: benching
+// a healthy credential only shrinks the serving pool.
+func TestAdmissionWall429SkipsLadder(t *testing.T) {
+	srv, hits := mkErrStub(t, 429, `{"error":{"message":"BackendAdmissionRejected: Engine cold-request admission rejected: dp_rank=0, policies=prefill_pressure, queued_uncached_tokens=0, inflight_uncached_tokens=0, outstanding_uncached_tokens=0, incoming_uncached_tokens=214293, pending_uncached_prefill_tokens=214293","type":"rate_limit_error"}}`)
+	def := newSingleDef(t, srv, "tokenrouter")
+	a1 := &def.Accounts[0]
+
+	_, apiErr := def.Do(context.Background(), a1, "z-ai/glm-5.3-free", nil, bytes.NewReader([]byte(`{}`)), false)
+	if apiErr == nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
+		t.Fatalf("got %+v, want 429 SharedConcurrency (admission wall)", apiErr)
+	}
+	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() {
+		t.Fatalf("admission wall must not bench the account, cooldown=%v", slot.cooldown)
+	}
+	if atomic.LoadInt32(hits) != 1 {
+		t.Fatalf("hits=%d, want 1", atomic.LoadInt32(hits))
+	}
+}

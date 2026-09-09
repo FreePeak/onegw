@@ -410,13 +410,14 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 	if lastErr == nil {
 		lastErr = &types.APIError{Status: 502, Type: "no_route", Message: "no route succeeded"}
 	}
-	if lastErr.OverQuota() && lastErr.RetryAfter == "" {
+	if (lastErr.OverQuota() || lastErr.SharedConcurrency()) && lastErr.RetryAfter == "" {
 		// The error is about to reach the client (mid-chain errors are
 		// replaced by later targets' results, so stamping the final one
 		// cannot leak a stale hint onto a successful response): give the
 		// client's SDK an honest backoff instead of instant-failing.
-		// Shared concurrency windows self-clear in seconds; unknown
-		// upstream 429s get the default suggestion.
+		// Shared walls (model-wide concurrency AND engine admission
+		// walls, including their 503 variants) self-clear in seconds;
+		// unknown upstream 429s get the default suggestion.
 		if lastErr.SharedConcurrency() {
 			lastErr.RetryAfter = "2"
 		} else {

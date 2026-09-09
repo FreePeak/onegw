@@ -39,15 +39,30 @@ func TestSharedConcurrencySignature(t *testing.T) {
 	if !(&types.APIError{Status: 429, Message: live}).SharedConcurrency() {
 		t.Fatal("live concurrency-limit 429 must classify as shared")
 	}
+	// Live 2026-09-09: new-api/z-ai engine cold-prefill admission wall.
+	const admission = "BackendAdmissionRejected: Engine cold-request admission rejected: dp_rank=0, policies=prefill_pressure, queued_uncached_tokens=0, inflight_uncached_tokens=0, outstanding_uncached_tokens=0, incoming_uncached_tokens=214293, pending_uncached_prefill_tokens=214293"
+	if !(&types.APIError{Status: 429, Message: admission}).SharedConcurrency() {
+		t.Fatal("live engine admission-rejected 429 must classify as shared")
+	}
 	negatives := []types.APIError{
 		{Status: 429, Message: "rate limit exceeded for key sk-xxx"},
 		{Status: 429, Code: "insufficient_quota", Message: "quota exhausted"},
-		{Status: 503, Message: "Concurrency limit 1200"}, // wrong status
-		{Status: 429, Message: ""},                       // empty
+		{Status: 429, Message: ""}, // empty
 	}
 	for i, e := range negatives {
 		if e.SharedConcurrency() {
 			t.Errorf("negative %d (%d %q) must not classify as shared", i, e.Status, e.Message)
+		}
+	}
+	// Engine admission walls also surface as 503 (new-api/z-ai
+	// aggregators, live 2026-09-09): same shared-wall medicine.
+	for i, e := range []types.APIError{
+		{Status: 503, Message: "cache-only admission rejected a cold, unavailable, or overloaded request"},
+		{Status: 503, Message: "gateway overloaded: hard concurrency limit reached"},
+		{Status: 503, Message: "gateway overloaded: cache-aware admission is unavailable"},
+	} {
+		if !e.SharedConcurrency() {
+			t.Errorf("positive 503 %d (%q) must classify as shared", i, e.Message)
 		}
 	}
 }
