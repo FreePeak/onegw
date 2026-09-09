@@ -1,5 +1,17 @@
 # onegw PRD
-*Last updated: 2026-09-09 (RCA + fix #52: b-ai transient faults no longer surface as terminal
+*Last updated: 2026-09-09 (RCA + fix: third b-ai transient-fault class — distributor node parse-rejects of large
+valid bodies no longer surface as terminal 400s (84fd1c9, zero-drop deployed, live-verified). Client-side omp dumps
+(~/.omp/logs/http-400-requests) showed 22 "400 Invalid request body. (request id: …c955d568…)" (type=api_error)
+in ~40 h, all combo free/dev to b-ai/glm-5.3-flash, bodies 228 KB-2.3 MB; forensics: every failing request id
+carries the same backend-node marker, while byte-identical replays of three of those exact bodies served 200
+through the gateway minutes later and direct-to-Zhipu replays flip 200/400/429 across runs — the distributor fans
+requests to heterogeneous GLM nodes and one node's parse edge rejects large bodies. Router treated the 400 as
+terminal (not Retryable/Fallbackable) so combo fall-through to qwen3.8-flash never ran. Fix mirrors the #52
+auth-verify precedent: translat.UpstreamParseRejected (narrow: 400 + api_error + "Invalid request body" +
+"request id:" trailer; genuine schema 400s keep failing fast, test-pinned) rewrites to retryable 502
+upstream_parse_rejected with the upstream diagnostic preserved, no account bench — Router retries the target
+(fresh node may serve) and combos fall through; client sees 200 or a retryable 502, never the lying 400.
+Tests mutation-checked; full suite green on the merged tree; earlier: RCA + fix #52: b-ai transient faults no longer surface as terminal
 client errors — 9fb6e69, zero-drop deployed, live-verified. Live dashboard showed two raw 429s
 ("model Concurrency limit 1200" — Tencent GLM's model-WIDE limit shared across all of the
 reseller's traffic, not per-key) and a terminal 401 whose body was the upstream's own internal
