@@ -871,6 +871,14 @@ Compared against the two reference gateways ( LiteLLM README + docs,
   b-ai — verified by live probe) must not receive it; adding bytes that buy
   nothing is worse than adding nothing. Anchoring is opt-in per provider and
   runs after every body mutation.
+- **Public-repo update checks never require a GitHub token** (96c1fd3): the
+  update client sends `ONEGW_GITHUB_TOKEN`/`GITHUB_TOKEN` when set, and on
+  401 retries the same request once anonymously. FreePeak/onegw is public —
+  anonymous reads answer — so a stale token in the environment (user shell,
+  inherited child, poisoned restart spec) can never break release checks or
+  binary downloads. Tokens remain for private forks: one valid-token request,
+  and the error names "token rejected AND anonymous failed" when both paths
+  die.
 
 ## Open work
 
