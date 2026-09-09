@@ -26,18 +26,27 @@ func InContainer() bool {
 const Image = "ghcr.io/freepeak/onegw"
 
 // ContainerGuidance explains how to move a containerized onegw to rel.
-// The commands run on the HOST; a named volume keeps usage data across the
-// recreate, and `compose up -d` only replaces the container whose image
-// changed.
+// The commands run on the HOST. The recreate must mount the SAME /data
+// volume the current container uses: a recreate without it starts a fresh,
+// empty usage.db and orphans the old data (the anonymous-volume fork that
+// VOLUME declarations used to cause — see the Dockerfile note). compose
+// users keep their named volume automatically; plain docker run users must
+// carry the -v flags over.
 func ContainerGuidance(rel *Release) string {
 	return fmt.Sprintf(`onegw %s is running in a container: binary self-update does not
 apply (the filesystem belongs to the image). Update on the host:
 
   docker pull %s:%s
   docker compose up -d        # if started via docker compose
-  # otherwise: docker stop <name> && docker rm <name> && docker run ... %s:%s
+  # otherwise recreate, mounting the SAME data volume:
+  docker stop onegw && docker rm onegw
+  docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
+    -v onegw-data:/data %s:%s
 
-Usage data survives on the %q volume. Auto-apply is ignored in
-containers; this instance will keep checking and log newer releases.`,
-		rel.Tag, Image, rel.Tag, Image, rel.Tag, "/data")
+Usage history lives in the mounted /data volume: recreating without the
+same mount starts a fresh empty usage.db and orphans the old one. If the
+previous container ran WITHOUT -v, copy the data out first
+(docker cp onegw:/data/usage.db .) before removing it. Auto-apply is
+ignored in containers; this instance will keep checking and log newer
+releases.`, rel.Tag, Image, rel.Tag, Image, rel.Tag)
 }
