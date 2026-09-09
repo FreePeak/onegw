@@ -44,19 +44,20 @@ function draw(id, series, title){
   new uPlot({
     width: el.clientWidth || 600, height: 230, title,
     series: [{}, ...series.map(s => ({label: s.label, stroke: s.color, width: 1.6,
-      fill: s.fill ? s.color+'2e' : undefined, points: {show: false}}))],
+      fill: s.fill ? s.color+'2e' : undefined, points: {show: false},
+      value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])}))],
     axes: [{}, {values: (u2, v) => v.map(kmb)}]
   }, [D.xs, ...series.map(s => s.vals)], el);
 }
 // stacked areas: cumulative input → +output → +cache_read
 const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
 draw('chart-tok', [
-  {label:'cache read', vals: cr, color:'#58a6ff', fill:true},
-  {label:'output', vals: out, color:'#3fb950', fill:true},
-  {label:'input', vals: inp, color:'#d29922', fill:true},
-], 'tokens · {{.ChartUnit}} (cumulative stack — read bottom label as the layer value)');
+  {label:'cache read', vals: cr, color:'#58a6ff', fill:true, layer: D.cache_read},
+  {label:'output', vals: out, color:'#3fb950', fill:true, layer: D.output},
+  {label:'input', vals: inp, color:'#d29922', fill:true, layer: D.input},
+], "tokens · {{.ChartUnit}} (stacked areas — legend shows each layer's own value)");
 draw('chart-req', [
-  {label:'requests', vals: D.requests, color:'#bc8cff', fill:true},
+  {label:'requests', vals: D.requests, color:'#bc8cff', fill:true, layer: D.requests},
 ], 'requests · {{.ChartUnit}}');
 </script>
 {{end}}
