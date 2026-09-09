@@ -39,6 +39,16 @@ retention_days = 90
 # export_url = "http://agg-host:8080/admin/usage/import"
 # export_password = "agg-admin-password"
 
+# Task-aware combo reordering (issue #54): with "on", each request is
+# classified locally (prompt size, message/tool count, max_tokens,
+# reasoning_effort, a few keyword regexes — no LLM call) and multi-target
+# combos are stable-re-sorted so the best-fit model is tried first. The
+# full fallback chain is preserved. Off (default) = byte-identical routing.
+# Per-model capability scores ride the provider def (see [[providers.tier]]).
+# Decision lines appear in /admin logs when the order actually changes.
+# ONEGW_TASK_ROUTING=on|off overrides.
+# task_routing = "on"
+
 # --- Providers -------------------------------------------------------------
 
 [[providers]]
@@ -153,6 +163,21 @@ targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/dee
 # [[combo]]
 # name = "planning"               # frontier models for plan/default/advisor roles
 # targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/deepseek/deepseek-v3.2"]
+
+# Step 2 (issue #54, task_routing = "on"): per-model capability scores the
+# classifier scores combo targets against. power 0–150 (higher = more
+# capable); vision/reasoning gate hard-miss penalties (a non-vision model
+# on an image request sorts last, a non-reasoning model on a heavy task is
+# -120); context/max_out are token limits for the >85%-context guard
+# (0 = unknown, no penalty). Declared models always outrank undeclared
+# ones of equal distance. Exact model id or path.Match glob.
+# [[providers.tier]]
+# model = "claude-sonnet-4-5"
+# power = 110
+# vision = true
+# reasoning = true
+# context = 200000
+# max_out = 64000
 
 # --- OAuth device-flow accounts (issue #2) ----------------------------------
 # Subscription providers (xAI/Grok, Kilo Code) log in with a device flow:
