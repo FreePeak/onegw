@@ -11,12 +11,17 @@
 ARG VERSION=dev
 FROM golang:1.25-alpine AS build
 ARG VERSION
+# Bounded build parallelism (repo rule: cap Go build jobs; default 2). Override
+# with --build-arg GO_BUILD_JOBS=N on a beefier builder.
+ARG GO_BUILD_JOBS=2
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X onegw/internal/update.version=${VERSION}" -o /out/onegw ./cmd/onegw
+RUN CGO_ENABLED=0 go build -p "${GO_BUILD_JOBS}" -trimpath \
+    -ldflags "-s -w -X onegw/internal/update.version=${VERSION}" \
+    -o /out/onegw ./cmd/onegw
 
 # --- Runtime stage -----------------------------------------------------------
 FROM alpine:3.20
@@ -41,4 +46,11 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Probes the unauthenticated dashboard root — /admin/* is password-gated
 # (X-Admin-Password), so a header probe would break with a mounted config
 # that sets a different password.
+
+# In-container `onegw update` is check-only by design (internal/update/docker.go):
+# the filesystem belongs to the image, so it reports the newer release and prints
+# host-side guidance — docker pull ghcr.io/freepeak/onegw:<tag> + recreate. The
+# release workflow stamps VERSION so the check compares against the real tag;
+# local builds report "dev".
+
 ENTRYPOINT ["/usr/local/bin/onegw"]

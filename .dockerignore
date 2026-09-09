@@ -5,6 +5,8 @@ onegw.toml.bak*
 .env*
 data/
 logs/
+target/
+dist/
 *.log
 
 # Not needed to build cmd/onegw
