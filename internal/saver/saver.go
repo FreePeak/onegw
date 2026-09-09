@@ -51,9 +51,14 @@ func (c *Config) fill() Config {
 
 // Saver compresses tool_result text. The config is an atomic snapshot so a
 // hot reload can flip Enabled (or any knob) without locking the hot path.
+// convMu/convs carry per-conversation stickiness state for the raw-path
+// gate (conv.go, issue #35).
 type Saver struct {
 	cfg     atomic.Pointer[Config]
 	extOnce sync.Once // logs the first external-compress failure, once
+
+	convMu sync.Mutex
+	convs  map[uint64]*convEntry
 }
 
 // New builds a saver from config.
@@ -78,24 +83,7 @@ func (s *Saver) settings() Config { return *s.cfg.Load() }
 // passes through unchanged.
 func (s *Saver) Compress(text string) string {
 	cfg := s.settings()
-	if !cfg.Enabled || len(text) < 256 {
-		return text
-	}
-	var out string
-	switch sniff(text) {
-	case "git-diff":
-		out = filterDiff(text, cfg)
-	case "git-status":
-		out = filterDedupCollapse(text, cfg, false)
-	case "grep":
-		out = filterGrep(text, cfg)
-	case "find", "ls", "tree":
-		out = filterTree(text, cfg)
-	case "log":
-		out = filterDedupCollapse(text, cfg, true)
-	default:
-		out = filterGeneric(text, cfg)
-	}
+	out := s.compressFiltered(text, cfg)
 	// Never grow, never over-truncate: savings gate.
 	if out == "" || len(out) >= len(text) {
 		return text
@@ -105,6 +93,28 @@ func (s *Saver) Compress(text string) string {
 		return text
 	}
 	return out
+}
+
+// compressFiltered runs the sniff-matched filter without the savings
+// floor; callers apply their own never-grow gate.
+func (s *Saver) compressFiltered(text string, cfg Config) string {
+	if !cfg.Enabled || len(text) < 256 {
+		return text
+	}
+	switch sniff(text) {
+	case "git-diff":
+		return filterDiff(text, cfg)
+	case "git-status":
+		return filterDedupCollapse(text, cfg, false)
+	case "grep":
+		return filterGrep(text, cfg)
+	case "find", "ls", "tree":
+		return filterTree(text, cfg)
+	case "log":
+		return filterDedupCollapse(text, cfg, true)
+	default:
+		return filterGeneric(text, cfg)
+	}
 }
 
 // sniff identifies content type from leading bytes (RTK peek heuristic).

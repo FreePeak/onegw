@@ -336,7 +336,39 @@ such models per provider with `always_thinking = ["glm-5.3*"]` (globs use
 are rewritten instead of forwarded: `reasoning_effort`
 `""/none/minimal/medium` → `low` (`high`/`xhigh`/`max` pass through), and
 disable-thinking knobs are dropped so the upstream default (thinking on)
-applies.
+applies. The same rewriting is applied to cross-format requests before
+translation (e.g. an Anthropic-surface client routed to a matching model —
+the request is coerced upfront instead of burning the first combo target
+on a 400).
+
+### Prompt-cache profiles
+
+Per-provider `cache_profile` opts a route into upstream prompt-cache
+anchoring (issue #34). Anchoring always runs LAST — after model rewrite,
+token saver, always-thinking adaptation and any cross-format translation —
+so anchors never sit at pre-normalization offsets (a stale anchor costs a
+full prefix rewrite). Profiles:
+
+- `""` / `"none"` (default): the body is forwarded byte-identical. GLM,
+  DeepSeek and b-ai ignore cache fields entirely (live-probed), so no
+  bytes are ever invented for them.
+- `"sticky-key"`: injects the request identity (the `X-Opencode-Session`
+  header, else the auth-key label — the same identity sticky round-robin
+  pins) as top-level `prompt_cache_key` for implicit sticky-routing
+  upstreams (xAI, OpenRouter, Kimi).
+- `"dashscope-marker"`: preserves client `cache_control` markers on the
+  OpenAI wire (Qwen accepts up to 4 markers, 20-block lookback); bodies
+  carrying more than 4 keep the last 4.
+- `"claude-anchor"`: for Anthropic-format upstreams. Every client
+  `cache_control` marker is stripped (client markers point at
+  pre-normalization offsets) and re-anchored at canonical positions —
+  the last system block, the last cache-eligible tool (`defer_loading`
+  tools skipped) and the last assistant turn (final message on turn
+  one) — so a completed exchange keeps a byte-stable prefix.
+
+Providers with a cache profile always take the buffered pipeline (the
+raw streaming fast path is bypassed) so anchoring applies to every
+request, including passthrough JSON bodies.
 
 ### Sticky account round-robin
 
