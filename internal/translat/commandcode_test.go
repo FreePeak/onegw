@@ -518,13 +518,6 @@ func TestAggregateStreamPropagatesError(t *testing.T) {
 // Cursor skeleton
 // ---------------------------------------------------------------------------
 
-func TestCursorDecoderIsSkeleton(t *testing.T) {
-	d, _ := newStreamDecoder(FmtCursor)
-	if _, err := d.decode(sseEvent{Data: []byte(`{}`)}); err == nil || !strings.Contains(err.Error(), "skeleton") {
-		t.Fatalf("want skeleton error, got %v", err)
-	}
-}
-
 // newUUID sanity: v4 shape.
 func TestNewUUIDShape(t *testing.T) {
 	u := newUUID()
