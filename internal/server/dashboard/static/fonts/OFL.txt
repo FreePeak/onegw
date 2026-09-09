@@ -2,10 +2,15 @@ Fonts vendored in this directory are subsets of typefaces released under
 the SIL Open Font License, Version 1.1 (OFL-1.1):
 https://openfontlicense.org
 
-- FiraSans-{400,500,600,700}.woff2 — Fira Sans, Copyright 2012-2015 The
-  Mozilla Foundation and Telefonica S.A. (carrois type design)
 - FiraCode-latin.woff2 — Fira Code, Copyright 2014 The Fira Code Authors
   (https://github.com/tonsky/FiraCode)
+- Rebels-Fett.woff2 — "Rebels" (Fett cut), bundled with the M.O.N.K.Y OS
+  dashboard design template (public/fonts/Rebels-Fett.woff2) that this
+  dashboard's CSS revamp follows. No license file shipped with the
+  template; used decoratively as the display face for headings and big
+  numbers. If you rebrand, swap the file.
 
-Each is used and redistributed under OFL-1.1. The fonts are subset to the
-latin unicode range (U+0000-00FF + punctuation) as served by Google Fonts.
+Each is used and redistributed under OFL-1.1 (Fira Code). The fonts are
+subset to the latin unicode range (U+0000-00FF + punctuation) as served
+by Google Fonts.
+

@@ -35,7 +35,17 @@ type Shell struct {
 	Active string
 	Live   bool // page subscribes to SSE (loads the sse extension)
 	Nav    []NavItem
+	Ranks  []RankRow // right-rail "top providers" list (all pages)
 	V      any
+}
+
+// RankRow is one entry of the rail's provider ranking (M.O.N.K.Y
+// rebels-ranking analogue): requests over the trailing 7 days.
+type RankRow struct {
+	Rank     int
+	Name     string
+	Req, Tok int64
+	Featured bool // top entry: highlighted tile
 }
 
 // LoginView is the login page's view data (login.html is standalone and
@@ -58,8 +68,7 @@ func init() {
 	assets = map[string][]byte{}
 	for _, name := range []string{
 		"htmx.min.js", "sse.min.js", "uPlot.iife.min.js", "uPlot.min.css", "admin.css",
-		"fonts/FiraCode-latin.woff2", "fonts/FiraSans-400.woff2",
-		"fonts/FiraSans-500.woff2", "fonts/FiraSans-600.woff2", "fonts/FiraSans-700.woff2",
+		"fonts/FiraCode-latin.woff2", "fonts/Rebels-Fett.woff2",
 	} {
 		b, err := fs.ReadFile(files, "static/"+name)
 		if err != nil {
