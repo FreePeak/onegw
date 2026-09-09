@@ -328,12 +328,25 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			select {
 			case <-ctx.Done():
 				return &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
-			case <-time.After(backoff(attempt-1, err)):
+			case <-time.After(Backoff(attempt-1, err)):
 			}
 		}
 	}
 	if lastErr == nil {
 		lastErr = &types.APIError{Status: 502, Type: "no_route", Message: "no route succeeded"}
+	}
+	if lastErr.OverQuota() && lastErr.RetryAfter == "" {
+		// The error is about to reach the client (mid-chain errors are
+		// replaced by later targets' results, so stamping the final one
+		// cannot leak a stale hint onto a successful response): give the
+		// client's SDK an honest backoff instead of instant-failing.
+		// Shared concurrency windows self-clear in seconds; unknown
+		// upstream 429s get the default suggestion.
+		if lastErr.SharedConcurrency() {
+			lastErr.RetryAfter = "2"
+		} else {
+			lastErr.RetryAfter = "10"
+		}
 	}
 	return lastErr
 }
@@ -342,7 +355,16 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 // server can inject its request pipeline (translation, saver, usage).
 type Caller func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError)
 
-func backoff(attempt int, err *types.APIError) time.Duration {
+// Backoff returns how long to wait before the next attempt at the same
+// target after a retryable failure. Shared model-wide concurrency
+// windows (Tencent GLM resellers) get 1s steps: rotating keys is
+// pointless — every key hits the same upstream wall — so the window is
+// waited out. Ordinary quota/rate errors use the fast 250ms tier (the
+// cooldown ladder does the waiting), everything else 100ms.
+func Backoff(attempt int, err *types.APIError) time.Duration {
+	if err.SharedConcurrency() {
+		return time.Duration(attempt+1) * time.Second
+	}
 	if err.OverQuota() {
 		return time.Duration(attempt+1) * 250 * time.Millisecond
 	}

@@ -47,3 +47,25 @@ func statusFromOAErr(code any, typ, msg string) int {
 	}
 	return 502
 }
+
+// UpstreamAuthVerifyFailed reports whether an upstream 401 is actually a
+// TRANSIENT failure of the upstream's own credential-verification
+// service, not an invalid gateway key. Resellers like b-ai (one-api)
+// forward our bearer token to an internal auth/verify endpoint on every
+// request; when that call fails (network blip, connection reset, 5xx),
+// the proxy answers 401 with the transport error text, e.g.
+// 鉴权服务请求失败: Post "http://.../v1/internal/auth/verify": read tcp ...: connection reset by peer.
+// These self-heal on the next request and must not surface to clients as
+// a terminal authentication failure; callers downgrade them to a
+// retryable 502-class upstream fault so combos fall through.
+func UpstreamAuthVerifyFailed(status int, typ, msg string) bool {
+	if status != 401 {
+		return false
+	}
+	probe := strings.ToLower(typ + " " + msg)
+	// The proxied auth-service failure arrives as a Go http client error
+	// quoted in the message (Chinese "auth service request failed:" or
+	// the English mirror) pointing at an auth/verify URL.
+	return strings.Contains(probe, "鉴权服务请求失败") ||
+		strings.Contains(probe, "auth/verify")
+}

@@ -925,12 +925,40 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		defer resp.Body.Close()
 		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		apiErr := decodeUpstreamError(d.Kind, limited, resp.StatusCode)
+		if translat.UpstreamAuthVerifyFailed(apiErr.Status, apiErr.Type, apiErr.Message) {
+			// Transient failure of the upstream's own auth/verify service
+			// (b-ai one-api forwards the bearer to an internal verify
+			// endpoint; a network blip there answers 401). The gateway key
+			// is fine and the NEXT request can succeed, so this is an
+			// upstream fault, not a credential fault: rewrite to a
+			// retryable 502-class error (combo fall-through), keep the
+			// upstream message for the dashboard, and do NOT bench or
+			// rotate the account — cooling it would blame a healthy key.
+			apiErr.Status = 502
+			apiErr.Type = "upstream_auth_verify_failed"
+		}
 		if apiErr.OverQuota() && acct != nil {
-			// Retry-After (when upstream sends one) wins verbatim; otherwise
-			// the adaptive ladder benches the account (10s doubling to 60s
-			// per consecutive 429 — empty-body one-api style limits recover
-			// fast but re-trigger immediately under sustained load).
-			d.pool.rateLimited(acct, coolDuration(resp.Header.Get("Retry-After")))
+			// Upstream's Retry-After header, when present, wins verbatim —
+			// on the account ladder (coolDuration below) AND on the error
+			// object, so Router.Execute never stamps its generic default
+			// over an upstream-provided hint.
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				apiErr.RetryAfter = ra
+			}
+			// Otherwise the adaptive ladder benches the account (10s
+			// doubling to 60s per consecutive 429 — empty-body one-api
+			// style limits recover fast but re-trigger immediately under
+			// sustained load). Shared-limit 429s are the exception and
+			// skip the ladder: the limit is the upstream's model-wide
+			// concurrency (all of the reseller's traffic), not this key's
+			// — live evidence (2026-09-09 10:52): a ~2s window 429ed two
+			// keys, every other request succeeded on the remaining five;
+			// benching healthy keys only shrinks the serving pool while the
+			// shared window clears by itself. Dampening happens in the
+			// retry backoff.
+			if !sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message) {
+				d.pool.rateLimited(acct, coolDuration(resp.Header.Get("Retry-After")))
+			}
 		}
 		if apiErr.RegionLocked() && acct != nil {
 			// The credential is refused by policy, not load: park it long
@@ -1015,6 +1043,16 @@ func gated403(status int, body []byte) bool {
 	return strings.Contains(b, "access_denied") || strings.Contains(b, "deposit required")
 }
 
+// sharedLimit429 reports whether an upstream 429 is the SHARED model-wide
+// concurrency limit rather than a per-key rate/quota limit (see
+// types.APIError.SharedConcurrency). Such 429s skip the per-account
+// cooldown ladder entirely: benching keys for a limit shared by all of
+// the reseller's traffic blames healthy credentials and shrinks the
+// serving pool while the seconds-long window self-clears.
+func sharedLimit429(status int, code, msg string) bool {
+	return (&types.APIError{Status: status, Code: code, Message: msg}).SharedConcurrency()
+}
+
 // applySessionAffinity forwards the client's conversation/session ids to
 // the upstream request (issue #36). Client-sent values ride verbatim for
 // EVERY provider — nothing is invented. When the client sent none and the
@@ -1037,9 +1075,16 @@ func (d *Def) applySessionAffinity(up, client http.Header, apiKey string) {
 	up.Set(d.SessionHeader, perKeySession("cache-affinity", apiKey))
 }
 
+// coolDuration parses an upstream Retry-After header (seconds form or
+// HTTP-date). Zero when the header is missing or unusable — the caller
+// (pool.rateLimited) then applies the adaptive ladder (coolBase doubling
+// to coolCap), which is the documented behavior for b-ai's empty-body
+// one-api style 429s: they carry no Retry-After and recover fast, so a
+// flat 30s park would starve a healthy pool. A GARBAGE header is treated
+// the same: no usable hint, ladder decides.
 func coolDuration(retryAfter string) time.Duration {
 	if retryAfter == "" {
-		return 30 * time.Second
+		return 0
 	}
 	if secs, err := time.ParseDuration(retryAfter + "s"); err == nil && secs > 0 {
 		return secs
@@ -1049,7 +1094,7 @@ func coolDuration(retryAfter string) time.Duration {
 			return d
 		}
 	}
-	return 30 * time.Second
+	return 0
 }
 
 // decodeUpstreamError normalizes any upstream error body into APIError by
