@@ -1,8 +1,13 @@
 # onegw PRD
 *Last updated: 2026-09-09 (docs: README revamped — assets/logo.svg replaced with the dashboard favicon mark (dark tile + white/blue bars), dashboard section rewritten around a single freshly re-shot live Overview screenshot (login/tools/usage/providers/logs PNGs removed, those pages now described as text), duplicate token-saver bullet merged, upstream-fault-classification + sticky/session-affinity feature bullets added, misplaced sticky TOML block re-homed. earlier: housekeeping: #53 closed fixed (84fd1c9 + 51ccf1e), #51 closed delivered, #44 closed
 research-delivered + step-1-shipped — follow-ups opened: #54 task-aware combo reordering (#44 step 2), #55
-omp+onegw VPS deploy; open-work table synced with struck rows; next up: #50 cross-format always-thinking
-coercion. earlier: #52 follow-up 51ccf1e: NormalizeInStreamError now also rewrites the
+omp+onegw VPS deploy; open-work table synced with struck rows; #50 cross-format always-thinking
+coercion landed 8b47d9d: coerceAlwaysThinkingUnified coerces the client-set ReasoningEffort and drops the
+Anthropic thinking budget on prepareUpstreamBody's cross-format branches before encodeFor (the same-format
+raw-body path was already covered — the unified decode/encode path was the last leak); regression test pins the
+Responses wire (effort ladder, budget drop, no invention, passthrough), mutation-checked; isolation build from
+git archive (tree carried untracked peer WIP in admin_config_edit.go), zero-drop deployed pid 74239 from the
+archive binary, live smoke: Anthropic thinking:enabled → dev combo → glm-5.3-flash 200. earlier: #52 follow-up 51ccf1e: NormalizeInStreamError now also rewrites the
 in-stream variant of the distributor parse-reject 400 (84fd1c9 shape) to retryable
 upstream_parse_rejected — the helper had shipped claiming "the same transient-fault rewrites"
 while only carrying auth-verify, leaving streaming paths surfacing that fault as a terminal
@@ -612,7 +617,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
 | ~~#48~~ | ~~b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down~~ — **done 2026-09-09** (242f303): narrow gated-403 signature (403 + access_denied/"Deposit required") benches the ACCOUNT on the adaptive 429 ladder (deposit-clearing success resets via pool.ok), marks Fallbackable — buffered rotates accounts→combo targets, router rotates pool-bounded without spending retry budget, all-gated pools answer 429+Retry-After, stream fast path answers pre-body; non-gated 403s fail fast unchanged; quota-503 untouched | found live testing #47 |
-| #50 | Cross-format encode path never coerces always-thinking effort (residual from #17) — fix shape verified: coerce `u.ReasoningEffort`/`u.Thinking` in `prepareUpstreamBody`'s cross-format branches via `AlwaysThinkingModel` before `encodeFor`; natural to land with #32 | #17 residual |
+| ~~#50~~ | ~~Cross-format encode path never coerces always-thinking effort (residual from #17)~~ — **done 2026-09-09** (8b47d9d): coerceAlwaysThinkingUnified in prepareUpstreamBody's cross-format branches — client-set ReasoningEffort coerced via coerceEffort (empty stays empty, never invented), Anthropic thinking budget dropped (no GLM-wire representation; budgetToEffort can emit outside low|high|max); streaming already herds into the buffered path; mutation-checked regression test on the Responses wire; zero-drop deployed pid 74239, live-verified | #17 residual |
 | ~~#51~~ | ~~Baseline research: peer gateways + free-model inventory (omp+onegw VPS foundation)~~ — **done 2026-09-09**; deliverable in the issue body (six tools verified vs source/docs/live endpoints); follow-up #55 tracks the actual VPS deploy | user request |
 | ~~#53~~ | ~~b-ai distributor nodes parse-reject large valid bodies as terminal 400~~ — **done 2026-09-09** (84fd1c9 + 51ccf1e): translat.UpstreamParseRejected (narrow 400 + api_error + "Invalid request body" + request-id trailer) rewrites to retryable 502 upstream_parse_rejected, no bench, Router retries / combo falls through; NormalizeInStreamError covers the in-stream variant; genuine schema 400s stay terminal (test-pinned); zero-drop deployed pid 53121, live-verified | #52 follow-up |
 | #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
