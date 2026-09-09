@@ -1112,7 +1112,11 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 ---
 
 
-*Last updated: 2026-09-09 (zai glm provider outage RCA + config fix: glm/glm-5.3-flash
+*Last updated: 2026-09-09 (README dashboard docs refresh, 71fc475: replaced the overview
+  screenshot with a current dark-mode capture (Playwright+Chrome headless against the live
+  admin, 2x scale) and updated the Overview description — hourly token chart, top-providers
+  rail, Providers/Combos in-page editing, Settings maintenance card; added dark-by-default +
+  persistent ◐ theme-toggle note; docs-only, no binary change; earlier: zai glm provider outage RCA + config fix: glm/glm-5.3-flash
   direct routes and the dev-combo last rung returned 500 upstream_empty_body from ~06:32Z
   after Z.AI repurposed https://api.z.ai/api/v1 into a dedicated Codex (OpenAI Responses
   protocol) endpoint for GLM Coding Plan keys (docs.z.ai/devpack/tool/codex) — chat
