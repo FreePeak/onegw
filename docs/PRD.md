@@ -1099,7 +1099,20 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 
 ---
 
-*Last updated: 2026-09-09 (rate-limit error-log RCA + governor restoration deploy: deep-dive
+
+*Last updated: 2026-09-09 (tokenrouter engine admission walls are shared, not per-key
+  — issue #64, fix 5f365b2 pushed: the 21:37 client 503 "cache-only admission rejected a
+  cold, unavailable, or overloaded request" is tokenrouter's z-ai engine cache-aware
+  cold-prefill admission rejecting ~180K-token all-uncached requests when concurrent
+  sessions exhaust the engine's outstanding-uncached budget; ring proves the wall is
+  shared — 429 @harvey 15:01:19 → identical request 200 @linh in=159561 15:01:23, both
+  accounts also served 200s; onegw misclassified the 429s as per-key (benched healthy
+  keys on the ladder) and the 503s as ordinary retryable (same-target retry re-sent the
+  same 214K uncached prefill into the saturated engine 100ms later); SharedConcurrency()
+  extended to the admission family (429 BackendAdmissionRejected + 503 cache-only/
+  gateway-overloaded variants): no benching, immediate combo fall-through, 2s Retry-After
+  on direct routes, 503 preserved; tests in translat/provider/router, mutation-checked;
+  live redeploy pending; earlier: rate-limit error-log RCA + governor restoration deploy: deep-dive
   on the live request ring during a high-throughput burst (16:43-16:48, ~130 req/min) showed
   168 of 512 ring rows were 429s — 140 upstream per-account (up to 11 429s/min on ONE key,
   impossible under the #56 rpm=5 token bucket) + 16 Tencent shared-wall + 12 tokenrouter
