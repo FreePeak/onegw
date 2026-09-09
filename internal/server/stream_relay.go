@@ -160,6 +160,28 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, t.Model, acctName(acct), apiErr)
 		def.Unpin(id) // failed fast-path attempt must not keep its pin
+		// Transient, retryable failures get a second chance. whole=true
+		// means the complete body is still buffered in the prefix —
+		// streamFallback reconstitutes r.Body from it and re-enters the
+		// buffered pipeline, where Execute's retry backoff (1s steps for
+		// shared model-concurrency windows) and combo fall-through apply
+		// with full semantics. This rides out the observed ~2-5s upstream
+		// windows that today surface as raw terminal 429s.
+		// whole=false cannot replay: the transport consumed part of the
+		// live body stream and those bytes are gone — buffering every
+		// request up front would forfeit the fast path's RAM contract.
+		// For those, answer a managed retryable error with an honest
+		// short Retry-After: the client's fresh retry re-enters the fast
+		// path whole and lands post-window.
+		if apiErr.Retryable() {
+			if whole {
+				return s.streamFallback(r, prefix, true)
+			}
+			writeErr(w, clientFmt, &types.APIError{Status: apiErr.Status,
+				Type: "upstream_transient", Code: apiErr.Code,
+				RetryAfter: "1", Message: apiErr.Message})
+			return true
+		}
 		if apiErr.Fallbackable {
 			// Pre-body gated 403 (issue #48): Do benched the account, but
 			// this single-shot path cannot rotate — the transport already
