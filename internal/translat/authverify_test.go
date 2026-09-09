@@ -94,3 +94,27 @@ func quoteJSON(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// The distributor parse-reject shape (peer RCA 84fd1c9) delivered
+// in-stream: same terminal-400 defect as the HTTP-level path, same
+// rewrite expected through the in-band normalizer.
+func TestInStreamParseRejectNormalized(t *testing.T) {
+	const live = "Invalid request body. (request id: 20260909040605170262326c955d568gwvECluW)"
+	_, err := DecodeOpenAIResponse([]byte(`{"error":{"code":400,"type":"api_error","message":` + quoteJSON(live) + `}}`))
+	apiErr, ok := err.(*types.APIError)
+	if !ok {
+		t.Fatalf("want *types.APIError, got %T", err)
+	}
+	if apiErr.Status != 502 || apiErr.Type != "upstream_parse_rejected" {
+		t.Fatalf("in-200 parse reject: got %d/%s, want 502/upstream_parse_rejected", apiErr.Status, apiErr.Type)
+	}
+	if !apiErr.Retryable() {
+		t.Fatal("in-stream parse reject must be retryable")
+	}
+	// A genuine schema 400 in-band stays terminal.
+	_, err = DecodeOpenAIResponse([]byte(`{"error":{"code":400,"type":"invalid_request_error","message":"invalid parameter temperature"}}`))
+	apiErr, ok = err.(*types.APIError)
+	if !ok || apiErr.Status != 400 {
+		t.Fatalf("real in-band schema 400 must stay 400, got %T %+v", err, apiErr)
+	}
+}

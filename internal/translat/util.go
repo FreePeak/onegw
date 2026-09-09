@@ -99,10 +99,13 @@ func UpstreamParseRejected(status int, typ, msg string) bool {
 // NormalizeInStreamError applies the same transient-fault rewrites to an
 // in-band error object (one-api proxies answer HTTP 200 and deliver the
 // real failure as an error object mid-stream or in a 200 body) that
-// provider.Do applies to HTTP-level error responses. Without it, an
-// in-stream auth/verify outage would surface as a terminal 401 even
-// though the HTTP-level path already downgrades it. Mutates and returns
-// e for call-site convenience; nil-safe.
+// provider.Do applies to HTTP-level error responses: transient upstream
+// auth-verify outages rewrite to a retryable 502, and distributor-node
+// parse rejections of valid bodies (peer RCA 84fd1c9: 22 client-visible
+// failures in ~40 h) rewrite to upstream_parse_rejected. Without this,
+// both shapes would surface terminally on streaming paths even though
+// the HTTP-level path already downgrades them. Mutates and returns e for
+// call-site convenience; nil-safe.
 func NormalizeInStreamError(e *types.APIError) *types.APIError {
 	if e == nil {
 		return nil
@@ -110,6 +113,10 @@ func NormalizeInStreamError(e *types.APIError) *types.APIError {
 	if UpstreamAuthVerifyFailed(e.Status, e.Type, e.Message) {
 		e.Status = 502
 		e.Type = "upstream_auth_verify_failed"
+	}
+	if UpstreamParseRejected(e.Status, e.Type, e.Message) {
+		e.Status = 502
+		e.Type = "upstream_parse_rejected"
 	}
 	return e
 }
