@@ -143,6 +143,11 @@ type Account struct {
 	APIKey  string `toml:"api_key"`
 	BaseURL string `toml:"base_url"` // optional override of kind default
 	Weight  int    `toml:"weight"`   // round-robin weight, 0 = 1
+	// RPM caps this account's upstream attempts per minute with a refill
+	// bucket (proactive governor): next() skips a drained bucket like a
+	// cooldown, so the pool rotates BEFORE the upstream per-account rate
+	// limit (您的账户已达到速率限制) benches the key reactively. 0 = uncapped.
+	RPM int `toml:"rpm"`
 
 	// OAuthToken resolves the credential at request time (issue #2): OAuth-
 	// managed accounts rotate it in the background; nil = static APIKey.
@@ -501,8 +506,51 @@ func (d *Def) OK(a *Account) { d.pool.ok(a) }
 
 type accountState struct {
 	acct     Account
-	cooldown time.Time // until when the account is skipped
-	strikes  int       // consecutive 429s (adaptive ladder); reset on success
+	cooldown time.Time    // until when the account is skipped
+	strikes  int          // consecutive 429s (adaptive ladder); reset on success
+	bucket   *tokenBucket // RPM governor; nil = uncapped (shared across slots)
+}
+
+// tokenBucket is a refill bucket enforcing Account.RPM. Capacity is two
+// (one short burst is cheaper than a cache-breaking rotation), refilling at
+// rpm/60 tokens per second. take consumes one token or reports when the
+// next is ready; it never queues — a drained bucket skips like a cooldown.
+type tokenBucket struct {
+	tokens float64
+	rate   float64 // tokens per second
+	last   time.Time
+}
+
+func newTokenBucket(rpm int) *tokenBucket {
+	return &tokenBucket{tokens: 2, rate: float64(rpm) / 60}
+}
+
+// take drains one token if available, else returns the instant the next
+// token refills (readyAt zero means the take succeeded).
+func (b *tokenBucket) take(now time.Time) (readyAt time.Time) {
+	if b.last.IsZero() {
+		b.last = now
+	} else {
+		b.tokens += now.Sub(b.last).Seconds() * b.rate
+		b.last = now
+	}
+	if b.tokens >= 1 {
+		b.tokens--
+		return time.Time{}
+	}
+	return now.Add(time.Duration((1 - b.tokens) / b.rate * float64(time.Second)))
+}
+
+// refillAt reports when the next token becomes available without
+// consuming one — take() stays the sole token-consuming path.
+func (b *tokenBucket) refillAt(now time.Time) time.Time {
+	if b.last.IsZero() {
+		return now
+	}
+	if b.tokens+(now.Sub(b.last).Seconds()*b.rate) >= 1 {
+		return now
+	}
+	return now.Add(time.Duration((1 - b.tokens) / b.rate * float64(time.Second)))
 }
 
 // maxStickyPins bounds the affinity map. Identities are client session ids
@@ -533,13 +581,17 @@ func newAccountPool(accts []Account, sticky time.Duration) *accountPool {
 		accts = []Account{{Name: "default"}}
 	}
 	p := &accountPool{ttl: sticky, now: time.Now}
+	buckets := make(map[string]*tokenBucket) // one bucket per account, shared by weighted slots
 	for _, a := range accts {
 		w := a.Weight
 		if w <= 0 {
 			w = 1
 		}
-		for i := 0; i < w; i++ {
-			p.accts = append(p.accts, accountState{acct: a})
+		if a.RPM > 0 {
+			buckets[a.Name+"\x00"+a.APIKey] = newTokenBucket(a.RPM)
+		}
+		for range w {
+			p.accts = append(p.accts, accountState{acct: a, bucket: buckets[a.Name+"\x00"+a.APIKey]})
 		}
 	}
 	return p
@@ -564,29 +616,57 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 		if pin, ok := p.sticky[id]; ok && now.Before(pin.expires) {
 			for i := range p.accts {
 				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
-					if now.After(s.cooldown) {
+					if ok, _ := p.available(s, now); ok {
 						return &s.acct, time.Time{}
 					}
-					start = i + 1 // pinned account cooling: rotate past it
+					start = i + 1 // pinned account cooling or governed: rotate past it
 					break
 				}
 			}
 		}
 		delete(p.sticky, id)
 	}
-	var ready time.Time // soonest cooldown expiry among cooling accounts
+	var ready time.Time // soonest cooldown expiry / bucket refill among blocked accounts
 	for i := range n {
 		s := &p.accts[(start+i)%n]
-		if now.After(s.cooldown) {
+		if ok, r := p.available(s, now); ok {
 			p.rr = (uint64(start+i) + 1) % uint64(n)
 			p.pin(id, &s.acct, now)
 			return &s.acct, time.Time{}
-		}
-		if t := s.cooldown; ready.IsZero() || t.Before(ready) {
-			ready = t
+		} else if !r.IsZero() {
+			if ready.IsZero() || r.Before(ready) {
+				ready = r
+			}
 		}
 	}
 	return nil, ready
+}
+
+// available reports whether slot s may take an upstream attempt now: past
+// its cooldown AND, when governed by an RPM bucket, holding a token. When
+// blocked it yields the instant the slot can serve — max(cooldown, refill),
+// both gates must pass — so a fully blocked pool reports an honest
+// soonest-ready for the fall-through Retry-After.
+func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time) {
+	cool := !s.cooldown.IsZero() && !now.After(s.cooldown)
+	if s.bucket == nil {
+		if cool {
+			return false, s.cooldown
+		}
+		return true, time.Time{}
+	}
+	if cool {
+		serve := s.cooldown
+		if r := s.bucket.refillAt(now); r.After(serve) {
+			serve = r
+		}
+		return false, serve
+	}
+	readyAt := s.bucket.take(now)
+	if readyAt.IsZero() {
+		return true, time.Time{}
+	}
+	return false, readyAt
 }
 
 // ok records a successful call on a: the account is healthy, so both its

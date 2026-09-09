@@ -188,7 +188,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
 				def.Accounts = append(def.Accounts, provider.Account{
-					Name: a.Name, APIKey: a.APIKey, BaseURL: a.BaseURL, Weight: a.Weight,
+					Name: a.Name, APIKey: a.APIKey, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM,
 				})
 			}
 		} else {
