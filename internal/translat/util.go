@@ -69,3 +69,27 @@ func UpstreamAuthVerifyFailed(status int, typ, msg string) bool {
 	return strings.Contains(probe, "鉴权服务请求失败") ||
 		strings.Contains(probe, "auth/verify")
 }
+
+// UpstreamParseRejected reports whether an upstream 400 is a distributor
+// node's generic body-parse rejection rather than a genuine request
+// fault. b-ai's one-api distributor fans each request to heterogeneous
+// GLM backend nodes; live RCA (2026-09-09): 22 client-visible failures
+// in ~40 h, every one answered by the same backend node (all 22 request
+// ids share the c955d568 marker), bodies 228 KB-2.3 MB, while
+// byte-identical replays of the same bodies served 200 through other
+// nodes minutes later. A body onegw itself parsed and rewrote is
+// well-formed JSON — the rejection is the node's, not the client's.
+// Callers rewrite it to a retryable 502-class fault so Router.Execute
+// retries the target (a fresh node may serve) and combos fall through
+// instead of surfacing a lying invalid_request. Deliberately narrow:
+// the one-api edge's exact "Invalid request body" phrasing plus its
+// "(request id: …)" trailer; genuine schema 400s (type
+// invalid_request_error, code 400001, named-parameter messages) keep
+// failing fast.
+func UpstreamParseRejected(status int, typ, msg string) bool {
+	if status != 400 || typ != "api_error" {
+		return false
+	}
+	return strings.Contains(msg, "Invalid request body") &&
+		strings.Contains(msg, "request id:")
+}

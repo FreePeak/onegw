@@ -937,6 +937,20 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			apiErr.Status = 502
 			apiErr.Type = "upstream_auth_verify_failed"
 		}
+		if translat.UpstreamParseRejected(apiErr.Status, apiErr.Type, apiErr.Message) {
+			// b-ai's distributor fans each request to heterogeneous GLM
+			// backend nodes, and some reject large (>= ~228 KB) valid
+			// bodies with a bare "Invalid request body. (request id: …)"
+			// 400 while byte-identical replays serve 200 on other nodes
+			// (live RCA 2026-09-09: 22 client-visible failures over ~40 h,
+			// every one from the same request-id node). Channel fault, not
+			// request fault: rewrite to a retryable 502-class error so
+			// Router.Execute retries the target — a fresh node may serve —
+			// and combos fall through. Do NOT bench or rotate the account;
+			// the credential is healthy.
+			apiErr.Status = 502
+			apiErr.Type = "upstream_parse_rejected"
+		}
 		if apiErr.OverQuota() && acct != nil {
 			// Upstream's Retry-After header, when present, wins verbatim —
 			// on the account ladder (coolDuration below) AND on the error
