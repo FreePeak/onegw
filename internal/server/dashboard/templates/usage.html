@@ -40,6 +40,12 @@
 const D = {{.ChartJSON}};
 function kmb(n){if(n>=1e9)return (n/1e9).toFixed(1)+'B';if(n>=1e6)return (n/1e6).toFixed(0)+'M';if(n>=1e3)return (n/1e3).toFixed(0)+'K';return String(n)}
 const CSS = getComputedStyle(document.documentElement);
+function cv(name, fallback){
+  const v = CSS.getPropertyValue(name).trim();
+  return v || fallback;
+}
+const FONTS = '11px "Fira Code", ui-monospace, monospace';
+let charts = [];
 function tokSeries(s){
   return {label: s.label, stroke: s.color, width: 1.6,
     fill: s.fill ? s.color+'2e' : undefined, points: {show: false},
@@ -48,26 +54,31 @@ function tokSeries(s){
 function draw(id, series, title){
   const el = document.getElementById(id);
   if(!el || !D.xs.length) return;
-  const grid = (CSS.getPropertyValue('--line') || '#ffffff1a').trim();
-  const text = (CSS.getPropertyValue('--mut') || '#9ca3af').trim();
-  const font = '11px "JetBrains Mono", ui-monospace, monospace';
-  new uPlot({
+  const grid = cv('--line', '#ffffff1a');
+  const text = cv('--mut', '#94a3b8');
+  return new uPlot({
     width: el.clientWidth || 600, height: 230, title,
     series: [{}, ...series.map(tokSeries)],
-    axes: [{stroke: text, grid: {stroke: grid}, font, size: 60},
-           {stroke: text, grid: {stroke: grid}, font, size: 60, values: (u2, v) => v.map(kmb)}]
+    axes: [{stroke: text, grid: {stroke: grid}, font: FONTS, size: 60},
+           {stroke: text, grid: {stroke: grid}, font: FONTS, size: 60, values: (u2, v) => v.map(kmb)}]
   }, [D.xs, ...series.map(s => s.vals)], el);
 }
-// stacked areas: cumulative input → +output → +cache_read
-const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
-draw('chart-tok', [
-  {label:'cache read', vals: cr, color:'#62b3ff', fill:true, layer: D.cache_read},
-  {label:'output', vals: out, color:'#10b981', fill:true, layer: D.output},
-  {label:'input', vals: inp, color:'#e6ad00', fill:true, layer: D.input},
-], "tokens · {{.ChartUnit}} (stacked areas — legend shows each layer's own value)");
-draw('chart-req', [
-  {label:'requests', vals: D.requests, color:'#ad87ed', fill:true, layer: D.requests},
-], 'requests · {{.ChartUnit}}');
+function redraw(){
+  charts.forEach(u => u.destroy());
+  charts = [];
+  // stacked areas: cumulative input → +output → +cache_read
+  const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
+  charts.push(draw('chart-tok', [
+    {label:'cache read', vals: cr, color: cv('--color-chart2', '#60a5fa'), fill:true, layer: D.cache_read},
+    {label:'output', vals: out, color: cv('--color-ok', '#22c55e'), fill:true, layer: D.output},
+    {label:'input', vals: inp, color: cv('--color-chart4', '#fbbf24'), fill:true, layer: D.input},
+  ], "tokens · {{.ChartUnit}} (stacked areas — legend shows each layer's own value)"));
+  charts.push(draw('chart-req', [
+    {label:'requests', vals: D.requests, color: cv('--color-chart3', '#a78bfa'), fill:true, layer: D.requests},
+  ], 'requests · {{.ChartUnit}}'));
+}
+redraw();
+document.addEventListener('ogw-theme', redraw);
 </script>
 {{end}}
 {{end}}
