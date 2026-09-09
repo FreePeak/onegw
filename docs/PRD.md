@@ -1,5 +1,31 @@
 # onegw PRD
-*Last updated: 2026-09-09 (live config: commandcode (GOAT plan, 48-model roster, GLM-5.3 always_thinking probes) + tokenrouter (new-api aggregator, 80 openai-type models, $0 balance) providers hot-reloaded into onegw.toml — earlier: README revamped — assets/logo.svg replaced with the dashboard favicon mark (dark tile + white/blue bars), dashboard section rewritten around a single freshly re-shot live Overview screenshot (login/tools/usage/providers/logs PNGs removed, those pages now described as text), duplicate token-saver bullet merged, upstream-fault-classification + sticky/session-affinity feature bullets added, misplaced sticky TOML block re-homed) 
+*Last updated: 2026-09-09 (dashboard revamp 987a849: ui-ux-pro-max design pass — slate
+glassmorphism tokens, Fira Sans/Fira Code vendored, contrast-fixed both themes — PLUS the
+provider/combo config editor: PUT /admin/config/providers and /admin/config/combos popup
+modals that splice the TOML file (comments + foreign keys preserved), validate with
+config.Load before the atomic write, then Load+Reload — save hot-reloads the live gateway
+and publishes an SSE config event; secrets never leave the file (empty key = keep existing);
+mutation-checked tests, staged-tree suite green, zero-drop deployed — earlier: live config: commandcode (GOAT plan, 48-model roster, GLM-5.3 always_thinking probes) + tokenrouter (new-api aggregator, 80 openai-type models, $0 balance) providers hot-reloaded into onegw.toml)*
+**2026-09-09 — dashboard revamp + config editor (987a849, zero-drop deployed):** the admin
+console was redesigned with the [ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)
+design system (Real-Time/Operations pattern → slate glassmorphism, emerald interactive
+accent, Fira Sans/Fira Code vendored as OFL latin woff2 subsets — old three fonts removed).
+Accessibility per the skill's checklist: visible focus rings, reduced-motion guard, skip
+link, aria-labelled icon buttons, 4.5:1 contrast verified by screenshot review in BOTH
+themes (two rounds of contrast fixes), uPlot charts now read theme tokens and redraw on
+dark/light flip. NEW capability (user request): the Providers and Combos pages have popup
+editor modals — Add/Edit/Save writes `[[providers]]`/`[[combo]]` blocks through
+`PUT /admin/config/{providers,combos}`: line-splice preserving comments and unmanaged keys
+(extra_headers, always_thinking, session_header, passthrough, accounts not being edited),
+pre-write `config.Load` validation (rejections answer 400 and leave the file byte-identical),
+atomic rename, then the SIGHUP-equivalent Load+Reload — clicking Save hot-reloads the live
+gateway and every open dashboard (SSE `config` topic). Secrets stay in the file: the UI
+never receives key material and an empty api_key field on update preserves the existing
+key per account name. Verification: new endpoint tests (add/update/secret-preserve/
+reject-untouched/reload-observed) mutation-checked; headless-Chrome E2E drove login →
+add-provider modal → save → auto-reload → edit prefill → combo modal on a scratch
+instance; RSS bench parity with HEAD (borderline 100 MiB contract is pre-existing, not a
+regression); deploy via scripts/deploy.sh zero-drop.
 **2026-09-09 — commandcode + tokenrouter providers added live (config-only, hot-reload):** two user-provided
 upstream keys wired into live onegw.toml, PUT /admin/config/reload (providers 6→8, zero downtime), live-verified:
 `commandcode/deepseek/deepseek-v4-flash` and `commandcode/z-ai/glm-5.3-flash` 200 through the gateway.
