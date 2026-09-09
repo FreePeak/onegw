@@ -1,9 +1,18 @@
 # onegw PRD
-
-*Last updated: 2026-09-09 (b-ai per-account 429 RCA + RPM governor 729c190 + free/dev
+*Last updated: 2026-09-09 (Merlin AI upstream research #58 published — wire contract live-verified,
+implementation pending; earlier: b-ai per-account 429 RCA + RPM governor 729c190 + free/dev
 rotation, zero-drop deployed pid 96925, closes #56 — earlier: four-lane wave
 #54/#32/#34/#35/#55/#14, below.)*
-
+**2026-09-09 — Merlin AI (getmerlin.in) upstream research (#58, research-only):** deep dive on the
+pricing page + internet adapters; wire contract live-verified end-to-end (Firebase anonymous
+signUp with Merlin's public Firebase web key (full value in issue #58) → 1h idToken →
+`POST www.getmerlin.in/arcane/api/v2/thread/unified` SSE → free model glm-5.3-flash streamed
+MERLIN-OK; guest hitting a paid model → in-band `PRO_ONLY_MODEL` error event). Pricing: Free $0
+(5 free-tier models), Pro $29/mo or $19/mo yearly (regional promos $2-$8/mo annual-billed),
+Teams $19/seat; discounted plans carry a $5/day + $20/month fair-usage cap. Deliverable in
+issue #58: options A (native kind="merlin" — refresh-token account + ForcedStream SSE
+translator, mirrors commandcode) vs B (self-hosted getmerlin-worker bridge as kind=openai).
+Earlier:
 **2026-09-09 — b-ai per-account 429 RCA + RPM governor (729c190, zero-drop deployed pid 96925):**
 the console showed two distinct b-ai 429 classes: `gateway_error` "Concurrency limit 1200"
 (Tencent GLM model-wide limit shared by ALL of the reseller's traffic — already handled by #52's
@@ -714,6 +723,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#53~~ | ~~b-ai distributor nodes parse-reject large valid bodies as terminal 400~~ — **done 2026-09-09** (84fd1c9 + 51ccf1e): translat.UpstreamParseRejected (narrow 400 + api_error + "Invalid request body" + request-id trailer) rewrites to retryable 502 upstream_parse_rejected, no bench, Router retries / combo falls through; NormalizeInStreamError covers the in-stream variant; genuine schema 400s stay terminal (test-pinned); zero-drop deployed pid 53121, live-verified | #52 follow-up |
 | #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
+| #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
 
 ### Recommended implementation order (2026-09-08)
 
