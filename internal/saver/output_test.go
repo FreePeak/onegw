@@ -220,6 +220,13 @@ func TestInjectPonytailMode(t *testing.T) {
 	if string(twice) != string(out) {
 		t.Fatalf("ponytail ladder injected twice")
 	}
+	// The prompt must not contain its own skip signature ("lazy senior
+	// dev"): a future edit adding the phrase would make the gateway
+	// treat its own directive as a client-side plugin and refuse to
+	// re-inject after a hot-reload mode swap.
+	if strings.Contains(ponytailPrompt, ponytailClientSig) {
+		t.Fatalf("ponytail prompt self-matches the client-plugin skip signature")
+	}
 }
 
 func TestInjectPonytailSkipsClientPlugin(t *testing.T) {
