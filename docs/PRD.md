@@ -1,5 +1,19 @@
 # onegw PRD
-*Last updated: 2026-09-09 (docs: README revamped — assets/logo.svg replaced with the dashboard favicon mark (dark tile + white/blue bars), dashboard section rewritten around a single freshly re-shot live Overview screenshot (login/tools/usage/providers/logs PNGs removed, those pages now described as text), duplicate token-saver bullet merged, upstream-fault-classification + sticky/session-affinity feature bullets added, misplaced sticky TOML block re-homed. earlier: housekeeping: #53 closed fixed (84fd1c9 + 51ccf1e), #51 closed delivered, #44 closed
+*Last updated: 2026-09-09 (live config: commandcode (GOAT plan, 48-model roster, GLM-5.3 always_thinking probes) + tokenrouter (new-api aggregator, 80 openai-type models, $0 balance) providers hot-reloaded into onegw.toml — earlier: README revamped — assets/logo.svg replaced with the dashboard favicon mark (dark tile + white/blue bars), dashboard section rewritten around a single freshly re-shot live Overview screenshot (login/tools/usage/providers/logs PNGs removed, those pages now described as text), duplicate token-saver bullet merged, upstream-fault-classification + sticky/session-affinity feature bullets added, misplaced sticky TOML block re-homed) 
+**2026-09-09 — commandcode + tokenrouter providers added live (config-only, hot-reload):** two user-provided
+upstream keys wired into live onegw.toml, PUT /admin/config/reload (providers 6→8, zero downtime), live-verified:
+`commandcode/deepseek/deepseek-v4-flash` and `commandcode/z-ai/glm-5.3-flash` 200 through the gateway.
+**commandcode** (kind=openai, `https://api.commandcode.ai/provider/v1`) — user's GOAT plan ($10/mo, $70 credits);
+48-model roster from the GOAT plan page (Gemini 3.1/3.5/3.6 + GPT-5.3/5.4/5.5 are Pro-gated with 403
+MODEL_NOT_IN_PLAN; Claude ids serve Anthropic-only on /v1/messages — 400 on /chat/completions, probe-verified);
+GLM-5.3 ids probed: accept `reasoning_effort medium`, reject `none` with 400 (low|medium|high|xhigh|max ladder),
+ignore `thinking:{type:disabled}` → always_thinking = ["zai-org/GLM-5.3", "z-ai/glm-5.3-flash"]. Note: the legacy
+`commandcode` KIND (NDJSON, #12) is unrelated — the new Provider API is standard OpenAI-compatible, so kind=openai.
+**tokenrouter** (kind=openai, `https://api.tokenrouter.com/v1`, new-api aggregator) — 80 openai-endpoint-type text
+models curated from /v1/models (openai-response-only ids like gpt-5.5/5.6/6-astra, Claude Anthropic-only,
+gemini-only, image/video/embedding entries excluded); GLM-5.3 family speculative always_thinking; ACCOUNT BALANCE
+$0.00 — all requests 403 insufficient_user_quota until topped up (live-probed; key authenticates, quota is empty).
+Earlier:
 research-delivered + step-1-shipped — follow-ups opened: #54 task-aware combo reordering (#44 step 2), #55
 omp+onegw VPS deploy; open-work table synced with struck rows; #50 cross-format always-thinking
 coercion landed 8b47d9d: coerceAlwaysThinkingUnified coerces the client-set ReasoningEffort and drops the
