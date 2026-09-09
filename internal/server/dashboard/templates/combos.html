@@ -1,13 +1,111 @@
-{{define "hdr"}}<span>{{len .}} combos · fallback chains</span>{{end}}
+{{define "hdr"}}<span>{{len .Rows}} combos · fallback chains</span>
+<button class="btn primary sm" id="addcombo" type="button">+ Add combo</button>{{end}}
 {{define "content"}}
 <div class="tblwrap">
 <table>
-<thead><tr><th>combo</th><th>fallback chain (tried in order)</th></tr></thead>
+<thead><tr><th>combo</th><th>fallback chain (tried in order)</th><th></th></tr></thead>
 <tbody>
-{{range .}}<tr><td><b class="mono">{{.Name}}</b></td><td class="mono">{{.Targets}}</td></tr>
-{{else}}<tr><td colspan="2" class="empty">no combos configured — model strings resolve directly</td></tr>{{end}}
+{{range .Rows}}<tr><td><b class="mono">{{.Name}}</b></td><td class="mono">{{.Targets}}</td>
+  <td class="text-right"><button class="rowact" data-edit="{{.Name}}" type="button" title="edit combo {{.Name}}" aria-label="edit combo {{.Name}}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round"/></svg>
+  </button></td></tr>
+{{else}}<tr><td colspan="3" class="empty">no combos configured — model strings resolve directly</td></tr>{{end}}
 </tbody>
 </table>
 </div>
+
+<dialog class="modal" id="cmodal" aria-labelledby="cmodal-title">
+  <form id="cform" method="dialog" novalidate>
+    <h2 id="cmodal-title">Edit combo</h2>
+    <p class="msub">Targets are tried in order; the first that answers wins. Saved to onegw.toml, validated, and hot-reloaded.</p>
+    <div class="merr" id="cerr" role="alert" hidden></div>
+    <div class="field">
+      <label for="cf-name">name <b>*</b></label>
+      <input id="cf-name" type="text" autocomplete="off" spellcheck="false" required>
+    </div>
+    <div class="field">
+      <label for="cf-targets">targets <b>*</b> <span class="text-mut/60">(one "provider/model" per line, in fallback order)</span></label>
+      <textarea id="cf-targets" rows="5" spellcheck="false" placeholder="provider-a/model-x
+provider-b/model-y"></textarea>
+    </div>
+    <div class="mfoot">
+      <button type="button" class="btn" id="ccancel">Cancel</button>
+      <button type="submit" class="btn primary" id="csave">Save &amp; reload</button>
+    </div>
+  </form>
+</dialog>
 {{end}}
-{{define "scripts"}}{{end}}
+{{define "scripts"}}
+<script>
+const CEDIT = {{.Edit}};
+(function(){
+  const dlg = document.getElementById('cmodal'),
+        errBox = document.getElementById('cerr'),
+        saveBtn = document.getElementById('csave'),
+        nameIn = document.getElementById('cf-name'),
+        targetsIn = document.getElementById('cf-targets');
+  let editing = null;
+
+  function showErr(m){ errBox.textContent = m; errBox.hidden = false; }
+
+  document.getElementById('addcombo').onclick = () => {
+    editing = null;
+    nameIn.value = ''; nameIn.disabled = false;
+    targetsIn.value = ''; errBox.hidden = true;
+    document.getElementById('cmodal-title').textContent = 'Add combo';
+    dlg.showModal();
+    nameIn.focus();
+  };
+  document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+    const c = (CEDIT || []).find(x => x.name === b.dataset.edit);
+    if (!c) return;
+    editing = c.name;
+    nameIn.value = c.name; nameIn.disabled = true;
+    targetsIn.value = (c.targets || []).join('\n');
+    errBox.hidden = true;
+    document.getElementById('cmodal-title').textContent = 'Edit combo · ' + c.name;
+    dlg.showModal();
+    targetsIn.focus();
+  });
+  document.getElementById('ccancel').onclick = () => dlg.close();
+
+  document.getElementById('cform').onsubmit = async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const body = {
+      name: nameIn.value.trim(),
+      targets: targetsIn.value.split('\n').map(s => s.trim()).filter(Boolean),
+    };
+    if (!body.name) { showErr('combo name is required'); return; }
+    if (!body.targets.length) { showErr('at least one target is required'); return; }
+    saveBtn.disabled = true; saveBtn.setAttribute('aria-busy', 'true');
+    saveBtn.textContent = 'Saving…';
+    try {
+      const res = await fetch('/admin/config/combos', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { showErr(j.error || ('save failed (' + res.status + ')')); return; }
+      dlg.close();
+      ogwToast('combo ' + j.name + ' ' + j.action + ' — config reloaded');
+      setTimeout(() => location.reload(), 400);
+    } catch (err) {
+      showErr('save failed: ' + err.message);
+    } finally {
+      saveBtn.disabled = false; saveBtn.removeAttribute('aria-busy');
+      saveBtn.textContent = 'Save & reload';
+    }
+  };
+
+  // Live config events: a save anywhere refreshes this view.
+  const es = new EventSource('/admin/events?topics=config');
+  let pending = false;
+  es.addEventListener('config', () => {
+    if (dlg.open || pending) return;
+    pending = true;
+    setTimeout(() => location.reload(), 300);
+  });
+})();
+</script>
+{{end}}
