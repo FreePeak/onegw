@@ -486,7 +486,7 @@ conciseness-demanding directive to the system prompt of matching requests:
 
 ```toml
 [[saver.inject]]
-mode = "terse"          # "caveman" (ultra-short), "terse", or "custom"
+mode = "terse"          # "caveman" (ultra-short), "terse", "ponytail", or "custom"
 # models = ["gpt-5*"]   # path.Match globs; empty matches every model
 # text = "..."          # custom mode only, shipped verbatim
 ```
@@ -496,6 +496,16 @@ persona claims, no withholding requested content. Injection is idempotent
 (a `onegw-terse-directive` marker is never applied twice), works on all
 three surfaces, survives cross-format translation, and never fails a
 request (bodies it cannot parse pass through untouched).
+`mode = "ponytail"` ships the
+[ponytail](https://github.com/DietrichGebert/ponytail) lazy-senior-dev
+ladder (adapted from the upstream ruleset, MIT): YAGNI → reuse what the
+codebase has → stdlib → native platform → installed dependency → one
+line → minimum that works, with validation/error handling/security and
+one runnable check never on the chopping block. It cuts what the agent
+BUILDS — pair it with `caveman`/`terse`, which cut what it SAYS. If the
+client already runs the ponytail plugin itself (its ruleset tagline is
+detected in the prompt), the gateway skips injection instead of stacking
+the ladder twice.
 
 **External compress** — `[saver.external]` forwards large requests'
 `messages[]` to a Headroom-protocol service and uses its compressed

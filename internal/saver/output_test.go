@@ -19,7 +19,8 @@ import (
 func TestInjectPromptHonesty(t *testing.T) {
 	// Shipped prompts must not lie (no false persona claims) and must
 	// demand conciseness. The custom prompt ships verbatim.
-	if strings.Contains(cavemanPrompt, "You are") || strings.Contains(tersePrompt, "You are") {
+	if strings.Contains(cavemanPrompt, "You are") || strings.Contains(tersePrompt, "You are") ||
+		strings.Contains(ponytailPrompt, "You are") {
 		t.Fatalf("shipped prompt makes a false persona claim: %q / %q", cavemanPrompt, tersePrompt)
 	}
 	if !strings.Contains(cavemanPrompt, "concise") && !strings.Contains(cavemanPrompt, "terse") {
@@ -29,7 +30,7 @@ func TestInjectPromptHonesty(t *testing.T) {
 	if !strings.Contains(custom, "reply in exactly three words") {
 		t.Fatalf("custom text not shipped verbatim: %q", custom)
 	}
-	for _, p := range []string{cavemanPrompt, tersePrompt} {
+	for _, p := range []string{cavemanPrompt, tersePrompt, ponytailPrompt} {
 		if !strings.Contains(p, injectMarker) {
 			t.Fatalf("prompt missing idempotency marker")
 		}
@@ -196,6 +197,44 @@ func TestInjectNoMessagesLeavesBodyUntouched(t *testing.T) {
 	}
 	if out := s.InjectRaw(translat.FmtOpenAI, []byte("not json"), "m"); string(out) != "not json" {
 		t.Fatalf("non-object body must pass through verbatim")
+	}
+}
+
+func TestInjectPonytailMode(t *testing.T) {
+	s := New(Config{Inject: []InjectCfg{{Mode: "ponytail"}}})
+	orig := []byte(`{"model":"m","messages":[{"role":"system","content":"be nice"},{"role":"user","content":"hi"}]}`)
+	out := s.InjectRaw(translat.FmtOpenAI, orig, "m")
+	// Assert on a quote-free prefix: the full prompt contains quotes that
+	// JSON-escape, so it never appears verbatim in the marshalled body.
+	if !strings.Contains(string(out), injectMarker+" (ponytail; adapted from DietrichGebert/ponytail, MIT): ") ||
+		!strings.Contains(string(out), "the best code is the code never written") {
+		t.Fatalf("ponytail ladder not injected")
+	}
+	if !strings.Contains(string(out), "YAGNI") || !strings.Contains(string(out), "minimum code that works") {
+		t.Fatalf("ponytail ladder incomplete: rungs missing")
+	}
+	if !strings.Contains(string(out), "be nice") {
+		t.Fatalf("client system prompt dropped by injection")
+	}
+	twice := s.InjectRaw(translat.FmtOpenAI, out, "m")
+	if string(twice) != string(out) {
+		t.Fatalf("ponytail ladder injected twice")
+	}
+}
+
+func TestInjectPonytailSkipsClientPlugin(t *testing.T) {
+	s := New(Config{Inject: []InjectCfg{{Mode: "ponytail"}}})
+	// A client that already runs the ponytail plugin carries its
+	// ruleset tagline in the prompt; the gateway must not stack the
+	// ladder on top of it.
+	orig := []byte(`{"model":"m","messages":[{"role":"system","content":"Ponytail, lazy senior dev mode. 1. YAGNI. 2. Reuse."},{"role":"user","content":"hi"}]}`)
+	if out := s.InjectRaw(translat.FmtOpenAI, orig, "m"); string(out) != string(orig) {
+		t.Fatalf("injected on top of a client-side ponytail ruleset: %s", out)
+	}
+	// The skip is ponytail-specific: terse mode still injects.
+	terse := New(Config{Inject: []InjectCfg{{Mode: "terse"}}})
+	if out := terse.InjectRaw(translat.FmtOpenAI, orig, "m"); !strings.Contains(string(out), tersePrompt) {
+		t.Fatalf("ponytail signature wrongly suppressed terse injection")
 	}
 }
 
