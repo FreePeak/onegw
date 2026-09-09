@@ -843,9 +843,36 @@ func transportErr(ctx context.Context, err error) *types.APIError {
 		return &types.APIError{Status: 499, Type: "client_closed", Message: err.Error()}
 	}
 	if anyChainTimeout(err) {
+		if headerBudgetExhausted(err) {
+			// The gateway's own pre-first-byte budget fired (the exact
+			// net/http error text ResponseHeaderTimeout produces — a dial
+			// timeout reports "dial tcp …: i/o timeout" instead). The
+			// pre-first-byte demand is a property of the request
+			// (prefill size), so a same-target retry just burns a second
+			// full budget on the same queued upstream: mark
+			// NoSameTargetRetry so Router.Execute falls through
+			// immediately. Tokenrouter live evidence (2026-09-09 14:46):
+			// glm-5.3-free prefill TTFB 17-37s nominal but the free lane
+			// queues past 120s; the failed attempt retried the same
+			// target, adding a second silent 120s before surfacing.
+			return &types.APIError{
+				Status: 504, Type: "upstream_timeout",
+				Message: err.Error(), NoSameTargetRetry: true,
+			}
+		}
 		return &types.APIError{Status: 504, Type: "upstream_timeout", Message: err.Error()}
 	}
 	return &types.APIError{Status: 502, Type: "upstream_unreachable", Message: err.Error()}
+}
+
+// headerBudgetExhausted reports whether err is the ResponseHeaderTimeout
+// abort (as opposed to a dial/TLS timeout, which is genuinely per-attempt
+// and stays retryable). The transport error is opaque, so match the only
+// text net/http produces for this abort; dial timeouts report
+// "dial tcp …: i/o timeout". Constant text, checked upstream of any
+// dynamic content.
+func headerBudgetExhausted(err error) bool {
+	return strings.Contains(err.Error(), "timeout awaiting response headers")
 }
 
 // anyChainTimeout reports whether ANY error in the unwrap chain reports a

@@ -107,6 +107,31 @@ func TestTransportErrClassification(t *testing.T) {
 	}
 }
 
+// dialTimeoutErr is a net.Error timeout that is NOT the ResponseHeaderTimeout
+// abort (the dial flavor fails in seconds and stays cheap to retry).
+type dialTimeoutErr struct{}
+
+func (dialTimeoutErr) Error() string   { return "dial tcp 1.2.3.4:443: i/o timeout" }
+func (dialTimeoutErr) Timeout() bool   { return true }
+func (dialTimeoutErr) Temporary() bool { return false }
+
+var _ net.Error = dialTimeoutErr{}
+
+// Only the ResponseHeaderTimeout flavor marks the pre-first-byte budget as
+// spent (NoSameTargetRetry): its text is net/http's exact abort message,
+// and http.Client.Timeout is always 0 here (the per-request context governs),
+// so nothing else can produce it.
+func TestTransportErrBudgetFlag(t *testing.T) {
+	header := transportErr(t.Context(), &url.Error{Op: "Post", URL: "https://x/y", Err: fakeTimeoutErr{}})
+	if header.Status != 504 || header.Type != "upstream_timeout" || !header.NoSameTargetRetry {
+		t.Fatalf("header-timeout must mark the budget spent: %+v", header)
+	}
+	dial := transportErr(t.Context(), &url.Error{Op: "Post", URL: "https://x/y", Err: dialTimeoutErr{}})
+	if dial.Status != 504 || dial.Type != "upstream_timeout" || dial.NoSameTargetRetry {
+		t.Fatalf("dial timeout must keep the same-target retry: %+v", dial)
+	}
+}
+
 // A stalled upstream must be aborted by the pre-first-byte budget, and the
 // resulting error must be typed upstream_timeout end-to-end through Do.
 func TestDoTimeoutSurfacesUpstreamTimeout(t *testing.T) {
@@ -133,6 +158,9 @@ func TestDoTimeoutSurfacesUpstreamTimeout(t *testing.T) {
 	}
 	if !apiErr.Retryable() {
 		t.Fatal("upstream_timeout must stay retryable so combos fall through")
+	}
+	if !apiErr.NoSameTargetRetry {
+		t.Fatal("the header-timeout abort must mark the pre-first-byte budget as spent")
 	}
 }
 
