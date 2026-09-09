@@ -1,10 +1,10 @@
-{{define "hdr"}}<span>request log · in-memory ring of {{.Cap}}</span>{{end}}
+{{define "hdr"}}<span>request log · in-memory ring of {{.Cap}} · auto-cleared after 7d</span>{{end}}
 {{define "content"}}
-<div class="card" style="margin-bottom:12px;display:flex;gap:14px;align-items:center">
-  <span id="logstat" class="sub" style="margin:0;color:var(--mut)">connecting…</span>
-  <label style="margin-left:auto;font-size:12.5px"><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
-  <button id="pause" class="btn" style="padding:3px 10px">pause</button>
-  <a class="btn" style="padding:3px 10px" href="/admin/api/v1/logs?limit=200">raw JSON</a>
+<div class="card mb-3 flex items-center gap-3">
+  <span id="logstat" class="sub mt-0">connecting…</span>
+  <label class="ml-auto text-[12.5px]"><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+  <button id="pause" class="btn sm">pause</button>
+  <a class="btn sm" href="/admin/api/v1/logs?limit=200">raw JSON</a>
 </div>
 <div id="logpane" class="mono"></div>
 {{end}}
@@ -14,14 +14,14 @@
   const pane = document.getElementById('logpane'), stat = document.getElementById('logstat'),
         auto = document.getElementById('autoscroll'), pauseBtn = document.getElementById('pause');
   let paused = false, last = 0;
-  pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? 'resume' : 'pause'; };
-  function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  pauseBtn.onclick = () => { paused =! paused; pauseBtn.textContent = paused ? 'resume' : 'pause'; };
   function cls(e){ return e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
   function line(e){
     const d = new Date(e.ts * 1000);
     const t = d.toTimeString().slice(0, 8);
     const mark = e.kind ? '✗' : '✓';
-    let txt = t + '  ' + mark + '  ' + (e.provider ? e.provider + '/' + e.model : e.model || '(unresolved)') +
+    const acct = e.account ? ' @' + e.account : '';
+    let txt = t + '  ' + mark + '  ' + (e.provider ? e.provider + '/' + e.model : e.model || '(unresolved)') + acct +
       '  ' + e.code + (e.kind ? ' · ' + e.kind : '') +
       '  · ' + kfmt(e.in) + ' in · ' + kfmt(e.out) + ' out' + (e.cache_read ? ' · ' + kfmt(e.cache_read) + ' cached' : '') +
       (e.saved ? ' · ' + kfmt(e.saved) + ' saved' : '') +

@@ -1,6 +1,6 @@
 {{define "hdr"}}<span>pid {{.PID}} · {{.Build}}</span>{{end}}
 {{define "content"}}
-<div class="card" style="margin-bottom:14px"><h3>Process</h3>
+<div class="card mb-3"><h3>Process</h3>
 <div class="kv">
   <span class="k">build</span><span class="mono">{{.Build}}</span>
   <span class="k">started</span><span class="mono">{{.StartedAt}} · up {{.Uptime}}</span>
@@ -10,12 +10,12 @@
   <span class="k">admin auth</span><span>{{if .AdminSet}}password set{{else}}<span class="pill warn">open — no admin_password</span>{{end}}</span>
 </div></div>
 
-<div class="card" style="margin-bottom:14px"><h3>Maintenance</h3>
-<div style="display:flex;gap:10px;align-items:center">
+<div class="card mb-3"><h3>Maintenance</h3>
+<div class="flex items-center gap-2.5">
   <button class="btn" hx-put="/admin/config/reload" hx-target="#reload-res" hx-swap="innerHTML">Reload config (SIGHUP)</button>
-  <form method="post" action="/admin/logout" style="margin:0"><button type="submit" class="btn danger">Sign out</button></form>
+  <form method="post" action="/admin/logout" class="m-0"><button type="submit" class="btn danger">Sign out</button></form>
 </div>
-<pre id="reload-res" class="mono" style="margin:10px 0 0;color:var(--mut)"></pre></div>
+<pre id="reload-res" class="mono mt-2.5 text-mut"></pre></div>
 
 <div class="card"><h3>Admin API</h3>
 <div class="kv">

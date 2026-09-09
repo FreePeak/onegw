@@ -1,0 +1,10 @@
+Fonts vendored in this directory are subsets of typefaces released under
+the SIL Open Font License, Version 1.1 (OFL-1.1):
+https://openfontlicense.org
+
+- SpaceGrotesk-latin.woff2   — Space Grotesk, Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk)
+- PlusJakartaSans-latin.woff2 — Plus Jakarta Sans, Copyright 2020 The Plus Jakarta Sans Project Authors (https://github.com/tokotype/PlusJakartaSans)
+- JetBrainsMono-latin.woff2   — JetBrains Mono, Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+
+Each is used and redistributed under OFL-1.1. The fonts are subset to the
+latin unicode range (U+0000-00FF + punctuation) as served by Google Fonts.

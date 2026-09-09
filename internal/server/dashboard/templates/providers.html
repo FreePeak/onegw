@@ -1,17 +1,17 @@
 {{define "hdr"}}<span>{{len .}} providers · keys masked</span>{{end}}
 {{define "content"}}
 {{range .}}
-<div class="card" style="margin-bottom:14px">
-  <h3 style="font-size:14px;text-transform:none;letter-spacing:0">{{.Name}}
-    <span class="pill">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
+<div class="card mb-3">
+  <h3 class="normal-case text-[14px] tracking-[-0.01em] text-fg">{{.Name}}
+    <span class="pill ml-2">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
   </h3>
-  <div class="kv" style="margin-bottom:8px">
+  <div class="kv mb-2">
     <span class="k">base URL</span><span class="mono">{{.BaseURL}}</span>
     <span class="k">accounts</span><span>{{.Accounts}} · {{.Concurrency}}</span>
     {{if .Quota}}<span class="k">quota window</span><span>{{.Quota}}{{if .QuotaLimit}} · limit {{.QuotaLimit}}{{end}}</span>{{end}}
   </div>
-  {{if .Models}}<details><summary style="cursor:pointer;color:var(--mut);font-size:12.5px">{{len .Models}} advertised models</summary>
-  <div class="mono" style="margin-top:6px;font-size:12px;line-height:1.9">{{range .Models}}<code class="chip">{{.}}</code> {{end}}</div></details>{{end}}
+  {{if .Models}}<details><summary>{{len .Models}} advertised models</summary>
+  <div class="mono mt-2 leading-8">{{range .Models}}<code class="chip">{{.}}</code> {{end}}</div></details>{{end}}
 </div>
 {{else}}
 <div class="tblwrap"><div class="empty">no providers configured</div></div>
