@@ -1,4 +1,27 @@
 # onegw PRD
+*Last updated: 2026-09-09 (shared-wall fall-through 359e5a0 + glm demotion/rpm cap live,
+pid 39967 — earlier: Merlin research #58 + RPM governor #56, below.)*
+
+**2026-09-09 — shared-wall fall-through + glm direct demotion (359e5a0, deployed pid 39967):**
+with >=20 sessions in flight the Tencent model-wide "Concurrency limit 1200" wall kept
+surfacing on b-ai/glm-5.3-flash because Router.Execute burned a 1s in-target backoff and a
+second attempt on the SAME model before falling through — a different key hits the same wall;
+only a different MODEL sits in a different concurrency bucket. SharedConcurrency 429s now
+fall through to the next combo target immediately (same shape as NoSameTargetRetry); direct
+routes surface the wall once with an honest 2s Retry-After; ordinary per-account 429s keep
+their same-target retry (account rotation does help there). 3 regression tests,
+mutation-checked. Deploy-day pid discipline incident: the pid-43915 build was silently
+replaced 4 minutes later by a peer's pre-359e5a0 binary (/tmp/onegw-504fix-bin, built 08:57Z
+vs 359e5a0 pushed 09:07Z) — the fix was pushed but NOT live; re-provenance checked (governor
+symbols newTokenBucket/refillAt present in both binaries) and origin tip re-deployed
+(pid 39967). New top error source emerged under load: glm/glm-5.3-flash direct (single
+z.ai key) — 48 empty-body 500s/10min, and 500s never bench, so the chain burned 2 attempts
+per hit. Live config: glm demoted to LAST rung in dev (overflow only), glm/harvey capped
+with rpm = 3 (Zhipu per-account concurrent ~1-2 at 150-300K inputs; no real capacity lost).
+Post-fix 7-min window at ~24 inflight: glm 500s 0 (was 48/10min), b-ai per-account 429
+1.3/min (was ~3.3/min), shared-wall 0.6/min, ring row success 81% (rest are mid-chain
+fall-throughs). tokenrouter free-lane 429s (8-req cap on z-ai/glm-5.3-free) remain the
+largest fall-through source — upstream-owned, absorbed.
 *Last updated: 2026-09-09 (Merlin AI upstream research #58 published — wire contract live-verified,
 implementation pending; earlier: b-ai per-account 429 RCA + RPM governor 729c190 + free/dev
 rotation, zero-drop deployed pid 96925, closes #56 — earlier: four-lane wave
