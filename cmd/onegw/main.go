@@ -111,6 +111,7 @@ func runGateway() {
 		}
 	})
 	upd.Start()
+	srv.SetUpdater(upd) // dashboard Settings card reads GET/POST /admin/api/v1/update (#61)
 	defer upd.Stop()
 
 	// srv.Handler() wraps its mux (recovery), so /admin/update mounts on

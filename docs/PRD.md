@@ -1,3 +1,14 @@
+*Last updated: 2026-09-09 (dashboard update button, #61: Settings page gains a
+Version card — running vs latest release, Check now / Update now — backed by new
+cookie-gated GET/POST /admin/api/v1/update in internal/server/admin_update.go
+(same internal/update service as `onegw update` and auto-apply; /admin/update
+stays the header-only CLI/probe surface). Local running: full zero-drop
+self-handoff with live polling until the new build answers. Docker container:
+the button reports status and, on apply, answers 409 with the host-side
+docker pull + recreate guidance — the image owns the filesystem, by design.
+Live-verified both modes on a throwaway gateway, incl. a real handoff to
+v0.12.7.)*
+
 *Last updated: 2026-09-09 (Docker release path audited for VPS deployments: latest image =
 v0.12.7 = master tip — only docs commits landed after the tag — and the release run's docker
 job pushed both tags. But the GHCR package is PRIVATE: anonymous `docker pull`/`manifest
@@ -1005,6 +1016,18 @@ the issue):
   `docker pull`/recreate commands instead of self-applying (the image
   owns the filesystem). Release binaries and Docker images are
   version-stamped by CI so `onegw version` reports the tag.
+  **Dashboard surface (2026-09-09, #61):** the Settings page has a
+  Version card — `Check now` and `Update now` buttons over
+  `GET/POST /admin/api/v1/update` (same admin gate as the rest of the
+  dashboard: header or session cookie; `/admin/update` stays the
+  header-only CLI/probe surface). Local runs: Update applies the
+  zero-drop handoff and the page polls until the pid changes / the
+  session 401s / the endpoint 404s, then reloads. Docker containers:
+  apply answers 409 with the exact host-side `docker pull` + recreate
+  commands (the image owns the filesystem), so the button works in both
+  modes. Live-verified end-to-end on a throwaway instance: 202 →
+  download → smoke → SO_REUSEPORT takeover → old pid drained ("updated
+  to v0.12.7"), and the container 409 guidance rendered verbatim.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay

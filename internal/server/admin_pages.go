@@ -25,6 +25,7 @@ import (
 	"onegw/internal/server/dashboard"
 	"onegw/internal/store"
 	"onegw/internal/types"
+	"onegw/internal/update"
 )
 
 // ---------------------------------------------------------------------------
@@ -1161,10 +1162,29 @@ type settingsView struct {
 	ConfigMtime string
 	DataDir     string
 	AdminSet    bool
+	UpdCurrent  string
+	UpdLatest   string
+	UpdChecked  string
+	UpdErr      string
+	UpdApply    string
+	UpdInDocker bool
+	UpdOutdated bool
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
-	v := settingsView{PID: os.Getpid(), StartedAt: s.start.Format(time.RFC3339)}
+	v := settingsView{PID: os.Getpid(), StartedAt: s.start.Format(time.RFC3339),
+		UpdCurrent: update.Version()}
+	if svc := s.updater(); svc != nil {
+		st := svc.Snapshot()
+		v.UpdLatest = st.Latest
+		v.UpdInDocker = st.InContainer
+		v.UpdOutdated = st.Outdated
+		v.UpdApply = st.LastApply
+		v.UpdErr = st.LastError
+		if st.LastCheck != nil {
+			v.UpdChecked = st.LastCheck.Format("2006-01-02 15:04:05 MST")
+		}
+	}
 	v.Uptime = time.Since(s.start).Round(time.Second).String()
 	if st := s.cur(); st != nil {
 		v.AdminSet = st.cfg.Server.AdminPassword != ""
