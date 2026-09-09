@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"onegw/internal/config"
 	"onegw/internal/server/dashboard"
 	"onegw/internal/store"
 	"onegw/internal/types"
@@ -775,12 +776,74 @@ func providerViews(st *state) []providerView {
 	return out
 }
 
-func (s *Server) providersPage(w http.ResponseWriter, r *http.Request) {
-	var views []providerView
-	if st := s.cur(); st != nil {
-		views = providerViews(st)
+// providerEditView is the editor-prefill shape for the popup modal. It
+// carries NO secret material: accounts expose has_key only, so an edit
+// round-trip can never echo a key back into the file.
+type providerEditView struct {
+	Name        string         `json:"name"`
+	Kind        string         `json:"kind"`
+	BaseURL     string         `json:"base_url,omitempty"`
+	Models      []string       `json:"models,omitempty"`
+	MaxConc     int            `json:"max_concurrency,omitempty"`
+	Sticky      string         `json:"sticky,omitempty"`
+	QuotaWindow string         `json:"quota_window,omitempty"`
+	QuotaTokens int64          `json:"quota_limit_tokens,omitempty"`
+	QuotaReqs   int64          `json:"quota_limit_requests,omitempty"`
+	Accounts    []acctEditView `json:"accounts,omitempty"`
+}
+
+type acctEditView struct {
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url,omitempty"`
+	Weight  int    `json:"weight,omitempty"`
+	HasKey  bool   `json:"has_key,omitempty"`
+}
+
+func providerEditViews(st *state) []providerEditView {
+	out := make([]providerEditView, 0, len(st.cfg.Providers))
+	for _, p := range st.cfg.Providers {
+		v := providerEditView{
+			Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: p.Models,
+			MaxConc: p.MaxConc, Sticky: p.Sticky, QuotaWindow: p.QuotaWindow,
+			QuotaTokens: p.QuotaLimitTokens, QuotaReqs: p.QuotaLimitRequests,
+		}
+		src := p.Accounts
+		if len(src) == 0 {
+			for i, k := range p.Keys {
+				if k == "" {
+					continue // env-provided; nothing to preserve or report
+				}
+				src = append(src, config.Acct{Name: fmt.Sprintf("key-%d", i+1), APIKey: k})
+			}
+			if len(src) == 0 && p.APIKey != "" {
+				src = []config.Acct{{Name: "default", APIKey: p.APIKey}}
+			}
+		}
+		for _, a := range src {
+			v.Accounts = append(v.Accounts, acctEditView{
+				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, HasKey: a.APIKey != "",
+			})
+		}
+		out = append(out, v)
 	}
-	s.authedPage(w, r, "providers", "Providers", false, views)
+	return out
+}
+
+type providersPageView struct {
+	Views []providerView
+	Edit  template.JS
+}
+
+func (s *Server) providersPage(w http.ResponseWriter, r *http.Request) {
+	v := providersPageView{}
+	if st := s.cur(); st != nil {
+		v.Views = providerViews(st)
+		edits := providerEditViews(st)
+		if b, err := json.Marshal(edits); err == nil {
+			v.Edit = template.JS(b)
+		}
+	}
+	s.authedPage(w, r, "providers", "Providers", false, v)
 }
 
 func (s *Server) handleAPIProviders(w http.ResponseWriter, r *http.Request) {
@@ -795,15 +858,33 @@ func (s *Server) handleAPIProviders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, views)
 }
 
+type combosPageView struct {
+	Rows []struct{ Name, Targets string }
+	Edit template.JS
+}
+
 func (s *Server) combosPage(w http.ResponseWriter, r *http.Request) {
-	type combo struct{ Name, Targets string }
-	var out []combo
+	var out []struct{ Name, Targets string }
 	if st := s.cur(); st != nil {
 		for _, c := range st.cfg.Combos {
-			out = append(out, combo{Name: c.Name, Targets: strings.Join(c.Targets, "  →  ")})
+			out = append(out, struct{ Name, Targets string }{c.Name, strings.Join(c.Targets, "  →  ")})
 		}
 	}
-	s.authedPage(w, r, "combos", "Combos", false, out)
+	v := combosPageView{Rows: out}
+	if st := s.cur(); st != nil {
+		type ce struct {
+			Name    string   `json:"name"`
+			Targets []string `json:"targets"`
+		}
+		edits := []ce{}
+		for _, c := range st.cfg.Combos {
+			edits = append(edits, ce{Name: c.Name, Targets: c.Targets})
+		}
+		if b, err := json.Marshal(edits); err == nil {
+			v.Edit = template.JS(b)
+		}
+	}
+	s.authedPage(w, r, "combos", "Combos", false, v)
 }
 
 func (s *Server) handleAPICombos(w http.ResponseWriter, r *http.Request) {

@@ -58,8 +58,8 @@ func init() {
 	assets = map[string][]byte{}
 	for _, name := range []string{
 		"htmx.min.js", "sse.min.js", "uPlot.iife.min.js", "uPlot.min.css", "admin.css",
-		"fonts/SpaceGrotesk-latin.woff2", "fonts/PlusJakartaSans-latin.woff2",
-		"fonts/JetBrainsMono-latin.woff2",
+		"fonts/FiraCode-latin.woff2", "fonts/FiraSans-400.woff2",
+		"fonts/FiraSans-500.woff2", "fonts/FiraSans-600.woff2", "fonts/FiraSans-700.woff2",
 	} {
 		b, err := fs.ReadFile(files, "static/"+name)
 		if err != nil {
