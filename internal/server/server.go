@@ -168,6 +168,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			ExtraHeaders:     p.ExtraHeader,
 			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
+			CacheProfile:     p.CacheProfile,
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
 			SearchTimeout:    provider.ParseSearchTimeout(p.Timeout),
@@ -438,7 +439,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -507,7 +508,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
@@ -568,9 +569,10 @@ func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIEr
 
 // requestIdentity derives the sticky-account identity for a request: the
 // client session header when present, else the auth key label. Empty
-// disables affinity (plain round-robin).
-func requestIdentity(r *http.Request, ak *config.AuthKey) string {
-	if sid := r.Header.Get(provider.OpenCodeSessionHeader); sid != "" {
+// disables affinity (plain round-robin). Takes the header map so
+// headerless callers (attempt tests) can pass a bare http.Header.
+func requestIdentity(h http.Header, ak *config.AuthKey) string {
+	if sid := h.Get(provider.OpenCodeSessionHeader); sid != "" {
 		return "s:" + sid
 	}
 	if ak != nil {
@@ -618,6 +620,13 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		s.m.invalidBody(def.Name, mdl, err.Error())
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
+	// Issue #34: anchor cache markers LAST — after every body mutation
+	// including cross-format translation — so anchors never sit at
+	// pre-normalization offsets (a stale anchor costs a full prefix
+	// rewrite). sessionKey is the same identity sticky-account pinning
+	// uses; "" (no session header, no key label) skips sticky-key
+	// injection. clientHdr may be nil (headerless tests).
+	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak))
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, apiErr)
@@ -1042,6 +1051,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel
+		coerceAlwaysThinking(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	case translat.FmtAnthropic:
 		u, err := translat.DecodeAnthropicRequest(body)
@@ -1049,6 +1059,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel
+		coerceAlwaysThinking(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	case translat.FmtGemini:
 		u, err := translat.DecodeGeminiRequest(body)
@@ -1056,10 +1067,34 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel // model arrives in the URL path on this surface
+		coerceAlwaysThinking(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	default:
 		return rewriteModel(body, upstreamModel)
 	}
+}
+
+// coerceAlwaysThinking rewrites disable-thinking knobs out of a decoded
+// unified request when the routed upstream model belongs to an
+// always-thinking provider — the cross-format counterpart of
+// adaptAlwaysThinking, applied before encodeFor (issue #50). Same
+// semantics: reasoning_effort none|minimal|medium → low, thinking/disable
+// knobs dropped, knobs never invented.
+func coerceAlwaysThinking(u *types.ChatRequest, upstreamModel string, def *provider.Def) {
+	if def == nil || !def.AlwaysThinkingModel(upstreamModel) {
+		return
+	}
+	if u == nil {
+		return
+	}
+	if u.ReasoningEffort != "" {
+		u.ReasoningEffort = coerceEffort(u.ReasoningEffort)
+	}
+	// The unified model carries no disable knob: Thinking is a budget and
+	// decoders never set it from {type:disabled}, so a disable request
+	// simply never reaches an always-thinking upstream — the field stays
+	// unset and encoders emit no knob. Enabled budgets are kept, mirroring
+	// adaptAlwaysThinking; nothing is invented.
 }
 
 // rewriteModel surgically replaces the top-level "model" string in a raw

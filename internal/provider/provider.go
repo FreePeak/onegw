@@ -177,6 +177,14 @@ type Def struct {
 	// server rewrites such requests instead of forwarding them.
 	AlwaysThinking []string `toml:"always_thinking"`
 
+	// CacheProfile opts the provider into upstream prompt-cache anchoring
+	// (issue #34, set from ProviderCfg.CacheProfile): "claude-anchor"
+	// re-anchors Anthropic cache_control breakpoints after normalization,
+	// "dashscope-marker" keeps DashScope/Qwen markers within the 4-marker
+	// ceiling, "sticky-key" injects prompt_cache_key for sticky-routing
+	// upstreams. ""/"none" forwards bodies untouched.
+	CacheProfile string
+
 	// SearXNG virtual-kind settings (kind = "searxng" only); zero values
 	// fall back to the defaults in searxng.go.
 	SearchMaxResults int
