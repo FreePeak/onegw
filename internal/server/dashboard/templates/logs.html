@@ -15,11 +15,11 @@
         auto = document.getElementById('autoscroll'), pauseBtn = document.getElementById('pause');
   let paused = false, last = 0;
   pauseBtn.onclick = () => { paused =! paused; pauseBtn.textContent = paused ? 'resume' : 'pause'; };
-  function cls(e){ return e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
+  function cls(e){ return e.kind === 'task_routing' ? 'code-2xx' : e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
   function line(e){
     const d = new Date(e.ts * 1000);
     const t = d.toTimeString().slice(0, 8);
-    const mark = e.kind ? '✗' : '✓';
+    const mark = e.kind === 'task_routing' ? '⇄' : (e.kind ? '✗' : '✓');
     const acct = e.account ? ' @' + e.account : '';
     let txt = t + '  ' + mark + '  ' + (e.provider ? e.provider + '/' + e.model : e.model || '(unresolved)') + acct +
       '  ' + e.code + (e.kind ? ' · ' + e.kind : '') +

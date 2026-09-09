@@ -44,6 +44,16 @@ type Router struct {
 	// skips when it never picks an account).
 	PoolEmptyError func(def *provider.Def, ready time.Time) *types.APIError
 
+	// Task routing (issue #54): taskRoutingOn gates the per-request
+	// combo reorder inside Execute; TaskLog receives one #19-ring
+	// decision line per request whose target order actually changed.
+	// Both are set by the server in apply() from config (server.apply
+	// builds a fresh Router on every reload, so plain fields set once
+	// before serving are race-free). Default off = byte-identical
+	// routing; TaskLog nil = silent.
+	taskRoutingOn bool
+	TaskLog       func(model, detail string)
+
 	// maxAttempts per target before falling to next (network/5xx).
 	MaxAttempts int
 }
@@ -131,6 +141,15 @@ func (r *Router) SetCombos(list []*Combo) {
 	r.combos = m
 }
 
+// SetTaskRouting enables task-aware combo reordering (issue #54). The
+// server calls it in apply() from [server] task_routing; off (default)
+// keeps Execute byte-identical to the pre-#54 behavior.
+func (r *Router) SetTaskRouting(on bool) {
+	r.mu.Lock()
+	r.taskRoutingOn = on
+	r.mu.Unlock()
+}
+
 // KnownModel reports whether model is a name the current route tables can
 // resolve: a configured "provider/model" route, a combo name, an alias
 // (chains followed like Resolve), or a bare model — either advertised in a
@@ -184,6 +203,7 @@ func (r *Router) KnownModel(model string) bool {
 type Resolution struct {
 	Targets []Target // provider/model pairs, fallback order
 	IsCombo bool
+	Model   string // the client-facing model string that resolved (task-log label)
 }
 
 // Resolve maps a client model string to an ordered target list.
@@ -218,7 +238,7 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 	}
 	if c, ok := r.combos[strings.ToLower(lookup)]; ok {
-		return &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true}, nil
+		return &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true, Model: lookup}, nil
 	}
 	model = lookup
 	if dr, ok := r.models[strings.ToLower(model)]; ok {
@@ -264,6 +284,11 @@ func IdentityFrom(ctx context.Context) string {
 // retryable failure try again, then fall through to the next target.
 // onResult receives the successful result.
 func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onResult func(any)) *types.APIError {
+	// Task-aware combo reordering (issue #54): stable re-sort of the
+	// target list before any account selection. No-op unless task
+	// routing is on and the caller tagged request signals; the full
+	// fallback chain is preserved — only the order changes.
+	r.applyTaskRouting(ctx, res)
 	var lastErr *types.APIError
 	id := IdentityFrom(ctx)
 	for _, t := range res.Targets {
