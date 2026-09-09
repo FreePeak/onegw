@@ -161,7 +161,7 @@ if [ -f "$CONFHOME/onegw.pid" ] && kill -0 "$(cat "$CONFHOME/onegw.pid")" 2>/dev
 fi
 if curl -fsS -o /dev/null -m 2 "http://127.0.0.1:$HOSTPORT/" 2>/dev/null; then
   say "binary updated; something else is already serving http://127.0.0.1:$HOSTPORT"
-  say "(no pid file at $CONFHOME/onegw.pid). NOT starting a second gateway on a"
+  say "(no live gateway from its pid file). NOT starting a second gateway on a"
   say "shared port: under SO_REUSEPORT it would silently split traffic with the"
   say "running instance and its config owns the live credentials. Restart that"
   say "instance to pick up the new binary, or set ONEGW_LISTEN for a separate one."
