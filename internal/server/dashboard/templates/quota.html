@@ -7,7 +7,7 @@
 {{range .}}<tr>
   <td><b>{{.Provider}}</b></td><td>{{.Window}}</td>
   <td class="num">{{compact .UsedTokens}}</td>
-  <td class="num">{{if .LimitTokens}}{{compact .LimitTokens}}{{else}}<span style="color:var(--mut)">track only</span>{{end}}</td>
+  <td class="num">{{if .LimitTokens}}{{compact .LimitTokens}}{{else}}<span class="text-mut">track only</span>{{end}}</td>
   <td style="width:90px">{{if .LimitTokens}}<div class="bar"><i class="{{.BarClass}}" style="width:{{.Pct}}%"></i></div>{{end}}</td>
   <td class="num">{{compact .UsedRequests}}</td>
   <td class="num">{{if .LimitRequests}}{{compact .LimitRequests}}{{else}}—{{end}}</td>
