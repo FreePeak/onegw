@@ -126,11 +126,11 @@ func (k Kind) Format() translat.Format {
 		return translat.FmtCommandCode
 	case KindOpenAIResponses:
 		return translat.FmtOpenAIResponses
-	case KindCursor:
-		return translat.FmtCursor // skeleton; fail-fast upstream
-	// KindSearXNG (searxng.go) intentionally falls through to OpenAI: its
-	// Do() returns a synthetic OpenAI completion, so clients see a normal
-	// chat response in every surface.
+	// KindCursor + KindSearXNG intentionally fall through to OpenAI:
+	// cursor's doCursor (cursor.go) returns a synthetic OpenAI SSE stream
+	// decoded from the upstream's Connect-RPC protobuf, and searxng's
+	// doSearch returns a synthetic OpenAI completion, so every surface
+	// sees normal OpenAI shape from both kinds.
 	default:
 		return translat.FmtOpenAI
 	}
@@ -982,6 +982,12 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: rerr.Error()}
 		}
 		return d.doSearch(ctx, acct, model, raw, stream)
+	case KindCursor:
+		// Cursor protobuf executor (issue #12 follow-up): body is the
+		// client's OpenAI-format request; doCursor re-encodes it into the
+		// right service's wire format and answers with a synthetic OpenAI
+		// stream (see cursor.go).
+		return d.doCursor(ctx, acct, model, body)
 	case KindGemini:
 		// Non-streaming: :generateContent; streaming: :streamGenerateContent?alt=sse
 		method := "generateContent"
