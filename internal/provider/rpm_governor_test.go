@@ -8,7 +8,7 @@ import (
 // mkGovPool builds a pool from accounts with a controllable clock.
 func mkGovPool(t *testing.T, accts []Account) (*accountPool, *time.Time) {
 	t.Helper()
-	p := newAccountPool(accts, 0)
+	p := newAccountPool(accts, 0, 0)
 	cur := time.Now()
 	p.now = func() time.Time { return cur }
 	return p, &cur
@@ -119,7 +119,7 @@ func TestRPMStickyPinRotatesWhenGoverned(t *testing.T) {
 	p := newAccountPool([]Account{
 		{Name: "a", APIKey: "ka", RPM: 1},
 		{Name: "b", APIKey: "kb"},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cur := time.Now()
 	p.now = func() time.Time { return cur }
 	first, _ := p.next("sess")

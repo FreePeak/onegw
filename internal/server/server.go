@@ -173,6 +173,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			Kind:             kind,
 			BaseURL:          p.BaseURL,
 			MaxConc:          p.MaxConc,
+			RPM:              p.RPM,
 			ExtraHeaders:     p.ExtraHeader,
 			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
@@ -738,7 +739,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 			// classification hooks: an in-stream 429/403 must still cool
 			// the account or the next attempt re-picks it and repeats.
 			if herr.OverQuota() && res.Acct != nil {
-				def.RateLimited(res.Acct, 0) // no Retry-After in-stream: adaptive ladder
+				def.RateLimited(res.Acct, herr.RateWindow()) // no header in-stream: stated window, else adaptive ladder
 			}
 			if herr.RegionLocked() && res.Acct != nil {
 				def.Cool(res.Acct, 5*time.Minute)
@@ -843,7 +844,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				// Mid-stream failures bypass provider.Do's classification
 				// hooks: cool on in-stream 429/403 like the aggregate path.
 				if herr.OverQuota() && res.Acct != nil {
-					def.RateLimited(res.Acct, 0)
+					def.RateLimited(res.Acct, herr.RateWindow()) // no header in-stream: stated window, else adaptive ladder
 				}
 				if herr.RegionLocked() && res.Acct != nil {
 					def.Cool(res.Acct, 5*time.Minute)

@@ -7,7 +7,10 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Role names in the unified model. System content is hoisted out of Messages
@@ -327,6 +330,42 @@ func (e *APIError) SharedConcurrency() bool {
 	return strings.Contains(probe, "concurrency limit") ||
 		strings.Contains(probe, "backendadmissionrejected") ||
 		strings.Contains(probe, "cold-request admission rejected")
+}
+
+// rateWindowRe matches the request-count window a 429 body names — the
+// new-api aggregator family, live 2026-09-09 (tokenrouter/z-ai/glm-5.3-free):
+// "You have reached the request limit[z-ai/glm-5.3-free]: Maximum 8 requests
+// within 1 minutes." The stated window is the honest account bench and
+// client Retry-After for a request-count limit: the default 10s ladder base
+// re-enters the still-closed window (ring evidence: 429 at :46, ladder retry
+// at :57 429s again, success only ~30-40s later).
+var rateWindowRe = regexp.MustCompile(`(?i)maximum\s+\d+\s+requests?\s+within\s+(\d+)\s+(second|minute|hour)s?`)
+
+// RateWindow reports the request-count window the upstream's rate-limit
+// message names ("Maximum 8 requests within 1 minutes" → 1 minute), or 0
+// when the message carries no such window. Consulted for OverQuota 429s
+// when no Retry-After header exists: bench the account for the stated
+// window and stamp it as the client Retry-After instead of guessing 10s.
+func (e *APIError) RateWindow() time.Duration {
+	if e == nil {
+		return 0
+	}
+	m := rateWindowRe.FindStringSubmatch(e.Code + " " + e.Message)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return 0
+	}
+	switch m[2] {
+	case "second":
+		return time.Duration(n) * time.Second
+	case "minute":
+		return time.Duration(n) * time.Minute
+	default: // "hour"
+		return time.Duration(n) * time.Hour
+	}
 }
 
 // EstimateTokens gives a rough char/4 estimate for text content; used only
