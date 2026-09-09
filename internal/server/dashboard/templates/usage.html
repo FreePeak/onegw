@@ -1,4 +1,4 @@
-{{define "hdr"}}<a href="/admin/usage/export?from={{.From}}&to={{.To}}">export CSV</a>{{end}}
+{{define "hdr"}}<a href="/admin/usage/export?from={{.ExportFrom}}&to={{.ExportTo}}">export CSV</a>{{end}}
 {{define "content"}}
 <div class="grid c4">
   <div class="card"><h3>Requests</h3><div class="big">{{compact .Totals.Req}}</div></div>
