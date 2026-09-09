@@ -128,10 +128,18 @@ kind = "opencode"               # OpenCode Zen Go subscription; base_url default
 [[providers.accounts]]
 name = "key-1"
 api_key = ""                    # fill or use env
+                                # rpm = 6  per-account budget (see below)
 
 [[providers.accounts]]
 name = "key-2"
 api_key = ""                    # fill or use env
+
+# rpm at the [[providers]] level is a SHARED budget for every account of
+# the provider (one token bucket), for upstreams whose rate limit is per
+# user / per model lane, not per key — e.g. new-api aggregators ("Maximum
+# 8 requests within 1 minutes" hitting ANY key). Size to the upstream
+# limit minus 2 (the bucket holds a 2-request burst): rpm = 6 for an
+# 8/min wall. Per-account rpm above works alongside it.
 
 # OpenAI Responses-wire upstream (e.g. orcarouter.ai): clients keep using
 # /v1/chat/completions; onegw translates to {base_url}/responses.

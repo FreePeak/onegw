@@ -28,7 +28,10 @@ base_url = "http://p1.local"
 api_key = "sk-test-p1-secret"
 # p1 comment that must survive an update
 extra_headers = { "X-Custom" = "keep-me" }
+# provider-wide shared budget (Def.RPM) — hand-set; a modal Save must not
+# drop it (the dashboard editor renders only the fields it knows).
 models = ["m1"]
+rpm = 6
 
 [[providers.accounts]]
 name = "acct1"
@@ -115,6 +118,53 @@ func TestProviderEditUpdateAccountKeepsKeyByName(t *testing.T) {
 	}
 	if !strings.Contains(file, "weight = 5") || strings.Contains(file, "weight = 3") {
 		t.Fatalf("account weight not updated:\n%s", file)
+	}
+}
+
+func TestProviderEditAccountRPMRoundTrip(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editTestToml)
+
+	// A hand-set rpm survives the full acctEdit parse + spliceProvider round
+	// trip (the #57 hazard: a modal Save must not silently drop it).
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"p1","kind":"openai","accounts":[{"name":"acct1","api_key":"sk-new1","rpm":5}]}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT provider rpm update: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if !strings.Contains(file, "rpm = 5") {
+		t.Fatalf("hand-set rpm not preserved after save:\n%s", file)
+	}
+	// The hand-set provider-WIDE rpm (Def.RPM, a shared per-user budget)
+	// must survive a modal Save untouched — the editor only rewrites the
+	// scalars it knows, and an account-table re-render never touches the
+	// top region where it lives.
+	if !strings.Contains(file, "rpm = 6") {
+		t.Fatalf("hand-set provider rpm dropped by save:\n%s", file)
+	}
+	// The live reloaded config must carry both (consumer-observable,
+	// same as a SIGHUP).
+	st := srv.cur().cfg.Providers[0]
+	if len(st.Accounts) == 0 || st.Accounts[0].Name != "acct1" || st.Accounts[0].RPM != 5 {
+		t.Fatalf("reloaded config missing rpm 5 on acct1: %+v", st.Accounts)
+	}
+	if st.RPM != 6 {
+		t.Fatalf("reloaded config lost provider-level rpm 6: %+v", st.RPM)
+	}
+
+	// rpm 0 emits no line: a save without rpm must not leave a stale
+	// `rpm = 5` behind, and must not write `rpm = 0`.
+	w = adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"p1","kind":"openai","accounts":[{"name":"acct1","api_key":"sk-new1"}]}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT provider rpm-less update: %d %s", w.Code, w.Body.String())
+	}
+	file = mustReadFile(t, path)
+	if strings.Contains(file, "rpm = 5") {
+		t.Fatalf("stale account rpm present after rpm-less save:\n%s", file)
+	}
+	if !strings.Contains(file, "rpm = 6") {
+		t.Fatalf("provider-level rpm must survive an rpm-less save:\n%s", file)
 	}
 }
 

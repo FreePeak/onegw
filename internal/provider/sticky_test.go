@@ -31,7 +31,7 @@ func mkPool(t *testing.T, sticky time.Duration) (*accountPool, *time.Time) {
 		{Name: "a", APIKey: "ka"},
 		{Name: "b", APIKey: "kb"},
 		{Name: "c", APIKey: "kc"},
-	}, sticky)
+	}, sticky, 0)
 	cur := time.Now()
 	p.now = func() time.Time { return cur }
 	return p, &cur
@@ -126,7 +126,7 @@ func TestStickyHonorsWeights(t *testing.T) {
 		{Name: "a", APIKey: "ka"},
 		{Name: "b", APIKey: "kb", Weight: 2},
 		{Name: "c", APIKey: "kc"},
-	}, 5*time.Minute)
+	}, 5*time.Minute, 0)
 	cur := time.Now()
 	p.now = func() time.Time { return cur }
 
@@ -163,7 +163,7 @@ func TestStickyWeightsRotateThroughWeightedSlots(t *testing.T) {
 		{Name: "a", APIKey: "ka"},
 		{Name: "b", APIKey: "kb", Weight: 2},
 		{Name: "c", APIKey: "kc"},
-	}, time.Hour)
+	}, time.Hour, 0)
 	cur := time.Now()
 	p.now = func() time.Time { return cur }
 
@@ -298,7 +298,7 @@ func TestWeightedAccountLadderEscalatesOnce(t *testing.T) {
 	p := newAccountPool([]Account{
 		{Name: "a", APIKey: "ka"},
 		{Name: "b", APIKey: "kb", Weight: 3},
-	}, 0)
+	}, 0, 0)
 	cur := time.Now()
 	p.now = func() time.Time { return cur }
 	p.rateLimited(&Account{Name: "b", APIKey: "kb"}, 0)

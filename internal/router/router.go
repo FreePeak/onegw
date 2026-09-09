@@ -420,6 +420,12 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		// unknown upstream 429s get the default suggestion.
 		if lastErr.SharedConcurrency() {
 			lastErr.RetryAfter = "2"
+		} else if w := lastErr.RateWindow(); w > 0 {
+			// The 429 body named its request-count window ("Maximum 8
+			// requests within 1 minutes" — live tokenrouter 2026-09-09):
+			// the honest hint beats the generic 10s, which sends the
+			// client straight back into the still-closed window.
+			lastErr.RetryAfter = strconv.Itoa(int((w + time.Second - 1) / time.Second))
 		} else {
 			lastErr.RetryAfter = "10"
 		}

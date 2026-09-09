@@ -119,6 +119,14 @@ type ProviderCfg struct {
 	Accounts    []Acct            `toml:"accounts"`
 	Models      []string          `toml:"models"` // advertised model ids
 	MaxConc     int               `toml:"max_concurrency"`
+	// RPM is the provider-WIDE request budget (one shared token bucket
+	// gating every account, 0 = uncapped), for upstreams whose rate limit
+	// is per-user/per-model-lane rather than per-key (live tokenrouter
+	// 2026-09-09: 8 req/min shared across both keys — a key 429ed with
+	// only ~5 attempts in its trailing window, so the budget cannot be
+	// modeled per-account). The pool reports an honest fall-through
+	// instead of feeding the shared window doomed attempts.
+	RPM int `toml:"rpm"`
 	ExtraHeader map[string]string `toml:"extra_headers"`
 	// AlwaysThinking lists model globs (path.Match; "*" does not cross
 	// "/") that reason unconditionally upstream and reject

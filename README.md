@@ -418,6 +418,32 @@ ladder benches an account on a premium-gating 403 (`access_denied` /
 the pool rotates to the next account or combo target instead of surfacing
 the 403, and a fully-gated pool answers the cooling-pool 429 + `Retry-After`.
 
+**Stated rate windows are honored.** A 429 whose body names a
+request-count window (new-api style: "Maximum 8 requests within 1
+minutes") benches the account for that window verbatim — like a
+`Retry-After` header would — instead of the 10 s ladder base that
+re-enters the still-closed window (live tokenrouter evidence: 429 at :46,
+ladder retry at :57 hit the same wall, success only ~30-40 s later). The
+same window rides the surfaced error as the client `Retry-After`.
+
+**Provider-wide RPM budget.** Some upstreams rate-limit per user /
+per model lane rather than per key (live tokenrouter 2026-09-09: 8
+req/min shared across both keys — one key 429ed with only ~5 attempts in
+its trailing window). No per-account `rpm` can express that wall, so the
+provider itself takes one shared token bucket:
+
+```toml
+[[providers]]
+name = "tokenrouter"
+models = ["z-ai/glm-5.3-free"]
+rpm = 6   # SHARED budget, all accounts of this provider, worst minute 2+6
+```
+
+Size it to `upstream_limit - 2` (the bucket holds a 2-request burst);
+when the shared budget drains, the pool reports the honest refill
+instant — combo chains fall through instead of feeding the shared window
+doomed attempts, and per-account `rpm` budgets keep working alongside it.
+
 ### Session affinity (per-key session headers)
 
 When the client sends none of the forwarded identity headers
