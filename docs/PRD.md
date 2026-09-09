@@ -1,27 +1,6 @@
-# onegw PRD
 *Last updated: 2026-09-09 (dashboard M.O.N.K.Y OS revamp caf93bf — flat ink/indigo/neon design,
 branded sidebar, right-rail clock/status/ranking, overview chart — zero-drop deployed pid 26764.
 Earlier: commandcode-520 + glm-empty-500 RCA 289cd47+d41d078.)*
-**2026-09-09 — dashboard M.O.N.K.Y OS revamp (caf93bf, zero-drop deployed pid 26764):** the admin
-dashboard was re-skinned to the user-provided M.O.N.K.Y OS template (freepeak/
-dashboard-m-o-n-k-y.zip), mined for design language only — no React/Tailwind-UI/Node; the
-#41/#45 Go html/template + htmx + uPlot + vendored-assets stack is unchanged. Palette:
-flat warm-ink canvas (oklch 0.2029/345.62, same for bg+cards), vivid indigo interactive
-accent (template primary, L nudged 0.4703→0.52 for ≥3:1 as large text/UI fill), pop-frame
-cards (6px pop gutter + 2px pop ring — the template's double panel without markup changes),
-square bullet markers, uppercase bold buttons, mono body (Fira Code; Fira Sans removed),
-vendored "Rebels" display font (template zip; no license file — provenance in
-static/fonts/OFL.txt + LICENSES.md). Composition: branded sidebar (logo tile + wordmark +
-tagline), sticky right rail ≥1280px (1s clock widget, SSE live status, 7d top-providers
-ranking — Shell.Ranks via authedPage), overview today-hourly stacked token chart (chartJSON
-reuse) + inset stat panels, full-width content (1240px cap dropped). Charts: oklch series
-tokens (cyan/violet/amber; semantic blue-cache/green-output/amber-input/purple-requests kept)
-with color-mix fills (hex-alpha `+"2e"` breaks on oklch), --fg axis ticks, minmax(0,1fr) kv
-columns. UUPM audit: WCAG AA fixes (dark err →0.65 for 5.13:1, light mut/err/input
-contrast-corrected, fg focus ring, ≥24px .btn.sm, reduced-motion kept); both themes
-screenshot-reviewed. Log pane overflow-wrap:anywhere. Tests: ./internal/server green on
-isolated git-archive builds; TestOverviewQuotaExhaustedBadge re-pinned to the SSE wiring
-contract (was the removed "SSE 1s" literal).
 **2026-09-09 — commandcode 520 terminal + glm empty-500 RCA (289cd47, test fix d41d078):** the
 dashboard showed `commandcode/unresolved 520 server_error` (transient; "Upstream model provider is
 temporarily unavailable. Please try again in a moment.") killing combo chains, and
