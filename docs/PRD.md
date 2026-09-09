@@ -1,3 +1,10 @@
+*Last updated: 2026-09-09 (Docker release path audited for VPS deployments: latest image =
+v0.12.7 = master tip — only docs commits landed after the tag — and the release run's docker
+job pushed both tags. But the GHCR package is PRIVATE: anonymous `docker pull`/`manifest
+inspect` → 403/denied and the package page 404s, so the documented container upgrade path
+(PRD §self-update container guidance, internal/update/docker.go ContainerGuidance) fails for
+users until org package visibility is flipped Public. Filed as issue #60; interim =
+`docker login ghcr.io` with a read:packages PAT or `docker compose up -d --build` on the VPS.)*
 *Last updated: 2026-09-09 (cursor provider live — KindCursor promoted from
 fail-fast skeleton to a full AgentService+ChatService executor (issue #12
 follow-up, commit 12fd081): Connect-RPC/protobuf port of 9router's cursor
