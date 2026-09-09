@@ -16,7 +16,8 @@ import (
 
 // Client talks to the GitHub releases API. Repo is "owner/name"; Token
 // authenticates private-repo release reads (ONEGW_GITHUB_TOKEN, then
-// GITHUB_TOKEN).
+// GITHUB_TOKEN). A token rejected with 401 is retried anonymously, so
+// public repos never depend on the environment's token being valid.
 type Client struct {
 	Base  string // API base; default https://api.github.com
 	Repo  string
@@ -78,24 +79,19 @@ func (c *Client) base() string {
 }
 
 // Latest fetches the newest published release. Any non-200 (including
-// 404 for "no releases yet" or a private repo without a token) surfaces as
-// an error carrying the status, so callers can log a precise reason.
+// 404 for "no releases yet" or a private repo without a valid token)
+// surfaces as an error carrying the status, so callers can log a precise
+// reason. A rejected token (401) is first retried anonymously — see
+// issueGET — so a public repo's check never depends on the environment's
+// token being valid.
 func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/releases/latest", c.base(), c.Repo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "onegw/"+Version())
-	if t := resolveToken(c); t != "" {
-		req.Header.Set("Authorization", "Bearer "+t)
-	}
 	hc := c.HTTP
 	if hc == nil {
 		hc = &http.Client{Timeout: 20 * time.Second}
 	}
-	resp, err := hc.Do(req)
+	tok := resolveToken(c)
+	resp, tokenRejected, err := issueGET(ctx, hc, url, "application/vnd.github+json", tok)
 	if err != nil {
 		return nil, fmt.Errorf("update: check %s: %w", c.Repo, err)
 	}
@@ -108,10 +104,15 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 		// token and 401 WITH a rejected one. Say which fix applies.
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
-			if resolveToken(c) == "" {
-				msg += " (private repo? set ONEGW_GITHUB_TOKEN or GITHUB_TOKEN to read its releases)"
-			} else {
+			switch {
+			case tokenRejected:
+				// The token was rejected AND the anonymous fallback also
+				// failed: a private repo behind an invalid credential.
+				msg += " (credentials rejected AND anonymous access failed: refresh ONEGW_GITHUB_TOKEN/GITHUB_TOKEN — private repos need a valid token)"
+			case tok != "":
 				msg += " (credentials rejected? refresh the token, or unset ONEGW_GITHUB_TOKEN/GITHUB_TOKEN to fall back to the public API)"
+			default:
+				msg += " (private repo? set ONEGW_GITHUB_TOKEN or GITHUB_TOKEN to read its releases)"
 			}
 		}
 		return nil, errors.New(msg)
@@ -124,6 +125,47 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 		return nil, fmt.Errorf("update: release for %s has no tag", c.Repo)
 	}
 	return &rel, nil
+}
+
+// issueGET performs a GET against url with onegw's GitHub headers,
+// optionally Bearer-authenticated with tok. When the authenticated
+// request is rejected with 401 ("Bad credentials" — a stale, expired, or
+// revoked token inherited from the environment), the SAME request is
+// retried once WITHOUT credentials: GitHub serves public repositories
+// like FreePeak/onegw to anonymous callers, so a broken token must never
+// block a release read the public API would answer. tokenRejected
+// reports whether that fallback fired; the returned response is the
+// final one and its body belongs to the caller.
+func issueGET(ctx context.Context, hc *http.Client, url, accept, tok string) (resp *http.Response, tokenRejected bool, err error) {
+	resp, err = doGET(ctx, hc, url, accept, tok)
+	if err != nil {
+		return nil, false, err
+	}
+	if tok == "" || resp.StatusCode != http.StatusUnauthorized {
+		return resp, false, nil
+	}
+	resp.Body.Close()
+	resp, err = doGET(ctx, hc, url, accept, "")
+	if err != nil {
+		return nil, true, err
+	}
+	return resp, true, nil
+}
+
+// doGET issues one request. Release reads stay on the API host; asset
+// downloads redirect to a signed host, and Go strips the Authorization
+// header on the cross-host hop automatically (see Asset.Download).
+func doGET(ctx context.Context, hc *http.Client, url, accept, tok string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", accept)
+	req.Header.Set("User-Agent", "onegw/"+Version())
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return hc.Do(req)
 }
 
 // SelectAsset picks the release asset for the running platform; release
@@ -159,17 +201,10 @@ func (a *Asset) Download(ctx context.Context, dst string) error {
 	if dl == "" {
 		dl = a.URL // test fixtures / mirrors without the API endpoint
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dl, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "onegw/"+Version())
-	req.Header.Set("Accept", "application/octet-stream")
-	if t := token(); t != "" {
-		req.Header.Set("Authorization", "Bearer "+t)
-	}
 	hc := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := hc.Do(req)
+	// Same credential discipline as release reads: a rejected token must
+	// not block the download for a public repo.
+	resp, _, err := issueGET(ctx, hc, dl, "application/octet-stream", token())
 	if err != nil {
 		return fmt.Errorf("update: download %s: %w", a.Name, err)
 	}

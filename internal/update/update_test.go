@@ -117,6 +117,70 @@ func TestLatestBadStatus(t *testing.T) {
 	}
 }
 
+// staleHub serves 401 "Bad credentials" to ANY request carrying
+// Authorization and 200 otherwise — the exact fingerprint of the live
+// failure: a stale GITHUB_TOKEN in the environment made public-repo
+// checks fail even though anonymous reads work.
+func staleHub(t *testing.T, relJSON string, asset []byte) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/r/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(relJSON))
+	})
+	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write(asset)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestLatestStaleTokenFallsBackToPublic pins the public-user guarantee:
+// no GitHub token is required for a public repo, and a stale one in the
+// environment must not break the check — the client falls back to an
+// anonymous request (issueGET).
+func TestLatestStaleTokenFallsBackToPublic(t *testing.T) {
+	t.Setenv("ONEGW_GITHUB_TOKEN", "stale-expired")
+	t.Setenv("GITHUB_TOKEN", "")
+	assetName := "onegw-" + runtime.GOOS + "-" + runtime.GOARCH
+	relJSON := `{"tag_name":"v9.9.9","assets":[{"name":"` + assetName + `","url":"https://example.test/dl/x","size":3}]}`
+	srv := staleHub(t, relJSON, nil)
+	c := &Client{Base: srv.URL, Repo: "r"} // token resolves from the env
+	rel, err := c.Latest(context.Background())
+	if err != nil {
+		t.Fatalf("stale env token must fall back to the public API, got: %v", err)
+	}
+	if rel.Tag != "v9.9.9" {
+		t.Fatalf("tag = %s", rel.Tag)
+	}
+}
+
+// TestDownloadStaleTokenFallsBackToPublic pins the same guarantee for the
+// asset download: a rejected token must not 401 the binary fetch.
+func TestDownloadStaleTokenFallsBackToPublic(t *testing.T) {
+	t.Setenv("ONEGW_GITHUB_TOKEN", "stale-expired")
+	t.Setenv("GITHUB_TOKEN", "")
+	srv := staleHub(t, "", []byte("BIN"))
+	rel := &Release{Tag: "v1", Assets: []Asset{{Name: "a", APIURL: srv.URL + "/dl/a", Size: 3}}}
+	dst := filepath.Join(t.TempDir(), "onegw.new")
+	if err := rel.Assets[0].Download(context.Background(), dst); err != nil {
+		t.Fatalf("stale env token must fall back to an anonymous download, got: %v", err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != "BIN" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
 func TestDownloadDigestVerification(t *testing.T) {
 	body := []byte("BIN")
 	good := fmt.Sprintf("%x", sha256.Sum256(body))
