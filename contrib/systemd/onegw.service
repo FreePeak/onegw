@@ -1,0 +1,97 @@
+# onegw systemd unit — hardened, non-root, secrets via EnvironmentFile (#55).
+#
+# Install (see docs/vps-deploy.md for the full runbook):
+#   useradd -r -s /usr/sbin/nologin onegw
+#   install -d -o onegw -g onegw /var/lib/onegw /etc/onegw
+#   # /etc/onegw/onegw.toml  -> root:onegw 0640 (config, no secrets)
+#   # /etc/onegw/onegw.env   -> root:root  0600 (provider keys, ONEGW_KEYS,
+#   #                            ONEGW_ADMIN_PASSWORD — never in this unit)
+#   cp contrib/systemd/onegw.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now onegw
+#
+# Layout contract:
+#   /usr/local/bin/onegw     the gateway binary (swapped by scripts/deploy_vps.sh)
+#   /etc/onegw/onegw.toml    config; data_dir must point OUTSIDE /home because
+#                            ProtectHome=yes makes /home and /root inaccessible
+#   /var/lib/onegw           data_dir: usage.db + owner.json (only writable path)
+#
+# SO_REUSEPORT restart model: the gateway itself sets SO_REUSEPORT on its
+# listener (cmd/onegw/main.go), so zero-drop binary deploys are
+# scripts/deploy_vps.sh (start NEW -> verify health -> drain OLD) or the
+# gateway's own self-update handoff. A plain `systemctl restart onegw` is
+# stop->start: seconds-scale downtime, in-flight streams drained gracefully
+# (SIGTERM, 30s in-app drain deadline) before the NEW process binds.
+
+[Unit]
+Description=onegw LLM gateway
+Documentation=https://github.com/FreePeak/onegw
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=onegw
+Group=onegw
+# Secrets file, REQUIRED (no leading dash): a missing env file must fail the
+# start loudly instead of launching with a partial environment — a provider
+# key missing at config load is a crash loop that Restart masks as backoff.
+EnvironmentFile=/etc/onegw/onegw.env
+ExecStart=/usr/local/bin/onegw -config /etc/onegw/onegw.toml
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5s
+# onegw drains in-flight streams for up to 30s on SIGTERM (cmd/onegw/main.go);
+# give it 35s before systemd escalates.
+TimeoutStopSec=35s
+KillSignal=SIGTERM
+KillMode=mixed
+
+# Filesystem: whole FS read-only except the data dir (StateDirectory creates
+# and chowns /var/lib/onegw; ReadWritePaths documents the same grant).
+StateDirectory=onegw
+ReadWritePaths=/var/lib/onegw
+WorkingDirectory=/var/lib/onegw
+# Config must be readable by the service user (ProtectSystem=strict leaves
+# /etc readable-only): chown root:onegw /etc/onegw/onegw.toml, chmod 0640.
+# The env file is read by systemd itself (as root) before dropping
+# privileges — keep it 0600 root:root and the service never opens it.
+
+# Hardening (systemd >= 250; audit with `systemd-analyze security onegw`).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+# Resource envelope: onegw self-tunes when the operator has not set
+# GOMEMLIMIT/GOGC/GOMAXPROCS (90 MiB soft heap limit, GOGC=60, GOMAXPROCS
+# capped at 4 — cmd/onegw/main.go applyMemoryTuning). MemoryHigh leaves the
+# GC room to work below the ceiling; MemoryMax is a runaway backstop, not
+# the operating target (PRD: <=100 MB RSS steady state).
+MemoryHigh=150M
+MemoryMax=400M
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onegw
+
+[Install]
+WantedBy=multi-user.target
