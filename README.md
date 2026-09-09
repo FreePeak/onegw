@@ -97,6 +97,11 @@ dashboard password — set `ONEGW_LISTEN` or `ONEGW_KEYS`
 to override. Config lives in `~/.onegw/onegw.toml`; add `[[providers]]` blocks
 there (see [Configuration](#configuration)).
 
+Re-running the installer (reinstall/update) never rotates credentials: the
+existing config's admin password and gateway keys are reused verbatim, and
+while a gateway is already serving, the re-run only swaps the binary and
+leaves the running instance and its config untouched.
+
 ### One command (VPS / cloud, Docker)
 
 ```bash

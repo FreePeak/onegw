@@ -1,3 +1,15 @@
+*Last updated: 2026-09-10 (install.sh credential preservation, #66: the installer minted a
+fresh gateway key on every run and pinned it as ONEGW_KEYS env — which replaces config-file
+keys entirely — so reinstall/update rotated the API key out from under wired clients and a
+stale-pid escape hatch could start a second config beside the live gateway under SO_REUSEPORT.
+Fixed: config-first key resolution (flat + [[auth.keys]] forms), running-instance/port-busy
+guards before any credential minting (clean exit 0, binary-swap-only beside a live gateway),
+service-file env pinning only for keyless legacy configs, starter config on true first install
+only. Live-proven in a sandbox: re-run beside a seeded config leaves it byte-identical, no
+ONEGW_* env on the started process, old admin password + old client key both auth 200, wrong
+key 401. The update-path half — `onegw update` dying on HTTP 401 Bad credentials from a stale
+env GITHUB_TOKEN — is fixed by 96c1fd3 (anonymous public-repo fallback).)*
+
 *Last updated: 2026-09-09 (ponytail inject mode live, 6ca71ab, issue #65: onegw now
   ships the [ponytail](https://github.com/DietrichGebert/ponytail) lazy-senior-dev
   ruleset (MIT, adapted) as `[[saver.inject]] mode = "ponytail"` — the gateway

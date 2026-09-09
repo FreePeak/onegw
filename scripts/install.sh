@@ -6,8 +6,10 @@
 # What it does: downloads the latest release binary for your OS/arch, verifies
 # it against the release's SHA256SUMS, installs it, writes a starter config
 # (loopback bind) with a generated admin password, and starts the gateway on
-# 127.0.0.1:8080. A fresh gateway key is generated on each start and printed
-# in the summary (clients send it as their API key).
+# 127.0.0.1:8080. Credentials are minted ONCE at first install and NEVER
+# rotated afterwards: reinstalls, updates, and restarts reuse the existing
+# config's admin password and gateway keys verbatim (a re-run beside a
+# running gateway only swaps the binary; it never touches the config).
 #
 # If the release for your platform is missing, build from source instead:
 #   git clone https://github.com/FreePeak/onegw && cd onegw
@@ -22,12 +24,15 @@
 #   ONEGW_LISTEN           default 127.0.0.1:8080
 #   ONEGW_KEYS             gateway client keys (default: generated)
 #   ONEGW_START=0          install + config only, do not start
+#   ONEGW_SERVICE=1        install as a persistent service (launchd on macOS,
+#                          systemd user service on Linux) instead of nohup
 set -eu
 REPO=FreePeak/onegw
 VERSION=${ONEGW_VERSION:-latest}
 PREFIX=${ONEGW_INSTALL_PREFIX:-/usr/local}
 CONFHOME=${ONEGW_HOME:-$HOME/.onegw}
 LISTEN=${ONEGW_LISTEN:-127.0.0.1:8080}
+HOSTPORT=${LISTEN#*:}
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
@@ -104,6 +109,64 @@ if ! out=$("$BINDIR/onegw" version 2>/dev/null) || [ -z "$out" ]; then
 fi
 say "installed: $out"
 
+# --- gateway keys ------------------------------------------------------------
+# Credential-preservation contract: whatever keys the EXISTING config (or a
+# previously installed service file) carries are the keys clients already
+# use — a re-run must never rotate them. Resolution order:
+#   1. existing $CONFHOME/onegw.toml [auth] keys (flat or [[auth.keys]]
+#      tables — the first key of the first form found)
+#   2. previously installed service file (launchd plist / systemd unit)
+#   3. explicit ONEGW_KEYS env (only when the config has NO keys at all:
+#      env replaces config keys entirely, so it must not shadow them)
+#   4. generate fresh (first install only)
+KEYS=""
+if [ -f "$CONFHOME/onegw.toml" ]; then
+  # Flat form: keys = ["sk-...", "sk-..."] — first entry.
+  KEYS=$(sed -n 's/^[[:space:]]*keys[[:space:]]*=[[:space:]]*\[\{0,1\}"\([^",]*\)"\{0,1\}.*/\1/p' "$CONFHOME/onegw.toml" | head -1)
+  if [ -z "$KEYS" ]; then
+    # Table form: [[auth.keys]] with key = "sk-..." inside — first entry.
+    KEYS=$(sed -n 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFHOME/onegw.toml" | head -1)
+  fi
+fi
+if [ -z "$KEYS" ]; then
+  _PLIST="$HOME/Library/LaunchAgents/com.freepeak.onegw.plist"
+  _UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/onegw.service"
+  if [ -f "$_PLIST" ]; then
+    KEYS=$(sed -n 's|.*<key>ONEGW_KEYS</key><string>\(.*\)</string>.*|\1|p' "$_PLIST" | head -1)
+  elif [ -f "$_UNIT" ]; then
+    KEYS=$(sed -n 's/^Environment=ONEGW_KEYS=//p' "$_UNIT" | head -1)
+  fi
+fi
+if [ -z "$KEYS" ]; then
+  KEYS=${ONEGW_KEYS:-}
+fi
+if [ -z "$KEYS" ]; then
+  if command -v openssl >/dev/null 2>&1; then
+    KEYS=$(openssl rand -hex 16)
+  else
+    KEYS=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  fi
+fi
+KEYS_TOML="\"$(printf '%s' "$KEYS" | sed 's/,/", "/g')\""
+
+# A live gateway is the owner of its credentials: whatever password and
+# keys its config holds are what clients already use. A re-run must never
+# start a second instance beside it (SO_REUSEPORT lets a newcomer share
+# the port — traffic would silently split across two configs), and never
+# mint fresh credentials a running config does not know about.
+if [ -f "$CONFHOME/onegw.pid" ] && kill -0 "$(cat "$CONFHOME/onegw.pid")" 2>/dev/null; then
+  say "onegw already running (pid $(cat "$CONFHOME/onegw.pid")); restart it to pick up the new binary"
+  say "endpoint:   http://127.0.0.1:$HOSTPORT (config: $CONFHOME/onegw.toml)"
+  exit 0
+fi
+if curl -fsS -o /dev/null -m 2 "http://127.0.0.1:$HOSTPORT/" 2>/dev/null; then
+  say "binary updated; something else is already serving http://127.0.0.1:$HOSTPORT"
+  say "(no pid file at $CONFHOME/onegw.pid). NOT starting a second gateway on a"
+  say "shared port: under SO_REUSEPORT it would silently split traffic with the"
+  say "running instance and its config owns the live credentials. Restart that"
+  say "instance to pick up the new binary, or set ONEGW_LISTEN for a separate one."
+  exit 0
+fi
 # --- starter config ----------------------------------------------------------
 mkdir -p "$CONFHOME/data"
 if [ ! -f "$CONFHOME/onegw.toml" ]; then
@@ -118,6 +181,9 @@ if [ ! -f "$CONFHOME/onegw.toml" ]; then
     echo "listen = \"$LISTEN\""
     echo "data_dir = \"$CONFHOME/data\""
     echo "admin_password = \"$ADMIN_PW\""
+    echo ""
+    echo "[auth]"
+    echo "keys = [$KEYS_TOML]"
     echo ""
     echo "[saver]"
     echo "enabled = true"
@@ -134,27 +200,97 @@ if [ "${ONEGW_START:-1}" = "0" ]; then
   exit 0
 fi
 
-HOSTPORT=${LISTEN#*:}
 
-if [ -f "$CONFHOME/onegw.pid" ] && kill -0 "$(cat "$CONFHOME/onegw.pid")" 2>/dev/null; then
-  say "onegw already running (pid $(cat "$CONFHOME/onegw.pid")); restart it to pick up changes"
-  say "endpoint:   http://127.0.0.1:$HOSTPORT (config: $CONFHOME/onegw.toml)"
-  exit 0
-fi
-
-KEYS=${ONEGW_KEYS:-}
-if [ -z "$KEYS" ]; then
-  if command -v openssl >/dev/null 2>&1; then
-    KEYS=$(openssl rand -hex 16)
-  else
-    KEYS=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+# Service files pin ONEGW_KEYS in the environment ONLY when the config has
+# no [auth] keys at all (older installs — flat form OR [[auth.keys]] tables;
+# env replaces config keys entirely per config.go, so a pinned env would
+# make later config-key edits silently ignored). When any keys exist in the
+# config, the config wins and the service file pins nothing.
+PLIST_KEYS=""
+UNIT_KEYS=""
+CFG_HAS_KEYS=""
+if [ -f "$CONFHOME/onegw.toml" ]; then
+  if grep -q '^[[:space:]]*keys[[:space:]]*=' "$CONFHOME/onegw.toml" \
+     || grep -q '^[[:space:]]*key[[:space:]]*=[[:space:]]*"' "$CONFHOME/onegw.toml"; then
+    CFG_HAS_KEYS=1
   fi
 fi
+if [ -z "$CFG_HAS_KEYS" ]; then
+  PLIST_KEYS="    <key>ONEGW_KEYS</key><string>$KEYS</string>"
+  UNIT_KEYS="Environment=ONEGW_KEYS=$KEYS"
+fi
+if [ "${ONEGW_SERVICE:-0}" = "1" ]; then
+  say "installing persistent service (ONEGW_SERVICE=1)..."
+  case "$(uname -s)" in
+    Darwin)
+      PLIST_DIR="$HOME/Library/LaunchAgents"
+      PLIST="$PLIST_DIR/com.freepeak.onegw.plist"
+      mkdir -p "$PLIST_DIR"
+      cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.freepeak.onegw</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BINDIR/onegw</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ONEGW_CONFIG</key><string>$CONFHOME/onegw.toml</string>
+$PLIST_KEYS
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$CONFHOME/onegw.log</string>
+  <key>StandardErrorPath</key><string>$CONFHOME/onegw.log</string>
+</dict>
+</plist>
+EOF
+      launchctl bootout "gui/$UID/com.freepeak.onegw" 2>/dev/null || true
+      launchctl bootstrap "gui/$UID" "$PLIST" || die "launchctl bootstrap failed; check: launchctl print gui/$UID/com.freepeak.onegw"
+      say "service: launchd (com.freepeak.onegw) — $(launchctl print "gui/$UID/com.freepeak.onegw" >/dev/null 2>&1 && echo loaded || echo FAILED)"
+      ;;
+    Linux)
+      UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+      UNIT="$UNIT_DIR/onegw.service"
+      mkdir -p "$UNIT_DIR"
+      cat > "$UNIT" <<EOF
+[Unit]
+Description=onegw LLM gateway
+After=network-online.target
 
-nohup env ONEGW_CONFIG="$CONFHOME/onegw.toml" ONEGW_KEYS="$KEYS" \
-  "$BINDIR/onegw" >> "$CONFHOME/onegw.log" 2>&1 &
-echo $! > "$CONFHOME/onegw.pid"
+[Service]
+ExecStart=$BINDIR/onegw
+Environment=ONEGW_CONFIG=$CONFHOME/onegw.toml
+$UNIT_KEYS
+Restart=on-failure
+RestartSec=2
 
+[Install]
+WantedBy=default.target
+EOF
+      systemctl --user daemon-reload
+      systemctl --user enable --now onegw.service
+      if systemctl --user is-active --quiet onegw.service; then
+        say "service: systemd user unit onegw.service (active)"
+      else
+        say "WARN: unit installed but not active; check: journalctl --user -u onegw"
+      fi
+      say "  stop:        systemctl --user stop onegw.service"
+      ;;
+  esac
+else
+  if [ -n "$UNIT_KEYS" ]; then
+    nohup env ONEGW_CONFIG="$CONFHOME/onegw.toml" ONEGW_KEYS="$KEYS" \
+      "$BINDIR/onegw" >> "$CONFHOME/onegw.log" 2>&1 &
+  else
+    nohup env ONEGW_CONFIG="$CONFHOME/onegw.toml" \
+      "$BINDIR/onegw" >> "$CONFHOME/onegw.log" 2>&1 &
+  fi
+  echo $! > "$CONFHOME/onegw.pid"
+fi
 # --- verify ------------------------------------------------------------------
 # Probe the unauthenticated dashboard root — /admin/* is password-gated.
 ok=""
@@ -171,10 +307,14 @@ done
 
 say ""
 say "onegw is running:"
-say "  pid:         $(cat "$CONFHOME/onegw.pid")"
 say "  endpoint:    http://127.0.0.1:$HOSTPORT"
-say "  dashboard:   http://127.0.0.1:$HOSTPORT/  (password: $(grep '^admin_password' "$CONFHOME/onegw.toml" | cut -d'"' -f2))"
-say "  gateway key: $KEYS  (clients send this as their API key)"
+say "  dashboard:   http://127.0.0.1:$HOSTPORT/  (password: $(sed -n 's/^admin_password[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFHOME/onegw.toml" | head -1))"
+say "  gateway key: $KEYS  (clients send this as their API key; sourced from the existing config when one exists)"
 say "  config:      $CONFHOME/onegw.toml"
 say "  log:         $CONFHOME/onegw.log"
-say "  stop:        kill \$(cat $CONFHOME/onegw.pid)"
+if [ -f "$CONFHOME/onegw.pid" ]; then
+  say "  pid:         $(cat "$CONFHOME/onegw.pid")"
+  say "  stop:        kill \$(cat $CONFHOME/onegw.pid)"
+else
+  say "  managed by launchd/systemd; use launchctl/systemctl to stop"
+fi
