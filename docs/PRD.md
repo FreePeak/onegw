@@ -1,3 +1,12 @@
+*Last updated: 2026-09-10 (flap breaker refinements live, 6308d0a, pid 150: consolidated the
+breaker strike to ONE site at Do's final error exit so plain JSON 502/503/504 bodies (the
+common one-api shape) trip it — previously only HTML/empty/transport faults did. edgeFault now
+excludes NoSameTargetRetry (header-budget 504) errors: they are REQUEST-shaped — one oversized
+prefill exceeded the gateway's own 120s budget; a smaller request to the same provider succeeds
+— so 4 big prefills never park the provider. Shared-concurrency walls stay excluded. Mutation-
+checked (neuter exclusion → predicate test fails); full suite green; zero-drop redeployed from
+archive HEAD. Attribution: breaker code body rode the shared-tree sweep b6c08bc; classification
+refinement + tests 2f8c180; this consolidation 6308d0a. Earlier:)*
 *Last updated: 2026-09-10 (b-ai HTML-502 flap breaker live, 2f8c180, pid 41359: deepdive of the
 22:54:38–22:55:03 burst — every b-ai account (all 7) answered the STOCK nginx page
 "<html><head><title>502 Bad Gateway</title>" simultaneously for ~25s while traffic before and
