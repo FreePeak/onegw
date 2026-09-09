@@ -347,7 +347,7 @@ func (s *Server) authedPage(w http.ResponseWriter, r *http.Request, id, title st
 		return
 	}
 	out, err := dashboard.Render(id, dashboard.Shell{
-		Title: title, Active: id, Live: live, Nav: navItems, V: v,
+		Title: title, Active: id, Live: live, Nav: navItems, Ranks: s.rankRows(), V: v,
 	})
 	if err != nil {
 		http.Error(w, "render error: "+err.Error(), http.StatusInternalServerError)
@@ -356,6 +356,50 @@ func (s *Server) authedPage(w http.ResponseWriter, r *http.Request, id, title st
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(out))
+}
+
+// rankRows aggregates provider request counts over the trailing 7 days
+// for the shell's right-rail ranking. Read-only; empty when the store
+// is unavailable.
+func (s *Server) rankRows() []dashboard.RankRow {
+	if s.st == nil {
+		return nil
+	}
+	to := time.Now().UTC().Format("2006-01-02")
+	from := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02")
+	raw, err := s.st.QueryRange(from, to)
+	if err != nil {
+		return nil
+	}
+	type agg struct{ req, tok int64 }
+	byProv := map[string]*agg{}
+	for _, r := range raw {
+		name := r.Provider
+		if name == "" {
+			name = "unresolved"
+		}
+		a := byProv[name]
+		if a == nil {
+			a = &agg{}
+			byProv[name] = a
+		}
+		a.req += r.Requests
+		a.tok += r.InputTok + r.OutputTok
+	}
+	rows := make([]dashboard.RankRow, 0, len(byProv))
+	for name, a := range byProv {
+		rows = append(rows, dashboard.RankRow{Name: name, Req: a.req, Tok: a.tok})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Req > rows[j].Req })
+	const maxRows = 4
+	if len(rows) > maxRows {
+		rows = rows[:maxRows]
+	}
+	for i := range rows {
+		rows[i].Rank = i + 1
+		rows[i].Featured = i == 0
+	}
+	return rows
 }
 
 // handleAdminPage serves GET /admin (Overview).
@@ -377,6 +421,7 @@ type overviewData struct {
 	HeapAlloc, HeapSys                      uint64
 	NumGC                                   uint32
 	LiveJSON                                string
+	ChartJSON                               template.JS // today's hourly token chart
 }
 
 // overviewView assembles the Overview page data.
@@ -400,6 +445,9 @@ func (s *Server) overviewView() *overviewData {
 		for _, p := range st.cfg.Providers {
 			v.Models += len(p.Models)
 		}
+		// today's hourly token series — the Overview chart card (M.O.N.K.Y
+		// puts a chart on the main page; the usage page covers wider ranges).
+		v.ChartJSON = template.JS(s.chartJSON(today, today))
 		if q := st.quota; q != nil {
 			for _, qs := range q.All(time.Now()) {
 				if qs.Exhausted {

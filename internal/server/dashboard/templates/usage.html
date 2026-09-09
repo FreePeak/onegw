@@ -48,14 +48,17 @@ const FONTS = '11px "Fira Code", ui-monospace, monospace';
 let charts = [];
 function tokSeries(s){
   return {label: s.label, stroke: s.color, width: 1.6,
-    fill: s.fill ? s.color+'2e' : undefined, points: {show: false},
+    // tokens are oklch() strings — hex-alpha suffix tricks don't compose;
+    // color-mix keeps the fill theme-aware
+    fill: s.fill ? `color-mix(in srgb, ${s.color} 18%, transparent)` : undefined,
+    points: {show: false},
     value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])};
 }
 function draw(id, series, title){
   const el = document.getElementById(id);
   if(!el || !D.xs.length) return;
+  const text = cv('--fg', '#fafafa'); // axis ticks: fg, not mut (UUPM contrast)
   const grid = cv('--line', '#ffffff1a');
-  const text = cv('--mut', '#94a3b8');
   return new uPlot({
     width: el.clientWidth || 600, height: 230, title,
     series: [{}, ...series.map(tokSeries)],
@@ -69,8 +72,8 @@ function redraw(){
   // stacked areas: cumulative input → +output → +cache_read
   const inp = D.input, out = D.output.map((v,i)=>v+inp[i]), cr = D.cache_read.map((v,i)=>v+out[i]);
   charts.push(draw('chart-tok', [
-    {label:'cache read', vals: cr, color: cv('--color-chart2', '#60a5fa'), fill:true, layer: D.cache_read},
-    {label:'output', vals: out, color: cv('--color-ok', '#22c55e'), fill:true, layer: D.output},
+    {label:'cache read', vals: cr, color: cv('--color-chart2', '#5b8cf5'), fill:true, layer: D.cache_read},
+    {label:'output', vals: out, color: cv('--color-ok', '#3fd76e'), fill:true, layer: D.output},
     {label:'input', vals: inp, color: cv('--color-chart4', '#fbbf24'), fill:true, layer: D.input},
   ], "tokens · {{.ChartUnit}} (stacked areas — legend shows each layer's own value)"));
   charts.push(draw('chart-req', [
