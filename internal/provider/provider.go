@@ -185,6 +185,12 @@ type Def struct {
 	// the shared window doomed attempts. Set from ProviderCfg.RPM.
 	RPM int
 
+	// Disabled pauses routing to this provider (from ProviderCfg.Disabled):
+	// Router.Execute skips it at target lookup with a 503 the combo loop
+	// falls through, and the dashboard grid renders the off state. The
+	// Def stays in the pool so the dashboard can show its config.
+	Disabled bool
+
 	// Headers added to every upstream request (auth handled separately).
 	ExtraHeaders map[string]string `toml:"extra_headers"`
 
@@ -499,9 +505,13 @@ const (
 // observation types. Deliberate per-request rewrites (the auth-verify
 // blip, the parse-rejected channel fault — both routed here as 502s)
 // and shared-concurrency walls are NOT edge outages: they never strike
-// the breaker. 4xx never strikes.
+// the breaker. Header-budget 504s (NoSameTargetRetry — the gateway's
+// own pre-first-byte abort on ONE oversized prefill) are request-shaped
+// too: a smaller request to the same provider succeeds, so they never
+// strike. 4xx never strikes.
 func edgeFault(apiErr *types.APIError) bool {
-	if apiErr == nil || apiErr.Status < 500 || apiErr.SharedConcurrency() {
+	if apiErr == nil || apiErr.Status < 500 ||
+		apiErr.SharedConcurrency() || apiErr.NoSameTargetRetry {
 		return false
 	}
 	switch apiErr.Type {
@@ -871,19 +881,6 @@ func (p *accountPool) flapHeal() {
 	defer p.mu.Unlock()
 	p.flapStrikes = 0
 	p.flapOpenUntil = time.Time{}
-}
-
-// flapOpenFor parks the whole pool for d — flapStrike's automatic trip,
-// exposed for tests and future explicit operator control.
-func (p *accountPool) flapOpenFor(d time.Duration) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if t := p.now().Add(d); t.After(p.flapOpenUntil) {
-		p.flapOpenUntil = t
-	}
 }
 
 // rateLimited benches a after an upstream 429. retryAfter > 0 (upstream
@@ -1270,20 +1267,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// "<html><head><title>502 Bad Gateway</title>…" served by ALL
 			// seven accounts at once while the origin pool flapped): the
 			// page says nothing about the request. Surface a bounded
-			// honest message instead of raw HTML and strike the
-			// provider-wide flap breaker — this fault indicts the edge,
-			// not any key (pool.open-until falls through instantly).
+			// honest message instead of raw HTML — the breaker strike for
+			// this and every other error shape happens once at the exit.
 			apiErr.Type = "upstream_html_error"
 			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an HTML error page%s", d.Name, resp.StatusCode, hint)
-			if edgeFault(apiErr) {
-				d.pool.flapStrike()
-			}
 		} else if len(limited) == 0 && apiErr.Message == "" && apiErr.Type == "upstream_error" {
 			apiErr.Type = "upstream_empty_body"
 			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an empty error body", d.Name, resp.StatusCode)
-			if edgeFault(apiErr) {
-				d.pool.flapStrike()
-			}
 		}
 		if translat.UpstreamAuthVerifyFailed(apiErr.Status, apiErr.Type, apiErr.Message) {
 			// Transient failure of the upstream's own auth/verify service
@@ -1364,6 +1354,14 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// the 403.
 			d.Gated(acct)
 			apiErr.Fallbackable = true
+		}
+		if edgeFault(apiErr) {
+			// Single strike site for every decoded error shape: HTML and
+			// empty bodies classified above, plain JSON 502/503/504s
+			// (the common one-api shape), and the rewritten 502s that
+			// edgeFault does NOT count. The transport exit above strikes
+			// separately — errors here are all upstream HTTP answers.
+			d.pool.flapStrike()
 		}
 		return nil, apiErr
 	}

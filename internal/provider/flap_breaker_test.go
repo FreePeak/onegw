@@ -181,24 +181,27 @@ func TestEdgeFaultPredicate(t *testing.T) {
 	cases := []struct {
 		status int
 		typ    string
+		budget bool // NoSameTargetRetry: the gateway's own pre-first-byte abort
 		want   bool
 	}{
-		{502, "upstream_html_error", true},
-		{502, "upstream_error", true},               // plain 502 status counts
-		{503, "gateway_overloaded", true},           // admission 503 class
-		{504, "upstream_timeout", true},             // transport timeout
-		{520, "server_error", true},                 // Cloudflare edge family
-		{502, "upstream_unreachable", true},         // dial/TLS failure
-		{500, "upstream_error", false},              // app-level 500: not edge
-		{429, "rate_limit_exceeded", false},         // per-key ladder territory
-		{400, "invalid_request", false},             // request fault
-		{403, "access_denied", false},               // credential fault
-		{502, "upstream_auth_verify_failed", false}, // rewritten: verify blip
-		{502, "upstream_parse_rejected", false},     // rewritten: channel fault
+		{502, "upstream_html_error", false, true},
+		{502, "upstream_error", false, true},               // plain 502 status counts
+		{503, "gateway_overloaded", false, true},           // admission 503 class
+		{504, "upstream_timeout", false, true},             // transport timeout
+		{520, "server_error", false, true},                 // Cloudflare edge family
+		{502, "upstream_unreachable", false, true},         // dial/TLS failure
+		{504, "upstream_timeout", true, false},             // header-budget abort: request-shaped
+		{500, "upstream_error", false, false},              // app-level 500: not edge
+		{429, "rate_limit_exceeded", false, false},         // per-key ladder territory
+		{400, "invalid_request", false, false},             // request fault
+		{403, "access_denied", false, false},               // credential fault
+		{502, "upstream_auth_verify_failed", false, false}, // rewritten: verify blip
+		{502, "upstream_parse_rejected", false, false},     // rewritten: channel fault
 	}
 	for _, c := range cases {
-		if got := edgeFault(&types.APIError{Status: c.status, Type: c.typ}); got != c.want {
-			t.Fatalf("edgeFault(%d %q) = %v, want %v", c.status, c.typ, got, c.want)
+		e := &types.APIError{Status: c.status, Type: c.typ, NoSameTargetRetry: c.budget}
+		if got := edgeFault(e); got != c.want {
+			t.Fatalf("edgeFault(%d %q budget=%v) = %v, want %v", c.status, c.typ, c.budget, got, c.want)
 		}
 	}
 }
