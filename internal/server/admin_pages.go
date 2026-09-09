@@ -866,6 +866,7 @@ type providerView struct {
 	Kind        string   `json:"kind"`
 	BaseURL     string   `json:"base_url"`
 	Accounts    int      `json:"accounts"`
+	Disabled    bool     `json:"disabled"`
 	Concurrency string   `json:"concurrency"`
 	Sticky      string   `json:"sticky,omitempty"`
 	Quota       string   `json:"quota,omitempty"`
@@ -885,7 +886,7 @@ func providerViews(st *state) []providerView {
 		}
 		v := providerView{
 			Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL,
-			Accounts: n, Models: p.Models, Sticky: p.Sticky,
+			Accounts: n, Models: p.Models, Sticky: p.Sticky, Disabled: p.Disabled,
 		}
 		if p.MaxConc > 0 {
 			v.Concurrency = fmt.Sprintf("max %d concurrent", p.MaxConc)
@@ -926,6 +927,7 @@ type acctEditView struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url,omitempty"`
 	Weight  int    `json:"weight,omitempty"`
+	RPM     int    `json:"rpm,omitempty"`
 	HasKey  bool   `json:"has_key,omitempty"`
 }
 
@@ -951,7 +953,7 @@ func providerEditViews(st *state) []providerEditView {
 		}
 		for _, a := range src {
 			v.Accounts = append(v.Accounts, acctEditView{
-				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, HasKey: a.APIKey != "",
+				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM, HasKey: a.APIKey != "",
 			})
 		}
 		out = append(out, v)

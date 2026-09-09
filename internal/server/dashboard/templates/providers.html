@@ -1,18 +1,27 @@
 {{define "hdr"}}<span>{{len .Views}} providers · keys masked</span>
 <button class="btn primary sm" id="addprov" type="button">+ Add provider</button>{{end}}
 {{define "content"}}
+<div class="pgrid">
 {{range .Views}}
-<div class="card mb-3">
-  <h3 class="normal-case text-[14px] tracking-[-0.01em] text-fg">{{.Name}}
-    <span class="pill ml-2">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
-    <button class="rowact float-right" data-edit="{{.Name}}" type="button" title="edit provider {{.Name}}" aria-label="edit provider {{.Name}}">
+<div class="card pcard{{if .Disabled}} off{{end}}">
+  <div class="ptop">
+    <label class="switch" title="{{if .Disabled}}enable{{else}}disable{{end}} provider {{.Name}}">
+      <input type="checkbox" data-toggle="{{.Name}}" aria-label="toggle provider {{.Name}}"{{if not .Disabled}} checked{{end}}>
+      <span class="track"></span>
+      <span class="thumb"></span>
+    </label>
+    <h3 class="normal-case text-[14px] tracking-[-0.01em] text-fg">{{.Name}}</h3>
+    {{if .Disabled}}<span class="pill warn">off</span>{{end}}
+    <span class="pill ml-auto">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
+    <button class="rowact" data-edit="{{.Name}}" type="button" title="edit provider {{.Name}}" aria-label="edit provider {{.Name}}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round"/></svg>
     </button>
-  </h3>
+  </div>
   <div class="kv mb-2">
-    <span class="k">base URL</span><span class="mono">{{.BaseURL}}</span>
+    <span class="k">base URL</span><span class="mono url">{{.BaseURL}}</span>
     <span class="k">accounts</span><span>{{.Accounts}} · {{.Concurrency}}</span>
     {{if .Quota}}<span class="k">quota window</span><span>{{.Quota}}{{if .QuotaLimit}} · limit {{.QuotaLimit}}{{end}}</span>{{end}}
+    {{if .Sticky}}<span class="k">sticky</span><span>{{.Sticky}}</span>{{end}}
   </div>
   {{if .Models}}<details><summary>{{len .Models}} advertised models</summary>
   <div class="mono mt-2 leading-8">{{range .Models}}<code class="chip">{{.}}</code> {{end}}</div></details>{{end}}
@@ -20,6 +29,7 @@
 {{else}}
 <div class="tblwrap"><div class="empty">no providers configured — add one with the button above</div></div>
 {{end}}
+</div>
 {{end}}
 {{define "content-modal"}}
 <dialog class="modal" id="pmodal" aria-labelledby="pmodal-title">
@@ -114,12 +124,15 @@ const PREFILL = {{.Edit}};
 
   function acctRow(a){
     const d = document.createElement('div');
-    d.className = 'grid grid-cols-[1fr_1fr_auto] items-end gap-2 mb-2';
+    d.className = 'grid grid-cols-[1fr_1fr_6rem_auto] items-end gap-2 mb-2';
     d.innerHTML = `<div><label class="sr-only">account name</label>
         <input class="a-name" type="text" placeholder="account name" autocomplete="off" spellcheck="false"></div>
       <div><label class="sr-only">account key</label>
-        <input class="a-key" type="password" placeholder="${a && a.has_key ? 'keep existing key' : 'api key (optional)'}" autocomplete="off"></div>`;
+        <input class="a-key" type="password" placeholder="${a && a.has_key ? 'keep existing key' : 'api key (optional)'}" autocomplete="off"></div>
+      <div><label class="sr-only">rpm (0 = uncapped)</label>
+        <input class="a-rpm" type="number" min="0" inputmode="numeric" placeholder="rpm"></div>`;
     d.querySelector('.a-name').value = a ? a.name : '';
+    if (a && a.rpm) d.querySelector('.a-rpm').value = a.rpm;
     if (a && a.base_url) { /* base_url preserved server-side; not surfaced */ }
     const rm = document.createElement('button');
     rm.type = 'button'; rm.className = 'rowact'; rm.title = 'remove account';
@@ -163,6 +176,39 @@ const PREFILL = {{.Edit}};
   document.getElementById('pcancel').onclick = () => dlg.close();
   addBtn.onclick = () => accts.appendChild(acctRow(null));
 
+  // Grid on/off toggle: PATCH only the `disabled` key of the named
+  // provider block (never the whole record — a toggle must not be able
+  // to clobber any other field or key). The checkbox state is reverted
+  // on failure; success reloads so the pill + card state re-render.
+  document.querySelectorAll('[data-toggle]').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const name = cb.dataset.toggle;
+      const on = cb.checked;
+      cb.disabled = true;
+      try {
+        const res = await fetch('/admin/config/providers/' + encodeURIComponent(name) + '/disabled', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ disabled: !on }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          cb.checked = !on;
+          ogwToast(j.error || ('toggle failed (' + res.status + ')'), false);
+          return;
+        }
+        ogwToast('provider ' + name + (on ? ' enabled' : ' disabled') + ' — config reloaded', true);
+        setTimeout(() => location.reload(), 400);
+      } catch (err) {
+        cb.checked = !on;
+        ogwToast('toggle failed: ' + err.message, false);
+      } finally {
+        cb.disabled = false;
+      }
+    });
+  });
+
+
   form.onsubmit = async (e) => {
     e.preventDefault(); e.stopPropagation();
     const body = {
@@ -174,9 +220,9 @@ const PREFILL = {{.Edit}};
       max_concurrency: parseInt(document.getElementById('pf-conc').value, 10) || 0,
       sticky: document.getElementById('pf-sticky').value.trim(),
       quota_window: document.getElementById('pf-qw').value,
+      accounts: [...accts.children].map(r => ({ name: r.querySelector('.a-name').value.trim(), api_key: r.querySelector('.a-key').value, rpm: parseInt(r.querySelector('.a-rpm').value, 10) || 0 })),
       quota_limit_tokens: parseInt(document.getElementById('pf-qt').value, 10) || 0,
       quota_limit_requests: parseInt(document.getElementById('pf-qr').value, 10) || 0,
-      accounts: [...accts.children].map(r => ({ name: r.querySelector('.a-name').value.trim(), api_key: r.querySelector('.a-key').value })),
     };
     if (!body.name) { showErr('provider name is required'); return; }
     saveBtn.disabled = true; saveBtn.setAttribute('aria-busy', 'true');

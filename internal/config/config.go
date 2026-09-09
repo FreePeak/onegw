@@ -111,14 +111,14 @@ type UsageCfg struct {
 
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
-	Name        string            `toml:"name"`
-	Kind        string            `toml:"kind"` // openai | anthropic | gemini | opencode | searxng | openai-responses | commandcode | cursor
-	BaseURL     string            `toml:"base_url"`
-	APIKey      string            `toml:"api_key"` // convenience for single-account
-	Keys        []string          `toml:"keys"`    // multi-key accounts, one account per key
-	Accounts    []Acct            `toml:"accounts"`
-	Models      []string          `toml:"models"` // advertised model ids
-	MaxConc     int               `toml:"max_concurrency"`
+	Name     string   `toml:"name"`
+	Kind     string   `toml:"kind"` // openai | anthropic | gemini | opencode | searxng | openai-responses | commandcode | cursor
+	BaseURL  string   `toml:"base_url"`
+	APIKey   string   `toml:"api_key"` // convenience for single-account
+	Keys     []string `toml:"keys"`    // multi-key accounts, one account per key
+	Accounts []Acct   `toml:"accounts"`
+	Models   []string `toml:"models"` // advertised model ids
+	MaxConc  int      `toml:"max_concurrency"`
 	// RPM is the provider-WIDE request budget (one shared token bucket
 	// gating every account, 0 = uncapped), for upstreams whose rate limit
 	// is per-user/per-model-lane rather than per-key (live tokenrouter
@@ -127,6 +127,12 @@ type ProviderCfg struct {
 	// modeled per-account). The pool reports an honest fall-through
 	// instead of feeding the shared window doomed attempts.
 	RPM int `toml:"rpm"`
+	// Disabled pauses routing to this provider without deleting its
+	// config: combos skip the target and fall through, direct routes
+	// answer 503 provider_disabled, and /v1/models stops advertising its
+	// models. The dashboard providers grid toggles it via the admin API;
+	// the entry stays in the file so a toggle back on is instant.
+	Disabled    bool              `toml:"disabled"`
 	ExtraHeader map[string]string `toml:"extra_headers"`
 	// AlwaysThinking lists model globs (path.Match; "*" does not cross
 	// "/") that reason unconditionally upstream and reject
