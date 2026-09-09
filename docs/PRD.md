@@ -554,7 +554,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#13~~ | ~~Web-search provider (SearXNG integration)~~ — **done 2026-09-08**; `kind = "searxng"` virtual search provider (9bd3594): `search/<x>` model requests answered with a SearXNG JSON search as a synthetic OpenAI completion, retryable-503 fail-open in combos, `max_results`/`timeout`/`extra_headers` knobs, unit + E2E tests on both client surfaces | 9router gap |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
 | ~~#17~~ | ~~Self-healing thinking-dialect fallback~~ — **done 2026-09-08**; shipped as always-thinking self-healing (7e935f2): coerceEffort xhigh→max/unknown→high, signature-400 detection, learned per (provider, model) on the Def (fresh on reload), Fallbackable retry-once then combo fall-through, stream fast path learns; live-verified with the xhigh replay; issue closed with landed note | #16 follow-up |
-| ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (a59c2a3) | user request |
+| ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (a59c2a3); **extended 2026-09-09** (ab62468): every row carries the upstream account name (`@account` in the console line, `account` in the JSON), and entries older than 7 days are auto-cleared from the view (ring bounds memory, age window bounds staleness) | user request |
 | ~~#31~~ | ~~Fix cache-inclusive/exclusive usage semantics across translation~~ — **done 2026-09-09** (f03dfcc): `Usage.InputTokens` = cache-INCLUSIVE total documented on the type; Anthropic decode folds read+write in, every Anthropic-format emitter denormalizes via `anthropicInputTokens` (clamped ≥ 0); sniffer normalizes Anthropic payloads at the same boundary; TotalTokenCount includes cache-write; 18 non-stream + 12 stream direction pairs pinned | research 2026-09-08 |
 | #32 | Preserve `cache_control` / `prompt_cache_key` / `session_id` across translation | research 2026-09-08 |
 | ~~#33~~ | ~~Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests~~ — **done 2026-09-09** (f03dfcc): `prompt_cache_hit_tokens` in the sniffer's cache-read pattern; Responses `input_tokens_details` + Kimi top-level `cached_tokens` on the typed path; all six vendor shapes pinned through sniffer + typed decode (TestSniffVendorUsageShapes) | research 2026-09-08 |
@@ -792,12 +792,12 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   visuals unchanged. Cards/table were always correct (Go compact).
 
 ---
-*Last updated: 2026-09-09 (dashboard Tailwind v4 revamp to the UnoRouter design
+*Last updated: 2026-09-09 (request log diagnosability: rows carry the upstream
+  account name + 7-day auto-clear, ab62468; earlier: dashboard Tailwind v4 revamp to the UnoRouter design
   language, 0b6202d — standalone-CLI pipeline, vendored OFL fonts, grouped sidebar,
   themed uPlot axes; browser-verified dark/light, commit green from clean archive,
   pushed; earlier: usage-chart hover fix: per-layer values + units,
-  9e1e5a4, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
-budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
+  9e1e5a4, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
 `[server] response_header_timeout` knob (live: 120s) + transport-error classification
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
 ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
