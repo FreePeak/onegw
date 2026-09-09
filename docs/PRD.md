@@ -1,3 +1,18 @@
+*Last updated: 2026-09-10 (providers grid + Kibana log table live, 2a37780, pid 38997 under
+hub record onegw-ui: (1) [[providers]] gained `disabled` — combos skip the target and fall
+through, direct routes answer honest 503 provider_disabled (not a 404), /v1/models stops
+advertising a paused provider, bare-model fallback skips it; persisted in onegw.toml so a
+toggle survives SIGHUP/restart. PATCH /admin/config/providers/{name}/disabled splices ONLY
+that key through validate+atomic-write+Load/Reload — a toggle can never clobber other fields
+or keys (the full-field PUT editor stays for real edits). (2) Providers page is a 9router-
+style responsive card grid with a per-card on/off switch; (3) Console Log page is a
+Kibana-style table: sticky header, status-colored rows, live SSE streaming, free-text filter,
+click-to-expand document detail (full error text, ISO ts, seq), pause + backfill on resume.
+Note: 6308d0a swept the half-wired provider.Def.Disabled field to origin mid-session; this
+commit completed the config field, routing gate, endpoint, tests, and UI. Regression tests
+mutation-checked (neutered gate → red, restored → green); live probes: kilocode toggle
+off → gone from /v1/models + direct call 503 provider_disabled → on → 3 ids restored, file
+byte-clean (0 stale disabled keys), peer comments preserved. Earlier:)*
 *Last updated: 2026-09-10 (flap breaker refinements live, 6308d0a, pid 150: consolidated the
 breaker strike to ONE site at Do's final error exit so plain JSON 502/503/504 bodies (the
 common one-api shape) trip it — previously only HTML/empty/transport faults did; pinned by
