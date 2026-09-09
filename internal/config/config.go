@@ -77,7 +77,8 @@ type UpdateCfg struct {
 
 // InjectCfg is one terse-output injection rule: when the request model
 // matches (path.Match globs; empty = all), the mode's directive is
-// prepended to the system prompt. Mode: caveman | terse | custom (text).
+// prepended to the system prompt. Mode: caveman | terse | ponytail |
+// custom (text).
 type InjectCfg struct {
 	Mode   string   `toml:"mode"`
 	Models []string `toml:"models"`
@@ -524,7 +525,7 @@ func (c *Config) Validate() error {
 	}
 	for i, in := range c.Saver.Inject {
 		switch in.Mode {
-		case "caveman", "terse":
+		case "caveman", "terse", "ponytail":
 		case "custom":
 			if strings.TrimSpace(in.Text) == "" {
 				return fmt.Errorf("saver.inject[%d]: custom mode needs text", i)
@@ -532,7 +533,7 @@ func (c *Config) Validate() error {
 		case "":
 			return fmt.Errorf("saver.inject[%d]: missing mode", i)
 		default:
-			return fmt.Errorf("saver.inject[%d]: unknown mode %q (caveman|terse|custom)", i, in.Mode)
+			return fmt.Errorf("saver.inject[%d]: unknown mode %q (caveman|terse|ponytail|custom)", i, in.Mode)
 		}
 	}
 	if c.Saver.External.Enabled && c.Saver.External.URL == "" {

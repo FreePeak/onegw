@@ -22,6 +22,8 @@ enabled = true
 mode = "terse"
 models = ["gpt-*"]
 [[saver.inject]]
+mode = "ponytail"
+[[saver.inject]]
 mode = "custom"
 text = "five words max"
 [saver.external]
@@ -34,14 +36,17 @@ fail_open = false
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Saver.Inject) != 2 {
-		t.Fatalf("want 2 inject rules, got %d", len(cfg.Saver.Inject))
+	if len(cfg.Saver.Inject) != 3 {
+		t.Fatalf("want 3 inject rules, got %d", len(cfg.Saver.Inject))
 	}
 	if cfg.Saver.Inject[0].Mode != "terse" || cfg.Saver.Inject[0].Models[0] != "gpt-*" {
 		t.Fatalf("inject[0] wrong: %+v", cfg.Saver.Inject[0])
 	}
-	if cfg.Saver.Inject[1].Mode != "custom" || cfg.Saver.Inject[1].Text != "five words max" {
+	if cfg.Saver.Inject[1].Mode != "ponytail" {
 		t.Fatalf("inject[1] wrong: %+v", cfg.Saver.Inject[1])
+	}
+	if cfg.Saver.Inject[2].Mode != "custom" || cfg.Saver.Inject[2].Text != "five words max" {
+		t.Fatalf("inject[2] wrong: %+v", cfg.Saver.Inject[2])
 	}
 	e := cfg.Saver.External
 	if !e.Enabled || e.URL != "http://127.0.0.1:8819" || e.TimeoutMS != 900 || e.MinBytes != 1024 {
