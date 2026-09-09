@@ -19,7 +19,7 @@ enabled = true                 # RTK-style tool_result compression
 
 # Output-side savers (each also requires the [saver] enabled flag):
 # [[saver.inject]]  — prepend an honest terse-output directive to the system prompt
-#   mode = "caveman"|"terse"|"custom" (custom needs text); models = globs, empty = all
+#   mode = "caveman"|"terse"|"ponytail"|"custom" (custom needs text); models = globs, empty = all
 # [saver.external]  — send big bodies' messages[] to a Headroom-style /v1/compress service
 #   url, timeout_ms (default 2000), min_bytes (default 32768), fail_open (default true)
 # [[saver.inject]]
