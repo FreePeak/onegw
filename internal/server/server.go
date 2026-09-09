@@ -1050,6 +1050,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel
+		coerceAlwaysThinkingUnified(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	case translat.FmtAnthropic:
 		u, err := translat.DecodeAnthropicRequest(body)
@@ -1057,6 +1058,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel
+		coerceAlwaysThinkingUnified(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	case translat.FmtGemini:
 		u, err := translat.DecodeGeminiRequest(body)
@@ -1064,6 +1066,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel // model arrives in the URL path on this surface
+		coerceAlwaysThinkingUnified(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	default:
 		return rewriteModel(body, upstreamModel)
@@ -1171,6 +1174,32 @@ func alwaysThinking400(e *types.APIError) bool {
 		return true
 	}
 	return false
+}
+
+// coerceAlwaysThinkingUnified applies the always-thinking adaptation to a
+// decoded unified request before cross-format encoding — the typed-struct
+// counterpart of adaptAlwaysThinking, which only runs on the same-format
+// raw-body branch (#50 residual from #17). Same discipline, adapted to the
+// unified model:
+//   - u.ReasoningEffort is coerced only when the client set it (empty stays
+//     empty — knobs are never invented): none|minimal|medium → low,
+//     xhigh → max, unrecognized → high.
+//   - u.Thinking (budget-based, decodes only from an explicit Anthropic
+//     thinking:enabled) is dropped for always-thinking upstreams: the GLM
+//     wire has no budget representation — encoders either drop it silently
+//     (OpenAI/Gemini out) or derive an effort via budgetToEffort that can
+//     violate the low|high|max enum (Responses out). Dropping lets the
+//     upstream default (thinking on) apply, mirroring the same-format
+//     disable-drop. Disable forms never decode into the unified struct, so
+//     there is nothing else to strip.
+func coerceAlwaysThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provider.Def) {
+	if def == nil || !def.AlwaysThinkingModel(upstreamModel) {
+		return
+	}
+	if u.ReasoningEffort != "" {
+		u.ReasoningEffort = coerceEffort(u.ReasoningEffort)
+	}
+	u.Thinking = nil
 }
 
 // adaptAlwaysThinking rewrites disable-thinking knobs out of a raw
