@@ -766,8 +766,15 @@ the issue):
   companion to #41): stack, SSE plumbing, auth prerequisite, API shape,
   landing order.
 
+Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
+  cumulative raw integers (stack accumulation without a per-series `value`
+  formatter) — cache read/output/input read as wrong values with no K/M/B
+  unit. Series now map back to their per-layer arrays via kmb; stacked
+  visuals unchanged. Cards/table were always correct (Go compact).
+
 ---
-*Last updated: 2026-09-08 (RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
+*Last updated: 2026-09-09 (usage-chart hover fix: per-layer values + units,
+  9e1e5a4, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
 budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
 `[server] response_header_timeout` knob (live: 120s) + transport-error classification
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
