@@ -493,15 +493,19 @@ const (
 	flapOpen      = 15 * time.Second // whole-pool park when the breaker opens
 )
 
-// edgeFault reports whether an upstream error indicts the provider's edge
-// rather than the request or the credential: the nginx/CDN Bad Gateway
-// page, an empty error body, an unreachable transport, a timeout, or a
-// plain 502/503/504/52x status. These faults are independent of which key
-// sent the request — exactly what the flap breaker counts. Shared-
-// concurrency walls and 4xx answers are load/request-shaped, not
-// edge-fault-shaped, and never strike.
+// edgeFault reports whether an upstream error indicts the provider's
+// edge rather than the request or the credential: the whole 5xx
+// edge/origin family (502/503/504, Cloudflare 52x) plus the transport
+// observation types. Deliberate per-request rewrites (the auth-verify
+// blip, the parse-rejected channel fault — both routed here as 502s)
+// and shared-concurrency walls are NOT edge outages: they never strike
+// the breaker. 4xx never strikes.
 func edgeFault(apiErr *types.APIError) bool {
 	if apiErr == nil || apiErr.Status < 500 || apiErr.SharedConcurrency() {
+		return false
+	}
+	switch apiErr.Type {
+	case "upstream_auth_verify_failed", "upstream_parse_rejected":
 		return false
 	}
 	switch apiErr.Type {
