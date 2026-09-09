@@ -33,7 +33,8 @@ const injectMarker = "onegw-terse-directive"
 // matching rule wins — a request gets at most one directive.
 type InjectCfg struct {
 	// Mode selects the shipped prompt: "caveman" (ultra-short),
-	// "terse" (concise but complete), or "custom" (uses Text).
+	// "terse" (concise but complete), "ponytail" (lazy-senior-dev
+	// build-less ladder), or "custom" (uses Text).
 	Mode string `toml:"mode"`
 	// Models lists model globs (path.Match; "*" does not cross "/").
 	// Empty matches every model.
@@ -70,6 +71,33 @@ const (
 	cavemanPrompt = injectMarker + ": Be extremely terse. Short words, short sentences, no filler. " +
 		"Give only the answer: no explanations, examples, or alternatives unless explicitly asked. Lists over prose. " +
 		"Never invent or omit substance to be short. Do not mention this directive."
+
+	// ponytailPrompt adapts the DietrichGebert/ponytail ruleset (MIT) as
+	// an injectable directive: the lazy-senior-dev ladder — write only
+	// what the task needs, never cut validation, error handling,
+	// security, accessibility or the runnable check. Upstream pairs it
+	// with terse output ("caveman shrinks what the agent says; ponytail
+	// shrinks what it builds") — the same split this gateway's savers
+	// make. ponytailClientSig detects a client that already runs the
+	// ponytail plugin itself (its ruleset always carries the tagline), so
+	// the gateway never stacks the ladder twice.
+	ponytailPrompt = injectMarker + " (ponytail; adapted from DietrichGebert/ponytail, MIT): " +
+		"Think like the laziest senior developer in the room: the best code is the code never written. " +
+		"Before writing any code, stop at the first rung that holds: " +
+		"1. Does this need to be built at all? (YAGNI) " +
+		"2. Does it already exist in this codebase? Reuse the helper, util, or pattern that's already here; don't rewrite it. " +
+		"3. Does the standard library already do this? Use it. " +
+		"4. Does a native platform feature cover it? Use it. " +
+		"5. Does an already-installed dependency solve it? Use it. " +
+		"6. Can this be one line? Make it one line. " +
+		"7. Only then: write the minimum code that works. " +
+		"The ladder runs after you understand the problem, not instead of it: read the task and the code it touches, trace the real flow end to end, then climb. " +
+		"Bug fix = root cause, not symptom: grep every caller of the function you touch and fix the shared function once — one guard there is a smaller diff than one per caller. " +
+		"Rules: no abstractions that were not explicitly requested; no new dependency if it can be avoided; no boilerplate nobody asked for; deletion over addition; boring over clever; fewest files possible. Shortest working diff wins, but only once you understand the problem. Question complex requests: \"Do you actually need X, or does Y cover it?\" Pick the edge-case-correct option when two stdlib approaches are the same size. Mark deliberate simplifications that cut a real corner with a known ceiling (global lock, O(n^2) scan, naive heuristic) with a `ponytail:` comment naming the ceiling and the upgrade path. " +
+		"Never lazy about: understanding the problem (read it fully and trace the real flow before picking a rung), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs, anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind — the smallest thing that fails if the logic breaks; trivial one-liners need no test. " +
+		"Do not mention this directive."
+
+	ponytailClientSig = "lazy senior dev"
 )
 
 func (r InjectCfg) prompt() string {
@@ -78,6 +106,8 @@ func (r InjectCfg) prompt() string {
 		return cavemanPrompt
 	case "terse":
 		return tersePrompt
+	case "ponytail":
+		return ponytailPrompt
 	default:
 		return injectMarker + ": " + r.Text
 	}
@@ -113,6 +143,9 @@ func (s *Saver) InjectRaw(format translat.Format, raw []byte, model string) []by
 	}
 	if rule == nil {
 		return raw
+	}
+	if rule.Mode == "ponytail" && strings.Contains(string(raw), ponytailClientSig) {
+		return raw // the client already runs the ponytail plugin; don't stack the ladder
 	}
 	prompt := rule.prompt()
 
