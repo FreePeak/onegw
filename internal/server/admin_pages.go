@@ -359,16 +359,16 @@ func (s *Server) authedPage(w http.ResponseWriter, r *http.Request, id, title st
 	_, _ = w.Write([]byte(out))
 }
 
-// rankRows aggregates provider request counts over the trailing 7 days
-// for the shell's right-rail ranking. Read-only; empty when the store
+// rankRows aggregates provider request counts over the trailing 7 local
+// days for the shell's right-rail ranking. Read-only; empty when the store
 // is unavailable.
 func (s *Server) rankRows() []dashboard.RankRow {
 	if s.st == nil {
 		return nil
 	}
-	to := time.Now().UTC().Format("2006-01-02")
-	from := time.Now().UTC().AddDate(0, 0, -6).Format("2006-01-02")
-	raw, err := s.st.QueryRange(from, to)
+	to := time.Now().Format("2006-01-02")
+	from := time.Now().AddDate(0, 0, -6).Format("2006-01-02")
+	raw, err := s.rowsInLocalWindow(from, to)
 	if err != nil {
 		return nil
 	}
@@ -403,6 +403,73 @@ func (s *Server) rankRows() []dashboard.RankRow {
 	return rows
 }
 
+// ---------------------------------------------------------------------------
+// Local-time dashboard windows
+//
+// The dashboard presents every usage window in the gateway host's LOCAL
+// calendar, while the rollup store keys rows by UTC day+hour. A local day
+// straddles two UTC days (UTC+7 midnight = 17:00 of the previous UTC day),
+// so each local window maps onto a UTC key superset and rows are
+// re-filtered by the local day their rollup instant lands on.
+// ---------------------------------------------------------------------------
+
+// rollupInstant parses a stored (day, hour) rollup key as the UTC instant
+// it represents. ok=false for odd/legacy keys; callers fall back to the
+// raw key as the display label.
+func rollupInstant(day, hour string) (time.Time, bool) {
+	if hour == "" {
+		t, err := time.ParseInLocation("2006-01-02", day, time.UTC)
+		return t, err == nil
+	}
+	t, err := time.ParseInLocation("2006-01-02 15", day+" "+hour, time.UTC)
+	return t, err == nil
+}
+
+// utcKeyWindow maps an inclusive local-day window onto the range of UTC
+// day keys that can contain its rollups: the bounds are the UTC dates of
+// the window's local-midnight instants.
+func utcKeyWindow(from, to string) (string, string) {
+	start, err1 := time.ParseInLocation("2006-01-02", from, time.Local)
+	end, err2 := time.ParseInLocation("2006-01-02", to, time.Local)
+	if err2 != nil {
+		return from, to
+	}
+	kTo := end.AddDate(0, 0, 1).Add(-time.Second).UTC().Format("2006-01-02")
+	if err1 != nil {
+		return "", kTo
+	}
+	return start.UTC().Format("2006-01-02"), kTo
+}
+
+// rowsInLocalWindow queries the rollup store for the UTC key superset
+// covering the inclusive LOCAL-day window [from, to] and keeps only rows
+// whose rollup instant falls on a local day inside it. from == "" queries
+// the whole history (the upper bound still applies).
+func (s *Server) rowsInLocalWindow(from, to string) ([]store.UsageRow, error) {
+	if s.st == nil {
+		return nil, nil
+	}
+	kFrom, kTo := utcKeyWindow(from, to)
+	raw, err := s.st.QueryRange(kFrom, kTo)
+	if err != nil {
+		return nil, err
+	}
+	out := raw[:0]
+	for _, r := range raw {
+		ld := r.Day
+		if inst, ok := rollupInstant(r.Day, r.Hour); ok {
+			ld = inst.In(time.Local).Format("2006-01-02")
+		}
+		if from != "" && ld < from {
+			continue
+		}
+		if ld <= to {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // handleAdminPage serves GET /admin (Overview).
 func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
@@ -429,15 +496,13 @@ type overviewData struct {
 func (s *Server) overviewView() *overviewData {
 	v := &overviewData{}
 	st := s.cur()
-	today := time.Now().UTC().Format("2006-01-02")
-	if s.st != nil {
-		if rows, err := s.st.QueryRange(today, today); err == nil {
-			for _, r := range rows {
-				v.TodayReq += r.Requests
-				v.TodayIn += r.InputTok
-				v.TodayOut += r.OutputTok
-				v.TodaySaved += r.SavedTok
-			}
+	today := time.Now().Format("2006-01-02") // local calendar day, like every dashboard window
+	if rows, err := s.rowsInLocalWindow(today, today); err == nil {
+		for _, r := range rows {
+			v.TodayReq += r.Requests
+			v.TodayIn += r.InputTok
+			v.TodayOut += r.OutputTok
+			v.TodaySaved += r.SavedTok
 		}
 	}
 	if st != nil {
@@ -526,7 +591,10 @@ type usageView struct {
 	HasCharts bool
 	ChartUnit string
 	ChartJSON template.JS
-	From, To  string
+	From, To  string // local-day labels (display)
+	// Export window: the raw rollup store is UTC-day-keyed, so the CSV
+	// export link carries the UTC key superset of the local window.
+	ExportFrom, ExportTo string
 }
 
 var usageRanges = []struct {
@@ -540,17 +608,17 @@ var usageRanges = []struct {
 	{"all", "All time", 3650},
 }
 
-// rangeWindow resolves ?range= to a from/to day pair ("all" has no lower
-// bound: from = "" queries everything stored).
+// rangeWindow resolves ?range= to a from/to LOCAL-day pair ("all" has no
+// lower bound: from = "" queries everything stored).
 func rangeWindow(sel string) (from, to string) {
-	to = time.Now().UTC().Format("2006-01-02")
+	to = time.Now().Format("2006-01-02")
 	switch sel {
 	case "today":
 		return to, to
 	case "7d":
-		return time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02"), to
+		return time.Now().AddDate(0, 0, -7).Format("2006-01-02"), to
 	case "1m":
-		return time.Now().UTC().AddDate(0, 0, -31).Format("2006-01-02"), to
+		return time.Now().AddDate(0, 0, -31).Format("2006-01-02"), to
 	default:
 		return "", to
 	}
@@ -563,18 +631,20 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := rangeWindow(sel)
 	v := &usageView{From: from, To: to}
+	// Raw export API is UTC-day-keyed: hand it the UTC key superset.
+	v.ExportFrom, v.ExportTo = utcKeyWindow(from, to)
 	for _, rg := range usageRanges {
 		v.Ranges = append(v.Ranges, usageRange{ID: rg.ID, Label: rg.Label, On: rg.ID == sel})
 	}
 	switch sel {
 	case "today":
-		v.Window = "UTC day " + to
+		v.Window = "local day " + to + " (" + time.Now().Format("MST") + ")"
 	case "7d", "1m":
-		v.Window = from + " → " + to
+		v.Window = from + " → " + to + " (local)"
 	default:
 		v.Window = "all stored rollups"
 	}
-	rows, err := s.usageRows(from, to)
+	rows, err := s.usageRowsLocal(from, to)
 	if err == nil {
 		v.Rows = rows
 		for _, r2 := range rows {
@@ -593,17 +663,18 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 	}
 	v.ChartUnit = "per day"
 	if from == to {
-		v.ChartUnit = "per hour (UTC)"
+		v.ChartUnit = "per hour (local)"
 	}
 	s.authedPage(w, r, "usage", "Usage", false, v)
 }
 
-// usageRows aggregates store rollups to one row per provider+model.
-func (s *Server) usageRows(from, to string) ([]usageRowView, error) {
+// usageRows aggregates the LOCAL-window rollups to one row per
+// provider+model.
+func (s *Server) usageRowsLocal(from, to string) ([]usageRowView, error) {
 	if s.st == nil {
 		return nil, nil
 	}
-	raw, err := s.st.QueryRange(from, to)
+	raw, err := s.rowsInLocalWindow(from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -636,40 +707,50 @@ func (s *Server) usageRows(from, to string) ([]usageRowView, error) {
 	return out, nil
 }
 
-// chartJSON builds the uPlot dataset. Day mode (default): dense day axis +
-// per-day sums. Hour mode (today): 24-hour axis + per-hour sums, so the
-// single-day view still shows a curve.
+// chartJSON builds the uPlot dataset on LOCAL-calendar axes: day mode
+// buckets per local day, hour mode (single-day window) buckets per local
+// hour of that local day. Rollup keys stay UTC day+hour — rows map to
+// their local slot via the instant they represent.
 func (s *Server) chartJSON(from, to string) string {
+	// slot: local label for a rollup row. ok=false (odd legacy keys) falls
+	// back to the raw key as the display label.
+	slot := func(r store.UsageRow) (string, bool) {
+		if from == to { // hour-of-the-day label
+			if inst, ok := rollupInstant(r.Day, r.Hour); ok {
+				return inst.In(time.Local).Format("15"), true
+			}
+			return r.Hour, false
+		}
+		if inst, ok := rollupInstant(r.Day, r.Hour); ok {
+			return inst.In(time.Local).Format("2006-01-02"), true
+		}
+		return r.Day, false
+	}
 	type axis struct {
 		Labels []string
 		Keys   map[string][4]int64 // label → [req, in, out, cache_read]
 	}
 	var ax axis
 	ax.Keys = map[string][4]int64{}
-	if s.st != nil {
-		if raw, err := s.st.QueryRange(from, to); err == nil {
-			for _, r := range raw {
-				label := r.Day
-				if from == to { // single-day window → hourly buckets
-					label = r.Hour
-				}
-				d := ax.Keys[label]
-				d[0] += r.Requests
-				d[1] += r.InputTok
-				d[2] += r.OutputTok
-				d[3] += r.CacheRead
-				ax.Keys[label] = d
-			}
+	if rows, err := s.rowsInLocalWindow(from, to); err == nil {
+		for _, r := range rows {
+			label, _ := slot(r)
+			d := ax.Keys[label]
+			d[0] += r.Requests
+			d[1] += r.InputTok
+			d[2] += r.OutputTok
+			d[3] += r.CacheRead
+			ax.Keys[label] = d
 		}
 	}
-	if from == to { // dense 00..23 hour axis
+	if from == to { // dense 00..23 local-hour axis
 		for h := range 24 {
 			ax.Labels = append(ax.Labels, fmt.Sprintf("%02d", h))
 		}
-	} else { // dense day axis; cap the span
+	} else { // dense local-day axis; cap the span
 		for d := from; d <= to; {
 			ax.Labels = append(ax.Labels, d)
-			t, err := time.Parse("2006-01-02", d)
+			t, err := time.ParseInLocation("2006-01-02", d, time.Local)
 			if err != nil {
 				break
 			}
@@ -690,12 +771,12 @@ func (s *Server) chartJSON(from, to string) string {
 	xs := make([]int64, len(ax.Labels))
 	for i, d := range ax.Labels {
 		var t time.Time
-		if from == to { // hour label on the current day
+		if from == to { // hour label on the current local day
 			h, _ := strconv.Atoi(d)
-			t, _ = time.Parse("2006-01-02", from)
+			t, _ = time.ParseInLocation("2006-01-02", from, time.Local)
 			t = t.Add(time.Duration(h) * time.Hour)
 		} else {
-			t, _ = time.Parse("2006-01-02", d)
+			t, _ = time.ParseInLocation("2006-01-02", d, time.Local)
 		}
 		xs[i] = t.Unix()
 	}
@@ -1074,7 +1155,7 @@ func (s *Server) handleAPISaver(w http.ResponseWriter, r *http.Request) {
 func (s *Server) savedAllTime() int64 {
 	var saved int64
 	if s.st != nil {
-		if rows, err := s.st.QueryRange("0001-01-01", time.Now().UTC().Format("2006-01-02")); err == nil {
+		if rows, err := s.rowsInLocalWindow("", time.Now().Format("2006-01-02")); err == nil {
 			for _, r := range rows {
 				saved += r.SavedTok
 			}
@@ -1203,7 +1284,12 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 			v.Listen = o.Listen
 		}
 		v.ConfigPath = o.ConfigPath
-		v.ConfigMtime = o.ConfigMtime
+		// The owner record stamps UTC; the dashboard shows local.
+		if mt, err := time.Parse(time.RFC3339Nano, o.ConfigMtime); err == nil {
+			v.ConfigMtime = mt.Local().Format(time.RFC3339)
+		} else {
+			v.ConfigMtime = o.ConfigMtime
+		}
 	}
 	s.authedPage(w, r, "settings", "Settings", false, v)
 }
