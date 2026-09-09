@@ -1,3 +1,18 @@
+*Last updated: 2026-09-09 (live supervision: the gateway had NO auto-restart — every
+  deploy.sh generation left a setsid orphan (PPID 1) and the hub daemon records
+  (onegw/onegw-live) that could have supervised it were exited/wedged ("unacknowledged
+  completion notifications"); a crash would have frozen all coding sessions indefinitely.
+  Fixed zero-drop: fresh hub record **onegw-sup** (restart=on-failure, persist=detached,
+  same binary+config) overlap-bound while the old orphan served, old pids drained by
+  explicit SIGTERM, single listener verified (health owner.pid=70282 ×3, /v1/models 200,
+  ~21 inflight across the swap). Crash semantics now: on-failure restarts crashes;
+  graceful SIGTERM stays down by design (deploys deliberately stop it); reboot needs a
+  launchd KeepAlive (not yet installed). Wedged names onegw/onegw-live abandoned —
+  future deploys should hub-start under onegw-sup or a fresh name. Binary path is
+  volatile: /tmp/onegw-lt-bin today, /tmp/onegw-admission earlier — the hub record's
+  retained spec must be updated (hub restart reuses the OLD spec) or the record
+  re-created after every deploy.sh generation.)*
+
 *Last updated: 2026-09-09 (docker anonymous-volume fork closed, 2d6f08d: dropped
 VOLUME ["/data"] from the Dockerfile — it allocated an anonymous volume on every
 plain docker run, so the documented pull+recreate update path silently re-homed
