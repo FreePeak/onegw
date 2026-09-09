@@ -15,7 +15,6 @@ before the breaker trips; sustained flaps pay ≤1 probe per 15s instead of a 7-
 request (this burst: 17 doomed attempts → would have been ~5). Mutation-checked (neuter →
 breaker suite fails); full suite green; zero-drop deployed from archive HEAD. Earlier:)*
 *Last updated: 2026-09-10 (tokenrouter 8/min window — fix live, b6c08bc+aa91d07, pid 16156: ring
-*Last updated: 2026-09-10 (tokenrouter 8/min window — fix live, b6c08bc+aa91d07, pid 16156: ring
 proof the "Maximum 8 requests within 1 minutes" budget is SHARED across keys (harvey 429ed with
 ~5 attempts in its trailing window while linh served 200s). Two changes: (1) `[[providers]] rpm`
 is now a provider-wide shared token bucket gating every account (onegw.toml: rpm = 6, worst
