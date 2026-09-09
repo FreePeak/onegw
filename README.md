@@ -90,9 +90,10 @@ buffering, no conversation state.
 curl -fsSL https://raw.githubusercontent.com/FreePeak/onegw/master/scripts/install.sh | sh
 ```
 
-Installs the latest release binary, writes a starter config (loopback bind,
-generated admin password), and starts the gateway on 127.0.0.1:8080. It prints
-the gateway key and dashboard password — set `ONEGW_LISTEN` or `ONEGW_KEYS`
+Installs the latest release binary (sha256-verified against the release's
+SHA256SUMS), writes a starter config (loopback bind, generated admin password),
+and starts the gateway on 127.0.0.1:8080. It prints the gateway key and
+dashboard password — set `ONEGW_LISTEN` or `ONEGW_KEYS`
 to override. Config lives in `~/.onegw/onegw.toml`; add `[[providers]]` blocks
 there (see [Configuration](#configuration)).
 
