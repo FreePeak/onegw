@@ -50,10 +50,12 @@ func TestStreamFastPathReplaysWholeBodyOnTransient429(t *testing.T) {
 }
 
 // Body whose model field sits BEYOND the 16K peek window never reaches
-// the fast path: the buffered pipeline handles it, and its Execute retry
-// (2 attempts, 1s+2s shared-concurrency backoff) must surface the final
-// 429 with the shared-window Retry-After hint.
-func TestBufferedPathSharedConcurrency429RetriesThenHints(t *testing.T) {
+// the fast path: the buffered pipeline handles it, and Execute's
+// shared-concurrency rule (359e5a0) applies — a direct route surfaces the
+// model-wide wall ONCE with the honest 2s Retry-After (rotating keys or
+// retrying the same model hits the same wall; there is no next combo
+// target here).
+func TestBufferedPathSharedConcurrency429SurfacesOnceWithHint(t *testing.T) {
 	var hits int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
@@ -68,8 +70,8 @@ func TestBufferedPathSharedConcurrency429RetriesThenHints(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(in))
 	r.Header.Set("Content-Type", "application/json")
 	w := do(t, h, authReq(r))
-	if got := atomic.LoadInt32(&hits); got != 2 {
-		t.Fatalf("upstream hits=%d, want 2 (MaxAttempts with shared backoff)", got)
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("upstream hits=%d, want 1 (shared wall surfaces once; no same-target retry)", got)
 	}
 	if w.Code != 429 {
 		t.Fatalf("code=%d, want 429; body=%s", w.Code, w.Body.String())
