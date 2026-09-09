@@ -206,6 +206,14 @@ type APIError struct {
 	// (the attempt now coerces upfront) and then falls through to the next
 	// combo target instead of surfacing the 400. Never serialized.
 	Fallbackable bool `json:"-"`
+
+	// NoSameTargetRetry marks a pre-first-byte budget exhaustion (the
+	// gateway's own ResponseHeaderTimeout): the request's pre-first-byte
+	// demand is fixed, so a second attempt on the SAME target burns a
+	// second full budget. Router.Execute falls through to the next combo
+	// target immediately; a direct route surfaces the 504. Never
+	// serialized.
+	NoSameTargetRetry bool `json:"-"`
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).
