@@ -1103,6 +1103,21 @@ Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
   clean git-archive build of the commit. Peer metrics work (acct-labeled
   log entries) remains uncommitted in the tree by design.
 
+Local-calendar dashboard windows (e39fb12): every admin-dashboard time
+  surface now follows the gateway host's LOCAL calendar instead of UTC —
+  usage page range/table/charts ("per hour (local)", "local day YYYY-MM-DD
+  (+07)"), overview "today" stats + hourly chart, right-rail 7-day rank,
+  saver all-time sum, settings config-mtime, export/daily API default
+  windows. Rollups stay UTC-keyed on disk (retention, node transfer, quota
+  rebuilds untouched); each local window maps onto its UTC-key superset and
+  rows re-bucket by the instant each (day,hour) key represents, so local
+  days straddling two UTC keys (e.g. UTC+7 00:00–06:59 = yesterday 17:00+
+  UTC) no longer drop their edge hours — pinned by
+  TestUsageTodaySpansUTCDayBoundary + TestChartDayModeLocalBuckets
+  (mutation-verified red pre-fix) and a UTC/UTC+7/UTC−8/UTC+14 suite sweep.
+  Zero-drop deployed from the origin/master archive (live page verified:
+  xs[0] == local-midnight epoch).
+
 Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   cumulative raw integers (stack accumulation without a per-series `value`
   formatter) — cache read/output/input read as wrong values with no K/M/B
@@ -1112,7 +1127,11 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 ---
 
 
-*Last updated: 2026-09-09 (README dashboard docs refresh, 71fc475: replaced the overview
+*Last updated: 2026-09-09 (local-calendar dashboard windows, e39fb12: usage/overview/rank
+  windows, charts, and labels now render the host's local time — "per hour (local)" — while
+  rollups stay UTC-keyed; local windows map onto UTC-key supersets so straddling local days
+  no longer drop edge hours; zero-drop deployed and live-verified; earlier: README dashboard
+  docs refresh (71fc475): replaced the overview
   screenshot with a current dark-mode capture (Playwright+Chrome headless against the live
   admin, 2x scale) and updated the Overview description — hourly token chart, top-providers
   rail, Providers/Combos in-page editing, Settings maintenance card; added dark-by-default +
