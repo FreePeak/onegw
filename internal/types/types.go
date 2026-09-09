@@ -253,6 +253,17 @@ func (e *APIError) Retryable() bool {
 	switch e.Status {
 	case 408, 409, 429, 500, 502, 503, 504, 529:
 		return true
+	case 520, 521, 522, 523, 524, 525, 526, 527:
+		// Cloudflare 52x family: the edge could not get a usable answer
+		// from the origin (520 unknown error, 521 down, 522/523 connect
+		// fail, 524 origin timeout, 525/526 TLS, 527 edge fetch). commandcode
+		// answers these while ITS upstream model provider flaps — verbatim
+		// live evidence (2026-09-09 15:35): 520 "Upstream model provider is
+		// temporarily unavailable. Please try again in a moment." (type
+		// server_error) — a transient fault that must not be terminal. Treat
+		// the whole family as retryable so Router.Execute retries the target
+		// and combos fall through to the next one.
+		return true
 	}
 	return false
 }

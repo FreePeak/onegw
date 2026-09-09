@@ -1047,6 +1047,17 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		defer resp.Body.Close()
 		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		apiErr := decodeUpstreamError(d.Kind, limited, resp.StatusCode)
+		// Some upstreams answer error statuses with a ZERO-byte body
+		// (live glm evidence 2026-09-09: api.z.ai /api/v1 returned 500s
+		// with no payload while model access was being deprovisioned).
+		// decodeUpstreamError would surface that as Type "upstream_error"
+		// with an EMPTY Message — a dashboard row and a client error that
+		// say nothing. Name the actual observation instead: the status is
+		// real, the body is not.
+		if len(limited) == 0 && apiErr.Message == "" && apiErr.Type == "upstream_error" {
+			apiErr.Type = "upstream_empty_body"
+			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an empty error body", d.Name, resp.StatusCode)
+		}
 		if translat.UpstreamAuthVerifyFailed(apiErr.Status, apiErr.Type, apiErr.Message) {
 			// Transient failure of the upstream's own auth/verify service
 			// (b-ai one-api forwards the bearer to an internal verify
@@ -1171,6 +1182,9 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 // "access_denied" / "Deposit required to unlock premium models." instead
 // of a retryable error. Deliberately narrow: any other 403 (invalid key,
 // permission denied) keeps failing fast — only these markers rotate.
+// Zhipu's per-model "model_access_denied" 403 also matches: it benches the
+// account and rotates, which for a combo target is the desired fall-through
+// (the direct-request pool-empty answer is made honest separately).
 func gated403(status int, body []byte) bool {
 	if status != 403 {
 		return false

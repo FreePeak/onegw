@@ -186,8 +186,21 @@ func (r *Router) KnownModel(model string) bool {
 		return true
 	}
 	if prov, _, ok := strings.Cut(lookup, "/"); ok {
-		_, exists := r.pool.Get(prov)
-		return exists
+		if _, exists := r.pool.Get(prov); exists {
+			return true
+		}
+		// Unknown provider prefix: still known when the string is
+		// advertised by some provider's models table — combo targets like
+		// "z-ai/glm-5.3-flash" (commandcode) carry a slash yet are config
+		// models. Their failure rows must not collapse to "unresolved"
+		// (live 2026-09-09: commandcode 520s logged as commandcode/unresolved).
+		// Junk "foo/bar" strings stay unknown: cardinality stays bounded.
+		for _, dr := range r.models {
+			if strings.EqualFold(dr.model, lookup) {
+				return true
+			}
+		}
+		return false
 	}
 	// Bare model: advertised in a models table, or the fallback route to
 	// the first configured provider applies.
@@ -300,6 +313,14 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			continue
 		}
 		benched := 0 // gated 403s rotated this target (each benches one account)
+		// cause remembers why this target's pool drained: the last real
+		// upstream answer before pool-empty. A pool emptied by per-model
+		// 403s (Zhipu model_access_denied, live 2026-09-09) is NOT a rate
+		// limit, and the default pool-empty 429 message would lie ("all
+		// accounts rate-limited"). The pool-empty error still governs
+		// status and Retry-After (the #48 contract tests pin them); only
+		// the MESSAGE names the actual last upstream cause.
+		var cause *types.APIError
 		for attempt := 0; attempt < max(1, r.MaxAttempts) || benched > 0; {
 			acct, poolReady := def.NextAccount(id)
 			if acct == nil {
@@ -310,7 +331,12 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// last target it becomes the configured pool-empty error
 				// (default: 429 whose Retry-After tells the client when
 				// the pool reopens).
-				lastErr = r.poolEmptyError(def, poolReady)
+				pe := r.poolEmptyError(def, poolReady)
+				if cause != nil {
+					pe.Message = fmt.Sprintf("provider %s: all accounts benched after upstream %d (%s); retry after %ss",
+						def.Name, cause.Status, cause.Type, pe.RetryAfter)
+				}
+				lastErr = pe
 				break
 			}
 			out, err := call(ctx, def, acct, t.Model)
@@ -319,6 +345,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				return nil
 			}
 			lastErr = err
+			cause = err
 			def.Unpin(id) // a failed attempt must not keep its pin
 			if !(err.Retryable() || err.RegionLocked() || err.Fallbackable) {
 				return err
