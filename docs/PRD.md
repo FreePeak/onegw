@@ -8,8 +8,8 @@ dashboard-css.sh), so the table now scrolls inside `.logwrap`; the logs toolbar 
 flex-wrap + max-w-full on the filter input (209px overflow at 390). Browser-verified at
 1512/1280/1024/756/640/390: pageOverflowX=0 on logs AND on every other shell page (overview/
 usage/combos/quota/saver/tools/settings); SSE live rows + filter/expand/pause re-verified
-post-deploy; zero-drop deployed. Known pre-existing outlier (not this fix): /admin/ui/settings
-overflows 80px at 390 — the hdr .hactions nowrap version string, shell-header-level. Earlier:)*
+post-deploy; zero-drop deployed. Known pre-existing outlier (not this fix, tracked #76):
+/admin/ui/settings overflows 80px at 390 — the hdr .hactions nowrap version string, shell-header-level. Earlier:)*
 *Last updated: 2026-09-10 (model-404 combo fall-through + reasoning-echo rename RCA, 747c6ac, live pid 653:
 an omp session died twice on the free combo's tokenharbor/deepseek-v4.1-flash:free leg (raw request
 ~/.omp/logs/http-400-requests/1789022741528-*.json). Root causes: (1) tokenharbor's catalog CHURNS on
