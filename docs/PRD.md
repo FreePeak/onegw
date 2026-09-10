@@ -1,3 +1,24 @@
+*Last updated: 2026-09-10 (b-ai TPM-wall 429 RCA + classifier fix, 103c253, live pid 56684:
+console burst 11:10-11:15 showed a THIRD b-ai 429 class alongside the two known ones —
+"The request rate exceeds the current model TPM limit 340000000" (kind gateway_error).
+Ring evidence: the TPM wall struck 2-3 DIFFERENT accounts in the same second (kisame/linh.mn/
+harvey @11:10:05 and :11:14:11) while clone3 served 200s on the same model seconds earlier —
+the budget is the reseller's per-MODEL lane (Tencent APPID-wide, 340M tokens/min), not a
+per-key limit. But SharedConcurrency() matched only "concurrency limit", so TPM walls fell
+into the PER-KEY ladder: each hit benched a HEALTHY key coolBase..coolCap (pool shrink →
+client-visible pool-empty 429s, plus doomed fall-through noise) and Router.Execute burned a
+same-target 1s-backoff retry into the saturated model on every request. Fix: modelLimitRe
+("request rate exceeds the current model \w+ limit") classifies the whole Tencent
+model-limit family — Concurrency, TPM, and unseen future variants (RPM…) — as shared
+walls: no account benching, no same-target retry, instant combo fall-through, honest 2s
+client Retry-After. The pre-existing mechanics (skip-ladder at Do, fall-through at Execute,
+stream fast-path replay) all keyed off SharedConcurrency() and needed no change — one
+classifier hole was the whole bug. Tests: types classification (TPM/concurrency/future
+variants + per-key negative guards incl. the Chinese per-account body and the windowed
+free-tier body), provider ladder-skip, router instant fall-through; all three
+mutation-checked (neutered regex → red, restored → green); full suite 18/18. Zero-drop
+deployed via scripts/deploy.sh, provenance verified (/admin/health revision 103c253, single
+listener), live probe 200 + X-OneGW-Decision attempts=1. Earlier:)*
 *Last updated: 2026-09-10 (tokenrouter usage accounting fix — sniffer max-over-matches,
 24e9bb5, live pid 56241: seq 516 RCA — every tokenrouter/z-ai-glm-5.3-free 200 logged
 out=0/cached=0 with input=bodyLen/4 (12 of 12 ring rows). Root cause: tokenrouter's stream
