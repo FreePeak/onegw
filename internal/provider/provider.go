@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/http2"
+
 	"onegw/internal/translat"
 	"onegw/internal/types"
 )
@@ -1074,20 +1076,45 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 // before the upstream says a word (2026-09-08 502 storm: ~115K-token
 // requests dying in waves while small probes succeeded). Streams after
 // headers stay unbounded — streams are long-lived.
+// configureHTTP2 turns on h2 health pings for the shared upstream transport:
+// a connection that goes silent (stalled peer, dropped path) is probed and
+// dropped within readIdle+ping, and in-flight requests retry on a fresh
+// connection instead of riding the dead one to the header timeout. Returns
+// the configured h2 transport for tests.
+func configureHTTP2(tr *http.Transport) *http2.Transport {
+	h2, err := http2.ConfigureTransports(tr)
+	if err != nil {
+		return nil
+	}
+	h2.ReadIdleTimeout = 30 * time.Second
+	h2.PingTimeout = 15 * time.Second
+	return h2
+}
+
 func newHTTPClient(headerTimeout time.Duration) *http.Client {
+	tr := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
+		MaxIdleConns:        256,
+		MaxIdleConnsPerHost: 64,
+		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   true,
+		// Body streaming after headers stays unbounded — streams are
+		// long-lived.
+		ResponseHeaderTimeout: headerTimeout,
+		TLSHandshakeTimeout:   10 * time.Second,
+	}
+	// HTTP/2 health pings. All accounts of one provider multiplex onto a
+	// single h2 connection per host, so one degraded connection stalls EVERY
+	// account at once — the "http2: timeout awaiting response headers" 504
+	// storm (2026-09-10 16:29-16:48: every b-ai account timing out while
+	// fresh connections served instantly). The ping loop detects a
+	// dead/stalled connection in ~readIdle+ping instead of letting each
+	// request burn the full response-header budget; the transport then
+	// retries on a fresh connection.
+	configureHTTP2(tr)
 	return &http.Client{
-		Transport: &http.Transport{
-			DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
-			MaxIdleConns:        256,
-			MaxIdleConnsPerHost: 64,
-			IdleConnTimeout:     90 * time.Second,
-			ForceAttemptHTTP2:   true,
-			// Body streaming after headers stays unbounded — streams are
-			// long-lived.
-			ResponseHeaderTimeout: headerTimeout,
-			TLSHandshakeTimeout:   10 * time.Second,
-		},
-		Timeout: 0, // streams are long-lived; per-request ctx governs
+		Transport: tr,
+		Timeout:   0, // streams are long-lived; per-request ctx governs
 	}
 }
 
