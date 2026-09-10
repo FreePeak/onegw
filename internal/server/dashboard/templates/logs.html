@@ -1,9 +1,9 @@
 {{define "hdr"}}<span>request log · in-memory ring of {{.Cap}} · auto-cleared after 7d</span>{{end}}
 {{define "content"}}
-<div class="card mb-3 flex items-center gap-3">
+<div class="card mb-3 flex flex-wrap items-center gap-3">
   <span id="logstat" class="sub mt-0">connecting…</span>
-  <div class="ml-auto flex items-center gap-3">
-    <input id="logfilter" class="w-64" type="text" placeholder="filter — model, provider, error…" autocomplete="off" spellcheck="false" aria-label="filter log rows">
+  <div class="ml-auto flex flex-wrap items-center gap-3">
+    <input id="logfilter" class="w-64 max-w-full" type="text" placeholder="filter — model, provider, error…" autocomplete="off" spellcheck="false" aria-label="filter log rows">
     <label class="text-[12.5px] whitespace-nowrap"><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
     <button id="pause" class="btn sm">pause</button>
     <a class="btn sm" href="/admin/api/v1/logs?limit=200">raw JSON</a>
