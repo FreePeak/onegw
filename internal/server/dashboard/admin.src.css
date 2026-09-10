@@ -255,8 +255,19 @@ html[data-theme="light"] { color-scheme: light; }
   .railmetrics .metric .v.hi { @apply text-[18px]; }
 
   .grid { @apply mb-4 grid gap-3; }
-  .grid.c4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-  .grid.c3 { grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); }
+  /* Explicit column counts, not auto-fit: with 4 (or 3) cards auto-fit
+   * orphans the last card on laptop widths (e.g. 3-up + a lone 4th).
+   * 4→2→1 / 3→2→1 packs every row; the odd-tail span rule lets a lone
+   * third card take the full row instead of squatting one column. */
+  .grid.c4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .grid.c3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  @media (max-width: 1279px) {
+    .grid.c4, .grid.c3 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .grid.c3 > :last-child:nth-child(2n+1) { grid-column: 1 / -1; }
+  }
+  @media (max-width: 639px) {
+    .grid.c4, .grid.c3 { grid-template-columns: minmax(0,1fr); }
+  }
 
   /* M.O.N.K.Y card, no markup change: a 6px pop gutter (border) inside a
    * 2px pop ring around the flat inner panel. */
@@ -471,6 +482,16 @@ html[data-theme="light"] { color-scheme: light; }
   .pcard .url { overflow-wrap: anywhere; }
   .pcard .kv { grid-template-columns: 92px minmax(0, 1fr); }
 
+  /* Cards are inline-size containers so key-value lists restack when the
+   * card itself is narrow (laptop 3-up / 2-up rows, ~300px provider cards)
+   * instead of squeezing the value column to a few characters. Placed after
+   * .pcard .kv so the restack wins the cascade at equal specificity. */
+  .card { container-type: inline-size; }
+  @container (max-width: 339px) {
+    .kv, .pcard .kv { grid-template-columns: minmax(0, 1fr); }
+    .kv > .k:not(:first-child) { margin-top: 6px; }
+  }
+
   /* on/off switch (grid toggle) */
   .switch { @apply relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer items-center; }
   .switch input { @apply sr-only; }
@@ -523,7 +544,7 @@ html[data-theme="light"] { color-scheme: light; }
     padding-block: 8px;
   }
   .sidebar .logo { @apply shrink-0 px-2 pb-0; }
-  .nav { @apply flex-row overflow-x-auto; }
+  .nav { @apply flex-row flex-wrap; }
   .navgrp { @apply hidden; }
   .nav a { @apply whitespace-nowrap; }
   .content { @apply px-4 py-4; }
