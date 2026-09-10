@@ -159,6 +159,10 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 				def.Name, int64(cool.Seconds())+1)})
 		return true
 	}
+	// Single-shot fast path: stamp the decision before the upstream call
+	// (no body written yet). A failure falls back to the buffered
+	// pipeline, whose attempt() re-stamps it.
+	setDecisionHeader(w, def, acct, t.Model, 1)
 	cres, apiErr := def.Do(r.Context(), acct, t.Model, r.Header, src, sc.stream)
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, t.Model, acctName(acct), apiErr)
