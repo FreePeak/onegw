@@ -41,7 +41,12 @@ type oaChunk struct {
 			Role             string          `json:"role"`
 			Content          json.RawMessage `json:"content"`
 			ReasoningContent string          `json:"reasoning_content"`
-			ToolCalls        []oaToolCall    `json:"tool_calls"`
+			// Vendor alias (commandcode /provider/v1 and other AI-SDK
+			// resellers emit reasoning, not reasoning_content — live
+			// 2026-09-10). Without it the buffered pipeline (saver on → no
+			// stream passthrough) silently drops their thinking.
+			Reasoning string       `json:"reasoning"`
+			ToolCalls []oaToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Usage *oaUsage `json:"usage"`
@@ -101,8 +106,8 @@ func decodeOpenAIStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 		if txt := flattenOAContent(d.Content); txt != "" {
 			out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: txt})
 		}
-		if d.ReasoningContent != "" {
-			out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: d.ReasoningContent})
+		if r := orDefault(strings.TrimSpace(d.ReasoningContent), strings.TrimSpace(d.Reasoning)); r != "" {
+			out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: r})
 		}
 		for _, tc := range d.ToolCalls {
 			if tc.ID != "" || tc.Function.Name != "" {

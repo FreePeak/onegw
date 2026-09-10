@@ -391,6 +391,18 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 					// still serve the same model (#48).
 					break
 				}
+				if err.ReasoningEchoRequired() {
+					// DeepSeek thinking-mode echo refusal (commandcode
+					// 2026-09-10 seqs 2455/2621/2812: 400 "The
+					// `reasoning_content` in the thinking mode must be
+					// passed back to the API."). A deterministic body-contract
+					// 400: same-target retries replay the identical body and
+					// can only re-burn the pool, and the sibling combo legs
+					// (opencode/deepseek-v4-flash, tokenharbor) serve the same
+					// model family — fall through like the 404 verdict above;
+					// a direct route surfaces the 400 honestly.
+					break
+				}
 				return err
 			}
 			if err.Fallbackable && err.Status == 403 {

@@ -63,8 +63,20 @@ type oaMessage struct {
 	Name       string          `json:"name,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
 	ToolCalls  []oaToolCall    `json:"tool_calls,omitempty"`
-	// DeepSeek-style reasoning content on assistant messages.
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// Assistant reasoning echo, vendor shapes (9router extractReasoningText
+	// is the shape authority): reasoning_content (DeepSeek/GLM/Qwen/Kimi),
+	// reasoning (commandcode /provider/v1 and other AI-SDK resellers — live
+	// 2026-09-10: their responses carry BOTH "reasoning" and
+	// "reasoning_details"), reasoning_text, and the structured
+	// reasoning_details[] array ([{type:"reasoning.text",text:"..."}, ...])
+	// pi-ai replays verbatim from those responses. The native
+	// reasoning_content wins; aliases are consulted in order and flattened
+	// into the unified PartThinking so cross-format paths stop silently
+	// dropping the echo the upstream demands back on replay.
+	ReasoningContent string          `json:"reasoning_content,omitempty"`
+	Reasoning        string          `json:"reasoning,omitempty"`
+	ReasoningText    string          `json:"reasoning_text,omitempty"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
 }
 
 type oaToolDef struct {
@@ -248,8 +260,8 @@ func DecodeOpenAIRequest(body []byte) (*types.ChatRequest, error) {
 			if txt := flattenOAContent(m.Content); txt != "" {
 				msg.Content = append(msg.Content, types.Part{Type: types.PartText, Text: txt})
 			}
-			if m.ReasoningContent != "" {
-				msg.Content = append(msg.Content, types.Part{Type: types.PartThinking, Text: m.ReasoningContent})
+			if r := reasoningEcho(m); r != "" {
+				msg.Content = append(msg.Content, types.Part{Type: types.PartThinking, Text: r})
 			}
 			for _, tc := range m.ToolCalls {
 				msg.Content = append(msg.Content, types.Part{
@@ -339,6 +351,55 @@ func flattenOAContent(raw json.RawMessage) string {
 		}
 	}
 	return b.String()
+}
+
+// reasoningEcho flattens an assistant message's reasoning fields into the
+// text the upstream demands back on replay (DeepSeek thinking mode:
+// "The `reasoning_content` in the thinking mode must be passed back to the
+// API.", commandcode 2026-09-10). reasoning_content is native; reasoning
+// and reasoning_text are string aliases; reasoning_details[] is the
+// structured array AI SDK clients replay verbatim (9router
+// extractReasoningText is the shape authority: {text|content} entries,
+// joined). A blank string means the turn carried no reasoning.
+func reasoningEcho(m oaMessage) string {
+	if r := strings.TrimSpace(m.ReasoningContent); r != "" {
+		return r
+	}
+	if r := strings.TrimSpace(m.Reasoning); r != "" {
+		return r
+	}
+	if r := strings.TrimSpace(m.ReasoningText); r != "" {
+		return r
+	}
+	var details []struct {
+		Type    string `json:"type"`
+		Text    string `json:"text"`
+		Content string `json:"content"`
+		Summary string `json:"summary"`
+	}
+	if len(m.ReasoningDetails) > 0 {
+		if err := json.Unmarshal(m.ReasoningDetails, &details); err != nil {
+			return ""
+		}
+		var sb strings.Builder
+		for _, d := range details {
+			t := d.Text
+			if t == "" {
+				t = d.Content
+			}
+			if t == "" && d.Type == "reasoning.summary" {
+				t = d.Summary
+			}
+			if t != "" {
+				if sb.Len() > 0 {
+					sb.WriteByte('\n')
+				}
+				sb.WriteString(t)
+			}
+		}
+		return sb.String()
+	}
+	return ""
 }
 
 func parseDataURL(url string) ([]byte, string, bool) {

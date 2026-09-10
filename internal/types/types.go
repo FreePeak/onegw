@@ -328,6 +328,28 @@ func (e *APIError) ModelScoped() bool {
 	return false
 }
 
+// reasoningEchoRe matches the DeepSeek thinking-mode history contract:
+// a replayed assistant turn must carry the reasoning the model emitted.
+// Live payload (commandcode/deepseek/deepseek-v4-flash 2026-09-10, seqs
+// 2455/2621/2812): 400 "The `reasoning_content` in the thinking mode must
+// be passed back to the API." wrapped by the reseller's AI SDK as type
+// AI_APICallError.
+var reasoningEchoRe = regexp.MustCompile(`(?i)reasoning_content.{0,80}must be passed back|must be passed back.{0,80}reasoning_content`)
+
+// ReasoningEchoRequired reports whether a 400 is the upstream's
+// thinking-mode reasoning-echo refusal: the request's replayed assistant
+// history does not satisfy the model's reasoning_content contract. The
+// verdict indicts THIS target's contract with the client's body, not the
+// credential or load — the body is deterministic, so same-target retries
+// are pointless; a sibling combo target serving the same model family
+// (opencode/deepseek-v4-flash, tokenharbor) is the right next hop.
+// Deliberately narrow: only the exact echo-demand wording matches, so
+// the GLM reasoning_effort 400 family ("use low, high or max") and
+// generic invalid_request 400s keep their terminal contract.
+func (e *APIError) ReasoningEchoRequired() bool {
+	return e != nil && e.Status == 400 && reasoningEchoRe.MatchString(e.Message)
+}
+
 // SharedConcurrency reports whether a 429 is the upstream's model-wide
 // concurrency limit (resellers fronting Tencent GLM: "The request rate
 // exceeds the current model Concurrency limit 1200") rather than a
