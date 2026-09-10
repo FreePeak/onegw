@@ -1,3 +1,28 @@
+*Last updated: 2026-09-10 (model-404 combo fall-through + reasoning-echo rename RCA, 747c6ac, live pid 653:
+an omp session died twice on the free combo's tokenharbor/deepseek-v4.1-flash:free leg (raw request
+~/.omp/logs/http-400-requests/1789022741528-*.json). Root causes: (1) tokenharbor's catalog CHURNS on
+~10-min scales — deepseek-v4.1-flash left their live /v1/models mid-day (every key 404ed), came back by
+14:35; the first 404 was TERMINAL at Router.Execute (router.go:379 returned before the #72 bench could
+help), killing the whole combo with four healthy legs waiting. Fix: a 404 ModelScoped error now breaks
+to the next combo leg (attempt count stays at 1 — no account-pool burn); the 403 model_access family
+keeps its Fallbackable rotation contract (#48); direct routes surface the honest upstream 404/429.
+(2) When the model WAS live, DeepSeek's thinking contract rejected the history: omp (AI SDK) echoes
+assistant thinking as a plain "reasoning" key, DeepSeek demands reasoning_content ("The
+reasoning_content in the thinking mode must be passed back to the API.", isRetryable:false). Fix at two
+layers: same-format passthrough now renames the assistant echo (string → reasoning_content, null
+dropped) inside the normalizeRoles pass, and the streaming fast-path gate pins reasoning-bearing bodies
+to the buffered pipeline; a residual 400 of this shape (reasoningEcho400: message names reasoning_content
++ thinking mode) is marked Fallbackable (mirrors the always-thinking learn path) so Execute retries the
+target once and then falls through instead of ending the client session. Context facts: all six
+tokenharbor accounts are 429 free_tier_limit_reached on :free until 2026-09-17 (rolling 7-day allowance;
+429 is already Retryable/OverQuota so the ladder handles it); the 400's providerMetadata.gateway.routing
+envelope is tokenharbor's own (AI-SDK gateway, system deepseek credentials) passed through byte-for-byte.
+Tests: router 404 fall-through (attempt-count pinned, no pool burn), rename end-to-end incl. streaming
+gate + null-drop, contract-400 fall-through after one retry, direct-route terminal; all four mutation-
+checked (each neuter → red, restore → green); full suite 18/18. Zero-drop deployed via scripts/deploy.sh
+(marker check ok, pid 653 = /tmp/onegw-rca-bin); live probes: free-combo request with reasoning-bearing
+history → 200 (glm leg), direct tokenharbor/deepseek-v4.1-flash:free → honest 429 free-tier body.
+Earlier:)*
 *Last updated: 2026-09-10 (dashboard adaptive reflow at laptop sizes, 10e7929, live pid 55951:
 the fluid layout had no real laptop-width behavior — stat grids (.grid.c4/.c3 auto-fit minmax)
 orphaned the last card with dead space at half-screen widths, the <=767px folded nav strip
