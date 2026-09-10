@@ -201,7 +201,7 @@ html[data-theme="light"] { color-scheme: light; }
   .hdr .hactions a { @apply text-[12.5px] text-fg underline decoration-line underline-offset-4 hover:decoration-acc; }
   .hdr .hactions b { @apply font-bold text-fg; }
 
-  .content { @apply w-full flex-1 px-6 py-6; } /* full-width: cards stretch dynamically */
+  .content { @apply w-full min-w-0 flex-1 px-6 py-6; } /* full-width: cards stretch dynamically; min-w-0 lets a wide table (console log) scroll inside .tblwrap instead of pushing the rail off-screen */
 
   footer { @apply border-t border-line px-6 py-4 text-[11.5px] text-fg/75; }
 
