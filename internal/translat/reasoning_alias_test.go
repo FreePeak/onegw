@@ -93,3 +93,37 @@ func TestDecodeOpenAIStreamReasoningAlias(t *testing.T) {
 		t.Fatalf("reasoning alias delta lost: %+v", evs)
 	}
 }
+
+// Non-stream responses from AI-SDK resellers carry reasoning under the
+// vendor aliases (tee 001 live capture: commandcode answers with BOTH
+// "reasoning" and "reasoning_details"): the response decoder must surface
+// them as thinking, not drop them.
+func TestDecodeOpenAIResponseReasoningAlias(t *testing.T) {
+	resp, err := DecodeOpenAIResponse([]byte(`{"id":"g1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning":"thinking via alias"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range resp.Content {
+		if p.Type == types.PartThinking && p.Text == "thinking via alias" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("response reasoning alias dropped: %+v", resp.Content)
+	}
+
+	resp2, err := DecodeOpenAIResponse([]byte(`{"id":"g2","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"hi","reasoning_details":[{"type":"reasoning.text","text":"detail text"}]}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found2 := false
+	for _, p := range resp2.Content {
+		if p.Type == types.PartThinking && p.Text == "detail text" {
+			found2 = true
+		}
+	}
+	if !found2 {
+		t.Fatalf("response reasoning_details dropped: %+v", resp2.Content)
+	}
+}

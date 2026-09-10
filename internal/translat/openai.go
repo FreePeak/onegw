@@ -746,8 +746,8 @@ func DecodeOpenAIResponse(body []byte) (*types.ChatResponse, error) {
 		if txt := flattenOAContent(m.Content); txt != "" {
 			out.Content = append(out.Content, types.Part{Type: types.PartText, Text: txt})
 		}
-		if m.ReasoningContent != "" {
-			out.Content = append(out.Content, types.Part{Type: types.PartThinking, Text: m.ReasoningContent})
+		if r := reasoningEcho(m); r != "" {
+			out.Content = append(out.Content, types.Part{Type: types.PartThinking, Text: r})
 		}
 		for _, tc := range m.ToolCalls {
 			out.Content = append(out.Content, types.Part{

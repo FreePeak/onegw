@@ -713,16 +713,6 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 			}
 			apiErr.Fallbackable = true
 		}
-		if reasoningEcho400(apiErr) {
-			// DeepSeek-style thinking contract: the upstream refuses the
-			// HISTORY SHAPE (assistant reasoning not echoed back as
-			// reasoning_content), a per-model capability rejection of this
-			// target, not a malformed request — other combo legs serve the
-			// same body fine. Mark Fallbackable so Execute retries this
-			// target once (the same-format echo rewrite may now satisfy
-			// it) and then falls through instead of ending the session.
-			apiErr.Fallbackable = true
-		}
 		return nil, apiErr
 	}
 	return nil, s.relayResponse(w, res, def, model, clientFmt, upstreamFmt, stream, len(body), savedTokens, ak, ctx)
@@ -1195,7 +1185,10 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 // reasoning_content deltas) require it echoed back under that name —
 // renamed when present, dropped when null (live 2026-09-10: tokenharbor
 // deepseek 400 "The `reasoning_content` in the thinking mode must be
-// passed back to the API").
+// passed back to the API"). Same medicine for the remaining vendor aliases
+// (reasoning_text, the structured reasoning_details[] array pi replays for
+// commandcode-served turns): converted only when reasoning_content is
+// absent — the native echo already satisfies the contract.
 func normalizeRoles(body []byte) ([]byte, error) {
 	var root map[string]any
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -1224,6 +1217,24 @@ func normalizeRoles(body []byte) ([]byte, error) {
 					delete(m, "reasoning")
 					changed = true
 				}
+				if v, ok := m["reasoning_text"]; ok {
+					if s, isStr := v.(string); isStr && s != "" {
+						if _, has := m["reasoning_content"]; !has {
+							m["reasoning_content"] = s
+						}
+					}
+					delete(m, "reasoning_text")
+					changed = true
+				}
+				if v, ok := m["reasoning_details"]; ok {
+					if s := flattenReasoningDetails(v); s != "" {
+						if _, has := m["reasoning_content"]; !has {
+							m["reasoning_content"] = s
+							delete(m, "reasoning_details")
+							changed = true
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1239,6 +1250,38 @@ func normalizeRoles(body []byte) ([]byte, error) {
 		return body, nil
 	}
 	return out, nil
+}
+
+// flattenReasoningDetails joins the readable entries of an AI-SDK-style
+// reasoning_details array ([{type:"reasoning.text","text":"..."}, ...])
+// into one echo string; "" when the array carries nothing usable. Field
+// precedence text > content > summary mirrors translat.reasoningEcho.
+func flattenReasoningDetails(v any) string {
+	arr, ok := v.([]any)
+	if !ok {
+		return ""
+	}
+	var sb strings.Builder
+	for _, d := range arr {
+		m, ok := d.(map[string]any)
+		if !ok {
+			continue
+		}
+		t := ""
+		for _, k := range []string{"text", "content", "summary"} {
+			if s, isStr := m[k].(string); isStr && s != "" {
+				t = s
+				break
+			}
+		}
+		if t != "" {
+			if sb.Len() > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.WriteString(t)
+		}
+	}
+	return sb.String()
 }
 
 // coerceEffort maps reasoning_effort values onto the enum an
@@ -1282,19 +1325,6 @@ func alwaysThinking400(e *types.APIError) bool {
 		return true
 	}
 	return false
-}
-
-// reasoningEcho400 reports whether an upstream 400 is the DeepSeek-style
-// thinking-contract rejection: the history must echo prior assistant
-// reasoning back as `reasoning_content`, and the client (AI SDK) sent it
-// under a different name. Live shape (tokenharbor 2026-09-10, OpenAI
-// passthrough): "The `reasoning_content` in the thinking mode must be
-// passed back to the API." — isRetryable:false, so without the
-// Fallbackable mark the combo chain dies and the client session with it.
-func reasoningEcho400(e *types.APIError) bool {
-	return e != nil && e.Status == 400 &&
-		strings.Contains(e.Message, "reasoning_content") &&
-		strings.Contains(e.Message, "thinking mode")
 }
 
 // coerceAlwaysThinkingUnified applies the always-thinking adaptation to a
