@@ -1,3 +1,28 @@
+*Last updated: 2026-09-11 (throughput metrics + speed steering, 7567e41+ec958b9, live pid 70807:
+the user-reported throughput collapse (22 → 6 tok/s average) RCA'd with simultaneous 120-token
+streaming probes across every dev/free combo leg: b-ai/glm-5.3-flash — combo leg #1 — served
+~1.3 tok/s under the 22-inflight storm while commandcode did ~51 and glm (Zhipu direct) ~25,
+and tokenrouter ~4.3. Combos are order-locked, so an UP-BUT-CRAWLING leg never falls through
+(only hard errors do): the gateway average collapsed onto the paralyzed first leg. Meanwhile
+opencode (combo tail on both combos) answered 401 — a dead leg adding churn to every request
+that reaches it. Fixes, all live-deployed zero-drop (single listener, /admin/health 200):
+(1) provider/speed.go — decode-speed EWMA (output tokens / headers-to-relay-end, prefill
+excluded) per (provider, model), per account, and provider-wide; 25% fold-in, 200ms/4-token
+noise floor, 10-minute stale reset. (2) accountPool.next picks the FASTEST open slot
+(strictly-greater keeps round-robin fairness for equal/no-data speeds; sticky pinning and the
+429/RPM/flap gates untouched). (3) combo strategy = "fastest" (config-validated): Execute
+stable-sorts the chain by each leg's ModelTPS before the first attempt — no-data legs keep
+the configured order, nothing is removed from the chain; both live combos opted in (onegw.toml,
+hot-reloadable). (4) Instrumentation: logEntry ms+tps (200ms noise floor after a live probe
+caught 1.38M tok/s on sub-ms buffered replies — ec958b9 regression-tested), logs-page tok/s
+column, Overview throughput card (per-provider EWMA ranking), provider-card tok/s pills,
+onegw_provider_tokens_per_second_x100 gauge (scrape-refreshed). Live proof on the serving
+binary: streaming probe 300 tok / 3937ms = 76.2 tok/s on b-ai with attempts=1, ring rows
+46.6/39.6 tok/s on organic traffic, EWMA/gauge tracking. The storm itself has since subsided —
+b-ai currently decodes 40-76 tok/s; the steering matters when a leg degrades again, and the
+dashboard now makes degradation visible per provider/account instead of invisible inside an
+average. Known neighbor regression (NOT this change): TestCursorKindEndToEnd hangs since the
+peer's 7702820 h2 health pings (bisect-confirmed, #77). Earlier:)*
 *Last updated: 2026-09-11 (console-log page responsiveness, 9acf84e, live pid 88946:
 /admin/ui/logs reflowed like the rest of the shell — at >=1280 (rail visible) `.content` was a
 flex item without min-width:0, so the 10-column log table's ~1100px min-content width floored the
