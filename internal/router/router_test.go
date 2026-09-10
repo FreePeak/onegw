@@ -3,6 +3,11 @@ package router
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"onegw/internal/provider"
@@ -418,5 +423,99 @@ func TestResolveBareModelSkipsDisabled(t *testing.T) {
 	res, err := r.Resolve("unadvertised-model")
 	if err != nil || len(res.Targets) != 1 || res.Targets[0].Provider != "p2" {
 		t.Fatalf("bare model must skip the disabled p1: %v %v", res, err)
+	}
+}
+
+// Per-model lockout end-to-end through Execute with a REAL upstream (real
+// Def.Do against an httptest stub): p1's upstream answers Zhipu-style
+// 403 model_access_denied for model "blocked" when the call comes from key
+// k1 only, so account b stays healthy and proves that the second request's
+// zero-upstream-calls comes from the MODEL bench, not a cooling pool.
+//
+//  1. First combo [p1/blocked, p2/ok] request: the #48 gated rotation
+//     burns p1's benched key, p1/b serves, success (2 upstream hits on p1).
+//  2. Second combo request: p1/blocked is model-benched → skipped at
+//     target lookup with ZERO upstream calls; p2 serves.
+//  3. Sibling model p1/healthy still reaches p1's upstream — the model
+//     bench never poisons the account pool.
+//  4. Direct route p1/blocked: 503 provider_model_benched + Retry-After,
+//     still zero upstream calls.
+func TestExecuteSkipsModelBenchedTarget(t *testing.T) {
+	var p1Hits int32
+	p1up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		atomic.AddInt32(&p1Hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(raw), `"model":"blocked"`) &&
+			r.Header.Get("Authorization") == "Bearer k1" {
+			w.WriteHeader(403)
+			_, _ = w.Write([]byte(`{"error":{"code":"1211","message":"Model access denied for model blocked.","type":"model_access_denied"}}`))
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(p1up.Close)
+	p2up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(p2up.Close)
+
+	pool := provider.NewPool()
+	pool.Set(&provider.Def{Name: "p1", Kind: provider.KindOpenAI, BaseURL: p1up.URL,
+		Accounts: []provider.Account{{Name: "a", APIKey: "k1"}, {Name: "b", APIKey: "k2"}}})
+	pool.Set(&provider.Def{Name: "p2", Kind: provider.KindOpenAI, BaseURL: p2up.URL,
+		Accounts: []provider.Account{{Name: "c", APIKey: "k3"}}})
+	r := New(pool)
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "blocked"},
+			{Provider: "p2", Model: "ok"},
+		},
+	}})
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		return def.Do(ctx, acct, model, nil, strings.NewReader(`{"model":"`+model+`","messages":[]}`), false)
+	}
+	ctx := context.Background()
+
+	res, _ := r.Resolve("stack")
+	if got := r.Execute(ctx, res, caller, func(a any) {}); got != nil {
+		t.Fatalf("first combo should succeed via p1/b, got %v", got)
+	}
+	if hits := atomic.LoadInt32(&p1Hits); hits != 2 {
+		t.Fatalf("p1 upstream hits=%d after first combo, want 2 (k1 denied, k2 served)", hits)
+	}
+
+	// Second combo request: the model bench is consulted — no p1 attempt.
+	if got := r.Execute(ctx, res, caller, func(a any) {}); got != nil {
+		t.Fatalf("second combo should succeed via p2, got %v", got)
+	}
+	if hits := atomic.LoadInt32(&p1Hits); hits != 2 {
+		t.Fatalf("p1 upstream hits=%d after second combo, want still 2 — the model bench must skip the target with zero upstream calls", hits)
+	}
+
+	// Sibling model on p1 still served: the bench never poisons the pool.
+	resH, _ := r.Resolve("p1/healthy")
+	if got := r.Execute(ctx, resH, caller, func(a any) {}); got != nil {
+		t.Fatalf("sibling model should be served by p1, got %v", got)
+	}
+	if hits := atomic.LoadInt32(&p1Hits); hits != 3 {
+		t.Fatalf("p1 upstream hits=%d after sibling request, want 3", hits)
+	}
+
+	// Direct route to the benched model: honest 503 with Retry-After,
+	// still zero additional upstream calls.
+	resB, _ := r.Resolve("p1/blocked")
+	got := r.Execute(ctx, resB, caller, func(a any) {})
+	if got == nil || got.Status != 503 || got.Type != "provider_model_benched" {
+		t.Fatalf("direct benched route: got %v, want 503 provider_model_benched", got)
+	}
+	if got.RetryAfter == "" {
+		t.Fatal("Retry-After missing on provider_model_benched")
+	}
+	if hits := atomic.LoadInt32(&p1Hits); hits != 3 {
+		t.Fatalf("p1 upstream hits=%d after direct benched route, want still 3", hits)
 	}
 }

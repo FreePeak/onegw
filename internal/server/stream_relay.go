@@ -103,7 +103,12 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	if !ok || def.UpstreamFormat(t.Model) != clientFmt || def.AlwaysThinkingModel(t.Model) ||
 		// Cache-profile anchoring requires the buffered pipeline
 		// (issue #34): the raw fast path bypasses prepareUpstreamBody.
-		(def.CacheProfile != "" && def.CacheProfile != "none") {
+		(def.CacheProfile != "" && def.CacheProfile != "none") ||
+		// Per-model lockout: a benched model must be skipped by
+		// Router.Execute (503 provider_model_benched or combo
+		// fall-through), which this single-shot path cannot do —
+		// fall back to the buffered pipeline.
+		func() bool { b, _ := def.ModelBenched(t.Model); return b }() {
 		return s.streamFallback(r, prefix, whole)
 	}
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {

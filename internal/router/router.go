@@ -324,6 +324,23 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			lastErr = &types.APIError{Status: 503, Type: "provider_disabled", Message: "provider " + t.Provider + " is disabled"}
 			continue
 		}
+		if benched, ready := def.ModelBenched(t.Model); benched {
+			// Per-model lockout (BenchModel): Do benched this
+			// (provider, model) pair after a model-scoped upstream
+			// refusal (Zhipu model_access_denied 403, model_not_found
+			// 404). Skip the target with ZERO upstream attempts — the
+			// refusal indicts the model, not the account, so burning
+			// the pool re-discovers the same verdict once per key. A
+			// combo falls through to the next leg; a direct route
+			// surfaces an honest 503 whose Retry-After names the bench
+			// expiry (mirrors the disabled-provider contract above and
+			// DefaultPoolEmptyError's recovery hint).
+			lastErr = &types.APIError{Status: 503, Type: "provider_model_benched",
+				RetryAfter: strconv.FormatInt(int64(time.Until(ready).Seconds())+1, 10),
+				Message: fmt.Sprintf("provider %s: model %s benched until %s",
+					t.Provider, t.Model, ready.Format(time.RFC3339))}
+			continue
+		}
 		benched := 0 // gated 403s rotated this target (each benches one account)
 		// cause remembers why this target's pool drained: the last real
 		// upstream answer before pool-empty. A pool emptied by per-model
