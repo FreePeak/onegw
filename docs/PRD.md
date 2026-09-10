@@ -1,3 +1,12 @@
+*Last updated: 2026-09-10 (tokenharbor provider added live, config-only hot-reload into onegw.toml
+  — no code change, SIGHUP reload, pid 38997 unchanged. kind=openai, https://tokenharbor.ai/v1,
+  user-provided key; full 24-id catalog from live /v1/models incl. th-orchestra (their virtual
+  smart-router) and three :free ids; always_thinking = ["glm-5.3", "glm-5.3-flash"] per the GLM
+  1210 pattern (balance_zero gates paid models before thinking validation, so the coercion is
+  convention-based like b-ai). Appended last: colliding bare ids (glm-5.3, claude-*, gpt-5.6-*,
+  ...) keep first-provider resolution; reachable explicitly as tokenharbor/<id>. Live-verified:
+  tokenharbor/deepseek-v4.1-flash:free 200 PONG through the gateway; /v1/models advertises the
+  tokenharbor/* ids. Earlier:)*
 *Last updated: 2026-09-10 (providers grid + Kibana log table live, 2a37780, pid 38997 under
 hub record onegw-ui: (1) [[providers]] gained `disabled` — combos skip the target and fall
 through, direct routes answer honest 503 provider_disabled (not a 404), /v1/models stops
