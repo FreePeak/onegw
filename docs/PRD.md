@@ -1,3 +1,15 @@
+*Last updated: 2026-09-11 (console-log page responsiveness, 9acf84e, live pid 88946:
+/admin/ui/logs reflowed like the rest of the shell — at >=1280 (rail visible) `.content` was a
+flex item without min-width:0, so the 10-column log table's ~1100px min-content width floored the
+column and shoved `.rail` past the viewport (doc scrollWidth 1655 vs 1512 — page-level horizontal
+scroll while every other page stayed put); `.tblwrap`'s overflow-x-auto never engaged. Fix is
+shell-level: `.content` gained `min-w-0` in admin.src.css (static/admin.css rebuilt via
+dashboard-css.sh), so the table now scrolls inside `.logwrap`; the logs toolbar card also gained
+flex-wrap + max-w-full on the filter input (209px overflow at 390). Browser-verified at
+1512/1280/1024/756/640/390: pageOverflowX=0 on logs AND on every other shell page (overview/
+usage/combos/quota/saver/tools/settings); SSE live rows + filter/expand/pause re-verified
+post-deploy; zero-drop deployed. Known pre-existing outlier (not this fix): /admin/ui/settings
+overflows 80px at 390 — the hdr .hactions nowrap version string, shell-header-level. Earlier:)*
 *Last updated: 2026-09-10 (model-404 combo fall-through + reasoning-echo rename RCA, 747c6ac, live pid 653:
 an omp session died twice on the free combo's tokenharbor/deepseek-v4.1-flash:free leg (raw request
 ~/.omp/logs/http-400-requests/1789022741528-*.json). Root causes: (1) tokenharbor's catalog CHURNS on
@@ -1475,3 +1487,4 @@ h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall t
 fix/upstream-header-timeout; earlier: admin login lockout aligned to spec (24h after 5 failures,
 6790dba) — master pushed through 6790dba and live gateway redeployed zero-drop from it (pid in
 /admin/health); xai OAuth token still expired — re-auth in 9router then re-import)*
+
