@@ -32,6 +32,10 @@ Four neuters mutation-checked (classifier, stream alias, details conversion, res
 18/18. Live re-verified on commandcode/deepseek-v4-flash: multi-turn with reasoning_content AND with
 reasoning_details history → 200 non-stream and stream (upstream quirk noted: the stream path answers
 model deepseek-v4.1-flash for a v4-flash request — upstream-side aliasing, not the gateway).
+Remaining honest gap: the router fall-through itself (echo-400 → next combo leg) is unit- and
+mutation-proven but has not yet been observed live on a real storm-window refusal — the storm
+subsided mid-investigation, so the fix carries the same "unobserved live until recurrence" caveat
+as the original stamp.
 Context facts (unchanged from 747c6ac): all six tokenharbor accounts are 429 free_tier_limit_reached
 on :free until 2026-09-17 (rolling 7-day allowance; 429 is already Retryable/OverQuota so the ladder
 handles it); the 400's providerMetadata.gateway.routing envelope is tokenharbor's own (AI-SDK gateway,
