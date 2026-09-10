@@ -718,6 +718,12 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	return nil, s.relayResponse(w, res, def, model, clientFmt, upstreamFmt, stream, len(body), savedTokens, ak, ctx)
 }
 
+// speedFloor is the smallest decode window whose tokens/sec quotient is
+// reportable: it mirrors provider.minStreamTime — buffered non-stream
+// replies finish in sub-millisecond time, and tokens/0.0001s is not a
+// speed anyone actually decoded at.
+const speedFloor = 200 * time.Millisecond
+
 // relayResponse delivers an upstream response to the client: the buffered
 // cross-format path for non-streaming format mismatches, otherwise the
 // sniffed/translated pipe. Usage is recorded, TPM and quota observed. It
@@ -900,8 +906,13 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 	if !res.FirstByte.IsZero() && rec.OutputTokens > 0 {
 		d := time.Since(res.FirstByte)
 		def.ObserveSpeed(res.Acct, model, rec.OutputTokens, d)
-		ms = d.Milliseconds()
-		tps = float64(rec.OutputTokens) / d.Seconds()
+		// Same noise floor as the EWMA (provider speed.go): a buffered
+		// non-stream reply lands in sub-millisecond time, and
+		// tokens/0.0001s is not a speed anyone decoded at.
+		if d >= speedFloor {
+			ms = d.Milliseconds()
+			tps = float64(rec.OutputTokens) / d.Seconds()
+		}
 	}
 	label := ""
 	if ak != nil {
