@@ -1,3 +1,13 @@
+*Last updated: 2026-09-10 (dashboard adaptive reflow at laptop sizes, 10e7929, live pid 55951:
+the fluid layout had no real laptop-width behavior — stat grids (.grid.c4/.c3 auto-fit minmax)
+orphaned the last card with dead space at half-screen widths, the <=767px folded nav strip
+clipped links mid-word, and 768-1279px windows got no intermediate handling. Changes (CSS only,
+admin.src.css + rebuilt static/admin.css): explicit 4/3/2/1 column breakpoints for c4/c3 (2x2
+packing below 1280, single column below 640), .grid.c3 odd-tail card spans the full row via
+nth-child(odd), folded nav wraps instead of clipping, cards became inline-size containers so
+.kv key-value lists restack when the card itself is narrow (3-up rows at 1280, ~300px provider
+cards). Desktop >=1280 layout unchanged. Browser-verified headless-Chrome at 756/1024/1280/1512
+against live-served bytes; full suite green. Earlier:)*
 *Last updated: 2026-09-10 (b-ai TPM-wall 429 RCA + classifier fix, 103c253, live pid 56684:
 console burst 11:10-11:15 showed a THIRD b-ai 429 class alongside the two known ones —
 "The request rate exceeds the current model TPM limit 340000000" (kind gateway_error).
