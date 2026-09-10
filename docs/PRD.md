@@ -1,3 +1,22 @@
+*Last updated: 2026-09-10 (router direct-route table fix — failure-row model labels, live
+deploy pending: the apply() wiring called rt.SetModels(p.Models) once PER PROVIDER, but
+SetModels REPLACES the table wholesale and drops slash-less routes — so with tokenharbor
+(all-bare ids) last in onegw.toml the direct-route table ended up EMPTY, and failure rows
+for every provider whose advertised ids carry non-provider slash prefixes (tokenrouter
+z-ai/glm-5.3-free, commandcode deepseek/…, orcarouter …, kilocode …) collapsed to
+"unresolved" (live: seq 204/211 tokenrouter 504 TLS-handshake-timeout rows logged model
+"unresolved" while identical success rows showed the real model — success rows bypass
+boundedModel). The 2026-09-09 label-honesty fix (TestKnownModelAdvertisedSlashModel) was
+wired out of existence the same way: its test called SetModels once with a merged list, so
+it never saw the production loop. Fix: aggregate ALL providers' models into one qualified
+SetModels call (name+"/"+id). Bare-model first-provider-wins routing was never broken
+(empty table → pool-order fallback, b-ai first). Wiring regression test mirrors the live
+shape (slash-model provider first, all-bare provider last), mutation-checked (old loop →
+red, restored → green); full suite 18/18 green. Root cause of the 504 itself: transient
+api.tokenrouter.com TLS-handshake blackhole (two accounts, exactly 10s apart = the hardcoded
+TLSHandshakeTimeout; b-ai served 200s in the same seconds; tokenharbor 120s header budgets
+overlapped the same window) — classification/retry/fall-through behaved per contract, no
+code change needed there. Earlier:)*
 *Last updated: 2026-09-10 (tokenharbor multi-account rotation live-verified, config-only:
 provider grew to six [[providers.accounts]] (linh, harvey, clone2, kisame, linh.mn @ rpm=3
 each, clone1 rpm=0 uncapped) — plain round-robin pool, no code change, hot reloads only.
