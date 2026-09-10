@@ -250,6 +250,55 @@ func TestExecuteFallbackableRetriesThenFallsThrough(t *testing.T) {
 // upstream attempt (zero calls against the cooling provider), and a
 // single-target route must surface 429 + Retry-After naming the pool's
 // recovery.
+
+// Live 2026-09-10 (commandcode/deepseek/deepseek-v4-flash seqs 2455/2621/2812):
+// the DeepSeek thinking-mode reasoning-echo 400 is a deterministic body-contract
+// verdict against THIS target — same-target retries replay the identical body,
+// so the combo must fall straight through to the sibling deepseek leg, and a
+// direct route must surface the 400 honestly.
+func TestExecuteFallsThroughOnReasoningEcho400(t *testing.T) {
+	r := New(newTestPool())
+	r.SetCombos([]*Combo{{
+		Name:    "free",
+		Targets: []Target{{Provider: "p1", Model: "deepseek/deepseek-v4-flash"}, {Provider: "p2", Model: "deepseek-v4-flash"}},
+	}})
+	res, _ := r.Resolve("free")
+	if res == nil {
+		t.Fatal("resolve free failed")
+	}
+	echo := &types.APIError{Status: 400, Type: "AI_APICallError",
+		Message: "The `reasoning_content` in the thinking mode must be passed back to the API."}
+	var calls [2]int
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		i := 0
+		if def.Name == "p2" {
+			i = 1
+		}
+		calls[i]++
+		if def.Name == "p1" {
+			return nil, echo
+		}
+		return "ok", nil
+	}
+	if err := r.Execute(context.Background(), res, caller, func(a any) {}); err != nil {
+		t.Fatalf("expected fall-through success: %v", err)
+	}
+	if calls != [2]int{1, 1} {
+		t.Fatalf("calls=%v, want [1 1] (no same-target retry on a deterministic 400)", calls)
+	}
+
+	// Direct route: nothing to fall through to — the 400 surfaces as-is.
+	r2 := New(newTestPool())
+	r2.SetCombos([]*Combo{{Name: "solo", Targets: []Target{{Provider: "p1", Model: "m"}}}})
+	res2, _ := r2.Resolve("solo")
+	err := r2.Execute(context.Background(), res2, func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		return nil, echo
+	}, func(a any) {})
+	if err == nil || err.Status != 400 || err != echo {
+		t.Fatalf("direct route must surface the 400 honestly, got %v", err)
+	}
+}
+
 func TestExecuteFallsThroughOnCoolingPool(t *testing.T) {
 	p := provider.NewPool()
 	def := &provider.Def{
