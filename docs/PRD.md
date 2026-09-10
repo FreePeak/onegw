@@ -1,6 +1,22 @@
-*Last updated: 2026-09-10 (router direct-route table fix — failure-row model labels, live
-deploy pending: the apply() wiring called rt.SetModels(p.Models) once PER PROVIDER, but
-SetModels REPLACES the table wholesale and drops slash-less routes — so with tokenharbor
+*Last updated: 2026-09-10 (tokenrouter usage accounting fix — sniffer max-over-matches,
+24e9bb5, live pid 56241: seq 516 RCA — every tokenrouter/z-ai-glm-5.3-free 200 logged
+out=0/cached=0 with input=bodyLen/4 (12 of 12 ring rows). Root cause: tokenrouter's stream
+usage chunk (new-api shape) appends zero-valued vendor aliases AFTER the real counts
+("prompt_tokens":10,…,"input_tokens":0,"output_tokens":0); the sniffer's lastMatch took the
+LAST regex occurrence in the tail, zeroed every count, left seen=false, and relayResponse
+fell into the bodyLen/4 estimate. Live-probe confirmed upstream emits usage with AND without
+stream_options.include_usage, so nothing was lost upstream — it was discarded at parse.
+Fix: lastMatch → maxMatch (max across all matches in the window), mirroring the
+cross-window running maxima extract() already kept; counts grow monotonically within one
+response. Regression tests pin the verbatim tokenrouter chunk (buffered + SSE), mutation-
+checked (restored last-match → both fail with the exact production symptom "usage marker
+not seen"); full suite green; zero-drop deployed from archive of 24e9bb5 (scripts/deploy.sh
+--binary, pid 56241); live behavioral proof: tokenrouter streaming request now logs
+in=583 out=2 (real sniffed values; 583 = ponytail inject ~566 + client 17). Earlier:)*
+*Last updated: 2026-09-10 (router direct-route table fix live, c9b320d (deployed zero-drop as
+pid 75127, then superseded by peer's 24e9bb5 deploy, pid 56241 — same lineage): the apply()
+wiring called rt.SetModels(p.Models) once PER PROVIDER, but SetModels REPLACES the table wholesale and
+drops slash-less routes — so with tokenharbor
 (all-bare ids) last in onegw.toml the direct-route table ended up EMPTY, and failure rows
 for every provider whose advertised ids carry non-provider slash prefixes (tokenrouter
 z-ai/glm-5.3-free, commandcode deepseek/…, orcarouter …, kilocode …) collapsed to
@@ -12,7 +28,10 @@ it never saw the production loop. Fix: aggregate ALL providers' models into one 
 SetModels call (name+"/"+id). Bare-model first-provider-wins routing was never broken
 (empty table → pool-order fallback, b-ai first). Wiring regression test mirrors the live
 shape (slash-model provider first, all-bare provider last), mutation-checked (old loop →
-red, restored → green); full suite 18/18 green. Root cause of the 504 itself: transient
+red, restored → green); full suite 18/18 green. Live-verified on the serving binary: tokenrouter
+failure rows (500 api_error from an upstream-rejected body) now log model "z-ai/glm-5.3-free"
+with provider tokenrouter, where the seq-204 shape logged "unresolved"; tokenrouter 200s with
+real cache_read confirm the TLS blackhole itself had long passed. Root cause of the 504 itself: transient
 api.tokenrouter.com TLS-handshake blackhole (two accounts, exactly 10s apart = the hardcoded
 TLSHandshakeTimeout; b-ai served 200s in the same seconds; tokenharbor 120s header budgets
 overlapped the same window) — classification/retry/fall-through behaved per contract, no
