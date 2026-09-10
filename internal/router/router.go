@@ -377,6 +377,20 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			cause = err
 			def.Unpin(id) // a failed attempt must not keep its pin
 			if !(err.Retryable() || err.RegionLocked() || err.Fallbackable) {
+				if err.Status == 404 && err.ModelScoped() {
+					// Catalog-level verdict (tokenharbor 2026-09-10:
+					// deepseek-v4.1-flash left their live catalog mid-day —
+					// every key of the pool re-discovers the same 404): Do
+					// already benched the (provider, model) pair, so rotating
+					// accounts or retrying can only re-burn the pool. The
+					// refusal indicts THIS target only — fall through to the
+					// next combo leg; a direct route ends the chain here and
+					// surfaces the upstream 404 honestly. The 403
+					// model_access family deliberately stays on the
+					// Fallbackable rotation path below: a sibling account can
+					// still serve the same model (#48).
+					break
+				}
 				return err
 			}
 			if err.Fallbackable && err.Status == 403 {

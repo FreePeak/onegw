@@ -432,7 +432,12 @@ func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 			}
 			i = after
 		case "messages":
-			if hasDeveloperRole(prefix[i:]) {
+			// normalizeRoles triggers: a role:"developer" entry, or any
+			// assistant "reasoning" echo key (the same-format rename needs
+			// the full body). The literal `"reasoning"` also matches
+			// string content and a trailing "reasoning_effort" — over-
+			// matching only costs the fast path, never correctness.
+			if hasDeveloperRole(prefix[i:]) || bytes.Contains(prefix[i:], []byte(`"reasoning"`)) {
 				sc.ineligible = true
 			}
 			after, ok := skipJSONValue(prefix, i)
