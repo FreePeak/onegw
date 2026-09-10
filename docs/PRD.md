@@ -1,3 +1,23 @@
+*Last updated: 2026-09-10 (fanout wave 1 live, 0dc852a, pid 32476 under hub record onegw-fanout:
+three OmniRoute-inspired features built in parallel worktrees (.worktrees/feat-*) by three
+subagents, merged clean, 18/18 packages green, issues #71/#72/#73 closed by merge:
+(1) X-OneGW-Decision response header (issue #71) — every proxied response carries
+`provider=<p>; account=<a>; model=<m>; attempts=<n>`, stamped pre-body-write at the three
+upstream-call choke points (attempt/proxyStream/passthroughCall) so combo fallback names the
+winning leg; live-verified on the dev combo. (2) Idempotency-Key dedup (issue #73) — new
+internal/idempotency bounded LRU (128 entries default, 1 MiB/entry + 4 MiB global body
+budget ≈ hard 4.3 MiB worst case), [server] idempotency_ttl (default 5s, off/false/0
+disables) + idempotency_cache; identical key+body within TTL coalesces in-flight and replays
+the buffered non-stream response (Idempotency-Replayed: true), streams answer 409
+idempotency_conflict on retry; scope = sha256(credential) hash, no secrets stored;
+live-verified (req2 replayed, upstream hit once). (3) Per-model lockout (issue #72) —
+APIError.ModelScoped() classifies 403 model-naming access-denied and 404 model_not_found
+(deposit gates and ALL 429s stay account-scoped, #48 contract byte-identical);
+Def.BenchModel/ModelBenched map (5m TTL, 256-entry cap) benched at Do's error exit;
+Execute skips benched targets (combo fall-through, direct 503 provider_model_benched with
+Retry-After); stream fast path consults the bench. Mutation-checked per feature; live
+probe confirmed 402 deposit-gate correctly does NOT model-bench. Remaining copy-list items
+tracked as issues #69 (USD quotas), #70 (combo strategies), #74 (quota-share). Earlier:)*
 *Last updated: 2026-09-10 (tokenharbor provider added live, config-only hot-reload into onegw.toml
   — no code change, SIGHUP reload, pid 38997 unchanged. kind=openai, https://tokenharbor.ai/v1,
   user-provided key; full 24-id catalog from live /v1/models incl. th-orchestra (their virtual
