@@ -22,8 +22,9 @@ type Target struct {
 
 // Combo is an ordered fallback chain of targets.
 type Combo struct {
-	Name    string   `toml:"name"`
-	Targets []Target `toml:"targets"`
+	Name     string   `toml:"name"`
+	Targets  []Target `toml:"targets"`
+	Strategy string   `toml:"strategy"`
 }
 
 // Router resolves model strings and executes calls with fallback.
@@ -217,6 +218,10 @@ type Resolution struct {
 	Targets []Target // provider/model pairs, fallback order
 	IsCombo bool
 	Model   string // the client-facing model string that resolved (task-log label)
+	// SpeedOrder marks a combo whose config declares strategy = "fastest":
+	// Execute stable-sorts the targets by recent decode speed before the
+	// first attempt (unknown speeds keep the configured order).
+	SpeedOrder bool
 }
 
 // Resolve maps a client model string to an ordered target list.
@@ -251,7 +256,7 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 	}
 	if c, ok := r.combos[strings.ToLower(lookup)]; ok {
-		return &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true, Model: lookup}, nil
+		return &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true, Model: lookup, SpeedOrder: c.Strategy == "fastest"}, nil
 	}
 	model = lookup
 	if dr, ok := r.models[strings.ToLower(model)]; ok {
@@ -307,6 +312,12 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 	// routing is on and the caller tagged request signals; the full
 	// fallback chain is preserved — only the order changes.
 	r.applyTaskRouting(ctx, res)
+	// Throughput steering (combo strategy = "fastest"): same contract —
+	// a stable re-sort by each leg's recent decode speed; legs with no
+	// speed data keep the configured order, and nothing is removed.
+	if res.IsCombo && res.SpeedOrder {
+		r.reorderBySpeed(res)
+	}
 	var lastErr *types.APIError
 	id := IdentityFrom(ctx)
 	for _, t := range res.Targets {

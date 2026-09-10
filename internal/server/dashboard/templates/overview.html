@@ -15,6 +15,17 @@
 </div>
 
 <div class="grid c3">
+  <div class="card"><h3>Throughput <span class="sub normal-case">tokens/s · decode EWMA</span></h3>
+    {{if .TPS}}
+    <div class="big">{{printf "%.1f" .TPSTotal}} <span class="text-mut">tok/s avg</span></div>
+    <table class="mt-3 w-full text-[13px]">
+      <thead><tr><th class="text-left font-normal text-mut">provider</th><th class="text-right font-normal text-mut">tok/s</th><th class="text-right font-normal text-mut">samples</th></tr></thead>
+      <tbody>{{range .TPS}}
+        <tr><td class="mono">{{.Account}}</td><td class="num mono">{{printf "%.1f" .TPS}}</td><td class="num mono text-mut">{{.Samples}}</td></tr>
+      {{end}}</tbody>
+    </table>
+    {{else}}<div class="sub mt-2">no speed data yet — the EWMA fills after a few streaming replies</div>{{end}}
+  </div>
   <div class="card"><h3>Memory budget</h3>
     <div class="big" id="lv-budget">{{.Budget}}</div>
     <div class="sub">held bytes of {{.BudgetCap}} cap · {{.BudgetWaiting}} waiting · {{.BudgetRejected}} rejected (503)</div>

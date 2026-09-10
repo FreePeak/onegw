@@ -329,6 +329,29 @@ func (r *Router) applyTaskRouting(ctx context.Context, res *Resolution) {
 	}
 }
 
+// reorderBySpeed stable-sorts res.Targets by each leg's recent decode
+// speed (tokens/sec EWMA, provider speed.go), fastest first. Legs with no
+// speed data report 0 and keep the configured order among themselves; the
+// full chain is preserved — only the order changes.
+func (r *Router) reorderBySpeed(res *Resolution) {
+	type scored struct {
+		t Target
+		s float64
+	}
+	order := make([]scored, len(res.Targets))
+	for i, t := range res.Targets {
+		s := 0.0
+		if def, ok := r.pool.Get(t.Provider); ok {
+			s = def.ModelTPS(t.Model)
+		}
+		order[i] = scored{t, s}
+	}
+	sort.SliceStable(order, func(i, j int) bool { return order[i].s > order[j].s })
+	for i := range order {
+		res.Targets[i] = order[i].t
+	}
+}
+
 // reorderByTask stable-sorts res.Targets so the best fit comes first:
 // equal scores keep the original order, and no target is ever removed.
 func (r *Router) reorderByTask(res *Resolution, task Task) {

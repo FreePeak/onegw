@@ -72,3 +72,19 @@ func TestResponseHeaderTimeoutDur(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateComboStrategy(t *testing.T) {
+	ok := []string{"", "order", "fastest"}
+	for _, s := range ok {
+		c := &Config{Providers: []ProviderCfg{{Name: "b", Kind: "openai", APIKey: "k"}}, Combos: []ComboCfg{{Name: "c", Targets: []string{"b/m"}, Strategy: s}}}
+		if err := c.Validate(); err != nil {
+			t.Fatalf("strategy %q must pass: %v", s, err)
+		}
+	}
+	for _, s := range []string{"speed", "FASTEST", "auto"} {
+		c := &Config{Providers: []ProviderCfg{{Name: "b", Kind: "openai", APIKey: "k"}}, Combos: []ComboCfg{{Name: "c", Targets: []string{"b/m"}, Strategy: s}}}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "strategy") {
+			t.Fatalf("strategy %q must be rejected naming the knob: %v", s, err)
+		}
+	}
+}

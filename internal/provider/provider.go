@@ -248,6 +248,8 @@ type Def struct {
 	pool     *accountPool
 	inflight chan struct{}
 
+	speed speedState // decode-speed EWMAs (speed.go): per-model + provider-wide
+
 	// learnedAT records models discovered at runtime to reject
 	// thinking-effort/disable knobs (GLM 1210-family 400) even though they
 	// are not listed in AlwaysThinking. Learned state lives on the Def on
@@ -692,6 +694,7 @@ type accountState struct {
 	cooldown time.Time    // until when the account is skipped
 	strikes  int          // consecutive 429s (adaptive ladder); reset on success
 	bucket   *tokenBucket // RPM governor; nil = uncapped (shared across slots)
+	speed    speedSample  // recent decode speed of this account (tokens/sec)
 }
 
 // tokenBucket is a refill bucket enforcing Account.RPM. Capacity is two
@@ -837,21 +840,36 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	var ready time.Time // soonest cooldown expiry / bucket refill among blocked accounts
 	anyOpen := false    // some slot passes its own gates but the shared budget is empty
 	sharedReady := p.sharedReady(now)
+	// Scan every slot (the pool is small) and take the FASTEST open one:
+	// accounts carry a decode-speed EWMA (speed.go), so once real samples
+	// exist traffic prefers the quicker credential while its own gates
+	// (cooldown, RPM bucket) are open — the per-account ladder still
+	// spreads load the moment the fast key hits a wall. Strictly-greater
+	// comparison keeps round-robin order among equal and no-data speeds,
+	// so a fresh pool behaves exactly like the old first-open pick.
+	best := -1 // index offset from start of the fastest open slot
 	for i := range n {
 		s := &p.accts[(start+i)%n]
 		if ok, r := p.available(s, now); ok {
 			if sharedReady.IsZero() {
-				p.grant(s, now)
-				p.rr = (uint64(start+i) + 1) % uint64(n)
-				p.pin(id, &s.acct, now)
-				return &s.acct, time.Time{}
+				if best < 0 || s.speed.tps() > p.accts[(start+best)%n].speed.tps() {
+					best = i
+				}
+			} else {
+				anyOpen = true // could serve at the shared refill — but not before
 			}
-			anyOpen = true // could serve at the shared refill — but not before
 		} else if !r.IsZero() {
 			if ready.IsZero() || r.Before(ready) {
 				ready = r
 			}
 		}
+	}
+	if best >= 0 {
+		s := &p.accts[(start+best)%n]
+		p.grant(s, now)
+		p.rr = (uint64(start+best) + 1) % uint64(n)
+		p.pin(id, &s.acct, now)
+		return &s.acct, time.Time{}
 	}
 	if !sharedReady.IsZero() {
 		// Shared budget empty: no account can attempt before the refill.
@@ -1205,6 +1223,10 @@ type CallResult struct {
 	Resp   *http.Response
 	Format translat.Format
 	Acct   *Account
+	// FirstByte is when the upstream response HEADERS arrived. The server
+	// measures decode speed (tokens/sec) from here to relay end — the
+	// streaming phase proper, prefill excluded.
+	FirstByte time.Time
 }
 
 // Path builds the upstream URL path for a kind from the client's path
@@ -1490,7 +1512,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 	}
 	d.pool.ok(acct)   // success resets the 429 ladder
 	d.pool.flapHeal() // and closes the flap breaker: the edge is serving
-	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct}, nil
+	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct, FirstByte: time.Now()}, nil
 }
 
 // DoPassthrough performs one upstream call for a passthrough surface

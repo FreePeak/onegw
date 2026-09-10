@@ -13,6 +13,7 @@
     <h3 class="normal-case text-[14px] tracking-[-0.01em] text-fg">{{.Name}}</h3>
     {{if .Disabled}}<span class="pill warn">off</span>{{end}}
     <span class="pill ml-auto">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
+    {{if .TPS}}<span class="pill" title="decode-speed EWMA · {{range .Speeds}}{{.Account}} {{printf "%.0f" .TPS}} · {{end}}">{{printf "%.1f" .TPS}} tok/s</span>{{end}}
     <button class="rowact" data-edit="{{.Name}}" type="button" title="edit provider {{.Name}}" aria-label="edit provider {{.Name}}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round"/></svg>
     </button>

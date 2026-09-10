@@ -20,12 +20,13 @@
       <th class="w-[110px]">kind</th>
       <th class="num w-[76px]">in</th>
       <th class="num w-[76px]">out</th>
+      <th class="num w-[86px]">tok/s</th>
       <th class="num w-[80px]">cached</th>
       <th class="num w-[76px]">saved</th>
       <th>error</th>
     </tr>
   </thead>
-  <tbody id="logbody"><tr><td colspan="10" class="empty">loading…</td></tr></tbody>
+  <tbody id="logbody"><tr><td colspan="12" class="empty">loading…</td></tr></tbody>
 </table>
 </div>
 {{end}}
@@ -60,7 +61,7 @@
     if (e.provider) parts.push('provider ' + e.provider);
     if (e.model) parts.push('model ' + e.model);
     if (e.account) parts.push('account ' + e.account);
-    parts.push('in ' + e.in + ' · out ' + e.out + ' · cached ' + e.cache_read + ' · saved ' + e.saved);
+    parts.push('in ' + e.in + ' · out ' + e.out + ' · cached ' + e.cache_read + ' · saved ' + e.saved + (e.ms ? ' · ' + e.ms + 'ms' : ''));
     if (e.err) parts.push('error ' + e.err);
     return esc(parts.join('\n'));
   }
@@ -80,13 +81,14 @@
       '<td class="text-mut">' + (e.kind ? esc(e.kind) : '') + '</td>' +
       '<td class="num mono">' + kfmt(e.in) + '</td>' +
       '<td class="num mono">' + kfmt(e.out) + '</td>' +
+      '<td class="num mono" title="' + (e.ms||0) + ' ms decode">' + (e.tps ? e.tps.toFixed(1) : '') + '</td>' +
       '<td class="num mono">' + kfmt(e.cache_read) + '</td>' +
       '<td class="num mono">' + kfmt(e.saved) + '</td>' +
       '<td class="err mono">' + (e.err ? '<span title="' + escq(e.err) + '">' + esc(short(e.err)) + '</span>' : '') + '</td>';
     const det = document.createElement('tr');
     det.className = 'det';
     det.style.display = 'none';
-    det.innerHTML = '<td colspan="10"><div class="detbody mono">' + detText(e) + '</div></td>';
+    det.innerHTML = '<td colspan="12"><div class="detbody mono">' + detText(e) + '</div></td>';
     row.onclick = () => { det.style.display = det.style.display === 'none' ? '' : 'none'; };
     frag.appendChild(row);
     frag.appendChild(det);
@@ -96,7 +98,7 @@
     body.innerHTML = '';
     let shown = 0;
     for (const e of entries) { if (matches(e)) { body.appendChild(tr(e)); shown++; } }
-    if (!shown) body.innerHTML = '<tr><td colspan="10" class="empty">' + (entries.length ? 'no rows match the filter' : 'no requests logged yet') + '</td></tr>';
+    if (!shown) body.innerHTML = '<tr><td colspan="12" class="empty">' + (entries.length ? 'no rows match the filter' : 'no requests logged yet') + '</td></tr>';
     stat.textContent = (paused ? 'paused · ' : 'streaming live · ') + entries.length + ' rows · last seq ' + last;
     stick();
   }

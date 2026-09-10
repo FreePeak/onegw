@@ -248,7 +248,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			prov, model, _ := strings.Cut(t, "/")
 			targets = append(targets, router.Target{Provider: prov, Model: model})
 		}
-		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets})
+		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets, Strategy: c.Strategy})
 	}
 	rt.SetCombos(combos)
 	rt.SetTaskRouting(cfg.TaskRoutingOn())
@@ -257,7 +257,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		// classifier changed (model field = client model, kind =
 		// "task_routing", err = decision detail).
 		rt.TaskLog = func(model, detail string) {
-			s.observeLog("", model, "", 0, "task_routing", types.Usage{}, 0, detail)
+			s.observeLog("", model, "", 0, "task_routing", types.Usage{}, 0, detail, 0, 0)
 		}
 	}
 	rt.SetAliases(cfg.Aliases)
@@ -891,6 +891,18 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		rec.Estimated = true
 		rec.InputTokens = int64(reqBodyLen) / 4
 	}
+	// Decode speed: from upstream response headers to relay end — the
+	// streaming phase proper, prefill excluded. Feeds the per-model /
+	// per-account EWMA (combo + account steering) and the #19 ring's
+	// tokens/sec column. Synthetic CallResults (search, cursor) carry no
+	// FirstByte and are skipped.
+	ms, tps := int64(0), 0.0
+	if !res.FirstByte.IsZero() && rec.OutputTokens > 0 {
+		d := time.Since(res.FirstByte)
+		def.ObserveSpeed(res.Acct, model, rec.OutputTokens, d)
+		ms = d.Milliseconds()
+		tps = float64(rec.OutputTokens) / d.Seconds()
+	}
 	label := ""
 	if ak != nil {
 		label = ak.Label()
@@ -900,7 +912,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 	if q := s.cur().quota; q != nil {
 		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
 	}
-	s.m.success(def.Name, model, acctName(res.Acct), rec, savedTokens)
+	s.m.success(def.Name, model, acctName(res.Acct), rec, savedTokens, ms, tps)
 	return nil
 }
 

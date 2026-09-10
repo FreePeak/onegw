@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"onegw/internal/config"
+	"onegw/internal/provider"
 	"onegw/internal/server/dashboard"
 	"onegw/internal/store"
 	"onegw/internal/types"
@@ -235,6 +236,10 @@ type logEntry struct {
 	CacheRead int64  `json:"cache_read,omitempty"`
 	Saved     int64  `json:"saved,omitempty"`
 	Err       string `json:"err,omitempty"`
+	// Decode phase of the serving attempt: duration in ms and output
+	// tokens/sec (0 when unknown — failures, synthetic replies).
+	Ms  int64   `json:"ms,omitempty"`
+	Tps float64 `json:"tps,omitempty"`
 }
 
 type requestLog struct {
@@ -314,19 +319,17 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // observeLog is the single hook the proxy paths call on completion.
-func (s *Server) observeLog(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string) {
+// ms/tps carry the decode phase's duration and tokens/sec (0 = unknown).
+func (s *Server) observeLog(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64) {
 	if s.reqlog == nil {
 		return
 	}
 	s.reqlog.record(logEntry{
 		TS: time.Now().Unix(), Model: model, Provider: provider, Account: acct, Code: code, Kind: kind,
 		In: u.InputTokens, Out: u.OutputTokens, CacheRead: u.CacheReadTokens, Saved: saved, Err: errMsg,
+		Ms: ms, Tps: tps,
 	})
 }
-
-// ---------------------------------------------------------------------------
-// Page handlers
-// ---------------------------------------------------------------------------
 
 var navItems = []dashboard.NavItem{
 	{ID: "overview", Href: "/admin", Label: "Overview", Group: "Monitor"},
@@ -490,6 +493,10 @@ type overviewData struct {
 	NumGC                                   uint32
 	LiveJSON                                string
 	ChartJSON                               template.JS // today's hourly token chart
+	// TPS is the per-provider decode-speed ranking (tokens/sec EWMA,
+	// fastest first); TPSTotal is the whole-gateway average.
+	TPS      []provider.SpeedRow
+	TPSTotal float64
 }
 
 // overviewView assembles the Overview page data.
@@ -520,6 +527,24 @@ func (s *Server) overviewView() *overviewData {
 					v.QuotaExhausted++
 				}
 			}
+		}
+		// Decode-speed ranking: providers with samples, fastest first —
+		// the Overview throughput card.
+		for _, name := range st.pool.Names() {
+			if d, ok := st.pool.Get(name); ok && !d.Disabled {
+				if tps := d.ProviderTPS(); tps > 0 {
+					v.TPS = append(v.TPS, provider.SpeedRow{Account: name, TPS: tps, Samples: d.SpeedSamples()})
+				}
+			}
+		}
+		sort.Slice(v.TPS, func(i, j int) bool { return v.TPS[i].TPS > v.TPS[j].TPS })
+		var wsum, w float64
+		for _, r := range v.TPS {
+			wsum += r.TPS
+			w++
+		}
+		if w > 0 {
+			v.TPSTotal = wsum / w
 		}
 		if st.budget != nil {
 			held, rejected := st.budget.Stats()
@@ -872,6 +897,10 @@ type providerView struct {
 	Quota       string   `json:"quota,omitempty"`
 	QuotaLimit  string   `json:"quota_limit,omitempty"`
 	Models      []string `json:"models,omitempty"`
+	// Decode-speed EWMA (tokens/sec) and per-account breakdown; empty
+	// until the provider has served streaming replies.
+	TPS    float64             `json:"tps,omitempty"`
+	Speeds []provider.SpeedRow `json:"speeds,omitempty"`
 }
 
 func providerViews(st *state) []providerView {
@@ -887,6 +916,10 @@ func providerViews(st *state) []providerView {
 		v := providerView{
 			Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL,
 			Accounts: n, Models: p.Models, Sticky: p.Sticky, Disabled: p.Disabled,
+		}
+		if def, ok := st.pool.Get(p.Name); ok {
+			v.TPS = def.ProviderTPS()
+			v.Speeds = def.SpeedRows()
 		}
 		if p.MaxConc > 0 {
 			v.Concurrency = fmt.Sprintf("max %d concurrent", p.MaxConc)

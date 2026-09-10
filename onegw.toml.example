@@ -174,6 +174,10 @@ targets = ["search/query", "b-ai/mimo-v2.5"]
 [[combo]]
 name = "coding-stack"
 targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/deepseek/deepseek-v3.2"]
+# strategy = "fastest" reorders the chain per request by each leg's recent
+# decode speed (tokens/sec EWMA, shown on the dashboard Overview). Legs
+# with no speed data keep the configured order; nothing is ever removed
+# from the chain. Default "" keeps the configured sequence verbatim.
 
 # Model tiering (issue #44 step 1, config-only): define a cheap combo and a
 # strong combo, then point the agent CLI's role slots at them (smol/tiny ->

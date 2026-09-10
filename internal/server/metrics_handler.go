@@ -27,6 +27,7 @@ type gatewayMetrics struct {
 	budgetHeld *metrics.Family // onegw_budget_inflight_bytes
 	budgetCap  *metrics.Family // onegw_budget_cap_bytes
 	uptime     *metrics.Family // onegw_uptime_seconds
+	provTPS    *metrics.Family // onegw_provider_tokens_per_second_x100
 }
 
 func newGatewayMetrics() *gatewayMetrics {
@@ -41,12 +42,13 @@ func newGatewayMetrics() *gatewayMetrics {
 		budgetHeld: reg.Gauge("onegw_budget_inflight_bytes", "Bytes currently reserved under the global buffered-memory budget."),
 		budgetCap:  reg.Gauge("onegw_budget_cap_bytes", "Capacity of the global buffered-memory budget in bytes."),
 		uptime:     reg.Gauge("onegw_uptime_seconds", "Seconds since the gateway process started."),
+		provTPS:    reg.Gauge("onegw_provider_tokens_per_second_x100", "Decode-speed EWMA (output tokens/sec) per provider, scaled x100 (int64 registry); refreshed at scrape, absent until the provider served streaming replies.", "provider"),
 	}
 }
 
 // success records one completed upstream attempt and its token accounting.
 // Called exactly where usage.Observe runs so /metrics and /admin/usage agree.
-func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, savedTokens int64) {
+func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, savedTokens int64, ms int64, tps float64) {
 	m.requests.Inc(provider, model, "200")
 	for _, e := range [...]struct {
 		typ string
@@ -63,7 +65,7 @@ func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, sa
 			m.tokens.Add(e.n, provider, model, e.typ)
 		}
 	}
-	m.logReq(provider, model, acct, 200, "", u, savedTokens, "")
+	m.logReq(provider, model, acct, 200, "", u, savedTokens, "", ms, tps)
 }
 
 // logReq routes one completion into the #19 ring; nil-safe because tests
@@ -71,9 +73,10 @@ func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, sa
 // explanation (upstream body / failure text) so the console log answers
 // "why" and not just "what" — it is diagnostic payload, not a secret:
 // it can contain model names, request ids, and upstream error prose.
-func (m *gatewayMetrics) logReq(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string) {
+// ms/tps are the decode phase's duration and tokens/sec (0 when unknown).
+func (m *gatewayMetrics) logReq(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64) {
 	if m.srv != nil {
-		m.srv.observeLog(provider, model, acct, code, kind, u, saved, truncErr(errMsg))
+		m.srv.observeLog(provider, model, acct, code, kind, u, saved, truncErr(errMsg), ms, tps)
 	}
 }
 
@@ -122,7 +125,7 @@ func (m *gatewayMetrics) upstreamErr(provider, model, acct string, herr *types.A
 	}
 	m.requests.Inc(provider, model, strconv.Itoa(status))
 	m.errors.Inc(provider, "upstream_error")
-	m.logReq(provider, model, acct, status, kind, types.Usage{}, 0, msg)
+	m.logReq(provider, model, acct, status, kind, types.Usage{}, 0, msg, 0, 0)
 }
 
 // boundedModel clamps a routed model string to config-defined routes
@@ -144,7 +147,7 @@ func (s *Server) boundedModel(model string) string {
 func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 	m.requests.Inc("", "unresolved", strconv.Itoa(status))
 	m.errors.Inc("", "no_route")
-	m.logReq("", "", "", status, "no_route", types.Usage{}, 0, errMsg)
+	m.logReq("", "", "", status, "no_route", types.Usage{}, 0, errMsg, 0, 0)
 }
 
 // saturated records a request rejected because the buffered-memory budget
@@ -152,13 +155,13 @@ func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 func (m *gatewayMetrics) saturated() {
 	m.requests.Inc("", "", "503")
 	m.errors.Inc("", "budget_saturated")
-	m.logReq("", "", "", 503, "budget_saturated", types.Usage{}, 0, "")
+	m.logReq("", "", "", 503, "budget_saturated", types.Usage{}, 0, "", 0, 0)
 }
 
 // tooLarge records a request rejected because its body exceeded the body cap.
 func (m *gatewayMetrics) tooLarge() {
 	m.requests.Inc("", "", "413")
-	m.logReq("", "", "", 413, "no_route", types.Usage{}, 0, "")
+	m.logReq("", "", "", 413, "no_route", types.Usage{}, 0, "", 0, 0)
 }
 
 // invalidBody records an attempt aborted before the upstream call because
@@ -166,7 +169,7 @@ func (m *gatewayMetrics) tooLarge() {
 // It is a client-side 400, not one of the three error kinds.
 func (m *gatewayMetrics) invalidBody(provider, model, acct, errMsg string) {
 	m.requests.Inc(provider, model, "400")
-	m.logReq(provider, model, acct, 400, "", types.Usage{}, 0, errMsg)
+	m.logReq(provider, model, acct, 400, "", types.Usage{}, 0, errMsg, 0, 0)
 }
 
 // handleMetrics serves GET /metrics in the Prometheus text exposition
@@ -197,6 +200,13 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		m.budgetCap.Set(st.budget.Capacity())
 	}
 	m.uptime.Set(int64(time.Since(s.start).Seconds()))
+	if st := s.cur(); st != nil && st.pool != nil && m.provTPS != nil {
+		for _, name := range st.pool.Names() {
+			if d, ok := st.pool.Get(name); ok && !d.Disabled {
+				m.provTPS.Set(int64(d.ProviderTPS()*100), name)
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(m.reg.Render()))

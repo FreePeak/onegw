@@ -230,6 +230,14 @@ type TierCfg struct {
 type ComboCfg struct {
 	Name    string   `toml:"name"`
 	Targets []string `toml:"targets"` // "provider/model" strings
+	// Strategy selects how the router orders the chain at request time:
+	// "" / "order" keeps the configured sequence (default — the fallback
+	// order is a deliberate cost/quality contract); "fastest" stable-sorts
+	// the targets by each leg's recent decode speed (tokens/sec EWMA,
+	// speed.go) so traffic prefers the quickest healthy provider while
+	// every leg stays in the chain as fallback. Legs with no speed data
+	// keep the configured order.
+	Strategy string `toml:"strategy"`
 }
 
 // Config is the whole file.
@@ -512,6 +520,9 @@ func (c *Config) Validate() error {
 		}
 		if comboNames[strings.ToLower(cb.Name)] {
 			return fmt.Errorf("duplicate combo %s", cb.Name)
+		}
+		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" {
+			return fmt.Errorf("combo %s strategy %q must be \"order\" or \"fastest\"", cb.Name, cb.Strategy)
 		}
 		comboNames[strings.ToLower(cb.Name)] = true
 		for _, t := range cb.Targets {
