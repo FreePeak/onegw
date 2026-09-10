@@ -63,6 +63,16 @@ func TestSniffVendorUsageShapes(t *testing.T) {
 			body: `{"id":"r1","usage":{"input_tokens":100,"output_tokens":20,"input_tokens_details":{"cached_tokens":30},"output_tokens_details":{"reasoning_tokens":5}}}`,
 			in:   100, out: 20, cr: 30, rs: 5,
 		},
+		{
+			// new-api aggregator (tokenrouter live 2026-09-10, seq 516):
+			// the usage object appends zero-valued vendor aliases AFTER
+			// the real OpenAI counts, so "last match wins" read
+			// input_tokens:0/output_tokens:0 and every streamed request
+			// logged out=0 with a body-length estimate for input.
+			name: "newapi-aliases",
+			body: `{"usage":{"prompt_tokens":10,"completion_tokens":79,"total_tokens":89,"prompt_tokens_details":{"cached_tokens":0,"text_tokens":0,"audio_tokens":0,"image_tokens":0},"completion_tokens_details":{"text_tokens":0,"audio_tokens":0,"reasoning_tokens":0},"input_tokens":0,"output_tokens":0,"input_tokens_details":null,"candidatesTokensDetails":null,"claude_cache_creation_5_m_tokens":0,"claude_cache_creation_1_h_tokens":0}}`,
+			in:   10, out: 79,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,5 +116,30 @@ func TestSniffAnthropicStreamNormalization(t *testing.T) {
 	in, out, cr, cw, _, _ := sn.Usage()
 	if in != 115 || out != 20 || cr != 30 || cw != 15 {
 		t.Fatalf("normalized stream usage: in=%d out=%d cr=%d cw=%d, want 115/20/30/15", in, out, cr, cw)
+	}
+}
+
+// tokenrouter's stream usage chunk (new-api shape) carries the aliases with
+// zeros after the real counts; across chunked reads the maximum must still
+// win and the usage marker must count as seen (seq 516 regression).
+func TestSniffNewAPIStreamAliasShadowing(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}],"usage":null}`,
+		``,
+		`data: {"id":"c1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":79,"total_tokens":89,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0},"input_tokens":0,"output_tokens":0,"input_tokens_details":null,"candidatesTokensDetails":null,"claude_cache_creation_5_m_tokens":0,"claude_cache_creation_1_h_tokens":0}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	sn := NewSniffer(strings.NewReader(body), 0)
+	if _, err := io.Copy(io.Discard, sn); err != nil {
+		t.Fatal(err)
+	}
+	in, out, _, _, _, seen := sn.Usage()
+	if !seen {
+		t.Fatal("usage marker not seen")
+	}
+	if in != 10 || out != 79 {
+		t.Fatalf("alias-shadowed stream usage: in=%d out=%d, want 10/79", in, out)
 	}
 }

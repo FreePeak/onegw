@@ -7,7 +7,11 @@ import (
 )
 
 // snifferRegexes extract final usage numbers from upstream payloads. The
-// LAST match of each pattern wins (final counts appear last in streams).
+// MAXIMUM match of each pattern wins: counts grow monotonically within a
+// response, and one usage object may carry the same count under several
+// vendor aliases — aggregators append zero-valued duplicates AFTER the real
+// fields (tokenrouter live 2026-09-10: {"prompt_tokens":10,…,"input_tokens":
+// 0,"output_tokens":0}), so a "last match wins" read zeroed every request.
 var (
 	reInput  = regexp.MustCompile(`"(?:input_tokens|prompt_tokens|promptTokenCount)"\s*:\s*(\d+)`)
 	reOutput = regexp.MustCompile(`"(?:output_tokens|completion_tokens|candidatesTokenCount)"\s*:\s*(\d+)`)
@@ -106,24 +110,22 @@ func (s *Sniffer) observe(b []byte) {
 	}
 }
 
-// extract runs the regexes over the tail, keeping maxima (later final counts
-// are larger or equal; take max to be resilient against partial windows).
 func (s *Sniffer) extract() {
-	if m := lastMatch(reInput, s.tail); m >= 0 && m > s.in {
+	if m := maxMatch(reInput, s.tail); m >= 0 && m > s.in {
 		s.in = m
 		s.seen = true
 	}
-	if m := lastMatch(reOutput, s.tail); m >= 0 && m > s.out {
+	if m := maxMatch(reOutput, s.tail); m >= 0 && m > s.out {
 		s.out = m
 		s.seen = true
 	}
-	if m := lastMatch(reCacheRead, s.tail); m > s.cr {
+	if m := maxMatch(reCacheRead, s.tail); m > s.cr {
 		s.cr = m
 	}
-	if m := lastMatch(reCacheWrite, s.tail); m > s.cw {
+	if m := maxMatch(reCacheWrite, s.tail); m > s.cw {
 		s.cw = m
 	}
-	if m := lastMatch(reReasoning, s.tail); m > s.rs {
+	if m := maxMatch(reReasoning, s.tail); m > s.rs {
 		s.rs = m
 	}
 	if anthropicCacheField.Match(s.tail) {
@@ -131,17 +133,27 @@ func (s *Sniffer) extract() {
 	}
 }
 
-func lastMatch(re *regexp.Regexp, b []byte) int64 {
+// maxMatch returns the largest captured value across every match of re in b,
+// or -1 when the pattern never matches. Mirrors the cross-window running
+// maxima in extract(): the final count is the largest one ever reported, so
+// zero-valued alias duplicates appended after the real fields cannot shadow
+// them, and a window cut mid-number cannot shrink the count.
+func maxMatch(re *regexp.Regexp, b []byte) int64 {
 	ms := re.FindAllSubmatch(b, -1)
 	if len(ms) == 0 {
 		return -1
 	}
-	m := ms[len(ms)-1][1]
-	var v int64
-	for _, c := range m {
-		v = v*10 + int64(c-'0')
+	best := int64(-1)
+	for _, m := range ms {
+		var v int64
+		for _, c := range m[1] {
+			v = v*10 + int64(c-'0')
+		}
+		if v > best {
+			best = v
+		}
 	}
-	return v
+	return best
 }
 
 // Usage returns sniffed counts and whether any usage marker was seen, in the
