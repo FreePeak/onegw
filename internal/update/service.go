@@ -104,6 +104,13 @@ func (s *Service) wake() {
 	now := time.Now()
 	s.mu.Lock()
 	if err != nil {
+		// LastError is diagnostic state the NEXT successful check erases
+		// (snapshotLocked clears it below), so a transient failure that
+		// heals on the next 24h tick would leave no trace at all. Log it
+		// here with a timestamp — the only durable record of when the
+		// check failed and why (e.g. x509 unknown authority on an
+		// intercepting network).
+		log.Printf("onegw update: periodic check failed: %v", err)
 		s.st.LastError = err.Error()
 		s.st.LastCheck = &now
 		s.mu.Unlock()

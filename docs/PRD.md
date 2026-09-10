@@ -1354,6 +1354,26 @@ the issue):
   modes. Live-verified end-to-end on a throwaway instance: 202 →
   download → smoke → SO_REUSEPORT takeover → old pid drained ("updated
   to v0.12.7"), and the container 409 guidance rendered verbatim.
+  **Diagnosing update-check failures (2026-09-11):** a periodic check
+  error is stored in Status.LastError AND logged with a timestamp
+  (`onegw update: periodic check failed: …`) — LastError alone self-erases
+  on the next successful tick, which is exactly how the 2026-09-10 x509
+  `certificate signed by unknown authority` failure on
+  `api.github.com/repos/FreePeak/onegw/releases/latest` left no evidence.
+  That error is emitted by the checking process's own TLS stack, so the
+  root cause lives in THAT process's environment or network path, never
+  in onegw's code: (a) an intercepting network hop — VPN, corporate/MITM
+  proxy, or captive portal presenting a CA the OS trust store does not
+  hold (Go and curl both fail then; curl succeeding while Go fails
+  points at SSL_CERT_FILE/SSL_CERT_DIR overrides rather than the wire);
+  (b) `SSL_CERT_FILE`/`SSL_CERT_DIR` in the emitting process env pointing
+  at a wrong/partial bundle (Go honors them on every platform and they
+  REPLACE the system roots — check `ps eww <pid> | tr ' ' '\n' | grep -i
+  'ssl\|proxy'`); (c) a container image without `ca-certificates`
+  (classic for scratch/distroless Go images; the onegw Dockerfile installs
+  the bundle, so only foreign images hit this). There is deliberately NO
+  TLS-skip fallback in the update client — a release feed that fails
+  verification must fail loudly, not silently accept a MITM'd release.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
@@ -1487,4 +1507,9 @@ h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall t
 fix/upstream-header-timeout; earlier: admin login lockout aligned to spec (24h after 5 failures,
 6790dba) — master pushed through 6790dba and live gateway redeployed zero-drop from it (pid in
 /admin/health); xai OAuth token still expired — re-auth in 9router then re-import)*
+
+*Last updated: 2026-09-11 (update-check observability: failed periodic checks now logged
+with a timestamp — Status.LastError self-erases on the next successful tick, which hid the
+2026-09-10 x509 unknown-authority failure; RCA notes for x509 unknown authority added to the
+self-update bullet; regression test TestWakeLogsFailedCheck; no TLS-skip fallback by design)*
 
