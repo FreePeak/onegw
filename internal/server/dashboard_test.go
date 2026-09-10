@@ -258,8 +258,8 @@ func TestRequestLogAgeClear(t *testing.T) {
 
 func TestObserveLogClassifiesKinds(t *testing.T) {
 	srv, _ := newAdminSrv(t, "")
-	srv.observeLog("p1", "m1", "acct-1", 200, "", typesUsage(3, 9), 7, "")
-	srv.observeLog("", "", "", 503, "budget_saturated", types.Usage{}, 0, "")
+	srv.observeLog("p1", "m1", "acct-1", 200, "", typesUsage(3, 9), 7, "", 0, 0)
+	srv.observeLog("", "", "", 503, "budget_saturated", types.Usage{}, 0, "", 0, 0)
 	entries := srv.reqlog.latest(2)
 	if entries[0].Code != 200 || entries[0].Out != 9 || entries[0].Saved != 7 || entries[0].Account != "acct-1" {
 		t.Fatalf("ok entry wrong: %+v", entries[0])
