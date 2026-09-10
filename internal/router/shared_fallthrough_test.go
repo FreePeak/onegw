@@ -72,6 +72,39 @@ func TestExecuteSharedConcurrencyDirectRouteSurfacesWithRetryAfter(t *testing.T)
 	}
 }
 
+// Live 2026-09-10 11:10-11:15 (b-ai/glm-5.3-flash): the TPM wall ("The
+// request rate exceeds the current model TPM limit 340000000") hit three
+// accounts in the same second — same shared model-lane budget as the
+// concurrency wall. It must fall through immediately (no same-target
+// retry) and surface the honest 2s Retry-After on a direct route.
+func TestExecuteSharedTPMWallFallsThroughImmediately(t *testing.T) {
+	r := New(newTestPool())
+	r.SetCombos([]*Combo{{
+		Name:    "stack",
+		Targets: []Target{{Provider: "p1", Model: "m1"}, {Provider: "p2", Model: "m2"}},
+	}})
+	res, _ := r.Resolve("stack")
+	calls := map[string]int{}
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls[def.Name]++
+		if def.Name == "p1" {
+			return nil, &types.APIError{Status: 429, Type: "upstream_error",
+				Message: "The request rate exceeds the current model TPM limit 340000000."}
+		}
+		return "ok", nil
+	}
+	start := time.Now()
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("expected success via the next combo target, got %v", got)
+	}
+	if calls["p1"] != 1 || calls["p2"] != 1 {
+		t.Fatalf("TPM wall must skip the same-target retry: %v", calls)
+	}
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatalf("fall-through must not wait out the backoff, took %v", time.Since(start))
+	}
+}
+
 // Guard against over-reach: an ordinary per-account 429 (no "concurrency
 // limit" phrasing) keeps its same-target retry — the cooldown ladder and
 // the 250ms tier do the rotation work there, and account rotation DOES

@@ -336,6 +336,16 @@ func (e *APIError) ModelScoped() bool {
 // bench keys for it and retries should wait ~1s steps instead of the
 // 250ms fast backoff.
 //
+// The same family covers every "current model X limit" wall the reseller
+// fronts — live 2026-09-10 11:10-11:15 (b-ai/glm-5.3-flash): "The request
+// rate exceeds the current model TPM limit 340000000." struck kisame,
+// linh.mn and harvey in the SAME second while clone3 served 200s on the
+// same model — the budget is the reseller's per-MODEL lane (Tencent
+// APPID-wide), not any one key's. Misclassifying it as per-key benched
+// healthy credentials on the 10-60s ladder and burned a same-target retry
+// into the saturated lane per request; both must ride the shared-wall
+// medicine instead.
+//
 // Also matches engine cold-prefill admission walls (new-api aggregators
 // fronting z-ai/SGLang: 429 "BackendAdmissionRejected: Engine
 // cold-request admission rejected … policies=prefill_pressure …", live
@@ -362,9 +372,17 @@ func (e *APIError) SharedConcurrency() bool {
 	}
 	probe := strings.ToLower(e.Code + " " + e.Message)
 	return strings.Contains(probe, "concurrency limit") ||
+		modelLimitRe.MatchString(e.Code+" "+e.Message) ||
 		strings.Contains(probe, "backendadmissionrejected") ||
 		strings.Contains(probe, "cold-request admission rejected")
 }
+
+// modelLimitRe matches the Tencent reseller's model-limit wall family —
+// "The request rate exceeds the current model <X> limit <N>" with X ∈
+// {Concurrency, TPM, RPM, …} (b-ai/glm-5.3-flash live 2026-09-10). The
+// message names the MODEL's budget, never the key, so every variant is a
+// shared wall.
+var modelLimitRe = regexp.MustCompile(`(?i)request rate exceeds the current model \w+ limit`)
 
 // rateWindowRe matches the request-count window a 429 body names — the
 // new-api aggregator family, live 2026-09-09 (tokenrouter/z-ai/glm-5.3-free):
