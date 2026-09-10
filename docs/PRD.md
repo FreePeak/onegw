@@ -11,20 +11,33 @@ assistant thinking as a plain "reasoning" key, DeepSeek demands reasoning_conten
 reasoning_content in the thinking mode must be passed back to the API.", isRetryable:false). Fix at two
 layers: same-format passthrough now renames the assistant echo (string → reasoning_content, null
 dropped) inside the normalizeRoles pass, and the streaming fast-path gate pins reasoning-bearing bodies
-to the buffered pipeline; a residual 400 of this shape (reasoningEcho400: message names reasoning_content
-+ thinking mode) is marked Fallbackable (mirrors the always-thinking learn path) so Execute retries the
-target once and then falls through instead of ending the client session. Context facts: all six
-tokenharbor accounts are 429 free_tier_limit_reached on :free until 2026-09-17 (rolling 7-day allowance;
-429 is already Retryable/OverQuota so the ladder handles it); the 400's providerMetadata.gateway.routing
-envelope is tokenharbor's own (AI-SDK gateway, system deepseek credentials) passed through byte-for-byte.
-Tests: router 404 fall-through (attempt-count pinned, no pool burn), rename end-to-end incl. streaming
-gate + null-drop, contract-400 fall-through after one retry, direct-route terminal; all four mutation-
-checked (each neuter → red, restore → green); full suite 18/18. Zero-drop deployed via scripts/deploy.sh
-(marker check ok, pid 653 = /tmp/onegw-rca-bin); live probes: free-combo request with reasoning-bearing
-history → 200 (glm leg), direct tokenharbor/deepseek-v4.1-flash:free → honest 429 free-tier body.
-Honest gap: the rename never reached a real DeepSeek-dialect thinking upstream live (every tokenharbor
-key 429-walled until 09-17; unit/integration tests carry the contract proof) — live re-verification is
-tracked in #75. Earlier:)*
+to the buffered pipeline; a residual 400 of this shape (message names reasoning_content + thinking mode)
+now falls through to the next combo leg — reconciled 2026-09-10 (3a3499a + 86369df, live pid 53909 =
+/tmp/onegw-echo2-bin, hub record onegw-echo2): the independent commandcode RCA (seqs 2455/2621/2812,
+same 400 wording via api.commandcode.ai/provider/v1) landed types.ReasoningEchoRequired + a router break,
+which supersedes the Fallbackable mark — normalizeRoles applies identically on every attempt, so the
+mark's retry-once replayed a byte-identical body (guaranteed second 400; 3/3 live occurrences repeated
+before the combo advanced). TestReasoningEcho400FallsThrough re-pinned to hits==1. The same reconciliation
+closed the alias gaps the rename missed: normalizeRoles now also converts reasoning_text and the
+structured reasoning_details[] array (pi replays details verbatim for commandcode-served turns,
+openai-completions.js:1043; converted only when reasoning_content is absent — the native echo wins), and
+DecodeOpenAIRequest/DecodeOpenAIResponse + the stream chunk decoder flatten reasoning/reasoning_text/
+reasoning_details into PartThinking, re-emitted as reasoning_content on encode (buffered pipeline no
+longer drops commandcode's "reasoning" deltas). Probe evidence: 17 shapes (plain text, tool_calls,
+echo variants, knobs, stream) all 200 direct AND through the full gateway (tee capture proved the
+pipeline preserves reasoning_details verbatim and only prepends the saver directive) — the exact
+failing body state was not reproducible; the trigger is plausibly multi-turn accumulation of
+mixed-provider reasoning metadata during the storm-window sessions (theory, labeled as such; see #75).
+Four neuters mutation-checked (classifier, stream alias, details conversion, response alias); suite
+18/18. Live re-verified on commandcode/deepseek-v4-flash: multi-turn with reasoning_content AND with
+reasoning_details history → 200 non-stream and stream (upstream quirk noted: the stream path answers
+model deepseek-v4.1-flash for a v4-flash request — upstream-side aliasing, not the gateway).
+Context facts (unchanged from 747c6ac): all six tokenharbor accounts are 429 free_tier_limit_reached
+on :free until 2026-09-17 (rolling 7-day allowance; 429 is already Retryable/OverQuota so the ladder
+handles it); the 400's providerMetadata.gateway.routing envelope is tokenharbor's own (AI-SDK gateway,
+system deepseek credentials) passed through byte-for-byte. Honest gap narrowed: the echo contract now
+has live proof on a real DeepSeek-dialect thinking upstream (commandcode/deepseek-v4-flash 200s above);
+tokenharbor itself stays unverifiable until 09-17 (tracked in #75). Earlier:)*
 *Last updated: 2026-09-10 (dashboard adaptive reflow at laptop sizes, 10e7929, live pid 55951:
 the fluid layout had no real laptop-width behavior — stat grids (.grid.c4/.c3 auto-fit minmax)
 orphaned the last card with dead space at half-screen widths, the <=767px folded nav strip
