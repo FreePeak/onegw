@@ -1,3 +1,9 @@
+*Last updated: 2026-09-10 (tokenharbor multi-account rotation live-verified, config-only:
+provider grew to six [[providers.accounts]] (linh, harvey, clone2, kisame, linh.mn @ rpm=3
+each, clone1 rpm=0 uncapped) — plain round-robin pool, no code change, hot reloads only.
+Request-log probes (GET /admin/api/v1/logs records the serving account): account-scoped 429
+benched "linh" and the next attempt landed "kisame" 200; 200s observed on the other five
+accounts, none on benched "linh". Earlier:)*
 *Last updated: 2026-09-10 (fanout wave 1 live, 0dc852a, pid 32476 under hub record onegw-fanout:
 three OmniRoute-inspired features built in parallel worktrees (.worktrees/feat-*) by three
 subagents, merged clean, 18/18 packages green, issues #71/#72/#73 closed by merge:
