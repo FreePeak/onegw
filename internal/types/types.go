@@ -294,6 +294,40 @@ func (e *APIError) RegionLocked() bool {
 	return e != nil && e.Status == 403 && strings.Contains(strings.ToLower(e.Type), "region")
 }
 
+// ModelScoped reports whether the upstream refusal indicts the MODEL on
+// this provider rather than the credential or load — the (provider, model)
+// pair cannot serve, but healthy sibling models on the same account can:
+//   - 403 refusals that NAME the model: Zhipu's per-model
+//     "model_access_denied" ("Model access denied for model x", live
+//     2026-09-09), the "model access" message family. The b-ai deposit
+//     gate ("access_denied" + "Deposit required") is deliberately NOT
+//     model-scoped: it is per-CREDENTIAL state with its own pinned
+//     contract (#48) — the next request must reach the pool's healthy
+//     key, and the model bench would over-lock the model for 5 minutes.
+//   - 404 model-not-found shapes: OpenAI's code "model_not_found", the
+//     spelled-out "model not found" message.
+//
+// Deliberately conservative: 429s are NEVER model-scoped (they are per-key
+// walls — the account ladder owns them, byte-identical to the pre-lockout
+// behavior), and a generic 404 "not found" (wrong path, dead route) is
+// not a model verdict. Callers bench the model for a short window so the
+// router skips the target without burning the account pool.
+func (e *APIError) ModelScoped() bool {
+	if e == nil {
+		return false
+	}
+	probe := strings.ToLower(e.Type + " " + e.Code + " " + e.Message)
+	switch e.Status {
+	case 403:
+		return strings.Contains(probe, "model_access") ||
+			strings.Contains(probe, "model access")
+	case 404:
+		return strings.Contains(probe, "model_not_found") ||
+			strings.Contains(probe, "model not found")
+	}
+	return false
+}
+
 // SharedConcurrency reports whether a 429 is the upstream's model-wide
 // concurrency limit (resellers fronting Tencent GLM: "The request rate
 // exceeds the current model Concurrency limit 1200") rather than a
