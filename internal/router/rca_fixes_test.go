@@ -133,3 +133,59 @@ func TestKnownModelAdvertisedSlashModel(t *testing.T) {
 		t.Fatal("unknown provider prefix must stay unknown")
 	}
 }
+
+// tokenharbor 2026-09-10: deepseek-v4.1-flash left their live catalog
+// mid-day — every key of the pool re-discovered the same 404
+// model_not_found and Router.Execute surfaced it terminally, killing the
+// free combo (and the client's omp session) while four healthy legs
+// waited. The catalog verdict indicts the (provider, model) pair only:
+// the combo must fall through on the FIRST 404 without burning the
+// account pool (Do benches the model for future requests — see
+// TestDoBenchesModelOn404ModelNotFound / TestExecuteSkipsModelBenchedTarget;
+// the 403 model_access family keeps its Fallbackable rotation contract).
+func TestExecuteFallsThroughOnModel404(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{
+		Name: "th", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "linh", APIKey: "k1"}, {Name: "harvey", APIKey: "k2"}},
+	})
+	p.Set(&provider.Def{
+		Name: "oc", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "go", APIKey: "k3"}},
+	})
+	r := New(p)
+	r.SetCombos([]*Combo{{
+		Name:    "free",
+		Targets: []Target{{Provider: "th", Model: "deepseek-v4.1-flash:free"}, {Provider: "oc", Model: "mimo-v2.5"}},
+	}})
+	res, err := r.Resolve("free")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	var thAttempts int
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		if def.Name == "th" {
+			thAttempts++
+			return nil, &types.APIError{Status: 404, Type: "model_not_found",
+				Message: "Model 'deepseek-v4.1-flash' is not available. Browse models at https://tokenharbor.ai/dashboard/models or call GET /v1/models for the live list."}
+		}
+		return "ok", nil
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("combo must serve via the next target, got %v", got)
+	}
+	if thAttempts != 1 {
+		t.Fatalf("th attempts=%d, want 1 — a model-scoped 404 must not rotate the account pool", thAttempts)
+	}
+
+	// Direct route (single target): the chain ends there, the honest
+	// upstream 404 surfaces.
+	resD, _ := r.Resolve("th/deepseek-v4.1-flash:free")
+	got := r.Execute(context.Background(), resD, caller, func(a any) {})
+	if got == nil || got.Status != 404 || !strings.Contains(got.Message, "not available") {
+		t.Fatalf("direct dead-model route: got %v, want the upstream 404", got)
+	}
+	if thAttempts != 2 {
+		t.Fatalf("th attempts=%d after direct route, want 2", thAttempts)
+	}
+}
