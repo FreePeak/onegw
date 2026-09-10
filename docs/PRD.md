@@ -22,7 +22,9 @@ gate + null-drop, contract-400 fall-through after one retry, direct-route termin
 checked (each neuter → red, restore → green); full suite 18/18. Zero-drop deployed via scripts/deploy.sh
 (marker check ok, pid 653 = /tmp/onegw-rca-bin); live probes: free-combo request with reasoning-bearing
 history → 200 (glm leg), direct tokenharbor/deepseek-v4.1-flash:free → honest 429 free-tier body.
-Earlier:)*
+Honest gap: the rename never reached a real DeepSeek-dialect thinking upstream live (every tokenharbor
+key 429-walled until 09-17; unit/integration tests carry the contract proof) — live re-verification is
+tracked in #75. Earlier:)*
 *Last updated: 2026-09-10 (dashboard adaptive reflow at laptop sizes, 10e7929, live pid 55951:
 the fluid layout had no real laptop-width behavior — stat grids (.grid.c4/.c3 auto-fit minmax)
 orphaned the last card with dead space at half-screen widths, the <=767px folded nav strip
