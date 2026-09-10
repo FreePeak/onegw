@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"onegw/internal/config"
+	"onegw/internal/idempotency"
 	"onegw/internal/oauth"
 	"onegw/internal/owner"
 	"onegw/internal/provider"
@@ -46,6 +47,9 @@ type state struct {
 	usage  *usage.Tracker
 	quota  *quota.Tracker
 	budget *ByteBudget
+	// ido is the idempotency dedup cache; nil (idempotency_ttl "0"/"off")
+	// disables the feature entirely.
+	ido *idempotency.Cache
 }
 
 // Server wires the gateway together.
@@ -282,6 +286,9 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		usage:  usageTracker,
 		quota:  quotaTracker,
 		budget: NewByteBudget(cfg.Server.BufferCap),
+		// Fresh LRU per load: SIGHUP drops at most one TTL window of
+		// replay state, which is acceptable at the default 5s.
+		ido: idempotency.New(cfg.Server.IdempotencyCache, cfg.IdempotencyTTLDur()),
 	})
 	if !initial && old != nil {
 		old.usage.Stop() // flushes remaining data to the store, then ends the loop
@@ -364,13 +371,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /admin/config/providers", s.handleAdminProviderEdit)
 	mux.HandleFunc("PATCH /admin/config/providers/{name}/disabled", s.handleAdminProviderDisabled)
 	mux.HandleFunc("PUT /admin/config/combos", s.handleAdminComboEdit)
-	mux.HandleFunc("POST /v1/chat/completions", s.handleOpenAI)
-	mux.HandleFunc("POST /v1/completions", s.handleOpenAI)
-	mux.HandleFunc("POST /v1/messages", s.handleAnthropic)
+	mux.HandleFunc("POST /v1/chat/completions", s.withIdempotency(translat.FmtOpenAI, s.handleOpenAI))
+	mux.HandleFunc("POST /v1/completions", s.withIdempotency(translat.FmtOpenAI, s.handleOpenAI))
+	mux.HandleFunc("POST /v1/messages", s.withIdempotency(translat.FmtAnthropic, s.handleAnthropic))
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("GET /admin/usage/export", s.handleUsageExport)
 	mux.HandleFunc("POST /admin/usage/import", s.handleUsageImport)
-	mux.HandleFunc("POST /anthropic/v1/messages", s.handleAnthropic)
+	mux.HandleFunc("POST /anthropic/v1/messages", s.withIdempotency(translat.FmtAnthropic, s.handleAnthropic))
 	mux.HandleFunc("POST /v1beta/models/", s.handleGemini)
 	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfEmbeddings) })
 	mux.HandleFunc("POST /v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfTranscriptions) })

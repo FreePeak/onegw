@@ -41,6 +41,16 @@ type Server struct {
 	// "off" (default) = no-op; "on" = active. Env ONEGW_TASK_ROUTING
 	// overrides. Applied on startup and SIGHUP reload.
 	TaskRouting string `toml:"task_routing"`
+	// IdempotencyTTL dedups retried requests carrying an Idempotency-Key
+	// (or X-Request-Id) header: an identical (key, body) retry inside the
+	// window coalesces onto the in-flight original or replays its
+	// finished response instead of double-executing upstream. A Go
+	// duration ("5s" default); "0"/"off" disables the cache entirely.
+	IdempotencyTTL string `toml:"idempotency_ttl"`
+	// IdempotencyCache caps the idempotency LRU in entries (0 = 128,
+	// hard max 1024). Buffered response bodies are additionally bounded
+	// by a global byte budget in the idempotency package.
+	IdempotencyCache int `toml:"idempotency_cache"`
 }
 
 // Auth holds gateway API keys clients authenticate with. Keys may be
@@ -274,6 +284,9 @@ func (c *Config) Defaults() {
 	if c.Usage.RetentionDays == 0 {
 		c.Usage.RetentionDays = 90
 	}
+	if c.Server.IdempotencyTTL == "" {
+		c.Server.IdempotencyTTL = "5s"
+	}
 	for i := range c.Providers {
 		p := &c.Providers[i]
 		envName := "ONEGW_PROVIDER_" + strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_"))
@@ -346,6 +359,23 @@ func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
 // is enabled. Anything other than "on" (case-insensitive) is off.
 func (c *Config) TaskRoutingOn() bool {
 	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) == "on"
+}
+
+// IdempotencyTTLDur parses [server] idempotency_ttl; 0 means the feature
+// is disabled ("0"/"off"/"false"/"disabled"). An empty value keeps the
+// default-on 5s window (Validate rejects garbage, so a loaded config never
+// reaches the fallback).
+func (c *Config) IdempotencyTTLDur() time.Duration {
+	s := strings.ToLower(strings.TrimSpace(c.Server.IdempotencyTTL))
+	switch s {
+	case "0", "off", "false", "disabled":
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 5 * time.Second
+	}
+	return d
 }
 
 // UpdateEvery parses the release-check interval; 0 means disabled.
@@ -460,6 +490,20 @@ func (c *Config) Validate() error {
 	case "", "off", "on":
 	default:
 		return fmt.Errorf("server.task_routing %q is not \"off\" or \"on\"", c.Server.TaskRouting)
+	}
+	// Idempotency dedup knobs: a typo'd ttl must fail the load, not
+	// silently replay for the wrong window.
+	if s := strings.ToLower(strings.TrimSpace(c.Server.IdempotencyTTL)); s != "" {
+		switch s {
+		case "0", "off", "false", "disabled":
+		default:
+			if d, err := time.ParseDuration(s); err != nil || d <= 0 {
+				return fmt.Errorf("server.idempotency_ttl %q is not a positive Go duration (e.g. \"5s\", \"30s\") or 0/off", c.Server.IdempotencyTTL)
+			}
+		}
+	}
+	if c.Server.IdempotencyCache < 0 || c.Server.IdempotencyCache > 1024 {
+		return fmt.Errorf("server.idempotency_cache %d out of range (0-1024)", c.Server.IdempotencyCache)
 	}
 	comboNames := map[string]bool{}
 	for _, cb := range c.Combos {
