@@ -477,8 +477,10 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
+	attempts := 0
 	execErr := st.router.Execute(execCtx, res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak)
+		attempts++
+		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak, attempts)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtGemini, execErr)
@@ -550,8 +552,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
+	attempts := 0
 	execErr := st.router.Execute(execCtx, res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
-		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak)
+		attempts++
+		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak, attempts)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
@@ -631,7 +635,7 @@ func requestIdentity(h http.Header, ak *config.AuthKey) string {
 // allowed for headerless callers (tests).
 func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.Account, model string,
 	clientFmt translat.Format, body []byte, stream bool, w http.ResponseWriter, savedTokens int64,
-	clientHdr http.Header, ak *config.AuthKey) (any, *types.APIError) {
+	clientHdr http.Header, ak *config.AuthKey, attempts int) (any, *types.APIError) {
 	// mdl is the metrics label only: raw client model strings must not
 	// create unbounded series (routing already used the original string).
 	mdl := s.boundedModel(model)
@@ -669,6 +673,11 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	// uses; "" (no session header, no key label) skips sticky-key
 	// injection. clientHdr may be nil (headerless tests).
 	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak))
+	// X-OneGW-Decision rides the pre-body write: every pre-flight gate
+	// above answers WITHOUT touching w, so the attempt that finally
+	// commits headers is the one that stamps the header (combo fallback
+	// therefore names the serving target).
+	setDecisionHeader(w, def, acct, model, attempts)
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)

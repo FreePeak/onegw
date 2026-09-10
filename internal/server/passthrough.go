@@ -155,7 +155,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 			return
 		}
 		aerr := s.passthroughCall(r.Context(), w, def, acct, sf, t.Model,
-			mp.replay(), mp.length(r.ContentLength), contentType, r.Header)
+			mp.replay(), mp.length(r.ContentLength), contentType, r.Header, 1)
 		if aerr != nil {
 			def.Unpin(id) // failed one-shot attempt must not keep its pin
 			if w.Header().Get("Content-Type") == "" {
@@ -165,6 +165,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		return
 	}
 
+	attempts := 0
 	execErr := st.router.Execute(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		if !def.AllowsPassthrough(sf.cap) {
 			return nil, errAPI(http.StatusNotFound, "passthrough_not_supported",
@@ -176,7 +177,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		// Issue #34: anchor after the model rewrite so cache markers
 		// never point at pre-rewrite offsets.
 		out = anchorCacheProfile(out, m, def, translat.FmtOpenAI, requestIdentity(r.Header, ak))
-		return nil, s.passthroughCall(ctx, w, def, acct, sf, m, bytes.NewReader(out), int64(len(out)), contentType, r.Header)
+		return nil, s.passthroughCall(ctx, w, def, acct, sf, m, bytes.NewReader(out), int64(len(out)), contentType, r.Header, attempts)
 	}, func(v any) {})
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtOpenAI, execErr)
@@ -189,8 +190,12 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 // router can fall back. clientHdr rides to DoPassthrough so session-affinity
 // ids reach embeddings/stt/tts upstreams too.
 func (s *Server) passthroughCall(ctx context.Context, w http.ResponseWriter, def *provider.Def,
-	acct *provider.Account, sf surface, m string, src io.Reader, srcLen int64, contentType string, clientHdr http.Header) *types.APIError {
+	acct *provider.Account, sf surface, m string, src io.Reader, srcLen int64, contentType string, clientHdr http.Header, attempts int) *types.APIError {
 
+	// Stamp the routing decision before the upstream call (pre-body
+	// write); covers both the one-shot transcriptions path and the
+	// Execute Caller (a retried attempt re-stamps, last stamp wins).
+	setDecisionHeader(w, def, acct, m, attempts)
 	resp, apiErr := def.DoPassthrough(ctx, acct, sf.op, m, contentType, clientHdr, src, srcLen)
 	if apiErr != nil {
 		return apiErr
