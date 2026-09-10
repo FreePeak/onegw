@@ -253,6 +253,17 @@ type Def struct {
 	// re-syncs it with the on-disk config.
 	learnedMu sync.RWMutex
 	learnedAT map[string]struct{}
+
+	// modelBenched records (model → bench-until) for upstream refusals
+	// that indict the MODEL, not the credential (types.APIError.ModelScoped:
+	// Zhipu per-model model_access_denied 403s, model_not_found 404s): the
+	// (provider, model) pair is dead for now, but sibling models on the
+	// same account serve fine, so benching the whole pool would punish
+	// innocent keys. See BenchModel/ModelBenched. Bench state lives on the
+	// Def like learnedAT: a SIGHUP reload rebuilds the pool with fresh
+	// Defs, re-syncing it with the on-disk config.
+	modelMu    sync.RWMutex
+	modelBench map[string]time.Time
 }
 
 // LearnAlwaysThinking records model as runtime-discovered always-thinking
@@ -284,6 +295,79 @@ func (d *Def) AlwaysThinkingModel(model string) bool {
 	defer d.learnedMu.RUnlock()
 	_, ok := d.learnedAT[model]
 	return ok
+}
+
+// ModelBenchTTL is how long a model-scoped upstream refusal benches the
+// (provider, model) pair. Short on purpose: a deprovisioned model stays
+// dead, but a "model access denied" that later clears (plan grant, model
+// re-enabled) must not stay locked out for long — and the bench expires
+// silently, so the next request after expiry is the probe.
+const ModelBenchTTL = 5 * time.Minute
+
+// maxModelBenches bounds the bench map. Do only benches the routed model
+// (routed model strings come from the route tables, so cardinality is
+// naturally bounded), but the cap keeps even a pathological config honest:
+// at the cap the sweep drops expired entries first, and a still-full map
+// of LIVE benches simply stops accepting new ones rather than growing.
+const maxModelBenches = 256
+
+// BenchModel benches the (provider, model) pair for ttl (0 = ModelBenchTTL):
+// Router.Execute skips the target without any upstream attempt until expiry,
+// while sibling models and every account of this provider keep serving.
+func (d *Def) BenchModel(model string, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = ModelBenchTTL
+	}
+	d.modelMu.Lock()
+	defer d.modelMu.Unlock()
+	if d.modelBench == nil {
+		d.modelBench = make(map[string]time.Time)
+	}
+	if len(d.modelBench) >= maxModelBenches {
+		// At the cap: sweep expired entries first; if none expired, evict
+		// the soonest-to-expire bench — the freshest verdict carries the
+		// most information, and the map must never outgrow the cap.
+		now := time.Now()
+		for m, until := range d.modelBench {
+			if !now.Before(until) {
+				delete(d.modelBench, m)
+			}
+		}
+		if len(d.modelBench) >= maxModelBenches {
+			evict := ""
+			var evictAt time.Time
+			for m, until := range d.modelBench {
+				if evict == "" || until.Before(evictAt) {
+					evict, evictAt = m, until
+				}
+			}
+			delete(d.modelBench, evict)
+		}
+	}
+	d.modelBench[model] = time.Now().Add(ttl)
+}
+
+// ModelBenched reports whether the (provider, model) pair is benched, and
+// when the bench lifts (zero when not benched). Expired entries are removed
+// on read, so the map self-cleans.
+func (d *Def) ModelBenched(model string) (benched bool, ready time.Time) {
+	d.modelMu.RLock()
+	until, ok := d.modelBench[model]
+	d.modelMu.RUnlock()
+	if !ok {
+		return false, time.Time{}
+	}
+	if !time.Now().Before(until) {
+		d.modelMu.Lock()
+		// Re-check under the write lock: a concurrent BenchModel may have
+		// re-benched the model between the read and this promotion.
+		if until2, ok2 := d.modelBench[model]; ok2 && !time.Now().Before(until2) {
+			delete(d.modelBench, model)
+		}
+		d.modelMu.Unlock()
+		return false, time.Time{}
+	}
+	return true, until
 }
 
 // AllowsPassthrough reports whether the provider declares the OpenAI-format
@@ -1354,6 +1438,18 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// the 403.
 			d.Gated(acct)
 			apiErr.Fallbackable = true
+		}
+		if apiErr.ModelScoped() {
+			// Per-model lockout: the upstream refused THIS MODEL, not the
+			// credential (Zhipu model_access_denied 403, model_not_found
+			// 404). The account-level benches above already rotate the
+			// in-flight request, but they would re-burn the whole pool on
+			// every retry for a model no key can serve; benching the
+			// (provider, model) pair lets Router.Execute skip the target
+			// outright on the next request while sibling models on the
+			// same accounts keep serving. 429s never reach here — they
+			// are per-key walls (OverQuota/SharedConcurrency above).
+			d.BenchModel(model, ModelBenchTTL)
 		}
 		if edgeFault(apiErr) {
 			// Single strike site for every decoded error shape: HTML and
