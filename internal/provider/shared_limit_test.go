@@ -88,6 +88,37 @@ func TestSharedConcurrency429SignatureNarrow(t *testing.T) {
 	}
 }
 
+// Live 2026-09-10 11:10-11:15: the reseller's per-MODEL TPM wall ("The
+// request rate exceeds the current model TPM limit 340000000") struck
+// kisame, linh.mn and harvey in the SAME second while clone3 served 200s on
+// the same model — a shared lane budget, not a per-key limit. Before the
+// modelLimitRe classification this body fell into the per-key ladder path:
+// the healthy key was benched coolBase..coolCap (shrinking the pool until
+// client-visible pool-empty 429s) and the router burned a same-target retry
+// into the saturated model. It must skip the ladder exactly like the
+// concurrency wall.
+const sharedTPMLimitBody = `{"error":{"message":"The request rate exceeds the current model TPM limit 340000000. Please reduce the request frequency or contact Tencent Cloud support to request a higher limit.","type":"upstream_error","code":1302}}`
+
+func TestSharedTPMWall429SkipsLadder(t *testing.T) {
+	srv, hits := mkErrStub(t, 429, sharedTPMLimitBody)
+	def := newSingleDef(t, srv, "b-ai")
+	a1 := &def.Accounts[0]
+
+	_, apiErr := def.Do(context.Background(), a1, "glm-5.3-flash", nil, bytes.NewReader([]byte(`{}`)), false)
+	if apiErr == nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
+		t.Fatalf("got %+v, want 429 SharedConcurrency (TPM wall)", apiErr)
+	}
+	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() || slot.strikes != 0 {
+		t.Fatalf("TPM-wall 429 must not bench the account, cooldown=%v strikes=%d", slot.cooldown, slot.strikes)
+	}
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a1" {
+		t.Fatalf("pool must keep serving the healthy key, got %+v", got)
+	}
+	if atomic.LoadInt32(hits) != 1 {
+		t.Fatalf("hits=%d, want 1", atomic.LoadInt32(hits))
+	}
+}
+
 func TestAuthVerify401DowngradedToRetryable502(t *testing.T) {
 	srv, hits := mkErrStub(t, 401, authVerifyBody)
 	def := newSingleDef(t, srv, "b-ai")
