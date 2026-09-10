@@ -225,9 +225,22 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	rt.PoolEmptyError = func(def *provider.Def, ready time.Time) *types.APIError {
 		return s.poolEmptyError(def, ready)
 	}
+	// Advertised models must reach the router as ONE SetModels call:
+	// SetModels REPLACES the direct-route table wholesale, so the historical
+	// per-provider loop let the last provider's table clobber every earlier
+	// one — and its bare (slash-less) ids were all dropped by the route
+	// parse, leaving the live table EMPTY (2026-09-10: tokenrouter 504 rows
+	// logged model "unresolved" because the advertised-scan had nothing to
+	// find; the 2026-09-09 commandcode label-honesty fix was wired out of
+	// existence the same way). Qualify each advertised id with its provider
+	// name — the table's route format — before the single call.
+	routes := make([]string, 0, 64)
 	for _, p := range cfg.Providers {
-		rt.SetModels(p.Models)
+		for _, m := range p.Models {
+			routes = append(routes, p.Name+"/"+m)
+		}
 	}
+	rt.SetModels(routes)
 	var combos []*router.Combo
 	for _, c := range cfg.Combos {
 		targets := make([]router.Target, 0, len(c.Targets))
