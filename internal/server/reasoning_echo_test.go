@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -158,9 +159,12 @@ func TestReasoningEchoNullDropped(t *testing.T) {
 
 // TestReasoningEcho400FallsThrough pins the containment half: a DeepSeek
 // upstream that STILL refuses (some other contract wrinkle) must not kill
-// the combo — the 400 is marked Fallbackable, Execute retries this target
-// once, then the next leg serves. Live 2026-09-10: the terminal 400 ended
-// the client's omp session.
+// the combo. Live 2026-09-10: the terminal 400 ended the client's omp
+// session. Reconciled with the router-level ReasoningEchoRequired break
+// (supersedes 747c6ac's Fallbackable retry-once): normalizeRoles applies
+// identically on every attempt, so a same-target retry replays a
+// byte-identical body — the combo must advance to the next leg on the
+// FIRST refusal with no doomed upstream call.
 func TestReasoningEcho400FallsThrough(t *testing.T) {
 	hits := 0
 	th := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -186,11 +190,80 @@ func TestReasoningEcho400FallsThrough(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong") {
 		t.Fatalf("combo must fall through to the next target, got code=%d body=%s", w.Code, w.Body.String())
 	}
-	if hits != 2 { // one raw attempt + one coerced retry (Fallbackable)
-		t.Fatalf("th hits=%d, want 2 (retry once, then fall through)", hits)
+	if hits != 1 { // no same-target retry: the refusal is a deterministic body verdict
+		t.Fatalf("th hits=%d, want 1 (fall through immediately, no doomed retry)", hits)
 	}
 	if b, _, _ := otherCap.snapshot(); len(b) == 0 {
 		t.Fatal("next combo leg never hit")
+	}
+}
+
+// TestReasoningEchoDetailsRenamed pins the reasoning_details alias: pi
+// replays the structured reasoning_details[] array (openai-completions.js
+// :1043) for commandcode-served turns; a DeepSeek-dialect upstream needs
+// the native reasoning_content key. Converted only when reasoning_content
+// is absent; when the native echo is already present the details stay.
+func TestReasoningEchoDetailsRenamed(t *testing.T) {
+	st := newReasoningEchoStub()
+	defer st.srv.Close()
+	cfg := makeCfg(t, "sk-test-key", "", false,
+		providerSpec{name: "th", up: st.srv.URL, model: "deepseek-v4.1-flash:free"})
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Close()
+	h := srv.Handler()
+
+	body, _ := json.Marshal(map[string]any{
+		"model": "th/deepseek-v4.1-flash:free",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "What is 2+2?"},
+			map[string]any{"role": "assistant", "content": "4", "reasoning_details": []any{
+				map[string]any{"type": "reasoning.text", "text": "2+2 is basic arithmetic.", "format": "unknown", "index": 0},
+			}},
+		},
+		"stream": false,
+	})
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer sk-test-key")
+	w := do(t, h, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong") {
+		t.Fatalf("details-bearing body must serve after rename, got code=%d body=%s", w.Code, w.Body.String())
+	}
+	bods := st.bodies()
+	if len(bods) != 1 {
+		t.Fatalf("upstream hits=%d, want 1", len(bods))
+	}
+	s := string(bods[0])
+	if !strings.Contains(s, `"reasoning_content":"2+2 is basic arithmetic."`) {
+		t.Fatalf("upstream body must carry native echo, got %s", s)
+	}
+	if strings.Contains(s, "reasoning_details") {
+		t.Fatalf("converted alias key must be deleted, got %s", s)
+	}
+
+	// Native echo wins: details untouched when reasoning_content is present.
+	body2, _ := json.Marshal(map[string]any{
+		"model": "th/deepseek-v4.1-flash:free",
+		"messages": []any{
+			map[string]any{"role": "user", "content": "hi"},
+			map[string]any{"role": "assistant", "content": "Hello", "reasoning_content": "native", "reasoning_details": []any{
+				map[string]any{"type": "reasoning.text", "text": "detail"},
+			}},
+		},
+		"stream": false,
+	})
+	r2 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body2))
+	r2.Header.Set("Content-Type", "application/json")
+	r2.Header.Set("Authorization", "Bearer sk-test-key")
+	if w2 := do(t, h, r2); w2.Code != 200 {
+		t.Fatalf("native-echo body must serve, got code=%d", w2.Code)
+	}
+	bods2 := st.bodies()
+	if !strings.Contains(string(bods2[len(bods2)-1]), `"reasoning_details":[{"`) {
+		t.Fatalf("details must stay untouched when native echo present, got %s", bods2[len(bods2)-1])
 	}
 }
 
