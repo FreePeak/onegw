@@ -1511,5 +1511,15 @@ fix/upstream-header-timeout; earlier: admin login lockout aligned to spec (24h a
 *Last updated: 2026-09-11 (update-check observability: failed periodic checks now logged
 with a timestamp — Status.LastError self-erases on the next successful tick, which hid the
 2026-09-10 x509 unknown-authority failure; RCA notes for x509 unknown authority added to the
-self-update bullet; regression test TestWakeLogsFailedCheck; no TLS-skip fallback by design)*
+self-update bullet; regression test TestWakeLogsFailedCheck; no TLS-skip fallback by design);
+h2 health pings on the shared upstream transport (7702820, branch fix/h2-ping, live pid 27421):
+2026-09-10 16:29-16:48 b-ai storm logged 52 "http2: timeout awaiting response headers" 504s
+across EVERY account while fresh connections served instantly — all accounts multiplex onto
+ONE h2 connection per host, so one degraded connection stalls them all and each request burns
+the full response-header budget. ReadIdleTimeout=30s + PingTimeout=15s drop the dead
+connection in ~45s (TestNewHTTPClientEnablesH2HealthPings). Throughput clarification from the
+same session: onegw streams tokens incrementally on both the fast path and the buffered
+fall-through path (no output throttle); TTFB spikes (9-50s) reproduce on FRESH direct
+connections to the congested b-ai endpoint (429 Concurrency-1200 walls, 23-173s TTFB, 502 HTML
+without the gateway), so upstream congestion — not gateway logic — dominates latency)*
 
