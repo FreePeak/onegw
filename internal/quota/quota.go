@@ -1,7 +1,9 @@
-// Package quota tracks per-provider usage against reset windows (5h rolling,
-// UTC calendar daily, ISO weekly) and optional token/request limits, giving
-// 9router-style countdowns per provider. Tokens counted are
-// input+output+reasoning; a zero limit means track-only (no enforcement).
+// Package quota tracks per-provider usage against reset windows — calendar
+// kinds (UTC daily, ISO weekly, monthly) and rolling duration grids (the
+// named "5h" or any Go duration like "48h", "90m") — with optional
+// token/request limits, giving 9router-style countdowns per provider.
+// Tokens counted are input+output+reasoning; a zero limit means track-only
+// (no enforcement).
 //
 // State is in-memory, seeded at startup from the persisted quota table
 // (usage.db `quota_state`) with usage rollups as a fallback for history that
@@ -16,28 +18,47 @@ import (
 	"onegw/internal/store"
 )
 
-// Window kinds used in ProviderCfg.QuotaWindow.
+// Window kinds used in ProviderCfg.QuotaWindow. Calendar kinds phase
+// resets to UTC boundaries; any other accepted value is a Go duration
+// string ("5h", "48h", "90m") driving a rolling grid (see rollingPeriod).
 const (
-	Off    = "" // tracking disabled
-	W5h    = "5h"
-	Daily  = "daily"
-	Weekly = "weekly"
+	Off     = "" // tracking disabled
+	W5h     = "5h"
+	Daily   = "daily"
+	Weekly  = "weekly"
+	Monthly = "monthly"
 )
 
 const (
-	period5h = 5 * time.Hour
-	periodD  = 24 * time.Hour
-	periodW  = 7 * 24 * time.Hour
+	periodD = 24 * time.Hour
+	periodW = 7 * 24 * time.Hour
 )
+
+// rollingPeriod resolves a rolling-window spec to its grid length: the
+// named "5h" or any positive time.ParseDuration value ("48h", "90m").
+// Calendar kinds and "" are not rolling.
+func rollingPeriod(w string) (time.Duration, bool) {
+	switch w {
+	case Off, Daily, Weekly, Monthly:
+		return 0, false
+	}
+	d, err := time.ParseDuration(w)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
+}
 
 // Limits configures one provider's quota window.
 type Limits struct {
-	// Window kind: "", "5h", "daily" or "weekly".
+	// Window kind: "" (off), a calendar kind ("daily", "weekly",
+	// "monthly") or a rolling duration ("5h", "48h", "90m").
 	Window string
 	// Anchor optionally pins the reset grid to an absolute instant: its
-	// time-of-day phases daily resets, its instant phases weekly and 5h
-	// grids. Zero = default (daily: UTC midnight; weekly: ISO Monday 00:00
-	// UTC; 5h: first-seen).
+	// time-of-day phases daily resets, its instant phases weekly and
+	// rolling grids, its day-of-month phases monthly (clamped to shorter
+	// months). Zero = default (daily: UTC midnight; weekly: ISO Monday
+	// 00:00 UTC; monthly: 1st of month; rolling: first-seen).
 	Anchor time.Time
 	// LimitTokens caps input+output+reasoning tokens per window; 0 = track
 	// only. Same for LimitRequests with request count.
@@ -99,20 +120,11 @@ func New(limits map[string]Limits, st *store.Store, flushEvery time.Duration) *T
 // Window math (pure; all instants UTC)
 
 // currentWindow returns the [start, end) window containing now. anchor is
-// the rolling grid origin (5h: the provider's window start / first-seen;
-// ignored by daily/weekly, which use Limits.Anchor or the calendar).
+// the rolling grid origin (rolling windows: the provider's window start /
+// first-seen; ignored by the calendar kinds, which use Limits.Anchor or
+// the calendar).
 func currentWindow(l Limits, anchor, now time.Time) (start, end time.Time) {
 	switch l.Window {
-	case W5h:
-		if anchor.IsZero() {
-			if !l.Anchor.IsZero() {
-				anchor = l.Anchor
-			} else {
-				return now, now.Add(period5h) // first-seen anchors here
-			}
-		}
-		start = gridStart(anchor, now, period5h)
-		return start, start.Add(period5h)
 	case Daily:
 		if !l.Anchor.IsZero() {
 			start = gridStart(l.Anchor, now, periodD)
@@ -128,9 +140,70 @@ func currentWindow(l Limits, anchor, now time.Time) (start, end time.Time) {
 			start = isoWeekStart(now.UTC())
 		}
 		return start, start.Add(periodW)
+	case Monthly:
+		start, end = monthGrid(l.Anchor, now.UTC())
+		return start, end
 	default:
-		return time.Time{}, time.Time{}
+		// Rolling windows: "5h" and any custom duration share one path —
+		// a grid of that length floored onto the anchor.
+		period, ok := rollingPeriod(l.Window)
+		if !ok {
+			return time.Time{}, time.Time{}
+		}
+		if anchor.IsZero() {
+			if !l.Anchor.IsZero() {
+				anchor = l.Anchor
+			} else {
+				return now, now.Add(period) // first-seen anchors here
+			}
+		}
+		start = gridStart(anchor, now, period)
+		return start, start.Add(period)
 	}
+}
+
+// monthGrid returns the [start, end) calendar-month window containing u
+// (UTC). A zero anchor is the plain calendar month (1st, 00:00 UTC); a
+// non-zero anchor phases the grid to its day-of-month and time-of-day,
+// clamped to each month's length (a 31st anchor resets on Feb 28/29).
+func monthGrid(anchor, u time.Time) (start, end time.Time) {
+	if anchor.IsZero() {
+		y, m, _ := u.Date()
+		start = time.Date(y, m, 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 1, 0)
+	}
+	a := anchor.UTC()
+	phase := func(y int, m time.Month) time.Time {
+		day := a.Day()
+		if last := daysIn(y, m); day > last {
+			day = last
+		}
+		hh, mm, ss := a.Clock()
+		return time.Date(y, m, day, hh, mm, ss, 0, time.UTC)
+	}
+	y, m, _ := u.Date()
+	start = phase(y, m)
+	if start.After(u) {
+		start = phase(monthShift(y, m, -1))
+	}
+	end = phase(monthShift(start.Year(), start.Month(), 1))
+	return start, end
+}
+
+// daysIn is the number of days in month m of year y (UTC leap rules).
+func daysIn(y int, m time.Month) int {
+	return time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+// monthShift moves (y, m) by k whole months (m is 1-based).
+func monthShift(y int, m time.Month, k int) (int, time.Month) {
+	i := int(m) - 1 + k
+	ny, nm := y+i/12, i%12
+	if nm < 0 {
+		nm += 12
+		ny--
+	}
+	return ny, time.Month(nm + 1)
 }
 
 // gridStart floors now onto the grid anchored at a with spacing d.
@@ -183,7 +256,7 @@ func (t *Tracker) Observe(provider string, tokens, requests int64, now time.Time
 // roll advances ws to the window containing now, resetting counters on
 // rollover. The grid is re-derived from the configured anchor whenever one
 // exists (so a changed anchor takes effect immediately); without an anchor
-// the current window start carries the 5h grid forward. Caller holds mu.
+// the current window start carries the rolling grid forward. Caller holds mu.
 func roll(l Limits, ws *windowState, now time.Time) {
 	anchor := ws.start
 	if !l.Anchor.IsZero() {
@@ -337,13 +410,13 @@ func (t *Tracker) seed(now time.Time) {
 
 // rebuildAnchor derives a window anchor for a provider with no usable
 // persisted state: the configured anchor, else the earliest rollup first-seen
-// (the best available first-seen for a 5h grid), else now.
+// (the best available first-seen for any rolling grid), else now.
 func (t *Tracker) rebuildAnchor(name string, l Limits, now time.Time) time.Time {
 	if !l.Anchor.IsZero() {
 		return l.Anchor
 	}
-	if l.Window != W5h {
-		return time.Time{} // daily/weekly derive from the calendar
+	if _, ok := rollingPeriod(l.Window); !ok {
+		return time.Time{} // calendar kinds derive from the calendar
 	}
 	if fs, err := t.store.QuotaFirstSeen(name); err == nil && !fs.IsZero() && fs.Before(now) {
 		return fs

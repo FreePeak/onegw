@@ -189,10 +189,13 @@ type ProviderCfg struct {
 	// header — only for upstreams documented to use it (xai:
 	// "x-grok-conv-id"). "" (default) never invents a header.
 	SessionHeader string `toml:"session_header"`
-	// Quota tracking (issue #7): Window "" = off | "5h" | "daily" |
-	// "weekly". QuotaResetAnchor optionally pins the reset grid to an ISO
-	// instant (its time-of-day phases daily resets; its instant phases 5h/
-	// weekly grids); empty = UTC midnight / ISO Monday / first-seen. The
+
+	// Quota tracking (issue #7): Window "" = off, a calendar kind
+	// ("daily" | "weekly" | "monthly") or a rolling Go duration ("5h",
+	// "48h", "90m"). QuotaResetAnchor optionally pins the reset grid to
+	// an ISO instant (its time-of-day phases daily resets, its instant
+	// phases weekly/rolling grids, its day-of-month phases monthly);
+	// empty = UTC midnight / ISO Monday / 1st of month / first-seen. The
 	// limits cap input+output+reasoning tokens (0 = track only).
 	QuotaWindow        string `toml:"quota_window"`
 	QuotaResetAnchor   string `toml:"quota_reset_anchor"`
@@ -487,9 +490,13 @@ func (c *Config) Validate() error {
 			seenAcct[a.Name] = true
 		}
 		switch p.QuotaWindow {
-		case "", "5h", "daily", "weekly":
+		case "", "daily", "weekly", "monthly":
 		default:
-			return fmt.Errorf("provider %s invalid quota_window %q (want 5h, daily or weekly)", p.Name, p.QuotaWindow)
+			// Any other value must be a positive Go duration ("5h",
+			// "48h", "90m") — the rolling quota window.
+			if d, err := time.ParseDuration(p.QuotaWindow); err != nil || d <= 0 {
+				return fmt.Errorf("provider %s invalid quota_window %q (want 5h, a Go duration like 48h, daily, weekly or monthly)", p.Name, p.QuotaWindow)
+			}
 		}
 		if p.QuotaResetAnchor != "" {
 			if _, err := time.Parse(time.RFC3339, p.QuotaResetAnchor); err != nil {
