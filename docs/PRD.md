@@ -13,7 +13,7 @@ multi-line keys-style, and api_key-style fixtures; verified on a scratch gateway
 against a copy of the live keys-shaped config: the UI-shaped Save converts opencode cleanly.
 Earlier:)*
 
-*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), 5683bdc, live pid 95082:
+*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), 8c3d404, live pid 80593:
 ported from 9router's open-sse/services/usage/{opencode-go,glm}.js + OmniRoute's
 opencodeQuotaFetcher.ts. internal/subquota polls the VENDOR's own subscription usage
 per (provider, account) — "" off | "opencode-go" (GET https://opencode.ai/zen/go/v1/usage:
@@ -37,7 +37,7 @@ e2e (stub vendors → JSON + page render + exhausted zai account parked while th
 opencode account keeps serving; no-providers null→[]). Verified in a detached worktree
 on pristine HEAD (config+subquota+provider+quota suites green; the combined server run
 reproduces the pre-existing stream-fast-path bench bleed on clean HEAD, not a
-regression). Live config (BOTH onegw.toml and ~/.onegw/onegw.toml): opencode → subscription_quota = "opencode-go", glm → "zai". Live proof on the serving binary: glm/harvey plan "Lite" — Session (5h) 23% (resets in 5.0h), Weekly (7d) 75% (in 3.2d); opencode key-1 rolling 0% / weekly 2% / monthly 28%, key-2 rolling 68% / weekly 34% / monthly 67% — per-key windows now visible for the first time; the Quota page renders 8 window rows with countdowns, zero exhausted pills (nothing parked — correct while every window has headroom). Zero-drop deployed (markers ok, single listener 95082, health x2).
+regression). Live config (BOTH onegw.toml and ~/.onegw/onegw.toml): opencode → subscription_quota = "opencode-go", glm → "zai". Live proof on the serving binary: glm/harvey plan "Lite" — Session (5h) 23% (resets in 5.0h), Weekly (7d) 75% (in 3.2d); opencode key-1 rolling 0% / weekly 2% / monthly 28%, key-2 rolling 68% / weekly 34% / monthly 67% — per-key windows now visible for the first time; the Quota page renders 8 window rows with countdowns, zero exhausted pills (nothing parked — correct while every window has headroom). Zero-drop deployed (markers ok, single listener 95082, health x2). Hardening follow-up e61fb5d→8c3d404: probe-time bearer resolution via the live pool (OAuth TokenProvider tokens rotate in the background), key-hash in the snapshot cache key so a rotated key replaces the old snapshot outright (Inherit matches by provider+account prefix), park matching by account name; mutation-checked (neutering the resolver or the same-prefix replace fails TestTrackerResolvesLiveKey). LIVE PARK PROOF same evening: glm/harvey session window crossed 100% (z.ai monitor: percentage 100, remaining 0; direct chat probe → 429 1308 'Usage limit reached for 5 hour... reset at 20:04:35') and the gateway parked the account — direct glm model route answered 429 provider_rate_limited with Retry-After 27s WITHOUT touching z.ai, while the dev combo served via b-ai/tokenrouter (ring: zero glm rows during the window). Self-heals on the vendor's own reset.
 Earlier:)*
 *Last updated: 2026-09-11 (kilo-auto/free reasoning-knob conflict 400 — no_thinking strip, live-verified):
 seq 1798 (onegw.toml, kilocode/kilo-auto/free, account mnhatlinh.doan@gmail.com) —
