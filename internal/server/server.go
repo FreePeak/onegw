@@ -299,7 +299,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	// hot reloads like the local quota windows.
 	var subTracker *subquota.Tracker
 	if targets := subTargets(cfg); len(targets) > 0 {
-		subTracker = subquota.New(targets, s.parkExhaustedSubscription)
+		subTracker = subquota.New(targets, s.parkExhaustedSubscription, s.liveSubKey)
 		subTracker.Inherit(oldStateSub(s.state.Load()))
 	}
 

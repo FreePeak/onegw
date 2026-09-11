@@ -175,7 +175,7 @@ func TestTrackerPollCachesAndParks(t *testing.T) {
 		parkedMu.Lock()
 		parked[tgt.AcctName] = until
 		parkedMu.Unlock()
-	}, probes, 50*time.Millisecond, nil, nil)
+	}, probes, nil, 50*time.Millisecond, nil, nil)
 	defer tr.Stop()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -219,7 +219,7 @@ func TestTrackerInheritKeepsFreshTargetsOnly(t *testing.T) {
 	old := NewAt([]Target{{Provider: "oc", AcctName: "k1", AcctKey: "x", Dialect: OpenCodeGo}}, nil,
 		func(ctx context.Context, tr *Tracker, tgt Target) Snapshot {
 			return Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Windows: []Window{{Name: "Rolling", Used: 7}}}
-		}, time.Hour, nil, nil)
+		}, nil, time.Hour, nil, nil)
 	defer old.Stop()
 
 	deadline := time.Now().Add(time.Second)
@@ -230,7 +230,7 @@ func TestTrackerInheritKeepsFreshTargetsOnly(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	fresh := NewAt([]Target{{Provider: "oc", AcctName: "k1", AcctKey: "x", Dialect: OpenCodeGo},
-		{Provider: "oc", AcctName: "k2", AcctKey: "y", Dialect: OpenCodeGo}}, nil, nil, time.Hour, nil, nil)
+		{Provider: "oc", AcctName: "k2", AcctKey: "y", Dialect: OpenCodeGo}}, nil, nil, nil, time.Hour, nil, nil)
 	defer fresh.Stop()
 	fresh.Inherit(old)
 	// k2 has no inherited snapshot; it will appear only after its own probe
@@ -246,7 +246,7 @@ func TestProbeHTTPOpensErrorAndDialects(t *testing.T) {
 	// probeHTTP is exercised through the real HTTP path only indirectly in
 	// the server e2e; here verify the fail-open snapshot on a dead URL.
 	tr := NewAt([]Target{{Provider: "x", AcctName: "a", AcctKey: "k", Dialect: OpenCodeGo, URL: "http://127.0.0.1:1/usage"}},
-		nil, nil, time.Hour, nil, nil)
+		nil, nil, nil, time.Hour, nil, nil)
 	defer tr.Stop()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -270,5 +270,78 @@ func TestDefaultURLPerDialect(t *testing.T) {
 	}
 	if DefaultURL("nope") != "" || ValidDialect("nope") {
 		t.Fatal("unknown dialect must have no URL and be invalid")
+	}
+}
+
+func TestTrackerResolvesLiveKey(t *testing.T) {
+	// A rotated/rotating bearer must reach the probe AND invalidate the
+	// cache entry: same (provider, account), fresh key -> fresh snapshot
+	// row, never the old key's windows.
+	var mu sync.Mutex
+	keysSeen := []string{}
+	rotate := "key-A"
+	probe := func(ctx context.Context, tr *Tracker, tgt Target) Snapshot {
+		mu.Lock()
+		keysSeen = append(keysSeen, tgt.AcctKey)
+		mu.Unlock()
+		return Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Windows: []Window{{Name: "Rolling", Used: 1}}}
+	}
+	resolver := func(provider, acct string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		return rotate
+	}
+	tr := NewAt([]Target{{Provider: "oc", AcctName: "k1", AcctKey: "stale", Dialect: OpenCodeGo}},
+		nil, probe, resolver, 30*time.Millisecond, nil, nil)
+	defer tr.Stop()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(keysSeen)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	first := append([]string(nil), keysSeen...)
+	mu.Unlock()
+	if len(first) == 0 || first[0] != "key-A" {
+		t.Fatalf("probe must receive the resolved live key, saw %v", first)
+	}
+
+	mu.Lock()
+	rotate = "key-B"
+	mu.Unlock()
+	// Wait for a probe under the new key, then assert a single settled row.
+	sawB := false
+	deadline = time.Now().Add(2 * time.Second)
+	for !sawB && time.Now().Before(deadline) {
+		mu.Lock()
+		for _, k := range keysSeen {
+			if k == "key-B" {
+				sawB = true
+			}
+		}
+		mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !sawB {
+		t.Fatal("rotation never reached the probe")
+	}
+	for {
+		got := tr.All()
+		if len(got) == 1 {
+			break
+		}
+		if len(got) > 1 {
+			t.Fatalf("rotated key must replace the old cache entry, got %d rows", len(got))
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("tracker never settled on one row")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

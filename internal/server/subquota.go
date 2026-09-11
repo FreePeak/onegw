@@ -53,6 +53,29 @@ func subTargets(cfg *config.Config) []subquota.Target {
 	return out
 }
 
+// liveSubKey resolves the CURRENT bearer credential for (provider, account)
+// at probe time: OAuth-managed accounts rotate tokens in the background
+// (TokenProvider), so the config-time key may already be stale.
+func (s *Server) liveSubKey(provider, acctName string) string {
+	st := s.cur()
+	if st == nil || st.pool == nil {
+		return ""
+	}
+	def, ok := st.pool.Get(provider)
+	if !ok {
+		return ""
+	}
+	for i := range def.Accounts {
+		a := &def.Accounts[i]
+		if a.Name == acctName && a.HasOAuthToken() {
+			if tok := a.OAuthToken.Token(); tok != "" {
+				return tok
+			}
+		}
+	}
+	return ""
+}
+
 // parkExhaustedSubscription is the tracker's onExhausted hook: the vendor
 // reports a window fully consumed, so park THIS account (others keep
 // serving) until the capped reset instant. The park duration is already
@@ -72,8 +95,9 @@ func (s *Server) parkExhaustedSubscription(tgt subquota.Target, until time.Time)
 		return
 	}
 	for i := range def.Accounts {
-		a := &def.Accounts[i]
-		if a.Name == tgt.AcctName && a.APIKey == tgt.AcctKey {
+		// Match by account name only: the slot's own stored key always
+		// matches itself inside pool.cool, and OAuth slots rotate keys.
+		if a := &def.Accounts[i]; a.Name == tgt.AcctName {
 			def.Cool(a, d)
 			return
 		}
