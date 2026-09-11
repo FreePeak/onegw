@@ -72,7 +72,7 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 			"level": "lite",
 			"limits": []any{map[string]any{
 				"type": "CREDIT_LIMIT", "unit": 3, "number": 5,
-				"percentage":   100,
+				"percentage":    100,
 				"nextResetTime": time.Now().Add(30 * time.Minute).UnixMilli(),
 			}},
 		}})
