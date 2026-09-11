@@ -197,7 +197,13 @@ type Def struct {
 	// Def stays in the pool so the dashboard can show its config.
 	Disabled bool
 
-	// Headers added to every upstream request (auth handled separately).
+	// DefaultEffort is the reasoning effort applied when a client sent no
+	// effort knob for an always-thinking model ("" = disabled). Only
+	// always-thinking models are touched: everywhere else an absent knob
+	// means "no thinking", and injecting one would invent behavior the
+	// client did not ask for. See DefaultEffortFor.
+	DefaultEffort string
+
 	ExtraHeaders map[string]string `toml:"extra_headers"`
 
 	// AlwaysThinking lists model globs (path.Match syntax; "*" does not
@@ -275,6 +281,11 @@ type Def struct {
 
 	speed speedState // decode-speed EWMAs (speed.go): per-model + provider-wide
 
+	// prefill EWMAs (prefill.go): the pre-first-byte phase per (model, size
+	// bucket). Decode speed cannot predict a 200K-token request's cost; this
+	// is the term that dominates it.
+	prefill prefillState
+
 	// learnedAT/learnedNT record models discovered at runtime: to coerce
 	// thinking-effort/disable knobs (GLM 1210-family 400) or to strip ANY
 	// reasoning knob (effort-conflict 400, kilocode), even though they are
@@ -302,6 +313,24 @@ type Def struct {
 	// edgeFault); a storm of them indicts the (provider, model) leg.
 	htMu      sync.Mutex
 	htStrikes map[string]htWindow
+}
+
+// DefaultEffortFor reports the configured reasoning effort to apply to an
+// always-thinking model when the client sent no effort knob at all, or "" to
+// leave the request alone. Scope is deliberate (measured on b-ai/glm-5.3-flash
+// 2026-09-11: unset → vendor default "max" produced 647/676 output tokens of
+// which 395/392 were reasoning in 6.2-6.5s, while "low" produced 246/234 with
+// 57/50 reasoning in 3.3-3.9s): only models whose upstream reasons
+// unconditionally are touched, because on every other model an absent knob
+// means "do not think" and adding one would change the client's contract.
+func (d *Def) DefaultEffortFor(model string) string {
+	if d.DefaultEffort == "" {
+		return ""
+	}
+	if !d.AlwaysThinkingModel(model) {
+		return ""
+	}
+	return d.DefaultEffort
 }
 
 // LearnAlwaysThinking records model as runtime-discovered always-thinking
@@ -1736,6 +1765,12 @@ type CallResult struct {
 	// measures decode speed (tokens/sec) from here to relay end — the
 	// streaming phase proper, prefill excluded.
 	FirstByte time.Time
+	// Prefill is the measured pre-first-byte phase of THIS attempt: dial and
+	// upload of the request body plus the upstream's queue and prefill,
+	// ending when the response headers arrived. It is the term that dominates
+	// large-context requests, and the one decode speed cannot see
+	// (provider/prefill.go).
+	Prefill time.Duration
 }
 
 // Path builds the upstream URL path for a kind from the client's path
@@ -2080,7 +2115,8 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 	// clears (the #48 deposit-recovery path).
 	d.pool.ok(acct, reqStart) // success resets the 429 ladder (fresh verdicts only)
 	d.pool.flapHeal()         // and closes the flap breaker: the edge is serving
-	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct, FirstByte: time.Now()}, nil
+	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct,
+		FirstByte: time.Now(), Prefill: time.Since(reqStart)}, nil
 }
 
 // DoPassthrough performs one upstream call for a passthrough surface

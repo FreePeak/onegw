@@ -65,6 +65,13 @@ type Router struct {
 	taskRoutingOn bool
 	TaskLog       func(model, detail string)
 
+	// SpeedLog receives one #19-ring decision line whenever the
+	// size-aware (prefill) steering changes a combo's serving order.
+	// Independent of task routing: the measured prefill rate is always
+	// live once requests have folded samples, so its decision is worth
+	// recording even when task routing is off. nil = silent.
+	SpeedLog func(model, detail string)
+
 	// maxAttempts per target before falling to next (network/5xx).
 	MaxAttempts int
 }
@@ -320,6 +327,25 @@ func WithIdentity(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, identityKey{}, id)
 }
 
+// inputSizeKey carries the request's estimated input size (tokens) so the
+// combo ordering can weigh the phase that dominates large requests. Set by
+// the server before Execute; absent for headerless/test callers, which keep
+// decode-only ordering.
+type inputSizeKey struct{}
+
+// WithInputSize attaches the request's estimated input token count.
+func WithInputSize(ctx context.Context, tokens int64) context.Context {
+	return context.WithValue(ctx, inputSizeKey{}, tokens)
+}
+
+func inputSizeFrom(ctx context.Context) int64 {
+	if ctx == nil {
+		return 0
+	}
+	n, _ := ctx.Value(inputSizeKey{}).(int64)
+	return n
+}
+
 // IdentityFrom extracts the identity tagged by WithIdentity.
 func IdentityFrom(ctx context.Context) string {
 	if ctx == nil {
@@ -340,11 +366,15 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 	// routing is on and the caller tagged request signals; the full
 	// fallback chain is preserved — only the order changes.
 	r.applyTaskRouting(ctx, res)
-	// Throughput steering (combo strategy = "fastest"): same contract —
-	// a stable re-sort by each leg's recent decode speed; legs with no
-	// speed data keep the configured order, and nothing is removed.
+	// Throughput steering (combo strategy = "fastest"): a stable re-sort of
+	// the targets by the leg that is expected to finish THIS request first;
+	// legs with no data for the request's size keep the configured order and
+	// nothing is removed. For requests from PrefillMattersAt tokens upwards
+	// the ranking uses measured prefill (provider/prefill.go) — decode speed
+	// alone cannot predict a 200K-token request, where ring evidence shows
+	// the pre-first-byte phase carrying ~97% of the wall time.
 	if res.IsCombo && res.SpeedOrder {
-		r.reorderBySpeed(res)
+		r.reorderBySpeed(ctx, res)
 	}
 	// Sticky round-robin (combo strategy = "round-robin", #82): rotate the
 	// chain so the target that should serve this request is first — the

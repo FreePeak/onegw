@@ -185,6 +185,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
 			NoThinking:       p.NoThinking,
+			DefaultEffort:    p.DefaultEffort,
 			CacheProfile:     p.CacheProfile,
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
@@ -265,6 +266,11 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	}
 	rt.SetCombos(combos)
 	rt.SetTaskRouting(cfg.TaskRoutingOn())
+	// Size-aware (prefill) ordering decision rows: recorded whenever the
+	// reorder actually changes a combo's chain, independent of task routing.
+	rt.SpeedLog = func(model, detail string) {
+		s.observeLog("", model, "", 0, "speed_order", types.Usage{}, 0, detail, 0, 0, 0, 0)
+	}
 	if cfg.TaskRoutingOn() {
 		// #19 ring: one decision row per request whose combo order the
 		// classifier changed (model field = client model, kind =
@@ -619,7 +625,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
-	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), d)
+	// Estimated input size for combo steering (router/reorderBySpeed): the
+	// same 4-bytes-per-token estimate the usage path falls back to, good
+	// enough to pick the size bucket. Only steers ordering, never routing.
+	execCtx := withDelivery(router.WithInputSize(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), int64(len(body))/4), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -998,6 +1007,19 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 			ms = d.Milliseconds()
 			tps = float64(rec.OutputTokens) / d.Seconds()
 		}
+	}
+	// Prefill: the pre-first-byte phase of the winning attempt, bucketed by
+	// request size (provider/prefill.go). This is the term that dominates
+	// large-context requests — a b-ai leg at 232K input decoded in 0.96s but
+	// answered 73.7s after the request arrived, and the whole cost sat here.
+	// The BUCKET comes from the same body-size estimate the router ordered
+	// on (otherwise the two sides disagree near a boundary and the steering
+	// silently never engages — measured live 2026-09-11); the RATE uses the
+	// upstream-reported token count. Folded only on success: a header-budget
+	// abort means "prefill is longer than the budget" — a censored sample
+	// that must not steer the average.
+	if res.Prefill > 0 {
+		def.ObservePrefill(model, provider.PrefillBucket(int64(reqBodyLen)/4), rec.InputTokens, res.Prefill)
 	}
 	label := ""
 	if ak != nil {
@@ -1481,9 +1503,12 @@ func noThinkingConflict400(e *types.APIError) bool {
 // always-thinking when both globs apply (kilo-auto/* rotation): its knobs
 // are stripped outright, because the upstream rejects any value at all.
 // Same discipline otherwise, adapted to the unified model:
-//   - u.ReasoningEffort is coerced only when the client set it (empty stays
-//     empty — knobs are never invented): none|minimal|medium → low,
-//     xhigh → max, unrecognized → high.
+//   - u.ReasoningEffort is coerced when the client set it: none|minimal|
+//     medium → low, xhigh → max, unrecognized → high. When the client set
+//     NOTHING and the provider configures default_effort, that value is
+//     applied — the upstream would otherwise fall back to its own default
+//     (GLM: max). Providers that set no default_effort keep the
+//     never-invent-a-knob rule.
 //   - u.Thinking (budget-based, decodes only from an explicit Anthropic
 //     thinking:enabled) is dropped for always-thinking upstreams: the GLM
 //     wire has no budget representation — encoders either drop it silently
@@ -1506,6 +1531,11 @@ func adaptThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provi
 	}
 	if u.ReasoningEffort != "" {
 		u.ReasoningEffort = coerceEffort(u.ReasoningEffort)
+	} else if eff := def.DefaultEffortFor(upstreamModel); eff != "" {
+		// The client asked for nothing; the upstream would fall back to its
+		// own default (GLM: max). Apply the provider's measured-cheaper
+		// effort instead. Off unless the provider sets default_effort.
+		u.ReasoningEffort = eff
 	}
 	u.Thinking = nil
 }
@@ -1553,6 +1583,15 @@ func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
 					changed = true
 				}
 			}
+		} else if eff := def.DefaultEffortFor(model); eff != "" &&
+			root["thinking"] == nil && root["enable_thinking"] == nil {
+			// Same rule as the unified path: only when the client expressed
+			// no thinking preference at all (default_effort is off by
+			// default). Measured 2026-09-11 on glm-5.3-flash: unset → max
+			// cost 647/676 output tokens (395/392 reasoning) in 6.2-6.5s,
+			// low cost 246/234 (57/50 reasoning) in 3.3-3.9s.
+			root["reasoning_effort"] = eff
+			changed = true
 		}
 		for _, key := range []string{"thinking", "enable_thinking"} {
 			if v, ok := root[key]; ok {

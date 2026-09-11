@@ -1,3 +1,23 @@
+*Last updated: 2026-09-11 (b-ai size-aware prefill steering RESTORED on the rotation master — uncommitted, pending review):
+the b-ai free-tier research + implementation lost in the working-tree reset was recovered
+whole from the peer auto-snapshot (wip/peer-snapshot-20260911-182333, 741d0ac) and
+cherry-picked onto the rotation master (provider.go conflicts resolved to the committed
+strategy-based pick — the snapshot had carried an earlier occupancy draft). Now in tree:
+internal/provider/prefill.go (prefill EWMA per (model, size bucket) — measured 2026-09-11
+glm-5.3-flash 4.2-7.6s vs qwen3.8-flash 4.4-63.7s at 200K tokens), size-aware combo ordering
+(reorderBySpeed scores by predicted seconds once a leg has >=3 samples at >=32K tokens,
+falling through to decode-only otherwise), the default_effort knob (measured: glm-5.3-flash
+unset → 647/676 output tokens, 395/392 reasoning, 6.2-6.5s; low → 246/234, 57/50, 3.3-3.9s
+— 64% fewer output tokens, 46% less wall; opt-in per provider, never overrides a client
+value), the onegw_provider_prefill_tokens_per_second_x100{provider,model,bucket} gauge, and
+the speed_order ring rows. Live-verified on the scratch gateway: steer combo (qwen configured
+first) served by glm at 2.2-4.2s; reasoning tokens 50 with default_effort vs 392-395 unset.
+The post-200 stall watchdog was dropped on evidence (headers→first chunk 0.07-1.38s), and the
+per-first-byte-budget change stays forbidden — docs/b-ai-free-tier-limits.md §6 records the
+regression trap and the peer's occupancy pick as the fix for the timeout storm. Composes with
+the in-flight pick per the PRD's own note: prefill steering picks the LEG, occupancy picks
+the KEY. Reload still gated. Earlier:)*
+
 *Last updated: 2026-09-11 (rotation follow-ups MERGED + DEPLOYED — 225625a, live pid 10264):
 PR #86 merged on GitHub; the main tree synced to origin/master (peer WIP preserved on
 wip/peer-snapshot-20260911-182333 + /tmp patches); zero-drop deployed via scripts/deploy.sh
@@ -1942,8 +1962,16 @@ the issue):
 - `bench/memory.sh` — RSS measurement harness; `scripts/smoke.sh` —
   end-to-end surface tests; `cmd/mockupstream` — fake provider.
 - `docs/dashboard-deep-dive.md` — dashboard build-approach research (#45,
+- `docs/b-ai-free-tier-limits.md` — B.AI (b.ai) free-tier throughput/rate-limit research
+  (2026-09-11) + the size-aware prefill steering plan (§6): vendor publishes no numeric
+  limits; free tier = 0-Credit promo models; measured per-key ceilings and the reseller
+  lane-variance mechanism; ranked optimization plan with evidence.
   companion to #41): stack, SSE plumbing, auth prerequisite, API shape,
   landing order.
+- `docs/b-ai-free-tier-limits.md` — B.AI (b.ai) free-tier throughput/rate-limit research
+  (2026-09-11): vendor's published position (none numeric), what the free tier really is
+  (0-Credit promo models), every enforced wall verbatim with its scope, measured per-key
+  ceilings, and the reseller lane-variance mechanism behind b-ai throughput collapse.
 
 Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
   pages to the UnoRouter design language (user-selected reference,

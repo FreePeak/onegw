@@ -156,6 +156,16 @@ type ProviderCfg struct {
 	// enable_thinking outright instead of coercing them.
 	NoThinking []string `toml:"no_thinking"`
 
+	// DefaultEffort caps the reasoning effort for always-thinking models when
+	// the client sent NO reasoning knob at all ("" = disabled). Measured on
+	// b-ai/glm-5.3-flash 2026-09-11 (same prompt, n=2): unset → vendor default
+	// max gave 647/676 output tokens of which 395/392 were reasoning, 6.2-6.5s;
+	// "low" gave 246/234 output with 57/50 reasoning, 3.3-3.9s — 64% fewer
+	// output tokens and 46% less wall time. Opt-in per provider because it
+	// trades answer depth for speed, and it never overrides a client's own
+	// effort value.
+	DefaultEffort string `toml:"default_effort"`
+
 	// CacheProfile opts the provider into upstream prompt-cache anchoring
 	// (issue #34): "" or "none" (default) forwards request bodies
 	// untouched — byte-identical, since GLM/DeepSeek/b-ai-style upstreams
