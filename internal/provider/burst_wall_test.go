@@ -183,3 +183,41 @@ func TestOKKeepsFreshBenchClearsStaleBench(t *testing.T) {
 		t.Fatalf("benched a1 must not be picked, got %+v", got)
 	}
 }
+
+// TestWordingWallParksOnSecondSight: the wording path needs a second
+// strike inside the window before the pair parks — a lone Concurrency-limit
+// 429 stays on the fall-through/replay path (the fast path's whole-body
+// replay rides out the ~2-5s window; a first-sight park turned that replay
+// into a client-visible 503, caught by
+// TestStreamFastPathReplaysWholeBodyOnTransient429 and reverted once in
+// 1da3c2e).
+func TestWordingWallParksOnSecondSight(t *testing.T) {
+	srv, hits := mkErrStub(t, 429, sharedTPMLimitBody)
+	def := newTwoAccountDef(t, srv, "b-ai")
+
+	// First sight: shared classification, no park — the replay rides it out.
+	_, err1 := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false)
+	if err1 == nil || !err1.SharedConcurrency() {
+		t.Fatalf("wording wall must classify shared, got %+v", err1)
+	}
+	if benched, _ := def.ModelBenched("m"); benched {
+		t.Fatal("a lone wording wall must not park the model")
+	}
+
+	// Second strike INSIDE the window (same or different account — the
+	// wording already proves the lane shared): park.
+	_, err2 := def.Do(context.Background(), &def.Accounts[1], "m", nil, bytes.NewReader([]byte(`{}`)), false)
+	if err2 == nil || !err2.SharedConcurrency() {
+		t.Fatalf("second strike must stay shared, got %+v", err2)
+	}
+	benched, ready := def.ModelBenched("m")
+	if !benched {
+		t.Fatal("second sighting must park the (provider, model) pair")
+	}
+	if d := time.Until(ready); d <= 0 || d > wallParkTTL {
+		t.Fatalf("park TTL=%v, want within wallParkTTL", d)
+	}
+	if atomic.LoadInt32(hits) != 2 {
+		t.Fatalf("hits=%d, want 2", atomic.LoadInt32(hits))
+	}
+}
