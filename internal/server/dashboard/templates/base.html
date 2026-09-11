@@ -9,15 +9,23 @@
 <style>{{asset_css "admin.css"}}</style>
 </head>
 <body>
+<script>
+// Sidebar/rail state BEFORE first paint: no collapse flash on reload.
+(function(){
+  if(localStorage.getItem('ogw-side')==='min') document.documentElement.classList.add('side-min');
+  if(localStorage.getItem('ogw-rail')==='off') document.documentElement.classList.add('rail-off');
+})();
+</script>
 <a class="skip" href="#content">Skip to content</a>
 <div class="layout">
 <aside class="sidebar">
   <div class="brand">
     <span class="btile" aria-hidden="true"><svg viewBox="0 0 32 32" width="26" height="26"><rect width="32" height="32" rx="6" fill="#050505"/><rect x="6" y="6" width="9" height="20" fill="#f8fafc"/><rect x="17" y="6" width="9" height="20" fill="#62b3ff"/></svg></span>
     <span class="bname">one<span>gw</span><em>the llm gateway</em></span>
+    <button id="side-toggle" class="btn ghost sm" title="collapse sidebar (icons stay)" aria-label="collapse or expand sidebar" aria-expanded="true">«</button>
   </div>
   <nav class="nav" aria-label="admin sections">
-    {{$prev := ""}}{{range .Nav}}{{if ne .Group $prev}}<div class="navgrp" aria-hidden="true">{{.Group}}</div>{{$prev = .Group}}{{end}}<a href="{{.Href}}"{{if eq .ID $.Active}} class="active" aria-current="page"{{end}}>{{.Label}}</a>{{end}}
+    {{$prev := ""}}{{range .Nav}}{{if ne .Group $prev}}<div class="navgrp" aria-hidden="true">{{.Group}}</div>{{$prev = .Group}}{{end}}<a href="{{.Href}}" title="{{.Label}}"{{if eq .ID $.Active}} class="active" aria-current="page"{{end}}><svg class="nicon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{.Icon}}</svg><span class="nlabel">{{.Label}}</span></a>{{end}}
   </nav>
 </aside>
 <main class="main">
@@ -25,6 +33,7 @@
   <h1>{{.Title}}</h1>
   <div class="hactions">{{block "hdr" .V}}{{end}}</div>
   <button id="theme" class="btn ghost sm" title="toggle dark/light" aria-label="toggle dark or light theme">◐</button>
+  <button id="rail-toggle" class="btn ghost sm" title="hide/show right rail" aria-label="hide or show right rail" aria-expanded="true">▐▌</button>
 </header>
 <div class="bodyrow">
 <div class="content" id="content">
@@ -65,6 +74,29 @@
     document.documentElement.dataset.theme=n;localStorage.setItem('ogw-theme',n);
     document.dispatchEvent(new CustomEvent('ogw-theme'));
   };
+  // Sidebar collapse: left rail keeps the icons, drops labels. Right rail
+  // hides entirely. Both persist like the theme toggle.
+  (function(){
+    var root=document.documentElement, st=document.getElementById('side-toggle'), rt=document.getElementById('rail-toggle');
+    function sync(){
+      var min=root.classList.contains('side-min');
+      st.textContent=min?'»':'«';
+      st.setAttribute('aria-expanded', String(!min));
+      var off=root.classList.contains('rail-off');
+      rt.setAttribute('aria-expanded', String(!off));
+    }
+    st.onclick=function(){
+      var min=root.classList.toggle('side-min');
+      localStorage.setItem('ogw-side', min?'min':'full');
+      sync();
+    };
+    rt.onclick=function(){
+      var off=root.classList.toggle('rail-off');
+      localStorage.setItem('ogw-rail', off?'off':'on');
+      sync();
+    };
+    sync();
+  })();
   // Toast helper: transient feedback for admin actions (auto-dismiss 4s).
   window.ogwToast=function(msg,ok){
     var box=document.getElementById('toasts');
