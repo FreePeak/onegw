@@ -1149,20 +1149,30 @@ type wallSight struct {
 }
 
 // wallStrike records a ladder-path 429 from acct against model and
-// reports whether it COMPLETES a cross-account burst: a distinct account
-// already struck the same model within wallWindow. Per the 103c253
-// diagnostic rule, a wall that strikes different accounts at nearly the
-// same wall-clock second is not per-key, whatever the (absent) wording
-// implies. On a proven burst the sight resets, so a continuing wall must
-// re-prove itself for every park instead of latching on stale evidence.
-func (p *accountPool) wallStrike(model, acct string) bool {
+// reports whether it COMPLETES a proven shared-wall burst inside
+// wallWindow. Two evidence modes:
+//   - distinct (text=false): a DIFFERENT account struck the same model
+//     within the window — the 103c253 behavioural rule for walls whose
+//     wording says nothing (empty-body one-api 429s).
+//   - text (wording-matched model walls): the message itself proves the
+//     lane is shared, so any two strikes within the window complete the
+//     burst — a lone sighting stays on the fall-through/replay path
+//     (the fast path's whole-body replay rides out the transient window,
+//     2026-09-09; TestStreamFastPathReplaysWholeBodyOnTransient429), and
+//     only the second strike parks the (provider, model) pair so sibling
+//     requests stop re-discovering a SUSTAINED wall.
+//
+// On a proven burst the sight resets, so a continuing wall must re-prove
+// itself for every park instead of latching on stale evidence.
+func (p *accountPool) wallStrike(model, acct string, text bool) bool {
 	if p == nil {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	if prev, ok := p.walls[model]; ok && prev.acct != acct && now.Sub(prev.at) <= wallWindow {
+	if prev, ok := p.walls[model]; ok && now.Sub(prev.at) <= wallWindow &&
+		(text || prev.acct != acct) {
 		delete(p.walls, model)
 		return true
 	}
@@ -1611,6 +1621,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// Router.Execute falls through to the next combo leg
 			// immediately, and parks the (provider, model) pair so
 			// sibling requests skip re-discovery for one burst window.
+			// Wording-matched walls park too, but only on a SECOND sight
+			// within the window (wallStrike text mode): a lone
+			// Concurrency-limit 429 is the transient the whole-body
+			// replay rides out, and a first-sight park turned that replay
+			// into a client-visible 503 (reverted once already — see
+			// 1da3c2e; TestStreamFastPathReplaysWholeBodyOnTransient429
+			// pins the contract).
 			shared := sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message)
 			if !shared {
 				// Burst detection applies only to a wall with nothing to
@@ -1618,7 +1635,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				// header nor the body named a duration (the empty-body
 				// one-api shape). A 429 that states its own window knows
 				// its scope — the ladder rides it verbatim.
-				if apiErr.RetryAfter != "" || !d.pool.wallStrike(model, acct.Name) {
+				if apiErr.RetryAfter != "" || !d.pool.wallStrike(model, acct.Name, false) {
 					dDur := coolDuration(resp.Header.Get("Retry-After"))
 					if dDur == 0 {
 						// No header hint: bench for the request-count window
@@ -1635,6 +1652,14 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 					apiErr.SharedWall = true
 					d.BenchModel(model, wallParkTTL)
 				}
+			} else if apiErr.ModelWall() && d.pool.wallStrike(model, acct.Name, true) {
+				// Sustained wording wall (second strike in the window):
+				// park so siblings skip re-discovery. No SharedWall flag
+				// and no key bench — the text already classifies this 429
+				// shared, so Execute fell through on this request too;
+				// the park only saves the NEXT requests their one doomed
+				// attempt.
+				d.BenchModel(model, wallParkTTL)
 			}
 		}
 		if apiErr.RegionLocked() && acct != nil {
