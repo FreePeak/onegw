@@ -186,6 +186,27 @@ html[data-theme="light"] { color-scheme: light; }
     @apply bg-soft font-bold text-fg;
   }
 
+  /* nav glyph (Lucide-geometry inline SVG) + label; the collapsed state
+   * hides .nlabel and centers the icon — the icon rail the user asked for. */
+  .nav a { @apply flex items-center gap-2.5; }
+  .nicon { @apply shrink-0 opacity-80; }
+  .nav a.active .nicon { @apply opacity-100; }
+  .nlabel { @apply truncate; }
+
+  /* collapsed sidebar (side-min): brand text and labels drop out, the
+   * 224px column shrinks to a 56px icon rail; groups keep a hairline
+   * divider so Monitor/Routing/Gateway still read as sections. */
+  .side-min .sidebar { @apply w-14 px-2; }
+  .side-min .nav a { @apply justify-center px-0; }
+  .side-min .nav .nlabel { display: none; }
+  .side-min .brand .bname { display: none; }
+  .side-min .brand { @apply justify-center px-0; }
+  .side-min .navgrp { @apply px-0 justify-center pb-1 pt-3 text-transparent; }
+  .side-min .navgrp::before { @apply m-0; }
+
+  /* right rail hidden (rail-off): the content column takes the width. */
+  .rail-off .rail { display: none; }
+
   .hdr {
     @apply sticky top-0 z-10 flex items-center gap-4 px-6 py-2.5;
     border-bottom: 2px solid var(--color-pop);

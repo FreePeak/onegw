@@ -335,16 +335,32 @@ func (s *Server) observeLog(provider, model, acct string, code int, kind string,
 	})
 }
 
+// navItems — the sidebar IA (#41). Icon is the glyph's inner SVG markup:
+// 24x24 viewBox, stroke=currentColor paths drawn by base.html inside a
+// <svg class="nicon"> wrapper. Geometry follows the Lucide icon language
+// (MIT): gauge (overview), bar chart (usage), list (logs), server rack
+// (providers), route (combos failover), pie (quota), banknote (saver),
+// terminal (tools), sliders (settings). Collapsed to the icon rail these
+// glyphs are the only navigation, so each must read at 17px.
 var navItems = []dashboard.NavItem{
-	{ID: "overview", Href: "/admin", Label: "Overview", Group: "Monitor"},
-	{ID: "usage", Href: "/admin/ui/usage", Label: "Usage", Group: "Monitor"},
-	{ID: "logs", Href: "/admin/ui/logs", Label: "Console Log", Group: "Monitor"},
-	{ID: "providers", Href: "/admin/ui/providers", Label: "Providers", Group: "Routing"},
-	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos", Group: "Routing"},
-	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota", Group: "Routing"},
-	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver", Group: "Routing"},
-	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools", Group: "Gateway"},
-	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings", Group: "Gateway"},
+	{ID: "overview", Href: "/admin", Label: "Overview", Group: "Monitor",
+		Icon: `<path d="m19 15-4-4"/><path d="M21.64 15a9 9 0 1 0-19.28 0"/>`},
+	{ID: "usage", Href: "/admin/ui/usage", Label: "Usage", Group: "Monitor",
+		Icon: `<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>`},
+	{ID: "logs", Href: "/admin/ui/logs", Label: "Console Log", Group: "Monitor",
+		Icon: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/>`},
+	{ID: "providers", Href: "/admin/ui/providers", Label: "Providers", Group: "Routing",
+		Icon: `<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>`},
+	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos", Group: "Routing",
+		Icon: `<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>`},
+	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota", Group: "Routing",
+		Icon: `<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>`},
+	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver", Group: "Routing",
+		Icon: `<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01"/><path d="M18 12h.01"/>`},
+	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools", Group: "Gateway",
+		Icon: `<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>`},
+	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings", Group: "Gateway",
+		Icon: `<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>`},
 }
 
 // authedPage renders a dashboard page after the gate; unauthenticated
