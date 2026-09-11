@@ -135,7 +135,12 @@ func runGateway() {
 		Handler:           outer,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No global WriteTimeout: streams run for minutes.
-		IdleTimeout: 120 * time.Second,
+		// Loopback agent clients (omp/hermes/opencode) hold pooled
+		// keep-alive conns across long think/tool gaps; closing at 120s
+		// makes their next POST reuse a dead socket ("socket connection
+		// was closed unexpectedly", live 2026-09-11). 30m covers the
+		// longest agentic gaps while still reclaiming abandoned conns.
+		IdleTimeout: 30 * time.Minute,
 	}
 
 	log.Printf("onegw listening on %s (data: %s, budget: %d MiB)",
