@@ -32,8 +32,13 @@ func newOpencodeEchoStub() *opencodeEchoStub {
 			Messages []map[string]any `json:"messages"`
 		}
 		_ = json.Unmarshal(b, &req)
-		bad := len(req.Messages) > 0 && req.Messages[len(req.Messages)-1]["role"] == "tool"
-		if bad {
+		// The Console Go contract: a tool-tail continuation is refused
+		// when ANY assistant turn lacks a non-empty echo. (Recomputed from
+		// a clean base — an earlier shape left `bad` true for EVERY
+		// tool-tail body, so the "serves after synthesis" assertions could
+		// only ever pass through the combo's fallback leg.)
+		bad := false
+		if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1]["role"] == "tool" {
 			for _, m := range req.Messages {
 				if m["role"] != "assistant" {
 					continue
@@ -157,19 +162,29 @@ func TestReasoningEchoSynthesizedOnToolLoop(t *testing.T) {
 	}
 }
 
-// TestReasoningEchoSynthesisNeedsConfig pins the default-off half: without
-// echo_reasoning the same failing body passes through byte-identical to the
-// upstream (and the stub refuses it, proving nothing was synthesized).
-func TestReasoningEchoSynthesisNeedsConfig(t *testing.T) {
+// TestReasoningEchoSynthesisScopesToLearnedModel pins the scoping: without
+// echo_reasoning globs the contract is learned PER MODEL from the first
+// refusal (that client's retry then serves), and a sibling model on the
+// same provider stays untouched — its bodies never carry a synthesized
+// echo, because the fill must not leak across models.
+func TestReasoningEchoSynthesisScopesToLearnedModel(t *testing.T) {
 	st := newOpencodeEchoStub()
 	defer st.srv.Close()
+	other, otherCap := captureStub()
+	defer other.Close()
 
 	cfg := &config.Config{}
 	cfg.Server.DataDir = "memory"
 	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test-key"}}
 	cfg.Providers = append(cfg.Providers, config.ProviderCfg{
 		Name: "oc", Kind: "openai", BaseURL: st.srv.URL, APIKey: "up-key",
-		Models: []string{"deepseek-v4.1-flash"},
+		Models: []string{"deepseek-v4.1-flash", "mimo-v2.5"},
+	})
+	// A second provider carrying the sibling model, so the two requests
+	// can never share learned state.
+	cfg.Providers = append(cfg.Providers, config.ProviderCfg{
+		Name: "mm", Kind: "openai", BaseURL: other.URL, APIKey: "up-key",
+		Models: []string{"mimo-v2.5"},
 	})
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {
@@ -181,9 +196,24 @@ func TestReasoningEchoSynthesisNeedsConfig(t *testing.T) {
 	}
 	defer srv.Close()
 
+	// deepseek: refusal teaches, the bounded retry serves filled.
 	w := do(t, srv.Handler(), toolLoopReq(t, "oc/deepseek-v4.1-flash"))
-	if w.Code != 400 || !strings.Contains(w.Body.String(), "reasoning_content") {
-		t.Fatalf("unconfigured provider must surface the upstream refusal verbatim: code=%d body=%s", w.Code, w.Body.String())
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong") {
+		t.Fatalf("learned deepseek must serve on retry: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if b, _, _ := otherCap.snapshot(); len(b) != 0 {
+		t.Fatalf("deepseek must not touch the sibling leg, got %s", b)
+	}
+
+	// mimo: never learned, never configured — no synthesized echo may
+	// appear in its upstream body even though the provider just learned
+	// the contract for deepseek.
+	w = do(t, srv.Handler(), toolLoopReq(t, "mm/mimo-v2.5"))
+	if w.Code != 200 {
+		t.Fatalf("sibling model must serve untouched: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if b, _, _ := otherCap.snapshot(); strings.Contains(string(b), "(context elided)") {
+		t.Fatalf("learn must not leak across models: %s", b)
 	}
 }
 
