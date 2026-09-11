@@ -27,15 +27,16 @@ stored one) matches OmniRoute's non-rotating-provider protection; and OmniRoute'
 isNetworkErrorRotatable (only rotate on network errors when the account has its own egress)
 is the twin of onegw's flapStrike ("not tied to an account: the fault indicts the provider's
 edge"). Open-work table noted stale (stops at #58 while #68-#82 exist) -> #83. FOLLOW-UP same
-session: the widest surface was still missing — added Layer 3b, the fourteen combo
-TARGET-ORDERING strategies (applyStrategyOrdering.ts: fill-first/lkgp/p2c/least-used/
-cost-optimized/reset-aware/reset-window/headroom/context-optimized/cache-optimized/
-quota-share/random/strict-random/auto) with their mechanics (reset-aware's 30s caches,
-concurrency-capped quota fetches and rrCounters-shared tie-band rotation; quota-share's
-DRR+P2C+bucket+concurrency gates) and the mapping that matters: #70 already scopes
-cost-optimized/headroom/reset-aware and this is its design reference, @lkgp and
-reset-window are the cheap adds (reset-window pairs with #79's subscription windows),
-and #74's quota-share is the quota-share row minus the DRR/bucket machinery. Earlier:)*
+session: recorded the ADJACENT axis too — combo target ORDERING
+(applyStrategyOrdering.ts, fourteen modes) — deliberately as a short cross-referenced
+paragraph rather than a semantics table: it is a scoring axis, not rotation, and its
+implementation homework belongs to #70 (cost-optimized/headroom/reset-aware, comment
+carries the mechanics) and #74 (quota-share's DRR+P2C+bucket+concurrency gates). Filed #84 for the rotation POLICY
+surface (rotationConfig.ts: per-status triggers, thresholds + sliding windows, per-connection
+overrides) after verifying onegw's equivalents are compile-time constants (coolBase/coolCap,
+flapThreshold/flapOpen, ModelBenchTTL, the gated-403 signature, the shared-wall matcher). Kept
+only the two rotation-relevant links: reset-aware/reset-window share rrCounters with
+round-robin (tie-band consistency), and their quota feed is the same one #79 provides. Earlier:)*
 
 *Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 546f997):
 follow-up to the splice-corruption fix (ace1969). The editor prefill synthesizes rows for legacy
@@ -1403,40 +1404,21 @@ refresh_token when the response omits it. Delta, conditional and NOT filed as an
 multi-account OAuth provider sharing ONE client_id is ever added, move the single-flight key
 from account to rotation group (the trigger condition to watch).
 
-**Layer 3b — combo target-ordering strategies** (`open-sse/services/combo/applyStrategyOrdering.ts`).
-The widest strategy surface of all — fourteen named modes, each only reordering
-the target list (no early returns), with `auto` handled separately by
-task-aware manifest routing:
-
-| strategy | mechanic |
-|---|---|
-| `fill-first` | config order (onegw's `order`) |
-| `lkgp` | hoist the combo's **last known good provider/account** to the front (persisted lookup, `getLKGP`) |
-| `p2c` | power-of-two-choices at target level |
-| `least-used` | LRU by last use |
-| `cost-optimized` | cheapest first + manifest routing hints |
-| `reset-aware` | `orderTargetsByResetAwareQuota` — quota score + reset proximity; 30s connection/quota caches, quota fetches concurrency-capped at 5, and the tie-band rotation **shares `rrCounters` with sticky-RR** so ties stay consistent |
-| `reset-window` | `orderTargetsByResetWindow` — soonest reset first |
-| `headroom` | `orderTargetsByHeadroom` — most free capacity first (per-connection headroom ranking) |
-| `context-optimized` | largest context window first |
-| `cache-optimized` | prompt-cache affinity ordering (+ target expansion for the affinity key) |
-| `quota-share` | DRR + P2C in-flight + per-model bucket gating + per-connection concurrency gating (`selectQuotaShareTarget`) |
-| `random` / `strict-random` | uniform / shuffle-deck |
-| `auto` | task-aware manifest routing |
-
-**Mapping to onegw.** onegw ships two of these (`order`, `fastest` — the latter
-a decode-speed EWMA sort with no OmniRoute equivalent, since OmniRoute routes by
-health/quota rather than measured throughput). #70 already scopes three of the
-same names (cost-optimized, headroom, reset-aware) — this table is its design
-reference, and the cheap ones to add beside it are `lkgp` (persist per-combo
-last-success and prefer it; survives restarts, unlike a speed EWMA) and
-`reset-window` (soonest reset first — pairs directly with the #79 subscription
-windows). #74 (quota-share routing) maps to the `quota-share` row: onegw's
-version has no DRR/bucket machinery, so the honest subset is the per-connection
-concurrency gate plus P2C in-flight balancing over the shared account. Note both
-`reset-aware` here and `headroom` depend on quota data that OmniRoute fetches
-per connection — onegw's #79 subquota poller is exactly that feed, which is why
-#81's P2C and these orderings can share one scoring layer.
+**Adjacent axis (not rotation): combo target ORDERING** (`open-sse/services/combo/applyStrategyOrdering.ts`).
+Fourteen named modes reorder a combo's targets before the attempt loop
+(`fill-first`, `lkgp`, `p2c`, `least-used`, `cost-optimized`, `reset-aware`,
+`reset-window`, `headroom`, `context-optimized`, `cache-optimized`,
+`quota-share`, `random`, `strict-random`, `auto`), plus a separate `auto`
+task-aware path. This is a scoring/ordering axis, not account rotation, and
+onegw already tracks its relevant members: **#70** (cost-optimized, headroom,
+reset-aware) and **#74** (quota-share); per-strategy mechanics live in those
+threads, not here. Two connections to the rotation material above are worth
+keeping: (1) the reset-aware and reset-window orderings **share the same
+`rrCounters` map as round-robin**, so tie-band rotation inside them stays
+consistent with RR routing — the one genuinely rotation-flavoured detail on
+this axis; (2) reset-aware and headroom consume per-connection quota data,
+which is exactly the feed #79's subscription poller provides, so #81's pool
+scoring and these orderings can share one component.
 
 **Rotation trigger policy** (`open-sse/services/rotationConfig.ts`). Which error
 classes rotate at all, and only after how many of them inside what window, is a
@@ -1448,8 +1430,12 @@ functions + sliding-window counters, no DB on the hot path. onegw deliberately
 keeps this half in code, not config: `types.Retryable()` is a fixed status set,
 and the classification refinements that mattered came from live RCA (shared-wall
 429s, model-scoped benches, wording-vs-behaviour walls) rather than operator
-tuning — the evaluation for whether any of it becomes a knob is "did a real
-incident need a per-deployment value?", which so far it did not.
+tuning. The delta is therefore narrow and filed as **#84**: make the *policy*
+half configurable — cooldown base/cap, flap threshold/window, model-bench TTL,
+and OmniRoute's "rotate on this status only after N errors in W seconds" gate —
+with every current constant as its default and classification itself left in
+code (a knob that can disable rotation is deliberately out of scope: that turns
+a misconfiguration into a routing outage).
 
 **Failure classification feeds all of them** (`open-sse/services/accountFallback.ts`,
 2129 lines): per-provider profiles (base/max cooldown, backoff steps, circuit
@@ -1592,6 +1578,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it | OmniRoute rotation research 2026-09-11 |
 | #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) | OmniRoute rotation research 2026-09-11 |
 | #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |
+| #84 | Make rotation policy configurable (cooldown base/cap, flap threshold/window, model-bench TTL, per-status rotate-after-N-in-window) with current constants as defaults; classification stays in code | OmniRoute rotation research 2026-09-11 |
 
 ### Recommended implementation order (2026-09-08)
 
