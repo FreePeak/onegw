@@ -304,6 +304,7 @@ type Def struct {
 	learnedMu sync.RWMutex
 	learnedAT map[string]struct{}
 	learnedNT map[string]struct{}
+	learnedRE map[string]struct{} // runtime-discovered echo_reasoning models
 
 	// modelBenched records (model → bench-until) for upstream refusals
 	// that indict the MODEL, not the credential (types.APIError.ModelScoped:
@@ -416,7 +417,29 @@ func (d *Def) ReasoningEchoModel(model string) bool {
 			return true
 		}
 	}
-	return false
+	d.learnedMu.RLock()
+	defer d.learnedMu.RUnlock()
+	_, ok := d.learnedRE[model]
+	return ok
+}
+
+// LearnReasoningEcho records model as runtime-discovered echo_reasoning (its
+// upstream refused the replayed history with the DeepSeek thinking-mode
+// "reasoning_content must be passed back" 400) and reports whether this call
+// newly learned it. attempt() grants the one bounded retry only on a fresh
+// learn: that retry's body carries the newly synthesized echoes, while an
+// already-known model replays byte-identically and falls through instead.
+func (d *Def) LearnReasoningEcho(model string) bool {
+	d.learnedMu.Lock()
+	defer d.learnedMu.Unlock()
+	if d.learnedRE == nil {
+		d.learnedRE = make(map[string]struct{})
+	}
+	if _, ok := d.learnedRE[model]; ok {
+		return false
+	}
+	d.learnedRE[model] = struct{}{}
+	return true
 }
 
 // RotationPolicy is the operator-tunable half of the rotation mechanics
