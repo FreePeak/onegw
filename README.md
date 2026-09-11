@@ -77,9 +77,11 @@ curl -fsSL https://raw.githubusercontent.com/FreePeak/onegw/master/scripts/insta
 Installs the latest release binary (sha256-verified against the release's
 SHA256SUMS), writes a starter config (loopback bind, generated admin password),
 and starts the gateway on 127.0.0.1:8080. It prints the gateway key and
-dashboard password — set `ONEGW_LISTEN` or `ONEGW_KEYS`
-to override. Config lives in `~/.onegw/onegw.toml`; add `[[providers]]` blocks
-there (see [Configuration](#configuration)).
+dashboard password — on a first run the credential is also persisted at
+`<data_dir>/admin_password` and explained under
+[Dashboard](#dashboard). Set `ONEGW_LISTEN` or `ONEGW_KEYS` to override.
+Config lives in `~/.onegw/onegw.toml`; add `[[providers]]` blocks there
+(see [Configuration](#configuration)).
 
 Re-running the installer (reinstall/update) never rotates credentials: the
 existing config's admin password and gateway keys are reused verbatim, and
