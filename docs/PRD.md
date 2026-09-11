@@ -1,3 +1,26 @@
+*Last updated: 2026-09-11 (client-delivered tok/s + sidebar icon rail + wording-park revert, 1da3c2e+97e9427+15263ae):
+(1) fix(provider) 1da3c2e — the wording-path model park (Concurrency/TPM limit 429 -> 6s BenchModel)
+broke TestStreamFastPathReplaysWholeBodyOnTransient429: the fast path's whole-body replay re-enters
+the buffered pipeline and hit the fresh bench skip, surfacing a client-visible 503 one attempt away
+from a 200. Reverted; wording walls ride the SharedConcurrency fall-through (per-request, ladder-
+skipped, keys warm), ModelWall removed. The BEHAVIORAL burst park stays (2nd distinct account inside
+5s — rotation proven futile; a single-account replay can never trip it). Lesson: parks must key off
+evidence that rotation cannot help, never off wording that a same-request replay can outlive.
+(2) feat(metrics) 97e9427 — CLIENT-delivered tok/s + TTFT, the number omp actually experiences:
+winning attempt's output tokens over the WHOLE request wall (failed attempts, rotation, backoff,
+prefill in the denominator), EWMA per CLIENT model (boundedModel keys), folded at the single
+relayResponse success site via a delivery ctx seeded at handler entry. Surfaces: /metrics
+onegw_client_delivered_tokens_per_second_x100 + onegw_client_tokens_to_first_byte_ms, ring rows
+e2e_ms/dtps, Console Log 'delivered' column. proxyStream tags ctx ONLY at the relay call — a
+WithContext fork of r makes streamFallback's body restoration land on a copy (11 stream-fallback
+tests caught it). Tests: EWMA/gates/stale/cap + end-to-end fold (tracker + ring + wall >= stub sleep),
+mutation-checked.
+(3) feat(dashboard) 15263ae — sidebar icon rail: brand-row toggle collapses the 224px left nav to a
+56px icon rail (labels drop, per-page glyphs stay — inline stroke SVGs, Lucide geometry: gauge, bars,
+list, server rack, route, pie, banknote, terminal, sliders; currentColor, zero new assets), header
+toggle hides/shows the right rail; ogw-side/ogw-rail localStorage persistence, state restored before
+first paint, aria-expanded synced.
+
 *Last updated: 2026-09-11 (first-run admin password + dashboard password reset, c538c56, LIVE pid 71003):
 an install with no admin_password (bare `onegw`, the docker image's baked default config, or a
 config leaving the key empty) used to fall back to the guessable in-code "admin". Now: (1)
