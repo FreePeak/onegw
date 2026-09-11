@@ -221,6 +221,15 @@ type Def struct {
 	// coercion, which keeps an accepted knob on the wire.
 	NoThinking []string `toml:"no_thinking"`
 
+	// EchoReasoning lists model globs (path.Match syntax; "*" does not
+	// cross "/") whose upstreams validate the REPLAYED assistant history
+	// in thinking mode: a tool-loop continuation 400s unless every
+	// assistant turn carries reasoning_content — including turns other
+	// combo legs served without reasoning. The server synthesizes the
+	// missing echo (see synthesizeReasoningEcho); see ProviderCfg doc for
+	// the live evidence.
+	EchoReasoning []string `toml:"echo_reasoning"`
+
 	// CacheProfile opts the provider into upstream prompt-cache anchoring
 	// (issue #34, set from ProviderCfg.CacheProfile): "claude-anchor"
 	// re-anchors Anthropic cache_control breakpoints after normalization,
@@ -393,6 +402,21 @@ func (d *Def) NoThinkingModel(model string) bool {
 	defer d.learnedMu.RUnlock()
 	_, ok := d.learnedNT[model]
 	return ok
+}
+
+// ReasoningEchoModel reports whether the routed upstream model matches the
+// provider's echo_reasoning globs (path.Match syntax): a thinking-mode
+// upstream that validates the REPLAYED history and 400s when a tool-loop
+// continuation carries an assistant turn without reasoning_content. The
+// server synthesizes the missing echo for these models (server
+// synthesizeReasoningEcho).
+func (d *Def) ReasoningEchoModel(model string) bool {
+	for _, pat := range d.EchoReasoning {
+		if ok, err := path.Match(pat, model); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // RotationPolicy is the operator-tunable half of the rotation mechanics
