@@ -356,7 +356,14 @@ func (d *Def) BenchModel(model string, ttl time.Duration) {
 			delete(d.modelBench, evict)
 		}
 	}
-	d.modelBench[model] = time.Now().Add(ttl)
+	// Benches never SHORTEN an existing verdict: the burst-wall park
+	// (wallParkTTL) and a model-scoped refusal (ModelBenchTTL) can strike
+	// the same pair within seconds, and the longer window carries the
+	// stronger evidence — mirrors cool()/rateLimited max semantics (a
+	// missing entry reads zero-time, so the max is always the set).
+	if t := time.Now().Add(ttl); t.After(d.modelBench[model]) {
+		d.modelBench[model] = t
+	}
 }
 
 // ModelBenched reports whether the (provider, model) pair is benched, and
@@ -635,6 +642,27 @@ const (
 	coolCap  = 60 * time.Second
 )
 
+// Burst-wall detection (live 2026-09-11, ring seqs 5960-6000): b-ai's
+// one-api edge answers bursty shared-limit pressure with a raw 429 and an
+// EMPTY body — no "concurrency limit"/"TPM limit" wording, no Retry-After,
+// no request-count window, so the 103c253 text classifiers see nothing and
+// every such 429 takes the per-key ladder. The ring shows three DIFFERENT
+// accounts 429ing within 2s (5977 mnhatlinh, 5978/5979 clone2) while the
+// same accounts served 200s seconds later — the cross-account clustering
+// that by definition marks a shared lane, not per-key exhaustion.
+const (
+	// wallWindow is the clustering horizon: 429s from two distinct
+	// accounts of one (provider, model) inside it read as one shared
+	// burst. Ring clusters land within ~2s; 5s catches spaced bursts.
+	wallWindow = 5 * time.Second
+	// wallParkTTL is the (provider, model) park once a burst is proven:
+	// the observed burst window is ~5s (coolBase's rationale) + 1s
+	// margin. A wrong park costs one combo leg for 6s and self-heals —
+	// the first request after expiry re-discovers and, if the wall is
+	// still up, re-parks after two 429s.
+	wallParkTTL = 6 * time.Second
+)
+
 // Flap breaker (b-ai edge 502 storms, live 2026-09-09 22:54): when a
 // provider-wide fault strikes every account at once — an HTML "502 Bad
 // Gateway" page served by an nginx-style edge while the origin pool flaps —
@@ -749,16 +777,13 @@ func (d *Def) RateLimited(a *Account, retryAfter time.Duration) {
 // coolCap) rather than a fixed long park.
 func (d *Def) Gated(a *Account) { d.pool.rateLimited(a, 0) }
 
-// OK records an account success and clears its consecutive-429 strike
-// count, so a recovered key re-enters the ladder at coolBase.
-func (d *Def) OK(a *Account) { d.pool.ok(a) }
-
 type accountState struct {
-	acct     Account
-	cooldown time.Time    // until when the account is skipped
-	strikes  int          // consecutive 429s (adaptive ladder); reset on success
-	bucket   *tokenBucket // RPM governor; nil = uncapped (shared across slots)
-	speed    speedSample  // recent decode speed of this account (tokens/sec)
+	acct      Account
+	cooldown  time.Time    // until when the account is skipped
+	benchedAt time.Time    // when the ACTIVE cooldown was stamped (ok() recency rule)
+	strikes   int          // consecutive 429s (adaptive ladder); reset on success
+	bucket    *tokenBucket // RPM governor; nil = uncapped (shared across slots)
+	speed     speedSample  // recent decode speed of this account (tokens/sec)
 }
 
 // tokenBucket is a refill bucket enforcing Account.RPM. Capacity is two
@@ -828,6 +853,12 @@ type accountPool struct {
 	// next request probes normally. See edgeFault.
 	flapStrikes   int
 	flapOpenUntil time.Time
+
+	// Burst-wall evidence (wallStrike): the last wording-less 429 per
+	// routed model, so the second distinct account within wallWindow
+	// proves the shared lane. Keys are model names — cardinality bounded
+	// by the route tables, like modelBench.
+	walls map[string]wallSight
 }
 
 // stickyPin is one identity's pinned account, matched by Name+APIKey like
@@ -1001,20 +1032,34 @@ func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time
 	return true, time.Time{}
 }
 
-// ok records a successful call on a: the account is healthy, so both its
-// strike count and any leftover cooldown reset — the next 429 starts the
-// ladder at coolBase again. All slots of the account are touched —
-// weighted pools expand one account into several slots.
-func (p *accountPool) ok(a *Account) {
+// ok records a successful call on a that began at `since`: the strike
+// count always resets — the next 429 starts the ladder at coolBase again —
+// but an active cooldown is erased ONLY when it was stamped BEFORE the
+// request started (a bench predating this success is older evidence than
+// it: the gated-403 deposit recovery and post-expiry probes). A cooldown
+// stamped DURING the request's flight is a fresher verdict than the
+// success and must survive it: the pool grants the same account to
+// overlapping requests, so a straggler success can complete AFTER a
+// concurrent request 429ed that account and benched it. Live 2026-09-11
+// (ring seqs 5960-6000): mnhatlinh 429ed at 5977 and served a 200 at
+// 5983, 4s into its 10s bench — the bench vanished to a racing success
+// and the picker re-entered the same burst wall on the same key minutes
+// later (429 again at 5991). Cooldowns expire on their own; coolCap
+// bounds the wait. All slots of the account are touched — weighted pools
+// expand one account into several slots.
+func (p *accountPool) ok(a *Account, since time.Time) {
 	if p == nil || a == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.accts {
-		if p.accts[i].acct.Name == a.Name && p.accts[i].acct.APIKey == a.APIKey {
-			p.accts[i].strikes = 0
-			p.accts[i].cooldown = time.Time{}
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
+			s.strikes = 0
+			if !s.cooldown.IsZero() && s.benchedAt.Before(since) {
+				s.cooldown = time.Time{}
+				s.benchedAt = time.Time{}
+			}
 		}
 	}
 }
@@ -1090,9 +1135,42 @@ func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
 			}
 			if t := now.Add(d); t.After(s.cooldown) {
 				s.cooldown = t
+				s.benchedAt = now
 			}
 		}
 	}
+}
+
+// wallSight is one burst-wall data point: a wording-less 429 from acct at
+// time t against model.
+type wallSight struct {
+	acct string
+	at   time.Time
+}
+
+// wallStrike records a ladder-path 429 from acct against model and
+// reports whether it COMPLETES a cross-account burst: a distinct account
+// already struck the same model within wallWindow. Per the 103c253
+// diagnostic rule, a wall that strikes different accounts at nearly the
+// same wall-clock second is not per-key, whatever the (absent) wording
+// implies. On a proven burst the sight resets, so a continuing wall must
+// re-prove itself for every park instead of latching on stale evidence.
+func (p *accountPool) wallStrike(model, acct string) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	if prev, ok := p.walls[model]; ok && prev.acct != acct && now.Sub(prev.at) <= wallWindow {
+		delete(p.walls, model)
+		return true
+	}
+	if p.walls == nil {
+		p.walls = make(map[string]wallSight)
+	}
+	p.walls[model] = wallSight{acct: acct, at: now}
+	return false
 }
 
 // pin records the identity → account affinity, keeping the map bounded.
@@ -1135,13 +1213,14 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 	defer p.mu.Unlock()
 	now := time.Now()
 	for i := range p.accts {
-		if p.accts[i].acct.Name == a.Name && p.accts[i].acct.APIKey == a.APIKey {
-			if p.accts[i].cooldown.Before(now) {
-				p.accts[i].cooldown = now
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
+			if s.cooldown.Before(now) {
+				s.cooldown = now
 			}
 			// Extend to the farthest slot so weighted pools cool as one.
-			if t := now.Add(d); t.After(p.accts[i].cooldown) {
-				p.accts[i].cooldown = t
+			if t := now.Add(d); t.After(s.cooldown) {
+				s.cooldown = t
+				s.benchedAt = now
 			}
 		}
 	}
@@ -1354,6 +1433,7 @@ func (d *Def) Path(op, model string) string {
 // verbatim (issue #36) and KindOpenCode always sends a session id
 // upstream, the client's own value when present.
 func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr http.Header, body io.Reader, stream bool) (*CallResult, *types.APIError) {
+	reqStart := time.Now() // ok()'s recency rule: benches stamped during this request's flight outlive it
 	if d.inflight != nil {
 		select {
 		case d.inflight <- struct{}{}:
@@ -1517,27 +1597,51 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				// upstream-stated window.
 				apiErr.RetryAfter = strconv.FormatInt(int64((w+time.Second-1)/time.Second), 10)
 			}
-			// doubling to 60s per consecutive 429 — empty-body one-api
-			// style limits recover fast but re-trigger immediately under
-			// sustained load). Shared-limit 429s are the exception and
-			// skip the ladder: the limit is the upstream's model-wide
-			// concurrency (all of the reseller's traffic), not this key's
-			// — live evidence (2026-09-09 10:52): a ~2s window 429ed two
-			// keys, every other request succeeded on the remaining five;
-			// benching healthy keys only shrinks the serving pool while the
-			// shared window clears by itself. Dampening happens in the
-			// retry backoff.
-			if !sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message) {
-				dDur := coolDuration(resp.Header.Get("Retry-After"))
-				if dDur == 0 {
-					// No header hint: bench for the request-count window
-					// the body names ("Maximum 8 requests within 1
-					// minutes" — live tokenrouter 2026-09-09) instead of
-					// the 10s ladder base, which only digs deeper into
-					// the still-closed window.
-					dDur = apiErr.RateWindow()
+			// Shared-limit 429s skip the ladder: the limit is the
+			// upstream's model-wide budget (all of the reseller's
+			// traffic), not this key's — benching healthy keys only
+			// shrinks the serving pool while the shared window clears by
+			// itself. A second, behavioural detection catches the
+			// walls the wording cannot (b-ai's EMPTY-BODY 429s, live
+			// 2026-09-11 seqs 5960-6000: no Retry-After, no window, no
+			// limit text, yet three DIFFERENT accounts struck within 2s
+			// while serving 200s seconds later): wallStrike compares
+			// accounts, not wording — a second distinct account inside
+			// wallWindow proves the shared lane, sets SharedWall so
+			// Router.Execute falls through to the next combo leg
+			// immediately, and parks the (provider, model) pair so
+			// sibling requests skip re-discovery for one burst window.
+			shared := sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message)
+			if !shared {
+				// Burst detection applies only to a wall with nothing to
+				// go on: RetryAfter is empty exactly when neither the
+				// header nor the body named a duration (the empty-body
+				// one-api shape). A 429 that states its own window knows
+				// its scope — the ladder rides it verbatim.
+				if apiErr.RetryAfter != "" || !d.pool.wallStrike(model, acct.Name) {
+					dDur := coolDuration(resp.Header.Get("Retry-After"))
+					if dDur == 0 {
+						// No header hint: bench for the request-count window
+						// the body names ("Maximum 8 requests within 1
+						// minutes" — live tokenrouter 2026-09-09) instead of
+						// the 10s ladder base, which only digs deeper into
+						// the still-closed window.
+						dDur = apiErr.RateWindow()
+					}
+					d.pool.rateLimited(acct, dDur)
+				} else {
+					// Proven shared burst: the key is healthy — benching
+					// it only shrinks the serving pool across the park.
+					apiErr.SharedWall = true
+					d.BenchModel(model, wallParkTTL)
 				}
-				d.pool.rateLimited(acct, dDur)
+			} else if apiErr.ModelWall() {
+				// A wording-matched model-limit wall (Concurrency/TPM/RPM
+				// family): already ladder-skipped, so park the pair for
+				// the same one-burst window and sibling requests skip
+				// re-discovery. Engine admission walls are request-shaped
+				// and never park (see ModelWall).
+				d.BenchModel(model, wallParkTTL)
 			}
 		}
 		if apiErr.RegionLocked() && acct != nil {
@@ -1550,8 +1654,9 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// refused for this model until a deposit lands — account state,
 			// not transient load, so unlike a 429 the request must rotate.
 			// Bench the account on the adaptive ladder (first hit coolBase,
-			// repeat hits double to coolCap; a deposit clearing the gate
-			// resets it via pool.ok) and mark the error Fallbackable so
+			// repeat hits double to coolCap; once the deposit lands the
+			// bench lifts on cooldown expiry and the next success resets
+			// the ladder via pool.ok) and mark the error Fallbackable so
 			// Router.Execute retries this target on the next account and
 			// falls through to the next combo target instead of surfacing
 			// the 403.
@@ -1580,8 +1685,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		}
 		return nil, apiErr
 	}
-	d.pool.ok(acct)   // success resets the 429 ladder
-	d.pool.flapHeal() // and closes the flap breaker: the edge is serving
+	// The recency rule compares benches against WHEN THIS REQUEST BEGAN:
+	// a bench stamped at any point during the flight (a concurrent 429 on
+	// the same account) is a fresher verdict than this success and
+	// survives it; a bench predating the request is older evidence and
+	// clears (the #48 deposit-recovery path).
+	d.pool.ok(acct, reqStart) // success resets the 429 ladder (fresh verdicts only)
+	d.pool.flapHeal()         // and closes the flap breaker: the edge is serving
 	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct, FirstByte: time.Now()}, nil
 }
 

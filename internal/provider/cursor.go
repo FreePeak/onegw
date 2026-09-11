@@ -41,6 +41,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"onegw/internal/translat"
 	"onegw/internal/types"
@@ -67,6 +68,7 @@ func cursorUsesChatService(model string, body []byte) bool {
 // ForcedStream path aggregates it for non-streaming clients and
 // TranslateStream/passthrough serve streaming ones.
 func (d *Def) doCursor(ctx context.Context, acct *Account, model string, body io.Reader) (*CallResult, *types.APIError) {
+	curStart := time.Now() // ok()'s recency rule: benches stamped during this call's flight outlive it
 	raw, err := io.ReadAll(body)
 	if err != nil {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
@@ -111,7 +113,7 @@ func (d *Def) doCursor(ctx context.Context, acct *Account, model string, body io
 		}
 		return nil, apiErr
 	}
-	d.pool.ok(acct) // success resets the 429 ladder
+	d.pool.ok(acct, curStart) // success resets the 429 ladder (fresh verdicts only)
 	// cancel tears the upstream down at the agent done frame (cursor never
 	// EOFs the response — see CursorSSEStream doc).
 	var cancel func()
