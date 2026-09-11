@@ -106,3 +106,36 @@ func TestDoHoldsOccupancyUntilReturn(t *testing.T) {
 		t.Fatalf("Do must release its slot on return, live=%d", got)
 	}
 }
+
+// A sticky pin is a cache-warmth preference, not an admission right. With
+// identity falling back to the auth-key label (server.go requestIdentity),
+// one pin would otherwise funnel every concurrent turn of every session
+// onto ONE credential against b-ai's ~1-request-per-key serialization —
+// the same herd the least-busy pick exists to break.
+func TestPinnedAccountYieldsWhileBusy(t *testing.T) {
+	p := newAccountPool([]Account{
+		{Name: "a1", APIKey: "k1"},
+		{Name: "a2", APIKey: "k2"},
+	}, time.Minute, 0)
+
+	pinned, _ := p.next("k:client")
+	if pinned == nil {
+		t.Fatal("next: no account")
+	}
+	// The pin holds while the account is idle: a second pick without a
+	// live attempt returns the same account (cache warmth preserved).
+	if again, _ := p.next("k:client"); again.Name != pinned.Name {
+		t.Fatalf("idle pin must hold, got %s want %s", again.Name, pinned.Name)
+	}
+
+	p.begin(pinned)
+	other, _ := p.next("k:client")
+	if other == nil || other.Name == pinned.Name {
+		t.Fatalf("busy pinned account must yield to the least-busy scan, got %+v", other)
+	}
+
+	p.end(pinned)
+	if back, _ := p.next("k:client"); back.Name != pinned.Name {
+		t.Fatalf("pin must resume once free, got %s want %s", back.Name, pinned.Name)
+	}
+}

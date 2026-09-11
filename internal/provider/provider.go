@@ -967,20 +967,42 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	}
 	n := len(p.accts)
 	start := int(p.rr)
+	// keepPin: the pinned account is up but already serving another call.
+	// This pick spreads (occupied slots lose the least-busy comparison
+	// below) while the warm-pin claim itself survives — dropping it here
+	// would migrate the identity to whichever account served the
+	// concurrent request, and the pin exists for cache warmth.
+	keepPin := false
 	if p.ttl > 0 && id != "" {
 		if pin, ok := p.sticky[id]; ok && now.Before(pin.expires) {
 			for i := range p.accts {
 				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
 					if ok, _ := p.available(s, now); ok && p.sharedReady(now).IsZero() {
-						p.grant(s, now)
-						return &s.acct, time.Time{}
+						// The pin is a cache-warmth preference, not an
+						// admission right: a pinned account already
+						// serving an upstream call yields to the
+						// least-busy scan instead of stacking a second
+						// attempt behind it (the seq-879 shape). It
+						// matters most where identity collapses to one
+						// client key (requestIdentity's label fallback):
+						// there the pin would otherwise funnel every
+						// concurrent turn of every session onto ONE
+						// credential — the herd this pick rule breaks.
+						if s.live == 0 {
+							p.grant(s, now)
+							return &s.acct, time.Time{}
+						}
+						keepPin = true
+						break
 					}
 					start = i + 1 // pinned account cooling or governed: rotate past it
 					break
 				}
 			}
 		}
-		delete(p.sticky, id)
+		if !keepPin {
+			delete(p.sticky, id)
+		}
 	}
 	var ready time.Time // soonest cooldown expiry / bucket refill among blocked accounts
 	anyOpen := false    // some slot passes its own gates but the shared budget is empty
@@ -1020,7 +1042,9 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 		s := &p.accts[(start+best)%n]
 		p.grant(s, now)
 		p.rr = (uint64(start+best) + 1) % uint64(n)
-		p.pin(id, &s.acct, now)
+		if !keepPin {
+			p.pin(id, &s.acct, now)
+		}
 		return &s.acct, time.Time{}
 	}
 	if !sharedReady.IsZero() {
