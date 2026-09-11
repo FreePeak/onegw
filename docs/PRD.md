@@ -1,3 +1,10 @@
+*Last updated: 2026-09-11 (speed_order log rows now yellow in the dashboard — deployed, live pid 81871):
+`logs.html` row coloring: `speed_order` rows (the prefill-order decision ring rows) render in
+the `code-4xx` warn-yellow class instead of the generic kind-red `code-err`, matching their
+advisory "weigh it, don't trust the head leg blindly" semantics — an unsampled leg still
+sorts to the front by the s=0 promotion rule, and `in~Ntok` is an estimate, not billed usage.
+`task_routing` keeps green; unclassified kinds keep red. Built from HEAD + the single template
+hunk (no peer WIP swept), embedded templates → binary redeploy required. Earlier:)*
 *Last updated: 2026-09-11 (b-ai size-aware prefill steering RESTORED on the rotation master — uncommitted, pending review):
 the b-ai free-tier research + implementation lost in the working-tree reset was recovered
 whole from the peer auto-snapshot (wip/peer-snapshot-20260911-182333, 741d0ac) and

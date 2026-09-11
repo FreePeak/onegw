@@ -44,7 +44,7 @@
     pauseBtn.textContent = paused ? 'resume' : 'pause';
     if (!paused) rebuild(); // backfill rows that arrived while paused
   };
-  function cls(e){ return e.kind === 'task_routing' ? 'code-2xx' : e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
+  function cls(e){ return e.kind === 'task_routing' ? 'code-2xx' : e.kind === 'speed_order' ? 'code-4xx' : e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
   function kfmt(n){ if(n==null||n===0)return '0'; if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M'; if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return String(n); }
   function route(e){ return e.provider ? e.provider + '/' + e.model : (e.model || '(unresolved)'); }
   function short(s){ return s.length > 140 ? s.slice(0, 140) + '…' : s; }
