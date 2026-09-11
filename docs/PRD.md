@@ -1,3 +1,28 @@
+*Last updated: 2026-09-11 (seq-879 RCA addendum — what the ring can and cannot prove):
+four measured corrections to the occupancy-pick commit (469633e); none changes the fix:
+(1) RING GRANULARITY: upstreamErr records one failed ATTEMPT, and attempt() logs the ROUTED leg
+model — so a "qwen3.8-flash" 504 row is leg-level and cannot tell a combo leg from a direct
+route; client visibility of seq 879 is therefore UNKNOWN from the ring (no request id). What IS
+measured is the tax on requests that succeeded: seq 1046, a 200 with e2e_ms 78114 on a 325K-token
+prompt (delivered 4.9 tok/s vs ~50-90 decode). Also checked: no combo lists b-ai/qwen3.8-flash
+twice (free: leg 3; dev: leg 2), so 879+880 are two requests, not a same-target retry pair.
+(2) THE 75s BUDGET MEASURES PURE UPSTREAM THINK TIME: Go arms the h2 ResponseHeaderTimeout only
+after writeRequestBody returns (h2_bundle.go 8826-8845, Go 1.25.14), so neither body upload nor
+h2 stream-admission waits consume it. The uncached-prefill/queue correlation is the whole
+mechanism, and the lever space is exactly two: warm the prefill, or adapt the budget (a bare
+raise only moves the wall and lengthens the burn — which is why 469633e changes neither).
+(3) THE QUEUE IS PRE-FIRST-BYTE, NOT PER-REQUEST: while a 1200-token generation streamed on
+clone2 for 34.9s, a second request on the SAME key answered in 0.72s (same key baseline 1.11s).
+Releasing occupancy at response headers is therefore the correct scope — long-session streams do
+not hold a slot. The probe that produced 29.4s/31.7s/170.2s was three concurrent 1.34MB PREFILLS
+(max_tokens 8), i.e. the incident shape, not a streaming shape.
+(4) `sticky` IS NOT A DROP-IN CACHE-AFFINITY WIN HERE: requestIdentity falls back to the auth-key
+LABEL when the client sends no session header, so enabling sticky on b-ai would pin all of a
+client key's traffic to ONE account — reintroducing the herd against rpm=5. Warm-cache value is
+real (seq 874: cache_read 141440/144556 -> prefb 6.0s vs 40-72s cold), so the follow-up worth
+designing is a conversation-scoped identity (prompt-prefix hash) before any sticky TTL. Pinning
+was also ruled out as an A/B confound: newAccountPool sets ttl = the configured value with no
+default, and the scratch config sets none. Earlier:)*
 *Last updated: 2026-09-11 (dynamic per-provider quota windows (#85, b96eac5, live pid 94769):
 the local quota_window was a fixed enum (5h | daily | weekly), so a provider whose real cap
 resets monthly — or on any other period — could not be modelled at all (leg rejection itself
