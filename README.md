@@ -195,12 +195,36 @@ Use a combo name as the model to get an ordered fallback chain
   `Retry-After` header wins verbatim. When every account of a provider is
   cooling, the gateway answers 429 + `Retry-After` (or falls through to the
   next combo target) instead of burning a doomed upstream attempt.
+  The ladder is tunable per deployment or per provider — `[rotation]`
+  `cooldown_base`/`cooldown_cap`, `flap_threshold`/`flap_open`,
+  `model_bench_ttl` — with the shipped values as defaults, so an existing
+  config is unchanged. Which errors rotate at all is deliberately NOT a knob:
+  that classification came from live incidents.
+- **Terminal billing refusals.** A `402` (or an `insufficient_quota` /
+  insufficient-balance answer) is not a rate limit, so the credential is
+  taken out of rotation instead of being re-offered every 10-60 s: the combo
+  falls through immediately, the console log records one `key_invalidated`
+  row, and the account stays out until an operator clears it
+  (`POST /admin/api/v1/providers/{name}/accounts/{acct}/reset`) or the key is
+  rotated in config. A provider whose every account is terminal answers
+  `503` + `insufficient_quota` naming the accounts, rather than a
+  rate-limit lie.
 - **Upstream fault intelligence.** Transient upstream faults — proxied
   auth-verify outages (401), one-api distributor parse-reject 400s,
   response-header timeouts (504), model-wide concurrency 429s — are
   reclassified as retryable `502`/`504` so combo chains fall through
   instead of surfacing a lying status; genuine schema errors still fail
   fast.
+- **Account-selection strategies.** Beyond the default (fastest recent
+  decode speed, round-robin among equals), `selection` opts a provider into
+  `p2c` (health score: recent strikes, speed, recency, and subscription
+  headroom from the upstream quota tracker), `least-used`,
+  `strict-random` (shuffle deck), or `random`.
+- **Sticky round-robin combos.** `strategy = "round-robin"` with
+  `round_robin_limit` (default 3) keeps one leg at the front for N
+  consecutive successes, then rotates to the next — so leg #1 stops
+  absorbing every request (and every failure) until it is exhausted, while
+  each leg still enjoys a run of warm prefix caches.
 - **Sticky accounts & session affinity.** A per-provider `sticky` window
   pins one key to a request identity to keep upstream prompt caches warm,
   and an opt-in `session_header` derives a stable per-key session id when
