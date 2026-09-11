@@ -29,6 +29,39 @@ called), req3 after the 2s reset served by m again; monthly reports 2026-09-01T0
 listener verified). No live provider sets a local quota_window yet — that is an operator
 config choice, now expressible for any period. Earlier:)*
 
+*Last updated: 2026-09-11 (in-flight-aware account pick — the seq-879 504 root cause):
+RCA of seq 879 (b-ai/qwen3.8-flash, clone2, 504 upstream_timeout "http2: timeout awaiting
+response headers"): NOT a dead lane. The ring window (seqs 861-1061) shows 14 header-budget
+504s on b-ai/qwen3.8-flash in six minutes, clustered 2-3 per second ON THE SAME ACCOUNT
+(879+880, 892+893+894 on clone2), while sibling accounts served 200s throughout — and the
+successful qwen rows paid 20.6s average / 72.0s worst BEFORE first byte (input 3.4K-326K
+tokens, cache_read mostly absent). Direct measurement against api.b.ai (clone2, same key):
+small prefill TTFB 1.0s; 800KB (~200K tok) 39.9s; three CONCURRENT 1.34MB (~330K tok)
+requests on that ONE key -> 29.4s / 31.7s / 170.2s, all HTTP 200. b-ai free keys admit ~1
+concurrent request (docs/b-ai-free-tier-limits.md), so a concurrent burst serializes
+upstream and the deepest-queued attempt rides past the 75s budget: the gateway aborted
+requests that were going to succeed, then re-paid the same cold prefill on the next combo
+leg (tokenrouter's free lane was queueing past its own budget at 08:15-08:16 too), which is
+what collapsed delivered tok/s to 1.5-16 while decode stayed 50-92.
+Why the pool stacked them: accountPool.next() took the FASTEST open slot (decode EWMA) and
+nothing at pick time knew an attempt was still waiting upstream — cooldowns and the RPM
+bucket (capacity 2, refill 12s at rpm=5) cannot express occupancy when one prefill occupies
+the key for 30-170s. Fix: accountState.live counts attempts in flight per slot; next() now
+takes the least-busy open slot with decode speed as the tiebreak, so an idle pool routes
+exactly as before and a burst spreads across the keys. Occupancy is registered in Do and
+DoPassthrough with a DEFERRED release (not from the 429/403/success hooks: the header-budget
+abort and the semaphore cancel return without reporting anything to the pool, so hook-based
+release would leak +1 on precisely the storming keys and silently retire the mechanism).
+Proof: A/B on a scratch gateway + stub upstream that seeds one fast account then fires 3
+concurrent stalled requests — old binary routes a1/a1/a1 (reproduces 892-894), new routes
+a1/a2/a3; unit tests TestPickSpreadsOffBusyAccount / TestDoHoldsOccupancyUntilReturn,
+mutation-checked in both directions (drop the comparator -> spread test fails; drop the
+deferred end -> release test fails). Full suite green on a clean base except the
+pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine a1465b2.
+Complementary, not conflicting: the size-aware PREFILL EWMA steering (prefill.go, issue #81
+pool-selection work) chooses the right LEG; this chooses the right KEY within a leg. The
+header budget stays 75s on purpose — spreading removes the queue that made it look too
+short, and a blanket raise would only slow every genuine dead-lane fall-through. Earlier:)*
 *Last updated: 2026-09-11 (OmniRoute rotation-strategy research + issues #80/#81/#82):
 deep-read of OmniRoute's three rotation layers from source — (1) per-key health rotation
 (apiKeyRotator.ts + chatCore/keyHealth.ts: 401 warning→invalid at threshold 2, 402 terminal
