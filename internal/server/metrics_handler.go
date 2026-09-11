@@ -28,6 +28,7 @@ type gatewayMetrics struct {
 	budgetCap  *metrics.Family // onegw_budget_cap_bytes
 	uptime     *metrics.Family // onegw_uptime_seconds
 	provTPS    *metrics.Family // onegw_provider_tokens_per_second_x100
+	provPreTPS *metrics.Family // onegw_provider_prefill_tokens_per_second_x100
 	clientTPS  *metrics.Family // onegw_client_delivered_tokens_per_second_x100
 	clientTTFT *metrics.Family // onegw_client_tokens_to_first_byte_ms
 
@@ -47,6 +48,7 @@ func newGatewayMetrics() *gatewayMetrics {
 		budgetCap:  reg.Gauge("onegw_budget_cap_bytes", "Capacity of the global buffered-memory budget in bytes."),
 		uptime:     reg.Gauge("onegw_uptime_seconds", "Seconds since the gateway process started."),
 		provTPS:    reg.Gauge("onegw_provider_tokens_per_second_x100", "Decode-speed EWMA (output tokens/sec) per provider, scaled x100 (int64 registry); refreshed at scrape, absent until the provider served streaming replies.", "provider"),
+		provPreTPS: reg.Gauge("onegw_provider_prefill_tokens_per_second_x100", "Prefill (pre-first-byte) rate EWMA in INPUT tokens/sec per provider+model+size-bucket, scaled x100; refreshed at scrape. Size-aware combo ordering steers large requests on this number: decode speed alone cannot predict a 200K-token request's wall time.", "provider", "model", "bucket"),
 		clientTPS:  reg.Gauge("onegw_client_delivered_tokens_per_second_x100", "Delivered tokens/sec EWMA per CLIENT model (output tokens of the winning attempt over the whole request wall time — failed attempts, rotation and backoff included), scaled x100 (int64 registry); refreshed at scrape, absent until the model served >=4 output tokens.", "model"),
 		clientTTFT: reg.Gauge("onegw_client_tokens_to_first_byte_ms", "First-byte TTFT EWMA in ms per CLIENT model (handler entry -> first upstream byte; failed attempts, rotation and backoff all land in it); refreshed at scrape.", "model"),
 
@@ -215,6 +217,18 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		for _, name := range st.pool.Names() {
 			if d, ok := st.pool.Get(name); ok && !d.Disabled {
 				m.provTPS.Set(int64(d.ProviderTPS()*100), name)
+			}
+		}
+	}
+	// Prefill rates per (provider, model, size bucket): what the size-aware
+	// combo ordering steers on. Emitted only where samples exist, so a quiet
+	// lane stays absent from the scrape instead of reporting a fake zero.
+	if st := s.cur(); st != nil && st.pool != nil && m.provPreTPS != nil {
+		for _, name := range st.pool.Names() {
+			if d, ok := st.pool.Get(name); ok && !d.Disabled {
+				for _, r := range d.PrefillRows() {
+					m.provPreTPS.Set(int64(r.TPS*100), name, r.Model, r.Bucket)
+				}
 			}
 		}
 	}
