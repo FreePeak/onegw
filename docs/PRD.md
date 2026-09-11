@@ -1,4 +1,4 @@
-*Last updated: 2026-09-11 (first-run admin password + dashboard password reset, sandbox-verified):
+*Last updated: 2026-09-11 (first-run admin password + dashboard password reset, c538c56, LIVE pid 71003):
 an install with no admin_password (bare `onegw`, the docker image's baked default config, or a
 config leaving the key empty) used to fall back to the guessable in-code "admin". Now: (1)
 internal/config/adminpw.go — boot mints a 22-char crypto/rand credential, persists it at
@@ -14,12 +14,17 @@ splices the TOML key (byte-preserving splice that opens a [server] table when th
 none) through patchConfigFile → immediate Reload, mirrors the value into the data-dir marker,
 and expires the caller's cookie — sessions are sha256(password)-bound, so every session (this
 browser and the X-Admin-Password header) requires the new password on the next call.
-Live-verified on a throwaway gateway on a private port (never the live :8080): first-run banner
-+ 0600 marker on both a config-less boot and the docker-shaped default config; login → change →
-old cookie 401, old header 401, new header 200, reload 200, second/third changes (no cfgMu
-deadlock), generated echo; regression tests: config resolver ladder (stability across loads,
-explicit/env precedence, memory sentinel, restart persistence) and server end-to-end including
-the no-config-file path. scripts/deploy.sh + deploy_vps.sh read the marker when the config key
+Live-verified on throwaway private-port instances and a real alpine container (never the
+live :8080 until the final zero-drop deploy): first-run banner + 0600 marker on a config-less
+boot AND a container with the baked docker default config (banner in `docker logs`, marker in the
+/data volume, no reprint after recreate with the stored credential authenticating); dashboard
+login → change → old cookie 401, old header 401, new header 200, reload 200, second/third
+changes (no cfgMu deadlock), generated echo, read-only-config-mount fallback (mirror +
+`persisted:"marker"`, new credential survives a process restart); regression tests: config
+resolver ladder (stability across loads, explicit/env precedence, memory sentinel, restart
+persistence, unwritable-dir fail-safe) and server end-to-end including the no-config-file and
+read-only-mount paths. Deployed to :8080 via scripts/deploy.sh zero-drop (single listener,
+/health 200 twice, /v1/models 200). scripts/deploy.sh + deploy_vps.sh read the marker when the config key
 is empty instead of probing with "admin". Earlier:)*
 
 *Last updated: 2026-09-11 (cross-account burst-wall park + bench-recency ok(), commit 092179c, live pid 89451):
