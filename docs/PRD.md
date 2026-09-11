@@ -1,3 +1,18 @@
+*Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 546f997):
+follow-up to the splice-corruption fix (ace1969). The editor prefill synthesizes rows for legacy
+top-level credentials (providerEditViews: keys → "key-N", api_key → "default"), but the splice knew
+none of those names: an accounts-bearing Save rendered keyless rows next to the surviving legacy
+lines — on a keys-style provider the next Load appended the expansion's keyed key-N accounts
+alongside the keyless rows (duplicate names → the new duplicate-account guard made every Save 400:
+legacy providers were uneditable), and on an api_key provider the keyless "default" row slipped
+through validation and shadowed the provider key. Fix: parseAccounts harvests the legacy lines
+under the prefill's names (multi-line arrays included, mirroring spliceAuthKeys's gather), and the
+Save supersedes only the lines whose material landed in the rendered roster — renamed rows keep
+their line, deleted rows intentionally remove the credential. Regression tests for keys-style,
+multi-line keys-style, and api_key-style fixtures; verified on a scratch gateway (port 18082)
+against a copy of the live keys-shaped config: the UI-shaped Save converts opencode cleanly.
+Earlier:)*
+
 *Last updated: 2026-09-11 (upstream subscription quota tracker (#79), 5683bdc, live pid 95082:
 ported from 9router's open-sse/services/usage/{opencode-go,glm}.js + OmniRoute's
 opencodeQuotaFetcher.ts. internal/subquota polls the VENDOR's own subscription usage
