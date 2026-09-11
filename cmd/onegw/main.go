@@ -64,6 +64,12 @@ func runGateway() {
 			fatal("load config: %v", err)
 		}
 	}
+	// First boot with no admin_password anywhere: mint one, persist it under
+	// the data dir, and print it once (below) so the operator can sign in.
+	if _, pwErr := cfg.GenerateAndStoreAdminPassword(); pwErr != nil {
+		log.Printf("onegw: generated admin password could NOT be persisted (%v) — it changes on every restart; fix %s or set admin_password", pwErr, cfg.Server.DataDir)
+	}
+	logAdminPassword(cfg)
 
 	applyMemoryTuning()
 
@@ -167,6 +173,21 @@ func runGateway() {
 	if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		fatal("serve: %v", err)
 	}
+}
+
+// logAdminPassword prints the first-run credential exactly once: a gateway
+// installed with no admin_password (bare `onegw`, or the docker image whose
+// default config ships the key empty) would otherwise fall back to the
+// guessable "admin" with the operator none the wiser. The generated value is
+// persisted at <data_dir>/admin_password, so this banner is the only place
+// it is ever displayed; restarts and reloads keep the stored value silently.
+func logAdminPassword(cfg *config.Config) {
+	if !cfg.AdminPasswordGenerated() {
+		return
+	}
+	log.Printf("onegw: FIRST-RUN ADMIN PASSWORD (no admin_password was configured): %s", cfg.Server.AdminPassword)
+	log.Printf("onegw: sign in at /admin with it, or set admin_password in your config to choose your own — stored in %s/%s",
+		cfg.Server.DataDir, config.AdminPasswordFile)
 }
 
 // applyMemoryTuning sets a soft heap limit when the operator has not. The

@@ -25,6 +25,18 @@
 <pre id="upd-res" class="mono mt-2.5 text-mut">{{if .UpdErr}}last error: {{.UpdErr}}{{end}}{{if .UpdApply}} · last apply: {{.UpdApply}}{{end}}</pre>
 </div>
 
+<div class="card mb-3"><h3>Admin password</h3>
+<p class="sub mb-2">Takes effect immediately and signs every session out — including this one. Leave the new password blank to generate a strong one.</p>
+<div class="grid grid-cols-2 gap-3">
+  <div class="field"><label for="pw-cur">current password <b>*</b></label><input id="pw-cur" type="password" autocomplete="current-password"></div>
+  <div class="field"><label for="pw-new">new password</label><input id="pw-new" type="password" autocomplete="new-password" placeholder="blank = generate"></div>
+</div>
+<div class="flex items-center gap-2.5">
+  <button class="btn primary" id="pw-save">Change password</button>
+  <span class="text-mut" id="pw-hint"></span>
+</div>
+<pre id="pw-res" class="mono mt-2.5 text-mut"></pre></div>
+
 <div class="card mb-3"><h3>Maintenance</h3>
 <div class="flex items-center gap-2.5">
   <button class="btn" hx-put="/admin/config/reload" hx-target="#reload-res" hx-swap="innerHTML">Reload config (SIGHUP)</button>
@@ -36,11 +48,56 @@
 <div class="kv">
   <span class="k">JSON (flat, stable)</span><span class="mono">/admin/health · /admin/usage · /admin/quota · /admin/config</span>
   <span class="k">JSON (grouped)</span><span class="mono">/admin/api/v1/{usage/daily,logs,providers,combos,quota,saver}</span>
-  <span class="k">live events</span><span class="mono">GET /admin/events?topics=health,usage,quota,logs (SSE)</span>
   <span class="k">auth</span><span class="mono">X-Admin-Password header · or session cookie via POST /admin/login</span>
+  <span class="k">password</span><span class="mono">PUT /admin/config/password {"current_password","new_password"} — blank new = generated</span>
 </div></div>
 {{end}}
 {{define "scripts"}}
+<script>
+// Admin password change: PUT /admin/config/password with the current
+// password; an empty new password asks the gateway to generate one. On
+// success the server reloads the config (effective immediately), drops
+// every session and expires this cookie — the response shows the generated
+// credential once, then a button hands back to the sign-in page.
+(function(){
+  var cur = document.getElementById('pw-cur'),
+      next = document.getElementById('pw-new'),
+      save = document.getElementById('pw-save'),
+      hint = document.getElementById('pw-hint'),
+      res = document.getElementById('pw-res');
+  if (!save) return;
+  save.onclick = async function(){
+    save.disabled = true;
+    hint.textContent = 'saving…';
+    var j;
+    try {
+      var r = await fetch('/admin/config/password', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({current_password: cur.value, new_password: next.value})
+      });
+      j = await r.json();
+      if (!r.ok) { hint.textContent = ''; res.textContent = 'failed: ' + (j.error || ('HTTP ' + r.status)); save.disabled = false; return; }
+    } catch(e) { hint.textContent = ''; res.textContent = 'failed: ' + e.message; save.disabled = false; return; }
+    hint.textContent = 'changed — everyone is signed out';
+    var show = 'password changed and live. ';
+    show += j.generated ? 'Generated password (copy it now): ' + j.password
+                        : 'Sign in again with the new password.';
+    if (j.persisted === 'marker') {
+      // The TOML was not writable (read-only config mount, permissions): the
+      // data-dir marker carries the credential instead — a future config
+      // reload of an empty key keeps it, so this is not a rollback.
+      show += ' (config file not writable — stored in the data-dir marker file)';
+    }
+    res.textContent = show;
+    var btn = document.createElement('button');
+    btn.className = 'btn primary mt-2.5';
+    btn.textContent = 'Go to sign-in';
+    btn.onclick = function(){ location.href = '/admin'; };
+    res.after(btn);
+  };
+})();
+</script>
 <script>
 (function(){
   var res = document.getElementById('upd-res'),

@@ -124,6 +124,13 @@ ADMIN_PW=$(sed -n 's/^[[:space:]]*admin_password[[:space:]]*=[[:space:]]*"\([^"]
 if [ -z "$ADMIN_PW" ] && [ -f "$ENVFILE" ]; then
   ADMIN_PW=$(sed -n -e 's/^ONEGW_ADMIN_PASSWORD="\?\([^"]*\)"\?$/\1/p' "$ENVFILE" | head -1)
 fi
+if [ -z "$ADMIN_PW" ]; then
+  # Empty/absent key + no env entry: the gateway generated its first-run
+  # credential under the data dir (internal/config/adminpw.go) — probe with
+  # that instead of the guessable "admin".
+  DATA_DIR=$(sed -n 's/^[[:space:]]*data_dir[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -1)
+  [ -n "$DATA_DIR" ] && [ -f "$DATA_DIR/admin_password" ] && ADMIN_PW=$(cat "$DATA_DIR/admin_password")
+fi
 ADMIN_PW=${ADMIN_PW:-admin}
 HEALTH="http://127.0.0.1:$PORT/admin/health"
 

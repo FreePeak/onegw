@@ -2,13 +2,18 @@
 # Everything secret comes from env at runtime — no keys in the image:
 #   ONEGW_KEYS="key1,key2"                     gateway client keys
 #   ONEGW_PROVIDER_<NAME>_KEY[2..9]            upstream provider keys
-#   ONEGW_ADMIN_PASSWORD                       dashboard/admin API (default: admin)
+#   ONEGW_ADMIN_PASSWORD                       dashboard/admin API (unset: a random
+#                                                password is generated on first boot,
+#                                                stored in the /data volume and printed
+#                                                once in the container log)
 # Mount your own config over /etc/onegw/onegw.toml to override any of this.
 
 [server]
 listen = "0.0.0.0:8080"        # in-container bind; publish with -p to reach it
 data_dir = "/data"             # usage.db lives here (volume)
-admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides; Defaults() -> "admin"
+admin_password = ""            # unset + no ONEGW_ADMIN_PASSWORD: first boot
+                               # generates + persists a random one (log line
+                               # "FIRST-RUN ADMIN PASSWORD" in docker logs)
 
 [saver]
 enabled = true
