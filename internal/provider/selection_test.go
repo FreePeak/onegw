@@ -141,3 +141,40 @@ func TestSelectionRespectsGates(t *testing.T) {
 		}
 	}
 }
+
+// Union guard with the peer's in-flight pick: a slot with a live upstream
+// call must lose to an idle sibling in EVERY selection mode — the
+// per-key-concurrency incident fix (3 stacked 330K prefills → TTFB
+// 29s/32s/170s) cannot be undone by opting into a strategy.
+func TestSelectionOccupancyGateAcrossModes(t *testing.T) {
+	for _, mode := range []string{"", "p2c", "least-used", "strict-random", "random"} {
+		d := selPool(t, mode, nil)
+		d.pool.mu.Lock()
+		now := d.pool.now()
+		for i := range d.pool.accts {
+			s := &d.pool.accts[i]
+			s.lastUsed = now.Add(-time.Hour)
+			// Busy: "a" has one call in flight. Idle: b and c.
+			if s.acct.Name == "a" {
+				s.live = 1
+			}
+			// Make "b" the LESS attractive normal candidate (slow, struck),
+			// so a mode that ignored occupancy would happily pick "a" or
+			// "b"; only the occupancy gate makes "c" correct... but any idle
+			// slot is acceptable, so assert the pick is not the busy one.
+			if s.acct.Name == "b" {
+				s.strikes = 5
+			}
+		}
+		d.pool.mu.Unlock()
+		for i := 0; i < 3; i++ {
+			a, _ := d.NextAccount("")
+			if a == nil {
+				t.Fatalf("mode %q: pool empty", mode)
+			}
+			if a.Name == "a" {
+				t.Fatalf("mode %q: picked the slot with a call in flight (occupancy gate lost)", mode)
+			}
+		}
+	}
+}

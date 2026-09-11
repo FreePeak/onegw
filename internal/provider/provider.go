@@ -2290,16 +2290,18 @@ func (p *accountPool) pickSlot(open []int, now time.Time) int {
 			minLive = l
 		}
 	}
-	if minLive > 0 {
-		idle := open[:0:0]
-		for _, i := range open {
-			if p.accts[i].live == minLive {
-				idle = append(idle, i)
-			}
+	// Always narrow (not just when everything is busy): with a=1, b=0 the
+	// minimum is 0 and the busy slot must be excluded — gating only on
+	// minLive > 0 let the default mode spend an idle slot's turn on a key
+	// that already had a call in flight.
+	idle := make([]int, 0, len(open))
+	for _, i := range open {
+		if p.accts[i].live == minLive {
+			idle = append(idle, i)
 		}
-		if len(idle) > 0 {
-			open = idle
-		}
+	}
+	if len(idle) > 0 {
+		open = idle
 	}
 	if len(open) == 1 {
 		return open[0]
