@@ -26,7 +26,16 @@ with the never-null guard (internal/oauth/manager.go refresh: absent refresh_tok
 stored one) matches OmniRoute's non-rotating-provider protection; and OmniRoute's
 isNetworkErrorRotatable (only rotate on network errors when the account has its own egress)
 is the twin of onegw's flapStrike ("not tied to an account: the fault indicts the provider's
-edge"). Open-work table noted stale (stops at #58 while #68-#82 exist) -> #83. Earlier:)*
+edge"). Open-work table noted stale (stops at #58 while #68-#82 exist) -> #83. FOLLOW-UP same
+session: the widest surface was still missing — added Layer 3b, the fourteen combo
+TARGET-ORDERING strategies (applyStrategyOrdering.ts: fill-first/lkgp/p2c/least-used/
+cost-optimized/reset-aware/reset-window/headroom/context-optimized/cache-optimized/
+quota-share/random/strict-random/auto) with their mechanics (reset-aware's 30s caches,
+concurrency-capped quota fetches and rrCounters-shared tie-band rotation; quota-share's
+DRR+P2C+bucket+concurrency gates) and the mapping that matters: #70 already scopes
+cost-optimized/headroom/reset-aware and this is its design reference, @lkgp and
+reset-window are the cheap adds (reset-window pairs with #79's subscription windows),
+and #74's quota-share is the quota-share row minus the DRR/bucket machinery. Earlier:)*
 
 *Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 546f997):
 follow-up to the splice-corruption fix (ace1969). The editor prefill synthesizes rows for legacy
@@ -1393,6 +1402,41 @@ gateway cannot clobber each other's rotated token, and `refresh()` keeps the sto
 refresh_token when the response omits it. Delta, conditional and NOT filed as an issue: if a
 multi-account OAuth provider sharing ONE client_id is ever added, move the single-flight key
 from account to rotation group (the trigger condition to watch).
+
+**Layer 3b — combo target-ordering strategies** (`open-sse/services/combo/applyStrategyOrdering.ts`).
+The widest strategy surface of all — fourteen named modes, each only reordering
+the target list (no early returns), with `auto` handled separately by
+task-aware manifest routing:
+
+| strategy | mechanic |
+|---|---|
+| `fill-first` | config order (onegw's `order`) |
+| `lkgp` | hoist the combo's **last known good provider/account** to the front (persisted lookup, `getLKGP`) |
+| `p2c` | power-of-two-choices at target level |
+| `least-used` | LRU by last use |
+| `cost-optimized` | cheapest first + manifest routing hints |
+| `reset-aware` | `orderTargetsByResetAwareQuota` — quota score + reset proximity; 30s connection/quota caches, quota fetches concurrency-capped at 5, and the tie-band rotation **shares `rrCounters` with sticky-RR** so ties stay consistent |
+| `reset-window` | `orderTargetsByResetWindow` — soonest reset first |
+| `headroom` | `orderTargetsByHeadroom` — most free capacity first (per-connection headroom ranking) |
+| `context-optimized` | largest context window first |
+| `cache-optimized` | prompt-cache affinity ordering (+ target expansion for the affinity key) |
+| `quota-share` | DRR + P2C in-flight + per-model bucket gating + per-connection concurrency gating (`selectQuotaShareTarget`) |
+| `random` / `strict-random` | uniform / shuffle-deck |
+| `auto` | task-aware manifest routing |
+
+**Mapping to onegw.** onegw ships two of these (`order`, `fastest` — the latter
+a decode-speed EWMA sort with no OmniRoute equivalent, since OmniRoute routes by
+health/quota rather than measured throughput). #70 already scopes three of the
+same names (cost-optimized, headroom, reset-aware) — this table is its design
+reference, and the cheap ones to add beside it are `lkgp` (persist per-combo
+last-success and prefer it; survives restarts, unlike a speed EWMA) and
+`reset-window` (soonest reset first — pairs directly with the #79 subscription
+windows). #74 (quota-share routing) maps to the `quota-share` row: onegw's
+version has no DRR/bucket machinery, so the honest subset is the per-connection
+concurrency gate plus P2C in-flight balancing over the shared account. Note both
+`reset-aware` here and `headroom` depend on quota data that OmniRoute fetches
+per connection — onegw's #79 subquota poller is exactly that feed, which is why
+#81's P2C and these orderings can share one scoring layer.
 
 **Failure classification feeds all of them** (`open-sse/services/accountFallback.ts`,
 2129 lines): per-provider profiles (base/max cooldown, backoff steps, circuit
