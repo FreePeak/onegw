@@ -1635,13 +1635,6 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 					apiErr.SharedWall = true
 					d.BenchModel(model, wallParkTTL)
 				}
-			} else if apiErr.ModelWall() {
-				// A wording-matched model-limit wall (Concurrency/TPM/RPM
-				// family): already ladder-skipped, so park the pair for
-				// the same one-burst window and sibling requests skip
-				// re-discovery. Engine admission walls are request-shaped
-				// and never park (see ModelWall).
-				d.BenchModel(model, wallParkTTL)
 			}
 		}
 		if apiErr.RegionLocked() && acct != nil {
