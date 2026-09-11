@@ -25,6 +25,10 @@ type Combo struct {
 	Name     string   `toml:"name"`
 	Targets  []Target `toml:"targets"`
 	Strategy string   `toml:"strategy"`
+	// RoundRobinLimit (strategy = "round-robin" only): how many
+	// consecutive successes keep a target first before rotation moves on
+	// (#82). 0 = default 3; clamped to 1..1000.
+	RoundRobinLimit int `toml:"round_robin_limit"`
 }
 
 // Router resolves model strings and executes calls with fallback.
@@ -34,6 +38,12 @@ type Router struct {
 	models  map[string]directRoute
 	combos  map[string]*Combo
 	aliases map[string]string
+
+	// Sticky round-robin state per round-robin combo (#82): combo name →
+	// counter + currently-winning target. In-memory by design (a reload
+	// rebuilds the router; at most one sticky run is forgotten).
+	rrMu sync.Mutex
+	rr   map[string]*comboRR
 
 	// PoolEmptyError, when set, builds the error Execute reports when a
 	// target's whole account pool is cooling and the upstream attempt is
@@ -74,6 +84,7 @@ func New(pool *provider.Pool) *Router {
 		models:      map[string]directRoute{},
 		combos:      map[string]*Combo{},
 		aliases:     map[string]string{},
+		rr:          map[string]*comboRR{},
 		MaxAttempts: 2,
 	}
 }
@@ -218,6 +229,16 @@ type Resolution struct {
 	Targets []Target // provider/model pairs, fallback order
 	IsCombo bool
 	Model   string // the client-facing model string that resolved (task-log label)
+	// RoundRobin (combo strategy = "round-robin"): Execute rotates the
+	// chain so the sticky/counter-selected target is FIRST, and records
+	// the winner per combo name so stickiness can expire (#82).
+	RoundRobin bool
+	Combo      string // canonical combo name, empty for direct routes
+
+	// rrLead is the pre-rotation index of the target leading this
+	// round-robin resolution (internal; 0 when not rotated).
+	rrLead int
+
 	// SpeedOrder marks a combo whose config declares strategy = "fastest":
 	// Execute stable-sorts the targets by recent decode speed before the
 	// first attempt (unknown speeds keep the configured order).
@@ -256,7 +277,14 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 	}
 	if c, ok := r.combos[strings.ToLower(lookup)]; ok {
-		return &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true, Model: lookup, SpeedOrder: c.Strategy == "fastest"}, nil
+		res := &Resolution{Targets: append([]Target(nil), c.Targets...), IsCombo: true, Model: lookup, Combo: c.Name}
+		switch c.Strategy {
+		case "fastest":
+			res.SpeedOrder = true
+		case "round-robin":
+			res.RoundRobin = true
+		}
+		return res, nil
 	}
 	model = lookup
 	if dr, ok := r.models[strings.ToLower(model)]; ok {
@@ -318,6 +346,14 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 	if res.IsCombo && res.SpeedOrder {
 		r.reorderBySpeed(res)
 	}
+	// Sticky round-robin (combo strategy = "round-robin", #82): rotate the
+	// chain so the target that should serve this request is first — the
+	// sticky winner while its success run is under the limit, else the
+	// counter position. A successful call records the winner for the next
+	// request; failures just fall through the chain as usual.
+	if res.IsCombo && res.RoundRobin {
+		r.rotateRoundRobin(res)
+	}
 	var lastErr *types.APIError
 	id := IdentityFrom(ctx)
 	for _, t := range res.Targets {
@@ -372,7 +408,12 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// (default: 429 whose Retry-After tells the client when
 				// the pool reopens).
 				pe := r.poolEmptyError(def, poolReady)
-				if cause != nil {
+				// Rewrite only the DEFAULT generic message ("all accounts
+				// rate-limited"), which can lie about the drain cause: a
+				// custom pool-empty error (e.g. the #80 unfunded answer)
+				// already names its own truth, and overwriting it would
+				// discard the specific remedy the message carries.
+				if cause != nil && pe.Type == "provider_rate_limited" {
 					pe.Message = fmt.Sprintf("provider %s: all accounts benched after upstream %d (%s); retry after %ss",
 						def.Name, cause.Status, cause.Type, pe.RetryAfter)
 				}
@@ -382,6 +423,10 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			out, err := call(ctx, def, acct, t.Model)
 			if err == nil {
 				onResult(out)
+				// Sticky round-robin bookkeeping (#82): a success extends
+				// the leader's run, and a spent run advances the counter
+				// past the target that just served.
+				r.recordRRSuccess(res, t)
 				return nil
 			}
 			lastErr = err
@@ -517,4 +562,119 @@ func Backoff(attempt int, err *types.APIError) time.Duration {
 		return time.Duration(attempt+1) * 250 * time.Millisecond
 	}
 	return time.Duration(attempt+1) * 100 * time.Millisecond
+}
+
+// ---------------------------------------------------------------------------
+// Sticky round-robin (combo strategy = "round-robin", #82)
+// ---------------------------------------------------------------------------
+
+// comboRR is one round-robin combo's rotation state.
+type comboRR struct {
+	counter int // index of the next target to lead
+	winner  int // index of the target currently serving its sticky run, -1 = none
+	run     int // consecutive successes on the winner
+}
+
+// rrDefaultLimit is the sticky run when a combo sets none (mirrors
+// OmniRoute's stickyRoundRobinLimit default of 3).
+const rrDefaultLimit = 3
+
+func (c *Combo) rrLimit() int {
+	if c.RoundRobinLimit > 0 {
+		return min(c.RoundRobinLimit, 1000)
+	}
+	return rrDefaultLimit
+}
+
+// rotateRoundRobin moves the combo's next designated leader to the front
+// (#82). Rotation rewrites the Targets slice (a per-resolution copy — the
+// config's Combo is never touched) so Execute's existing ordered loop is the
+// whole implementation.
+func (r *Router) rotateRoundRobin(res *Resolution) {
+	c := r.combos[strings.ToLower(res.Combo)]
+	if c == nil || len(res.Targets) < 2 {
+		return
+	}
+	r.rrMu.Lock()
+	st := r.rr[c.Name]
+	if st == nil {
+		st = &comboRR{counter: 0, winner: -1}
+		r.rr[c.Name] = st
+	}
+	limit := c.rrLimit()
+	lead := -1
+	if st.winner >= 0 && st.run < limit && st.winner < len(res.Targets) {
+		lead = st.winner // sticky: keep serving the target mid-run
+	} else {
+		lead = st.counter % len(res.Targets)
+	}
+	// Remember which target leads so recordRRSuccess can count it even if
+	// rotation reordered the slice.
+	res.rrLead = lead
+	r.rrMu.Unlock()
+	if lead <= 0 {
+		return
+	}
+	rot := append([]Target(nil), res.Targets[lead:]...)
+	rot = append(rot, res.Targets[:lead]...)
+	res.Targets = rot
+	// The sticky winner index moves with the rotation: after this reorder the
+	// winner is index 0; the counter's next position is tracked separately
+	// (rrLead), so no index fixups are needed beyond this request.
+}
+
+// recordRRSuccess is called by Execute after a target served a request on a
+// round-robin combo: the same leader continues while its run is under the
+// limit, and once the run completes the counter advances past it (mirrors
+// OmniRoute's rrStickyTargets: successCount >= limit → counter = served+1,
+// clear sticky).
+func (r *Router) recordRRSuccess(res *Resolution, served Target) {
+	if res == nil || !res.IsCombo || !res.RoundRobin || res.Combo == "" {
+		return
+	}
+	c := r.combos[strings.ToLower(res.Combo)]
+	if c == nil || len(res.Targets) < 2 {
+		return
+	}
+	idx := -1
+	for i, t := range res.Targets {
+		if t.Provider == served.Provider && t.Model == served.Model {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	r.rrMu.Lock()
+	defer r.rrMu.Unlock()
+	st := r.rr[c.Name]
+	if st == nil {
+		return
+	}
+	limit := c.rrLimit()
+	// Rotation is a pure offset: rotated index j is original index
+	// (j + rrLead) % n. st.winner and st.counter live in ORIGINAL
+	// coordinates — the same coordinates rotateRoundRobin reads — so a
+	// fallback leg that served must be translated before it is recorded.
+	// Skipping that translation pins stickiness to the leg that FAILED and
+	// advances the counter past the wrong target: the next request re-offers
+	// the known-dead leader, which is the regression sticky-RR exists to
+	// avoid.
+	n := len(res.Targets)
+	orig := idx
+	if res.rrLead > 0 {
+		orig = (idx + res.rrLead) % n
+	}
+	// A run continues only when the SAME original target served again while
+	// it was the leader (rotated index 0); any other leg starts a new run.
+	if idx == 0 && st.winner == orig {
+		st.run++
+	} else {
+		st.winner, st.run = orig, 1
+	}
+	if st.run >= limit {
+		st.counter = orig + 1
+		st.winner, st.run = -1, 0
+	}
 }
