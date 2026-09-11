@@ -21,6 +21,7 @@
       <th class="num w-[76px]">in</th>
       <th class="num w-[76px]">out</th>
       <th class="num w-[86px]">tok/s</th>
+      <th class="num w-[92px]" title="output tokens over the whole request wall (attempts, rotation, backoff included)">delivered</th>
       <th class="num w-[80px]">cached</th>
       <th class="num w-[76px]">saved</th>
       <th>error</th>
@@ -82,13 +83,14 @@
       '<td class="num mono">' + kfmt(e.in) + '</td>' +
       '<td class="num mono">' + kfmt(e.out) + '</td>' +
       '<td class="num mono" title="' + (e.ms||0) + ' ms decode">' + (e.tps ? e.tps.toFixed(1) : '') + '</td>' +
+      '<td class="num mono" title="' + (e.e2e_ms||0) + ' ms wall (client view)">' + (e.dtps ? e.dtps.toFixed(1) : '') + '</td>' +
       '<td class="num mono">' + kfmt(e.cache_read) + '</td>' +
       '<td class="num mono">' + kfmt(e.saved) + '</td>' +
       '<td class="err mono">' + (e.err ? '<span title="' + escq(e.err) + '">' + esc(short(e.err)) + '</span>' : '') + '</td>';
     const det = document.createElement('tr');
     det.className = 'det';
     det.style.display = 'none';
-    det.innerHTML = '<td colspan="12"><div class="detbody mono">' + detText(e) + '</div></td>';
+    det.innerHTML = '<td colspan="13"><div class="detbody mono">' + detText(e) + '</div></td>';
     row.onclick = () => { det.style.display = det.style.display === 'none' ? '' : 'none'; };
     frag.appendChild(row);
     frag.appendChild(det);
