@@ -623,7 +623,7 @@ convention with direction-pinned tests + #33 DeepSeek/Responses/Kimi cache shape
 #44 step 1 config-only tiny/planning combo examples (e797986); earlier:
 RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
 budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
-`[server] response_header_timeout` knob (live: 120s) + transport-error classification
+`[server] response_header_timeout` knob (live: 75s since 2026-09-11 — user call to fail over faster; was 120s) + transport-error classification
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
 ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
 h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall through; branch
@@ -1280,7 +1280,7 @@ the issue):
   classified, hiding both the timeout nature and its retryability
   (`Retryable()` covers 504, and combos DID fall through, but the log gave
   no signal). Fix: `[server] response_header_timeout` knob (per-Def
-  memoized HTTP client, SIGHUP-safe; live config = 120s) +
+  memoized HTTP client, SIGHUP-safe; live config = 75s since 2026-09-11; was 120s) +
   `transportErr` classification (504 `upstream_timeout` /
   502 `upstream_unreachable` / 499 `client_closed`). Classification
   subtlety pinned by regression test: Go's header-timeout error BOTH
@@ -1546,7 +1546,7 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   themed uPlot axes; browser-verified dark/light, commit green from clean archive,
   pushed; earlier: usage-chart hover fix: per-layer values + units,
   9e1e5a4, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
-`[server] response_header_timeout` knob (live: 120s) + transport-error classification
+`[server] response_header_timeout` knob (live: 75s since 2026-09-11 — user call to fail over faster; was 120s) + transport-error classification
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
 ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
 h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall through; branch
