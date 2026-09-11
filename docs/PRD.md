@@ -1,3 +1,16 @@
+*Last updated: 2026-09-11 (rotation follow-ups implemented in PR #86 — #80 terminal billing refusals, #81 selection strategies, #82 sticky round-robin combos, #84 tunable rotation policy):
+one branch, four features, **nothing deployed and no live config touched** — the running gateway was
+verified untouched by lsof before and after the evidence run, which used a scratch instance on
+127.0.0.1:18099 with stub upstreams and a /tmp data_dir. Live evidence from the rebased build:
+a 402 key is hit exactly once then skipped (upstream hits {"sk-dead":1,"sk-ok":2}, one
+key_invalidated ring row), the reset endpoint answers 200 then 409, the configured 1s ladder
+surfaces as `Retry-After: 1`, the round-robin combo serves leg1 x2 then leg2 x2 (per-request
+X-Onegw-Decision headers), and p2c keeps serving the unstruck key. Rebased onto master's
+in-flight `live` pick: the union keeps the peer's least-busy ordering inside the default mode and
+applies an occupancy gate to EVERY strategy (bug caught by the new
+TestSelectionOccupancyGateAcrossModes — the gate had only applied when all slots were busy).
+Suites: `go test ./... -skip TestCursorKindEndToEnd` exit 0 (19 packages ok). Earlier:)*
+
 *Last updated: 2026-09-11 (sticky pin yields while busy, b1f1497, live pid 4753): the 469633e
 occupancy pick had one bypass — next()'s sticky-pin branch returned on available() alone and
 never read slot occupancy, so a provider with `sticky` set would have re-created the seq-879
@@ -1679,11 +1692,11 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
-| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) | OmniRoute rotation research 2026-09-11 |
-| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it | OmniRoute rotation research 2026-09-11 |
-| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) | OmniRoute rotation research 2026-09-11 |
+| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |
-| #84 | Make rotation policy configurable (cooldown base/cap, flap threshold/window, model-bench TTL, per-status rotate-after-N-in-window) with current constants as defaults; classification stays in code | OmniRoute rotation research 2026-09-11 |
+| #84 | Make rotation policy configurable (cooldown base/cap, flap threshold/window, model-bench TTL, per-status rotate-after-N-in-window) with current constants as defaults; classification stays in code — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 
 ### Recommended implementation order (2026-09-08)
 
