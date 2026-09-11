@@ -826,6 +826,14 @@ type accountState struct {
 	strikes   int          // consecutive 429s (adaptive ladder); reset on success
 	bucket    *tokenBucket // RPM governor; nil = uncapped (shared across slots)
 	speed     speedSample  // recent decode speed of this account (tokens/sec)
+	// live counts the upstream calls currently in flight on this slot.
+	// next() prefers the least-busy open slot: per-key concurrency is ~1
+	// on b-ai's free keys (2026-09-11 live: 3 identical 330K-token prefills
+	// stacked on ONE key serialized to TTFB 29s / 32s / 170s — the 170s
+	// attempt is the seq-879 504 shape, past the 75s header budget).
+	// Cooldowns and RPM buckets cannot express this: a prefill occupies
+	// the key for tens of seconds while its bucket token refills in 12s.
+	live int
 }
 
 // tokenBucket is a refill bucket enforcing Account.RPM. Capacity is two
@@ -977,19 +985,26 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	var ready time.Time // soonest cooldown expiry / bucket refill among blocked accounts
 	anyOpen := false    // some slot passes its own gates but the shared budget is empty
 	sharedReady := p.sharedReady(now)
-	// Scan every slot (the pool is small) and take the FASTEST open one:
-	// accounts carry a decode-speed EWMA (speed.go), so once real samples
-	// exist traffic prefers the quicker credential while its own gates
-	// (cooldown, RPM bucket) are open — the per-account ladder still
-	// spreads load the moment the fast key hits a wall. Strictly-greater
-	// comparison keeps round-robin order among equal and no-data speeds,
-	// so a fresh pool behaves exactly like the old first-open pick.
-	best := -1 // index offset from start of the fastest open slot
+	// Scan every slot (the pool is small) and take the least-busy open one,
+	// breaking ties by decode speed: accounts carry a speed EWMA (speed.go)
+	// so idle traffic still prefers the quicker credential, but a slot with
+	// a live upstream call yields to an idle sibling. Occupancy first is
+	// what keeps a burst from stacking on one key — the per-key concurrency
+	// ceiling (b-ai ≈1) turns a stack into upstream queueing, and the
+	// deepest-queued attempt is the one that rides past the pre-first-byte
+	// budget (2026-09-11 live: 3 identical 330K-token prefills on clone2
+	// → TTFB 29s / 32s / 170s, the last one the seq-879 504). Ties keep
+	// round-robin order among equal in-flight and no-data speeds, so a
+	// fresh pool behaves exactly like the old first-open pick.
+	best := -1 // index offset from start of the best open slot
 	for i := range n {
 		s := &p.accts[(start+i)%n]
 		if ok, r := p.available(s, now); ok {
 			if sharedReady.IsZero() {
-				if best < 0 || s.speed.tps() > p.accts[(start+best)%n].speed.tps() {
+				if best < 0 {
+					best = i
+				} else if cur := &p.accts[(start+best)%n]; s.live < cur.live ||
+					(s.live == cur.live && s.speed.tps() > cur.speed.tps()) {
 					best = i
 				}
 			} else {
@@ -1043,6 +1058,50 @@ func (p *accountPool) grant(s *accountState, now time.Time) {
 	if s.bucket != nil {
 		s.bucket.take(now)
 	}
+}
+
+// begin marks one upstream call in flight on the account's slot and reports
+// the slot's new depth (0 when the account is not a pool slot, e.g. a
+// hand-built Account in tests). Callers MUST pair it with end via defer:
+// Do's return paths include the header-budget abort and the semaphore
+// cancel, none of which report an outcome to the pool — releasing from the
+// 429/403/success hooks instead would leak a permanent +1 on exactly the
+// keys that storm, and once every slot reads busy the pick collapses back
+// to speed-only selection.
+func (p *accountPool) begin(a *Account) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.slot(a)
+	if s == nil {
+		return 0
+	}
+	s.live++
+	return s.live
+}
+
+// end releases the in-flight mark taken by begin. A miss is a no-op so a
+// pool rebuilt mid-request (SIGHUP reload) cannot drive a slot negative.
+func (p *accountPool) end(a *Account) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if s := p.slot(a); s != nil && s.live > 0 {
+		s.live--
+	}
+}
+
+// slot resolves an Account to its pool slot by name+key: callers may hold
+// a copy rather than the pool's own instance (tests pass &def.Accounts[i],
+// the sticky-pin path looks slots up the same way).
+func (p *accountPool) slot(a *Account) *accountState {
+	if a == nil {
+		return nil
+	}
+	for i := range p.accts {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
+			return s
+		}
+	}
+	return nil
 }
 
 // available reports whether slot s may take an upstream attempt now: past
@@ -1494,6 +1553,16 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			return nil, &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
 		}
 	}
+	if d.pool != nil && d.pool.begin(acct) > 0 {
+		// Occupancy for the pick loop (see accountState.live): the slot
+		// reads as busy for as long as this attempt waits on the upstream,
+		// so concurrent selections spread instead of stacking on the
+		// fastest key. Deferred, NOT reported from the outcome hooks:
+		// the header-budget abort and the semaphore cancel return without
+		// telling the pool anything, and a leaked +1 would silently
+		// retire this slot from least-busy selection.
+		defer d.pool.end(acct)
+	}
 	base := d.Base(acct)
 	var url string
 	var req *http.Request
@@ -1771,6 +1840,12 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 		case <-ctx.Done():
 			return nil, &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
 		}
+	}
+	if d.pool != nil && d.pool.begin(acct) > 0 {
+		// Same occupancy contract as Do: the slot is busy until the
+		// upstream answers, and the deferred end covers the early
+		// internal-error return below.
+		defer d.pool.end(acct)
 	}
 	base := d.Base(acct)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(base, d.Path(op, model)), body)
