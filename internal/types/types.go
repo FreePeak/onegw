@@ -217,6 +217,17 @@ type APIError struct {
 	// target immediately; a direct route surfaces the 504. Never
 	// serialized.
 	NoSameTargetRetry bool `json:"-"`
+
+	// SharedWall marks a 429 the provider proved shared by BEHAVIOUR
+	// rather than wording: a second distinct account struck the same
+	// (provider, model) inside the burst window while the error carried
+	// no Retry-After, no request-count window, and no limit text to
+	// match (b-ai's empty-body one-api 429s). SharedConcurrency()
+	// reports it, so every consumer — Router.Execute's immediate
+	// fall-through to the next combo leg, the Retry-After stamping, the
+	// flap-breaker exemption — treats it exactly like the text-matched
+	// model walls. Never serialized.
+	SharedWall bool `json:"-"`
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).
@@ -380,9 +391,16 @@ func (e *APIError) ReasoningEchoRequired() bool {
 // carry the same medicine and are matched here too: Retryable() already
 // lets 503s fall through, but the ladder and the Retry-After stamping
 // must also treat them as shared-wall, not per-key load.
+//
+// A behaviour-proven SharedWall (provider burst detection on a
+// wording-less 429) short-circuits the text matching entirely.
 func (e *APIError) SharedConcurrency() bool {
 	if e == nil {
 		return false
+	}
+	if e.SharedWall {
+		// No wording needed — see the SharedWall field doc.
+		return true
 	}
 	if e.Status == 503 {
 		probe := strings.ToLower(e.Code + " " + e.Message)
@@ -397,6 +415,27 @@ func (e *APIError) SharedConcurrency() bool {
 		modelLimitRe.MatchString(e.Code+" "+e.Message) ||
 		strings.Contains(probe, "backendadmissionrejected") ||
 		strings.Contains(probe, "cold-request admission rejected")
+}
+
+// ModelWall reports whether the error NAMES a model-scoped upstream
+// budget — the reseller's "current model <X> limit <N>" family or a bare
+// "Concurrency limit <N>" — a wall shared by every key fronting the
+// model, so the (provider, model) pair can be parked for one burst
+// window instead of every request re-discovering the wall. Engine
+// admission walls ("BackendAdmissionRejected", "cache-only admission",
+// "cold-request admission", "gateway overloaded") are per-request
+// prefill-shape rejections and deliberately excluded: other requests
+// keep serving the same model, so parking it would skip servable
+// capacity.
+func (e *APIError) ModelWall() bool {
+	if e == nil {
+		return false
+	}
+	probe := strings.ToLower(e.Code + " " + e.Message)
+	if strings.Contains(probe, "admission") || strings.Contains(probe, "gateway overloaded") {
+		return false
+	}
+	return strings.Contains(probe, "concurrency limit") || modelLimitRe.MatchString(e.Code+" "+e.Message)
 }
 
 // modelLimitRe matches the Tencent reseller's model-limit wall family —
