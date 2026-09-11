@@ -373,7 +373,63 @@ func parseAccounts(block []string) map[string]config.Acct {
 		}
 	}
 	flush()
+	// Legacy top-level credentials: the editor prefill synthesizes them
+	// into rows named "default" (api_key) and "key-N" (keys), so the
+	// carry-over map must know those names too — a Save carries the
+	// material into the rendered tables instead of writing keyless ones
+	// next to the surviving lines. Explicit account tables win on name
+	// collision.
+	tops := topRegionEnd(block)
+	for i := 1; i < tops; i++ {
+		t := strings.TrimSpace(block[i])
+		eq := strings.Index(t, "=")
+		if eq <= 0 {
+			continue
+		}
+		switch strings.TrimSpace(t[:eq]) {
+		case "api_key":
+			if v, ok := parseTOMLString(t[eq+1:]); ok && v != "" {
+				if _, taken := out["default"]; !taken {
+					out["default"] = config.Acct{Name: "default", APIKey: v}
+				}
+			}
+		case "keys":
+			if items, _, ok := gatherStringArray(block, i); ok {
+				for n, k := range items {
+					name := fmt.Sprintf("key-%d", n+1)
+					if k == "" {
+						continue
+					}
+					if _, taken := out[name]; !taken {
+						out[name] = config.Acct{Name: name, APIKey: k}
+					}
+				}
+			}
+		}
+	}
 	return out
+}
+
+// gatherStringArray parses the (possibly multi-line) TOML string array
+// whose opening bracket sits on lines[i], mirroring spliceAuthKeys's
+// gather, and reports the line the array closes on. ok=false when it
+// never closes within the block.
+func gatherStringArray(lines []string, i int) (items []string, end int, ok bool) {
+	var arr strings.Builder
+	arr.WriteString(lines[i][strings.Index(lines[i], "=")+1:])
+	arr.WriteString("\n")
+	j := i
+	for {
+		if items, ok = scanStringArray(arr.String()); ok {
+			return items, j, true
+		}
+		j++
+		if j >= len(lines) {
+			return nil, 0, false
+		}
+		arr.WriteString(lines[j])
+		arr.WriteString("\n")
+	}
 }
 
 // editProviderBlock applies the managed upserts to one block's lines.
@@ -423,17 +479,63 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 	} else {
 		block = removeScalar(block, "quota_limit_requests")
 	}
-	// accounts: re-render the nested sub-tables when the request carries any
+	// accounts: re-render the nested sub-tables when the request carries any.
+	// The roster replaces the block's whole credential surface: track which
+	// legacy credentials the carry-over consumed — a superseded line whose
+	// keys all landed in the rendered tables is dropped; one that did not
+	// (renamed row, unparseable array) is left alone, since dropping
+	// unrepresented key material is a guess, not a supersede.
 	if req.Accounts != nil {
+		used := map[string]bool{}
 		for _, a := range req.Accounts {
 			key := a.APIKey
 			if key == "" {
-				if o, ok := old[a.Name]; ok {
+				if o, ok := old[a.Name]; ok && o.APIKey != "" {
 					key = o.APIKey
+					used[a.Name] = true
 				}
+			} else if _, known := old[a.Name]; known {
+				used[a.Name] = true // explicit key supersedes the old line
 			}
 			block = append(block, renderAccountTable(a, key)...)
 		}
+		// api_key: superseded iff the request did not just write a fresh
+		// provider-level key and the "default" carry-over was consumed.
+		if req.APIKey == "" && used["default"] {
+			block = removeScalar(block, "api_key")
+		}
+		block = dropSupersededKeysArray(block, used)
+	}
+	return block
+}
+
+// dropSupersededKeysArray removes a legacy top-level `keys = [...]` line
+// when every key it holds was carried into the rendered account roster
+// (used marks the consumed "key-N" names). An array that cannot be parsed
+// from the block is left untouched.
+func dropSupersededKeysArray(block []string, used map[string]bool) []string {
+	tops := topRegionEnd(block)
+	for i := 1; i < tops; i++ {
+		t := strings.TrimSpace(block[i])
+		eq := strings.Index(t, "=")
+		if eq <= 0 || strings.TrimSpace(t[:eq]) != "keys" {
+			continue
+		}
+		items, end, ok := gatherStringArray(block, i)
+		if !ok {
+			continue
+		}
+		covered := true
+		for n := range items {
+			if !used[fmt.Sprintf("key-%d", n+1)] {
+				covered = false
+				break
+			}
+		}
+		if covered {
+			return append(append([]string{}, block[:i]...), block[end+1:]...)
+		}
+		return block
 	}
 	return block
 }
