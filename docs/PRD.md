@@ -1,93 +1,41 @@
-*Last updated: 2026-09-11 (seq-879 RCA addendum — what the ring can and cannot prove):
-four measured corrections to the occupancy-pick commit (469633e); none changes the fix:
-(1) RING GRANULARITY: upstreamErr records one failed ATTEMPT, and attempt() logs the ROUTED leg
-model — so a "qwen3.8-flash" 504 row is leg-level and cannot tell a combo leg from a direct
-route; client visibility of seq 879 is therefore UNKNOWN from the ring (no request id). What IS
-measured is the tax on requests that succeeded: seq 1046, a 200 with e2e_ms 78114 on a 325K-token
-prompt (delivered 4.9 tok/s vs ~50-90 decode). Also checked: no combo lists b-ai/qwen3.8-flash
-twice (free: leg 3; dev: leg 2), so 879+880 are two requests, not a same-target retry pair.
-(2) THE 75s BUDGET MEASURES PURE UPSTREAM THINK TIME: Go arms the h2 ResponseHeaderTimeout only
-after writeRequestBody returns (h2_bundle.go 8826-8845, Go 1.25.14), so neither body upload nor
-h2 stream-admission waits consume it. The uncached-prefill/queue correlation is the whole
-mechanism, and the lever space is exactly two: warm the prefill, or adapt the budget (a bare
-raise only moves the wall and lengthens the burn — which is why 469633e changes neither).
-(3) THE QUEUE IS PRE-FIRST-BYTE, NOT PER-REQUEST: while a 1200-token generation streamed on
-clone2 for 34.9s, a second request on the SAME key answered in 0.72s (same key baseline 1.11s).
-Releasing occupancy at response headers is therefore the correct scope — long-session streams do
-not hold a slot. The probe that produced 29.4s/31.7s/170.2s was three concurrent 1.34MB PREFILLS
-(max_tokens 8), i.e. the incident shape, not a streaming shape.
-(4) `sticky` IS NOT A DROP-IN CACHE-AFFINITY WIN HERE: requestIdentity falls back to the auth-key
-LABEL when the client sends no session header, so enabling sticky on b-ai would pin all of a
-client key's traffic to ONE account — reintroducing the herd against rpm=5. Warm-cache value is
-real (seq 874: cache_read 141440/144556 -> prefb 6.0s vs 40-72s cold), so the follow-up worth
-designing is a conversation-scoped identity (prompt-prefix hash) before any sticky TTL. Pinning
-was also ruled out as an A/B confound: newAccountPool sets ttl = the configured value with no
-default, and the scratch config sets none. Earlier:)*
-*Last updated: 2026-09-11 (dynamic per-provider quota windows (#85, b96eac5, live pid 94769):
-the local quota_window was a fixed enum (5h | daily | weekly), so a provider whose real cap
-resets monthly — or on any other period — could not be modelled at all (leg rejection itself
-already worked: the attempt()/stream_relay gates answer before def.Do, proven by frozen
-upstream hits in the live proof). Windows are now DATA: a calendar kind
-(daily / weekly / monthly, month resetting at the 1st 00:00 UTC with quota_reset_anchor phasing
-the grid to the anchor's day-of-month, clamped to shorter months so a 31st anchor resets on
-Feb 28/29) or ANY positive Go duration ("5h", "48h", "90m") rolling on the existing 5h grid
-machinery (rollingPeriod); config.Validate rejects junk loudly instead of tracking nothing.
-Enforcement itself was already window-agnostic and needed no change: an exhausted provider
-cools its WHOLE account pool until its OWN WindowEnd and answers 503 provider_quota_exhausted
-+ Retry-After, so Execute skips the leg with ZERO upstream attempts and the combo falls through
-to the next target — and when that provider's window rolls, the counters reset and the park
-expires at the same instant, resuming service with no reload and no manual un-park. Each
-provider's park is exactly as long as its own window (5h frees at +5h, monthly at the 1st).
-The vendor-reported side (#79) already parks per account until the vendor's own reset, so both
-quota sources now reject/resume dynamically. Dashboard: the provider editor's quota-window
-field became input + datalist (was a select) so a custom duration round-trips instead of
-silently resetting to "off" — the splice-corruption family again. Verification: monthly grid +
-anchor clamp + custom-duration + rollover-clears-exhaustion + inherit unit tests; config
-accept/reject table; e2e TestQuotaAutoRejectAndDynamicResume drives a REAL 2s rolling window
-through the HTTP surface (exhausted leg skipped with zero upstream traffic, direct 503 +
-Retry-After, then auto-resume after the reset) — impossible before with a 5h floor; both
-directions mutation-checked (neutering the pool-empty quota override, and the monthly clamp,
-each turn the tests red). Live proof on a scratch gateway (port 18096, mock upstream, own
-/tmp data_dir): combo mock/m -> monthly/m2 — req1 served by the mock leg, tracker flips
-exhausted, req2 served by m2 with exactly ONE upstream hit (the exhausted leg was never
-called), req3 after the 2s reset served by m again; monthly reports 2026-09-01T00:00:00Z ->
-2026-10-01T00:00:00Z. Deployed zero-drop to :8080 (overlap + explicit-PID drain, single
-listener verified). No live provider sets a local quota_window yet — that is an operator
-config choice, now expressible for any period. Earlier:)*
-
-*Last updated: 2026-09-11 (in-flight-aware account pick — the seq-879 504 root cause):
-RCA of seq 879 (b-ai/qwen3.8-flash, clone2, 504 upstream_timeout "http2: timeout awaiting
-response headers"): NOT a dead lane. The ring window (seqs 861-1061) shows 14 header-budget
-504s on b-ai/qwen3.8-flash in six minutes, clustered 2-3 per second ON THE SAME ACCOUNT
-(879+880, 892+893+894 on clone2), while sibling accounts served 200s throughout — and the
-successful qwen rows paid 20.6s average / 72.0s worst BEFORE first byte (input 3.4K-326K
-tokens, cache_read mostly absent). Direct measurement against api.b.ai (clone2, same key):
-small prefill TTFB 1.0s; 800KB (~200K tok) 39.9s; three CONCURRENT 1.34MB (~330K tok)
-requests on that ONE key -> 29.4s / 31.7s / 170.2s, all HTTP 200. b-ai free keys admit ~1
-concurrent request (docs/b-ai-free-tier-limits.md), so a concurrent burst serializes
-upstream and the deepest-queued attempt rides past the 75s budget: the gateway aborted
-requests that were going to succeed, then re-paid the same cold prefill on the next combo
-leg (tokenrouter's free lane was queueing past its own budget at 08:15-08:16 too), which is
-what collapsed delivered tok/s to 1.5-16 while decode stayed 50-92.
-Why the pool stacked them: accountPool.next() took the FASTEST open slot (decode EWMA) and
-nothing at pick time knew an attempt was still waiting upstream — cooldowns and the RPM
-bucket (capacity 2, refill 12s at rpm=5) cannot express occupancy when one prefill occupies
-the key for 30-170s. Fix: accountState.live counts attempts in flight per slot; next() now
-takes the least-busy open slot with decode speed as the tiebreak, so an idle pool routes
-exactly as before and a burst spreads across the keys. Occupancy is registered in Do and
-DoPassthrough with a DEFERRED release (not from the 429/403/success hooks: the header-budget
-abort and the semaphore cancel return without reporting anything to the pool, so hook-based
-release would leak +1 on precisely the storming keys and silently retire the mechanism).
-Proof: A/B on a scratch gateway + stub upstream that seeds one fast account then fires 3
-concurrent stalled requests — old binary routes a1/a1/a1 (reproduces 892-894), new routes
-a1/a2/a3; unit tests TestPickSpreadsOffBusyAccount / TestDoHoldsOccupancyUntilReturn,
-mutation-checked in both directions (drop the comparator -> spread test fails; drop the
-deferred end -> release test fails). Full suite green on a clean base except the
-pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine a1465b2.
-Complementary, not conflicting: the size-aware PREFILL EWMA steering (prefill.go, issue #81
-pool-selection work) chooses the right LEG; this chooses the right KEY within a leg. The
-header budget stays 75s on purpose — spreading removes the queue that made it look too
-short, and a blanket raise would only slow every genuine dead-lane fall-through. Earlier:)*
+*Last updated: 2026-09-11 (sticky pin yields while busy, b1f1497, live pid 4753): the 469633e
+occupancy pick had one bypass — next()'s sticky-pin branch returned on available() alone and
+never read slot occupancy, so a provider with `sticky` set would have re-created the seq-879
+stack through the pin (two concurrent same-identity requests both pinned onto one key). It
+becomes load-bearing the moment #84 exposes rotation policy, because requestIdentity falls
+back to the auth-key LABEL when the client sends no session header — one identity per client
+key, every concurrent turn of every session sharing it. The pin now applies only while the
+pinned slot is idle; a busy pin falls through to the least-busy scan, and keepPin preserves
+the affinity claim across the fall-through so the warm key resumes the moment it is free
+(dropping it there would migrate the pin to whichever account served the burst — the
+opposite of cache warmth). TestPinnedAccountYieldsWhileBusy pins the property (idle holds /
+busy yields / freed resumes) and is mutation-checked; suite green on a clean base except the
+pre-existing TestCursorKindEndToEnd hang. Live: pid 4753, three concurrent
+b-ai/qwen3.8-flash requests again spread three ways. Earlier:)*
+*Last updated: 2026-09-11 (b.ai free-tier throughput/rate-limit research,
+[docs/b-ai-free-tier-limits.md](b-ai-free-tier-limits.md)): exhaustive internet sweep of the
+b-ai upstream's limit surface — all 180 docs.b.ai pages in both locales, the public docs
+source repo (BofAI/docs), third-party integration threads, plus live probes and onegw's own
+ring/usage data. Result: B.AI publishes NO numeric throughput limit at all and "free tier" is
+not a rate tier but promotional 0-Credit models (Qwen3.8-Flash, Hy3, MiMo-V2.5, GLM-5.3-Flash).
+The API node is one-api (x-oneapi-request-id), inference-paths-only, and emits no
+X-RateLimit-* / Retry-After headers and no quota endpoint (403 allowlist), so rate state is
+observable only by hitting the wall. Enforced walls are per-account (429 code 1302
+"您的账户已达到速率限制", empty-body 429, "B.AI: Too many pending requests"), plus relayed
+upstream lanes ("Concurrency limit 1200" / "TPM limit 340000000", Tencent wording) and
+distributor channel exhaustion (503 "No available channel…"). Measured free-key ceilings
+≈4.3-6.5 attempts/min and concurrency ≈1; a 3-way concurrent probe today showed 7x lane
+variance (2.39s/17.33s/2.67s) on the same model and payload — reseller lane assignment, and
+the reason "fastest" ordering + per-attempt timeouts matter. Also flagged: GLM-5.3-Flash's
+free window has a docs conflict (0 Credits on the model page vs a 10%-of-standard offer
+starting 2026-09-12 10:00 UTC+8) — leg #1 of free/dev may stop being free. Vendor-side
+corroboration from B.AI's own "Inclusive Compute" PR (techflowpost 33731, 2026-09-03):
+free roster held for GLM-5.3-Flash/Qwen3.8-Flash/Hy3/MiMo-V2.5 while DeepSeek-V4-Flash moved
+to tiered discounts; scale 1.33T tok/day + 10.86M calls/day + 2.3M users (body figures — the
+headline misstates the daily volume as 13.3T, 10x off); and B.AI itself describes a
+"tiered API system" trading "official stability guarantees" against "self-selected
+lowest-priced options" — the vendor's own statement of the stability-vs-price trade-off the
+measured 7x lane variance tracks. Earlier:)*
 *Last updated: 2026-09-11 (OmniRoute rotation-strategy research + issues #80/#81/#82):
 deep-read of OmniRoute's three rotation layers from source — (1) per-key health rotation
 (apiKeyRotator.ts + chatCore/keyHealth.ts: 401 warning→invalid at threshold 2, 402 terminal
@@ -1909,6 +1857,10 @@ the issue):
 - `docs/dashboard-deep-dive.md` — dashboard build-approach research (#45,
   companion to #41): stack, SSE plumbing, auth prerequisite, API shape,
   landing order.
+- `docs/b-ai-free-tier-limits.md` — B.AI (b.ai) free-tier throughput/rate-limit research
+  (2026-09-11): vendor's published position (none numeric), what the free tier really is
+  (0-Credit promo models), every enforced wall verbatim with its scope, measured per-key
+  ceilings, and the reseller lane-variance mechanism behind b-ai throughput collapse.
 
 Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
   pages to the UnoRouter design language (user-selected reference,
