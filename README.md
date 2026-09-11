@@ -190,6 +190,15 @@ with `admin_password` from your config (a 12-hour HttpOnly cookie; the
 Go `html/template` + htmx + uPlot, vendored inline: zero external assets, no
 CDN, no Node toolchain — the console ships inside the single binary.
 
+First run with no `admin_password` and no `ONEGW_ADMIN_PASSWORD`? The
+gateway generates a random credential, stores it in
+`<data_dir>/admin_password` (0600), and prints it once in the startup log
+(`FIRST-RUN ADMIN PASSWORD`, visible in `docker logs` too) — so a fresh
+install is never reachable with a guessable default. Settings → Admin
+password in the console changes it (re-proving the current password,
+applying through the same reload path as SIGHUP, and signing every session
+out — the new password is required immediately).
+
 ![Dashboard overview](docs/screenshots/dashboard-overview.png)
 
 **Overview** — today's request/token/saver totals, an hourly token chart,

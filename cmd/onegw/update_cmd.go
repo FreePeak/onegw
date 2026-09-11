@@ -359,6 +359,9 @@ func loadConfigForCLI(flagPath string) *config.Config {
 		if _, statErr := os.Stat(path); os.IsNotExist(statErr) && flagPath == "" && os.Getenv("ONEGW_CONFIG") == "" {
 			cfg = &config.Config{}
 			cfg.Defaults()
+			// The gateway booted the same way stores its generated password
+			// under the data dir — probe with that, never generate one here.
+			cfg.UseStoredAdminPassword()
 		} else {
 			fmt.Fprintf(os.Stderr, "onegw update: %v\n", err)
 			os.Exit(1)
