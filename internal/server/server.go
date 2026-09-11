@@ -1344,7 +1344,13 @@ func alwaysThinking400(e *types.APIError) bool {
 		strings.Contains(msg, "不支持关闭思考"), // "does not support disabling thinking"
 		strings.Contains(msg, "low、high 或 max"),
 		strings.Contains(msg, "low, high or max"),
-		strings.Contains(msg, "low, high, or max"):
+		strings.Contains(msg, "low, high, or max"),
+		// commandcode's zod enum rejection (live 2026-09-11): reasoning_effort
+		// outside its accepted set answers `Invalid option: expected one of
+		// "low"|"medium"|"high"|"xhigh"|"max"` — the same always-thinking
+		// family (a none/minimal-capable dialect the model refuses): learn +
+		// coerce, and stay Fallbackable so combos never die on it.
+		strings.Contains(msg, `expected one of "low"`):
 		return true
 	}
 	return false
