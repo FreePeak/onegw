@@ -242,7 +242,7 @@ func TestSuccessResetsLadder(t *testing.T) {
 	p.rateLimited(a, 0)
 	p.rateLimited(a, 0)
 	*cur = cur.Add(coolCap + time.Minute) // bench expired, upstream accepts again
-	p.ok(a)
+	p.ok(a, *cur) // the recovered request started after the expired bench
 	if p.accts[0].strikes != 0 {
 		t.Fatalf("strikes=%d after success, want 0", p.accts[0].strikes)
 	}
