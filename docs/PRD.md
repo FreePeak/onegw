@@ -1,3 +1,24 @@
+*Last updated: 2026-09-11 (provider toggle/update splice corruption fix, ace1969, live pid 88714):
+the dashboard's provider on/off toggle and PUT editor corrupted onegw.toml on the shapes the live
+config actually contains. Root causes, all in internal/server/admin_config_edit.go line splicers:
+(1) scanBlocks treated a SINGLE-bracket nested table ([providers.extra_headers]) as a new section,
+truncating the provider block at it — a PUT re-rendered the account tables inside the truncated
+range while the real ones stayed below, duplicating accounts (keyless, since parseAccounts never
+saw the originals); (2) removeAccountTables swallowed every line below an account header until the
+next header, deleting provider keys stranded there — opencode's always_thinking + models sat below
+its key-2 account, TOML re-parented them into that account, and the provider silently served with
+NO models (opencode/* dead in /v1/models, matching the "deepseek-v4-flash dead since 09-07" combo
+comment); (3) topRegionEnd only stopped at [[ headers. Fix: a nested header is any header whose
+dotted path starts with the section root, either bracket form; account stripping keeps only what
+Acct models and hoists stranded comments/keys back into the top region (upserts then replace them
+in place, saves idempotent); topRegionEnd stops at any header; editProviderBlock strips accounts
+before the scalar upserts. config.Validate now rejects duplicate account names per provider — the
+shape the bug produced — so future splices fail loudly instead of shadowing pool keys. Regression
+tests pin all three shapes + save-twice idempotence; reproduced first on a throwaway worktree
+gateway (port 18081) against a copy of the live config. Live repair: one PUT through the fixed
+endpoint re-homed opencode's stranded lines (models live again in /v1/models), account keys
+carried over by name; toggle round trip verified byte-exact on the live config.*
+
 *Last updated: 2026-09-11 (distributor channel-empty 503 → shared-wall fall-through, 5e4c6b1, live pid 23877):
 b-ai's one-api distributor answers 503 "No available channel for model glm-5.3-flash under group
 default (distributor)" when its upstream channel pool for the model is empty (live 06:14Z, seq 595).
