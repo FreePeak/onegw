@@ -15,6 +15,8 @@
 [![Streaming](https://img.shields.io/badge/SSE-streaming-FF6F61)](#surfaces)
 [![Single Binary](https://img.shields.io/badge/binary-CGO_ENABLED%3D0-3E6259)](#features)
 [![RAM](https://img.shields.io/badge/RSS-%E2%89%A4%20100%20MB-brightgreen)](#benchmarks)
+[![Latest release](https://img.shields.io/github/v/release/FreePeak/onegw?color=8A2BE2&label=release)](https://github.com/FreePeak/onegw/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/FreePeak/onegw/release.yml?label=build)](https://github.com/FreePeak/onegw/actions/workflows/release.yml)
 
 </div>
 
@@ -27,60 +29,42 @@ A resource-efficient alternative to JavaScript gateways like
 [9router](https://github.com/decolua/9router): no runtime, no per-request
 buffering, no conversation state.
 
-## Why onegw
+<div align="center">
 
-| Concern | Typical Node/JS gateway | onegw |
-| --- | --- | --- |
-| Runtime | Node.js + framework | Single static Go binary (`CGO_ENABLED=0`) |
-| Streaming | Parsed & re-serialized | Byte passthrough; cross-format streams re-encoded event-by-event |
-| Sessions | Cached conversations | Stateless — memory is independent of session count |
-| RAM | Hundreds of MB | **Measured: 17 MiB baseline → 67 MiB peak** under 30 concurrent 800 KB streams |
-| Throughput target | — | 1–2 B tokens/day (~12–23 k tok/s sustained; bench hit ~71 K tok/s) |
+![onegw admin console — dashboard overview](docs/screenshots/dashboard-overview.png)
 
-## Features
+**The admin console is part of the binary** — live request feed, token/cost
+rollups, provider & combo editing, theme-aware dark UI. Zero CDN, zero Node.
 
-- **Three wire surfaces, any-to-any translation.** OpenAI, Anthropic, and
-  Gemini clients can all talk to all three upstream kinds — request bodies and
-  SSE streams translated on the fly through a unified intermediate model.
-- **Combos (fallback chains).** A model name can resolve to an ordered list of
-  `{provider, model}` targets: retry on 429/5xx/network errors with backoff,
-  fail fast on other 4xx, per-provider concurrency caps.
-- **Account pools.** Multiple API keys per provider with weighted round-robin
-  and quota cooldown. Upstream 429s trigger an adaptive per-account cooldown:
-  the first rate-limit response benches the key for 10 s, each consecutive
-  429 doubles the bench (capped at 60 s), and a successful call resets the
-  ladder — keys that keep hammering a spent limit sink to the 60 s bench
-  instead of re-entering rotation every few seconds. An upstream
-  `Retry-After` header wins verbatim. When every account of a provider is
-  cooling, the gateway answers 429 + `Retry-After` (or falls through to the
-  next combo target) instead of burning a doomed upstream attempt.
-- **Upstream fault intelligence.** Transient upstream faults — proxied
-  auth-verify outages (401), one-api distributor parse-reject 400s,
-  response-header timeouts (504), model-wide concurrency 429s — are
-  reclassified as retryable `502`/`504` so combo chains fall through
-  instead of surfacing a lying status; genuine schema errors still fail
-  fast.
-- **Sticky accounts & session affinity.** A per-provider `sticky` window
-  pins one key to a request identity to keep upstream prompt caches warm,
-  and an opt-in `session_header` derives a stable per-key session id when
-  the client sends none.
-- **Token saver (input + output).** Input side: RTK-style `tool_result`
-  compression (prefix sniffing, idempotent, same-format surgical JSON walk)
-  cuts prompt tokens before they reach the upstream. Output side: system-prompt
-  injection of terse-output directives and an external compress hook (below).
-- **OAuth device flows for subscription providers (#2).** `onegw-oauth
-  login -provider xai` runs the RFC 8628 device flow (Kilo Code's bespoke
-  dialect also built in), stores the token in
-  `<data_dir>/oauth-tokens.json` (0600, atomic writes), and the gateway
-  injects it as the upstream bearer credential at request time — with a
-  per-account refresher that tops up the token before expiry (single-flight
-  per account) and cools the account when a refresh fails.
-- **Usage tracking.** Lock-sharded atomic counters flushed to SQLite on a
-  timer; per `provider / model / key / day / hour` rollups; admin API and
-  built-in dashboard.
-- **Byte-budget backpressure.** The non-streaming cross-format path holds a
-  4× body-size reservation against a 48 MiB global budget; saturation returns
-  `503 + Retry-After` in the client's wire format instead of growing RSS.
+</div>
+
+> **TL;DR** — one `curl` installs a static Go binary; you get three API
+> surfaces (OpenAI ⇄ Anthropic ⇄ Gemini, any-to-any), fallback combos,
+> multi-key pools with adaptive 429 cooldown, token savers, OAuth subscription
+> logins, and a built-in dashboard — at 17 MiB baseline RSS.
+
+<div align="center">
+
+`single static Go binary` · `~17 MiB RSS` · `SSE byte passthrough` ·
+`any-to-any translation` · `fallback combos` · `multi-key pools` ·
+`OAuth device flow` · `RTK tool_result compression` · `built-in dashboard` ·
+`zero external assets`
+
+</div>
+
+## Contents
+
+| | |
+| --- | --- |
+| **[Quick start](#quick-start)** | install in one command · Docker · build from source · first request |
+| **[Why onegw](#why-onegw)** | comparison vs. Node/JS gateways |
+| **[Features](#features)** | routing, pools, fault intelligence, savers, OAuth |
+| **[Dashboard](#dashboard)** | what the 9 console pages show |
+| **[Configuration](#configuration)** | TOML reference, OpenCode Zen, SearXNG, cache profiles |
+| **[Surfaces](#surfaces)** | endpoints & translation matrix |
+| **[Operations](#operations)** | VPS deploy, ownership, hot reload |
+| **[Benchmarks](#benchmarks)** · **[Development](#development)** · **[Docs](#docs)** | measured numbers, test commands, deeper docs |
+
 
 ## Quick start
 
@@ -182,6 +166,62 @@ curl "http://127.0.0.1:8080/v1beta/models/anthropic/claude-sonnet-4-5:generateCo
 Use a combo name as the model to get an ordered fallback chain
 (`"model": "coding-stack"`).
 
+## Why onegw
+
+| Concern | Typical Node/JS gateway | onegw |
+| --- | --- | --- |
+| Runtime | Node.js + framework | Single static Go binary (`CGO_ENABLED=0`) |
+| Streaming | Parsed & re-serialized | Byte passthrough; cross-format streams re-encoded event-by-event |
+| Sessions | Cached conversations | Stateless — memory is independent of session count |
+| RAM | Hundreds of MB | **Measured: 17 MiB baseline → 67 MiB peak** under 30 concurrent 800 KB streams |
+| Throughput target | — | 1–2 B tokens/day (~12–23 k tok/s sustained; bench hit ~71 K tok/s) |
+
+## Features
+
+- **Three wire surfaces, any-to-any translation.** OpenAI, Anthropic, and
+  Gemini clients can all talk to all three upstream kinds — request bodies and
+  SSE streams translated on the fly through a unified intermediate model.
+- **Combos (fallback chains).** A model name can resolve to an ordered list of
+  `{provider, model}` targets: retry on 429/5xx/network errors with backoff,
+  fail fast on other 4xx, per-provider concurrency caps.
+- **Account pools.** Multiple API keys per provider with weighted round-robin
+  and quota cooldown. Upstream 429s trigger an adaptive per-account cooldown:
+  the first rate-limit response benches the key for 10 s, each consecutive
+  429 doubles the bench (capped at 60 s), and a successful call resets the
+  ladder — keys that keep hammering a spent limit sink to the 60 s bench
+  instead of re-entering rotation every few seconds. An upstream
+  `Retry-After` header wins verbatim. When every account of a provider is
+  cooling, the gateway answers 429 + `Retry-After` (or falls through to the
+  next combo target) instead of burning a doomed upstream attempt.
+- **Upstream fault intelligence.** Transient upstream faults — proxied
+  auth-verify outages (401), one-api distributor parse-reject 400s,
+  response-header timeouts (504), model-wide concurrency 429s — are
+  reclassified as retryable `502`/`504` so combo chains fall through
+  instead of surfacing a lying status; genuine schema errors still fail
+  fast.
+- **Sticky accounts & session affinity.** A per-provider `sticky` window
+  pins one key to a request identity to keep upstream prompt caches warm,
+  and an opt-in `session_header` derives a stable per-key session id when
+  the client sends none.
+- **Token saver (input + output).** Input side: RTK-style `tool_result`
+  compression (prefix sniffing, idempotent, same-format surgical JSON walk)
+  cuts prompt tokens before they reach the upstream. Output side: system-prompt
+  injection of terse-output directives and an external compress hook (below).
+- **OAuth device flows for subscription providers (#2).** `onegw-oauth
+  login -provider xai` runs the RFC 8628 device flow (Kilo Code's bespoke
+  dialect also built in), stores the token in
+  `<data_dir>/oauth-tokens.json` (0600, atomic writes), and the gateway
+  injects it as the upstream bearer credential at request time — with a
+  per-account refresher that tops up the token before expiry (single-flight
+  per account) and cools the account when a refresh fails.
+- **Usage tracking.** Lock-sharded atomic counters flushed to SQLite on a
+  timer; per `provider / model / key / day / hour` rollups; admin API and
+  built-in dashboard.
+- **Byte-budget backpressure.** The non-streaming cross-format path holds a
+  4× body-size reservation against a 48 MiB global budget; saturation returns
+  `503 + Retry-After` in the client's wire format instead of growing RSS.
+
+
 ## Dashboard
 
 The built-in admin console lives at `http://127.0.0.1:8080/admin` — sign in
@@ -199,15 +239,13 @@ password in the console changes it (re-proving the current password,
 applying through the same reload path as SIGHUP, and signing every session
 out — the new password is required immediately).
 
-![Dashboard overview](docs/screenshots/dashboard-overview.png)
-
 **Overview** — today's request/token/saver totals, an hourly token chart,
   a top-providers rail, the byte-budget meter (`503` rejection count
   included), and a live SSE strip (in-flight, uptime, heap, GC)
   refreshing every second. Every page renders fully without JavaScript;
   SSE only adds the live updates. The console is dark by default, follows
   your OS preference on first visit, and the `◐` header button persists
-  your choice — the screenshot shows the dark theme.
+  your choice — the screenshot at the top of this README shows the dark theme.
 
 Eight more pages complete the console:
 
