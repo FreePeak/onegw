@@ -191,6 +191,15 @@ type ProviderCfg struct {
 	QuotaResetAnchor   string `toml:"quota_reset_anchor"`
 	QuotaLimitTokens   int64  `toml:"quota_limit_tokens"`
 	QuotaLimitRequests int64  `toml:"quota_limit_requests"`
+	// SubscriptionQuota opts the provider into UPSTREAM-reported
+	// subscription quota tracking (issue #79, ported from 9router's
+	// usage services and OmniRoute's quota preflight): "" (off) |
+	// "opencode-go" | "zai" | "zai-cn". The gateway probes the vendor's
+	// own usage endpoint per account and parks accounts whose windows
+	// the vendor reports exhausted. SubscriptionURL overrides the
+	// dialect's default endpoint (self-hosted mirrors, tests).
+	SubscriptionQuota string `toml:"subscription_quota"`
+	SubscriptionURL   string `toml:"subscription_url"`
 	// Passthrough opts the provider into the narrow OpenAI-format surfaces
 	// served without translation: "embeddings", "stt", "tts".
 	Passthrough []string `toml:"passthrough"`
@@ -482,6 +491,11 @@ func (c *Config) Validate() error {
 		}
 		if p.QuotaWindow == "" && (p.QuotaLimitTokens != 0 || p.QuotaLimitRequests != 0) {
 			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
+		}
+		switch p.SubscriptionQuota {
+		case "", "opencode-go", "zai", "zai-cn":
+		default:
+			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai or zai-cn)", p.Name, p.SubscriptionQuota)
 		}
 
 		switch p.CacheProfile {

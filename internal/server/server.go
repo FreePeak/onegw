@@ -23,6 +23,7 @@ import (
 	"onegw/internal/saver"
 	"onegw/internal/server/dashboard"
 	"onegw/internal/store"
+	"onegw/internal/subquota"
 	"onegw/internal/translat"
 	"onegw/internal/types"
 	"onegw/internal/update"
@@ -46,6 +47,7 @@ type state struct {
 	saver  *saver.Saver
 	usage  *usage.Tracker
 	quota  *quota.Tracker
+	subq   *subquota.Tracker
 	budget *ByteBudget
 	// ido is the idempotency dedup cache; nil (idempotency_ttl "0"/"off")
 	// disables the feature entirely.
@@ -290,6 +292,16 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		quotaTracker.Inherit(oldStateQuota(s.state.Load()))
 	}
 
+	// Subscription quota (issue #79): upstream-reported vendor windows for
+	// opt-in providers (subscription_quota); exhausted accounts park until
+	// the vendor's reset so combos fall through. Snapshots inherit across
+	// hot reloads like the local quota windows.
+	var subTracker *subquota.Tracker
+	if targets := subTargets(cfg); len(targets) > 0 {
+		subTracker = subquota.New(targets, s.parkExhaustedSubscription)
+		subTracker.Inherit(oldStateSub(s.state.Load()))
+	}
+
 	old := s.state.Load()
 	s.state.Store(&state{
 		cfg:    cfg,
@@ -298,6 +310,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		saver:  saver.New(saverConfigFrom(&cfg.Saver)),
 		usage:  usageTracker,
 		quota:  quotaTracker,
+		subq:   subTracker,
 		budget: NewByteBudget(cfg.Server.BufferCap),
 		// Fresh LRU per load: SIGHUP drops at most one TTL window of
 		// replay state, which is acceptable at the default 5s.
@@ -307,6 +320,9 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		old.usage.Stop() // flushes remaining data to the store, then ends the loop
 		if old.quota != nil {
 			old.quota.Stop()
+		}
+		if old.subq != nil {
+			old.subq.Stop()
 		}
 	}
 	s.syncOAuth(cfg)
@@ -319,6 +335,14 @@ func oldStateQuota(old *state) *quota.Tracker {
 		return nil
 	}
 	return old.quota
+}
+
+// oldStateSub returns the previous snapshot's subscription tracker, or nil.
+func oldStateSub(old *state) *subquota.Tracker {
+	if old == nil {
+		return nil
+	}
+	return old.subq
 }
 
 // Reload hot-swaps configuration (SIGHUP, or PUT /admin/config/reload).
@@ -368,6 +392,9 @@ func (s *Server) Close() {
 		if st.quota != nil {
 			st.quota.Stop()
 		}
+		if st.subq != nil {
+			st.subq.Stop()
+		}
 	}
 	if s.st != nil {
 		s.st.Close()
@@ -409,6 +436,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/v1/providers", s.handleAPIProviders)
 	mux.HandleFunc("GET /admin/api/v1/combos", s.handleAPICombos)
 	mux.HandleFunc("GET /admin/api/v1/quota", s.handleAPIQuota)
+	mux.HandleFunc("GET /admin/api/v1/subscription", s.handleAPISubscription)
 	mux.HandleFunc("GET /admin/api/v1/saver", s.handleAPISaver)
 	mux.HandleFunc("GET /admin/api/v1/update", s.handleUpdateStatus)
 	mux.HandleFunc("POST /admin/api/v1/update", s.handleUpdateApply)

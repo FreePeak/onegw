@@ -1142,7 +1142,10 @@ func quotaViews(st *state) []quotaRowView {
 }
 
 func (s *Server) quotaPage(w http.ResponseWriter, r *http.Request) {
-	s.authedPage(w, r, "quota", "Quota", false, quotaViews(s.cur()))
+	s.authedPage(w, r, "quota", "Quota", false, quotaPageView{
+		Windows: quotaViews(s.cur()),
+		Subs:    s.subViews(),
+	})
 }
 
 func (s *Server) handleAPIQuota(w http.ResponseWriter, r *http.Request) {

@@ -263,8 +263,9 @@ Eight more pages complete the console:
   a combo's fallback chain; each save is spliced into `onegw.toml`,
   validated, and hot-reloaded into the running gateway. Keys are always
   masked.
-- **Quota / Token Saver** — read-only: quota windows with reset
-  countdowns, and token-saver stats.
+- **Quota / Token Saver** — read-only: local quota windows with reset
+  countdowns, upstream-reported subscription windows (OpenCode Go,
+  z.ai GLM Coding Plan — see below), and token-saver stats.
 - **CLI Tools** — copy-paste preset cards for wiring agent CLIs to the
   gateway: Claude Code, opencode, grok, Codex CLI, omp, pi, and hermes —
   the bearer key renders as a `$ONEGW_KEY` placeholder, never a real key.
@@ -273,7 +274,8 @@ Eight more pages complete the console:
   (endpoints, auth, SSE topics) as served by the running gateway.
 
 The grouped read-only API lives under `/admin/api/v1/`
-(`providers`, `combos`, `quota`, `saver`, `logs`, `usage/daily`); the flat
+(`providers`, `combos`, `quota`, `subscription`, `saver`, `logs`,
+`usage/daily`); the flat
 `/admin/*` endpoints stay unchanged for scripts. Rollup retention
 (`[usage].retention_days`, default 90) prunes old rows daily.
 
@@ -323,6 +325,43 @@ between the Responses wire and whichever client surface asked — so
 clients, streaming and non-streaming alike. A Responses stream that closes
 without `response.completed` is surfaced as an upstream error, never a
 clean finish.
+
+### Subscription quota tracking
+
+`subscription_quota` (issue #79) turns on **upstream-reported** plan
+tracking for subscription providers, ported from 9router's usage services
+(and OmniRoute's quota preflight). Unlike the local `quota_window` counters
+(which track what this gateway spent), the gateway polls the vendor's own
+usage endpoint once per minute per account and shows the plan's real
+windows — used percent and reset time — on the Quota page and
+`GET /admin/api/v1/subscription`:
+
+| dialect | vendor endpoint (per account, bearer key) | windows |
+|---|---|---|
+| `opencode-go` | `https://opencode.ai/zen/go/v1/usage` | rolling 5h, weekly, monthly (%) |
+| `zai` | `https://api.z.ai/api/monitor/usage/quota/limit` | session (5h), weekly (credits or tokens, % + plan level) |
+| `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
+
+An account whose vendor-reported window is **fully consumed** parks until
+the vendor's stated reset (capped at one poll cycle so an early reset or a
+probe hiccup self-heals): the pool skips it and combos fall through instead
+of burning doomed upstream attempts. Probes are strictly fail-open — a
+vendor outage never benches a healthy account; the Quota page just shows
+the last-known state plus the probe error.
+
+```toml
+[[providers]]
+name = "glm"
+kind = "openai"
+base_url = "https://api.z.ai/api/coding/paas/v4"
+subscription_quota = "zai"   # + GET /admin/api/v1/subscription
+
+[[providers]]
+name = "opencode"
+kind = "opencode"
+keys = ["oc-key-1", "oc-key-2"]
+subscription_quota = "opencode-go"   # both keys tracked independently
+```
 
 ### OpenAI Responses-wire upstreams
 
@@ -403,11 +442,30 @@ translation (e.g. an Anthropic-surface client routed to a matching model —
 the request is coerced upfront instead of burning the first combo target
 on a 400).
 
+### No-thinking models
+
+The mirror failure: models with NO thinking mode that reject any
+reasoning-effort knob outright. kilo's openrouter gateway duplicates
+`reasoning_effort` into `reasoning.effort` internally, then refuses the
+request whenever either is present — 400 `"reasoning_effort" and
+"reasoning.effort" are both provided with conflicting values`, for
+`kilo-auto/free` at every value (live 2026-09-11; the alias rotates to
+free models without thinking, e.g. dots-3-note-preview). List such models
+per provider with `no_thinking = ["kilo-auto/*"]` (same `path.Match`
+globs); requests routed to a matching model have `reasoning_effort`,
+`thinking` and `enable_thinking` deleted outright, on the same-format
+and cross-format paths alike, so the upstream default (no thinking)
+applies. A no-thinking match wins over an always-thinking one. An
+unlisted model self-heals: the conflict 400 is learned at runtime
+(mirroring `alwaysThinking400`), retried once with the knobs stripped,
+then falls through.
+
 ### Prompt-cache profiles
 
 Per-provider `cache_profile` opts a route into upstream prompt-cache
 anchoring (issue #34). Anchoring always runs LAST — after model rewrite,
-token saver, always-thinking adaptation and any cross-format translation —
+token saver, thinking-knob adaptation (always/no-thinking) and any
+cross-format translation —
 so anchors never sit at pre-normalization offsets (a stale anchor costs a
 full prefix rewrite). Profiles:
 

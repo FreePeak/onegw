@@ -1,3 +1,29 @@
+*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), live pid TBD:
+ported from 9router's open-sse/services/usage/{opencode-go,glm}.js + OmniRoute's
+opencodeQuotaFetcher.ts. internal/subquota polls the VENDOR's own subscription usage
+per (provider, account) — "" off | "opencode-go" (GET https://opencode.ai/zen/go/v1/usage:
+rolling 5h / weekly / monthly percent + resetsAt; 403 EntitlementError = key without the
+Go subscription), "zai" / "zai-cn" (GET api.z.ai|open.bigmodel.cn /api/monitor/usage/
+quota/limit: CREDIT_LIMIT/TOKENS_LIMIT rows, unit 3 = Session (5h), unit 6 = Weekly (7d),
+plan from data.level) — on a fixed 60s cadence, 8s probe timeout, strictly fail-open (a
+failed probe keeps the last snapshot + error; a vendor outage never benches a healthy
+account). OmniRoute's /v1/quota default 404s (no public quota API upstream); 9router's
+/v1/usage is the live surface — that's the URL shipped here. Parking: an account whose
+worst vendor window is 100% consumed parks via Def.Cool until the vendor reset, CAPPED at
+one poll cycle so early resets/probe hiccups self-heal (re-parked each cycle while the
+vendor still reports exhaustion) — combos fall through instead of burning doomed attempts
+(9router's auth pre-filter / OmniRoute's quota preflight). Config: providers.
+subscription_quota + optional subscription_url (validated). Surfaces: GET
+/admin/api/v1/subscription (per-account snapshots) + a "Subscription quota" section on
+the Quota page; snapshots inherit across hot reloads like the local windows. Tests:
+subquota parsers on the exact 9router fixture shapes (string percents, ms vs s resets,
+401/403/EntitlementError, code!=200), tracker loop cache/park-capping/Inherit, server
+e2e (stub vendors → JSON + page render + exhausted zai account parked while the healthy
+opencode account keeps serving; no-providers null→[]). Verified in a detached worktree
+on pristine HEAD (config+subquota+provider+quota suites green; the combined server run
+reproduces the pre-existing stream-fast-path bench bleed on clean HEAD, not a
+regression). Live onegw.toml: opencode → subscription_quota = "opencode-go", glm → "zai".
+Earlier:)*
 *Last updated: 2026-09-11 (provider toggle/update splice corruption fix, ace1969, live pid 88714):
 the dashboard's provider on/off toggle and PUT editor corrupted onegw.toml on the shapes the live
 config actually contains. Root causes, all in internal/server/admin_config_edit.go line splicers:
