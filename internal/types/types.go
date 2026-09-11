@@ -296,6 +296,31 @@ func (e *APIError) OverQuota() bool {
 		strings.Contains(strings.ToLower(e.Type), "rate_limit")
 }
 
+// PaymentRequired reports an upstream refusal that indicts the ACCOUNT
+// BALANCE, not the request and not the rate window: HTTP 402, or the
+// explicit OpenAI-family `insufficient_quota` code, or unambiguous
+// insufficient-balance/credits wording. Unlike a 429 there is nothing to
+// wait out — the credential cannot serve until credits are added — so the
+// pool marks it terminal instead of offering it on every subsequent request
+// (#80, OmniRoute's recordKeyTerminal semantics). Deliberately narrow: the
+// gated-403 deposit family (`insufficient_user_quota`, "Deposit required")
+// keeps its #48 adaptive-ladder contract, and a generic 403 quota_exceeded
+// stays OverQuota-only, because those vendors recover on their own.
+func (e *APIError) PaymentRequired() bool {
+	if e == nil {
+		return false
+	}
+	if e.Status == 402 {
+		return true
+	}
+	probe := strings.ToLower(e.Code + " " + e.Type + " " + e.Message)
+	if e.Code != "" && strings.EqualFold(e.Code, "insufficient_quota") {
+		return true
+	}
+	return strings.Contains(probe, "insufficient balance") ||
+		strings.Contains(probe, "insufficient credits")
+}
+
 // RegionLocked reports whether the upstream refused this account's
 // credential for a region/availability policy (e.g. OpenCode Go
 // RegionError: the key's workspace has not opted into the China-hosted

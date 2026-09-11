@@ -13,10 +13,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,6 +248,18 @@ type Def struct {
 	// ProviderCfg.SessionHeader.
 	SessionHeader string
 
+	// Rotation tunes this provider's rotation mechanics (#84); zero fields
+	// keep the package defaults. Wired from config in server.apply (the
+	// global [rotation] table merged with the provider override).
+	Rotation RotationPolicy
+
+	// Selection (#81) chooses among OPEN account slots: "" = shipped
+	// behavior (fastest decode speed), or "p2c", "least-used",
+	// "strict-random", "random". Headroom, when set, feeds the p2c score
+	// with subscription headroom (#79) without this package importing it.
+	Selection string
+	Headroom  func(acct string) (float64, bool)
+
 	// HeaderTimeout bounds the pre-first-byte phase (dial, TLS, full body
 	// upload, upstream prefill) of every upstream call. 0 = 60s default.
 	// Massive-prefill providers (thinking models, ~100K-token sessions)
@@ -351,6 +366,24 @@ func (d *Def) NoThinkingModel(model string) bool {
 	return ok
 }
 
+// RotationPolicy is the operator-tunable half of the rotation mechanics
+// (#84): the 429 cooldown ladder, the provider-wide edge breaker, and the
+// model-scoped bench TTL. Zero fields mean "use the shipped default", so a
+// config that says nothing behaves EXACTLY as before this existed.
+//
+// Deliberately NOT here: which errors rotate at all, and how they are
+// classified. Those rules came from live incidents (the shared-wall family,
+// model-scoped refusals, the gated-403 deposit contract, wording-vs-behaviour
+// burst walls) — promoting them to knobs would let a misconfiguration undo an
+// RCA, and onegw has no multi-tenant operator to serve.
+type RotationPolicy struct {
+	CoolBase      time.Duration // 429 ladder start (default coolBase)
+	CoolCap       time.Duration // 429 ladder ceiling (default coolCap)
+	FlapThreshold int           // consecutive edge faults before opening (default flapThreshold)
+	FlapOpen      time.Duration // whole-pool park while open (default flapOpen)
+	BenchTTL      time.Duration // model-scoped bench from a refusal (0 = ModelBenchTTL)
+}
+
 // ModelBenchTTL is how long a model-scoped upstream refusal benches the
 // (provider, model) pair. Short on purpose: a deprovisioned model stays
 // dead, but a "model access denied" that later clears (plan grant, model
@@ -370,7 +403,7 @@ const maxModelBenches = 256
 // while sibling models and every account of this provider keep serving.
 func (d *Def) BenchModel(model string, ttl time.Duration) {
 	if ttl <= 0 {
-		ttl = ModelBenchTTL
+		ttl = d.benchTTL() // #84: per-provider override, else ModelBenchTTL
 	}
 	d.modelMu.Lock()
 	defer d.modelMu.Unlock()
@@ -516,6 +549,8 @@ func NewPool() *Pool { return &Pool{byName: map[string]*Def{}} }
 func (p *Pool) Set(d *Def) {
 	if d.pool == nil {
 		d.pool = newAccountPool(d.Accounts, d.StickyTTL, d.RPM)
+		d.pool.policy = d.Rotation // #84: zero fields keep the package defaults
+		d.pool.selection, d.pool.headroom = d.Selection, d.Headroom
 	}
 	if d.MaxConc > 0 {
 		d.inflight = make(chan struct{}, d.MaxConc)
@@ -537,6 +572,8 @@ func (p *Pool) Replace(defs []*Def) {
 	for _, d := range defs {
 		if d.pool == nil {
 			d.pool = newAccountPool(d.Accounts, d.StickyTTL, d.RPM)
+			d.pool.policy = d.Rotation // #84: zero fields keep the package defaults
+			d.pool.selection, d.pool.headroom = d.Selection, d.Headroom
 		}
 		if d.MaxConc > 0 {
 			d.inflight = make(chan struct{}, d.MaxConc)
@@ -820,12 +857,14 @@ func (d *Def) RateLimited(a *Account, retryAfter time.Duration) {
 func (d *Def) Gated(a *Account) { d.pool.rateLimited(a, 0) }
 
 type accountState struct {
-	acct      Account
-	cooldown  time.Time    // until when the account is skipped
-	benchedAt time.Time    // when the ACTIVE cooldown was stamped (ok() recency rule)
-	strikes   int          // consecutive 429s (adaptive ladder); reset on success
-	bucket    *tokenBucket // RPM governor; nil = uncapped (shared across slots)
-	speed     speedSample  // recent decode speed of this account (tokens/sec)
+	acct        Account
+	invalidated bool         // terminal: vendor refused the key for billing (#80); no timer clears it
+	lastUsed    time.Time    // when this slot last served (least-used/recency, #81)
+	cooldown    time.Time    // until when the account is skipped
+	benchedAt   time.Time    // when the ACTIVE cooldown was stamped (ok() recency rule)
+	strikes     int          // consecutive 429s (adaptive ladder); reset on success
+	bucket      *tokenBucket // RPM governor; nil = uncapped (shared across slots)
+	speed       speedSample  // recent decode speed of this account (tokens/sec)
 	// live counts the upstream calls currently in flight on this slot.
 	// next() prefers the least-busy open slot: per-key concurrency is ~1
 	// on b-ai's free keys (2026-09-11 live: 3 identical 330K-token prefills
@@ -904,6 +943,21 @@ type accountPool struct {
 	flapStrikes   int
 	flapOpenUntil time.Time
 
+	// policy is the operator-tunable rotation mechanics (#84); zero fields
+	// resolve to the package defaults via the ladderBase/flapTrip family.
+	policy RotationPolicy
+
+	// Selection (#81) picks among the OPEN slots: "" = the shipped
+	// behavior (fastest decode speed, round-robin among equals), or one of
+	// "p2c", "least-used", "strict-random", "random". pickN and headroom
+	// are injectable so the choice is deterministic in tests and can weigh
+	// subscription headroom (#79) without this package importing it.
+	selection string
+	deck      []int
+	deckPos   int
+	pickN     func(n int) int
+	headroom  func(acct string) (float64, bool)
+
 	// Burst-wall evidence (wallStrike): the last wording-less 429 per
 	// routed model, so the second distinct account within wallWindow
 	// proves the shared lane. Keys are model names — cardinality bounded
@@ -918,11 +972,50 @@ type stickyPin struct {
 	expires   time.Time
 }
 
+// ladderBase/ladderCap/flapTrip/flapPark resolve a pool's RotationPolicy
+// against the shipped defaults: every consumer goes through them so a
+// hand-built pool (tests) and a config-less pool behave identically to the
+// pre-#84 constants.
+func (p *accountPool) ladderBase() time.Duration {
+	if p.policy.CoolBase > 0 {
+		return p.policy.CoolBase
+	}
+	return coolBase
+}
+
+func (p *accountPool) ladderCap() time.Duration {
+	if p.policy.CoolCap > 0 {
+		return p.policy.CoolCap
+	}
+	return coolCap
+}
+
+func (p *accountPool) flapTrip() int {
+	if p.policy.FlapThreshold > 0 {
+		return p.policy.FlapThreshold
+	}
+	return flapThreshold
+}
+
+func (p *accountPool) flapPark() time.Duration {
+	if p.policy.FlapOpen > 0 {
+		return p.policy.FlapOpen
+	}
+	return flapOpen
+}
+
+func (d *Def) benchTTL() time.Duration {
+	if d != nil && d.Rotation.BenchTTL > 0 {
+		return d.Rotation.BenchTTL
+	}
+	return ModelBenchTTL
+}
+
 func newAccountPool(accts []Account, sticky time.Duration, sharedRPM int) *accountPool {
 	if len(accts) == 0 {
 		accts = []Account{{Name: "default"}}
 	}
-	p := &accountPool{ttl: sticky, now: time.Now}
+	p := &accountPool{ttl: sticky, now: time.Now, pickN: rand.IntN}
 	if sharedRPM > 0 {
 		p.shared = newTokenBucket(sharedRPM)
 	}
@@ -1007,28 +1100,19 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	var ready time.Time // soonest cooldown expiry / bucket refill among blocked accounts
 	anyOpen := false    // some slot passes its own gates but the shared budget is empty
 	sharedReady := p.sharedReady(now)
-	// Scan every slot (the pool is small) and take the least-busy open one,
-	// breaking ties by decode speed: accounts carry a speed EWMA (speed.go)
-	// so idle traffic still prefers the quicker credential, but a slot with
-	// a live upstream call yields to an idle sibling. Occupancy first is
-	// what keeps a burst from stacking on one key — the per-key concurrency
-	// ceiling (b-ai ≈1) turns a stack into upstream queueing, and the
-	// deepest-queued attempt is the one that rides past the pre-first-byte
-	// budget (2026-09-11 live: 3 identical 330K-token prefills on clone2
-	// → TTFB 29s / 32s / 170s, the last one the seq-879 504). Ties keep
-	// round-robin order among equal in-flight and no-data speeds, so a
-	// fresh pool behaves exactly like the old first-open pick.
-	best := -1 // index offset from start of the best open slot
+	// Collect the OPEN slots in round-robin order from start, then let the
+	// configured strategy pick among them (#81). Every mode shares these
+	// gates, so no strategy can select a blocked slot; the default mode
+	// reproduces the shipped pick exactly (least-busy, tie-break by decode
+	// speed — accounts carry a speed EWMA, so idle traffic still prefers the
+	// quicker credential while a slot with a live upstream call yields to an
+	// idle sibling; ties keep round-robin order).
+	open := make([]int, 0, n)
 	for i := range n {
 		s := &p.accts[(start+i)%n]
 		if ok, r := p.available(s, now); ok {
 			if sharedReady.IsZero() {
-				if best < 0 {
-					best = i
-				} else if cur := &p.accts[(start+best)%n]; s.live < cur.live ||
-					(s.live == cur.live && s.speed.tps() > cur.speed.tps()) {
-					best = i
-				}
+				open = append(open, (start+i)%n)
 			} else {
 				anyOpen = true // could serve at the shared refill — but not before
 			}
@@ -1038,10 +1122,11 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 			}
 		}
 	}
-	if best >= 0 {
-		s := &p.accts[(start+best)%n]
+	if len(open) > 0 {
+		chosen := p.pickSlot(open, now)
+		s := &p.accts[chosen]
 		p.grant(s, now)
-		p.rr = (uint64(start+best) + 1) % uint64(n)
+		p.rr = (uint64(chosen) + 1) % uint64(n)
 		if !keepPin {
 			p.pin(id, &s.acct, now)
 		}
@@ -1076,6 +1161,7 @@ func (p *accountPool) sharedReady(now time.Time) time.Time {
 // (Account.RPM). Called under p.mu with every gate verified open — a pick
 // examined but not granted must not spend anything.
 func (p *accountPool) grant(s *accountState, now time.Time) {
+	s.lastUsed = now
 	if p.shared != nil {
 		p.shared.take(now)
 	}
@@ -1137,6 +1223,14 @@ func (p *accountPool) slot(a *Account) *accountState {
 // max(cooldown, refill), both gates must pass — so a fully blocked pool
 // reports an honest soonest-ready for the fall-through Retry-After.
 func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time) {
+	if s.invalidated {
+		// Terminal: no instant makes this slot ready (next() ignores a zero
+		// "ready" when computing the pool's soonest-recovery, so a fully
+		// invalidated pool honestly reports "never" rather than a bogus
+		// Retry-After). Only Revalidate — operator action, or a reload that
+		// changed the credential — clears it.
+		return false, time.Time{}
+	}
 	cool := !s.cooldown.IsZero() && !now.After(s.cooldown)
 	if s.bucket == nil {
 		if cool {
@@ -1200,8 +1294,8 @@ func (p *accountPool) flapStrike() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.flapStrikes++
-	if p.flapStrikes >= flapThreshold {
-		if t := p.now().Add(flapOpen); t.After(p.flapOpenUntil) {
+	if p.flapStrikes >= p.flapTrip() {
+		if t := p.now().Add(p.flapPark()); t.After(p.flapOpenUntil) {
 			p.flapOpenUntil = t
 		}
 	}
@@ -1246,9 +1340,9 @@ func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
 	}
 	d := retryAfter
 	if d <= 0 {
-		d = coolBase << uint(min(cur, 3))
-		if d > coolCap {
-			d = coolCap
+		d = p.ladderBase() << uint(min(cur, 3))
+		if d > p.ladderCap() {
+			d = p.ladderCap()
 		}
 	}
 	now := p.now()
@@ -1356,6 +1450,143 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 			if t := now.Add(d); t.After(s.cooldown) {
 				s.cooldown = t
 				s.benchedAt = now
+			}
+		}
+	}
+}
+
+// invalidate marks every slot of a terminal for selection (#80): the vendor
+// refused this credential for billing reasons, a condition no amount of
+// waiting fixes. Returns true when the account was not already terminal, so
+// callers log once per invalidation instead of once per request.
+func (p *accountPool) invalidate(a *Account) bool {
+	if p == nil || a == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fresh := false
+	for i := range p.accts {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
+			if !s.invalidated {
+				s.invalidated = true
+				fresh = true
+			}
+		}
+	}
+	return fresh
+}
+
+// revalidate clears an account's terminal state (operator action, or the
+// config reload path in CarryInvalidated when the credential changed).
+// Returns true when something was actually cleared.
+func (p *accountPool) revalidate(a *Account) bool {
+	if p == nil || a == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cleared := false
+	for i := range p.accts {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
+			if s.invalidated {
+				s.invalidated = false
+				s.strikes = 0
+				s.cooldown = time.Time{}
+				s.benchedAt = time.Time{}
+				cleared = true
+			}
+		}
+	}
+	return cleared
+}
+
+func (p *accountPool) invalidatedNames() []string {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for i := range p.accts {
+		if s := &p.accts[i]; s.invalidated && !seen[s.acct.Name] {
+			seen[s.acct.Name] = true
+			out = append(out, s.acct.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Invalidate marks an account terminal after an upstream billing refusal
+// (402 / insufficient_quota — see types.APIError.PaymentRequired). It joins
+// the pool's fault state alongside the 429 ladder, but with no timer: the key
+// stays out of rotation until Revalidate or a reload that rotates the
+// credential. Returns true when this call newly invalidated the account.
+func (d *Def) Invalidate(a *Account) bool { return d.pool.invalidate(a) }
+
+// Revalidate clears an account's terminal state (dashboard/API action).
+func (d *Def) Revalidate(a *Account) bool { return d.pool.revalidate(a) }
+
+// RevalidateByName clears the named account; false when no account by that
+// name exists or none was terminal.
+func (d *Def) RevalidateByName(name string) bool {
+	for i := range d.Accounts {
+		if d.Accounts[i].Name == name && d.pool.revalidate(&d.Accounts[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// Invalidated lists terminal account names (sorted) for the dashboard and
+// the pool-empty error message.
+func (d *Def) Invalidated() []string { return d.pool.invalidatedNames() }
+
+// AllInvalidated reports whether the pool has accounts and every one of them
+// is terminal — the case where a provider's whole billing relationship is
+// dead and the honest client answer is a billing error, not a rate limit.
+func (d *Def) AllInvalidated() bool {
+	if d.pool == nil || len(d.Accounts) == 0 {
+		return false
+	}
+	return len(d.pool.invalidatedNames()) >= len(d.Accounts)
+}
+
+// CarryInvalidated copies terminal (billing-invalidated) accounts from an old
+// account set onto a freshly built one (#80): a hot reload must not silently
+// resurrect a key the vendor refused, because the very next request would
+// burn a doomed upstream attempt to learn it again. Matching is by account
+// name AND credential, so a rotated api_key under the same account name is a
+// different credential and starts active — which is exactly the recovery
+// path an operator takes when they top a balance back up.
+func CarryInvalidated(old *Pool, fresh *Pool) {
+	if old == nil || fresh == nil {
+		return
+	}
+	old.mu.RLock()
+	defer old.mu.RUnlock()
+	fresh.mu.Lock()
+	defer fresh.mu.Unlock()
+	for name, od := range old.byName {
+		nd, ok := fresh.byName[name]
+		if !ok || od == nil || od.pool == nil || nd == nil || nd.pool == nil {
+			continue
+		}
+		term := make(map[string]struct{}, len(od.pool.accts))
+		for i := range od.pool.accts {
+			if s := &od.pool.accts[i]; s.invalidated {
+				term[s.acct.Name+"\x00"+s.acct.APIKey] = struct{}{}
+			}
+		}
+		if len(term) == 0 {
+			continue
+		}
+		for i := range nd.pool.accts {
+			s := &nd.pool.accts[i]
+			if _, ok := term[s.acct.Name+"\x00"+s.acct.APIKey]; ok {
+				s.invalidated = true
 			}
 		}
 	}
@@ -2017,4 +2248,191 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	return body, resp.StatusCode, err
+}
+
+// SetRotationPolicy installs the operator-tunable rotation mechanics (#84)
+// on the Def and any pool already built for it. Call before Pool.Set for a
+// fresh def; safe on a live def too (the field is read under the pool lock).
+func (d *Def) SetRotationPolicy(pol RotationPolicy) {
+	d.Rotation = pol
+	if d.pool != nil {
+		d.pool.policy = pol
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Selection strategies (#81)
+// ---------------------------------------------------------------------------
+
+// p2cSpeedRef is the decode speed (tok/s) at which the P2C speed penalty
+// saturates: at or above it an account pays nothing for being slow, below it
+// the penalty grows linearly. 100 tok/s is the observed good-provider band
+// (the throughput session measured b-ai 40-76, commandcode ~51, glm ~25).
+const p2cSpeedRef = 100.0
+
+// pickSlot chooses one of the open slots (absolute indexes, round-robin order
+// from the pool's cursor). The default preserves the shipped behavior exactly:
+// fastest open slot, round-robin order among equal/no-data speeds.
+func (p *accountPool) pickSlot(open []int, now time.Time) int {
+	if len(open) == 1 {
+		return open[0]
+	}
+	// Occupancy gate, applied to EVERY mode: per-key concurrency is ~1 on
+	// several upstreams, so a second concurrent call on a key that already
+	// has one in flight queues upstream and rides past the pre-first-byte
+	// budget (2026-09-11: 3 stacked 330K prefills → TTFB 29s/32s/170s, the
+	// last the seq-879 504). Narrow to the least-busy slots first; a
+	// strategy may then choose freely among those, but none can stack on an
+	// idle sibling's key.
+	minLive := p.accts[open[0]].live
+	for _, i := range open[1:] {
+		if l := p.accts[i].live; l < minLive {
+			minLive = l
+		}
+	}
+	if minLive > 0 {
+		idle := open[:0:0]
+		for _, i := range open {
+			if p.accts[i].live == minLive {
+				idle = append(idle, i)
+			}
+		}
+		if len(idle) > 0 {
+			open = idle
+		}
+	}
+	if len(open) == 1 {
+		return open[0]
+	}
+	switch p.selection {
+	case "least-used":
+		best := open[0]
+		for _, i := range open[1:] {
+			a, b := p.accts[i].lastUsed, p.accts[best].lastUsed
+			if a.IsZero() {
+				return i // never served beats any served slot
+			}
+			if b.IsZero() {
+				continue
+			}
+			if a.Before(b) {
+				best = i
+			}
+		}
+		return best
+	case "random":
+		return open[p.pickN(len(open))]
+	case "strict-random":
+		return p.deckPick(open)
+	case "p2c":
+		if len(open) == 2 {
+			return p.cheaper(open[0], open[1], now)
+		}
+		i := p.pickN(len(open))
+		j := p.pickN(len(open) - 1)
+		if j >= i {
+			j++
+		}
+		return p.cheaper(open[i], open[j], now)
+	default: // "" = shipped: least-busy (already filtered), then fastest,
+		// then round-robin order among equals (strictly-greater keeps the
+		// first candidate).
+		best := open[0]
+		for _, i := range open[1:] {
+			if p.accts[i].speed.tps() > p.accts[best].speed.tps() {
+				best = i
+			}
+		}
+		return best
+	}
+}
+
+// cheaper returns the lower-scoring of two slots; ties keep a (round-robin
+// order), matching the default mode's strictly-greater comparison.
+func (p *accountPool) cheaper(a, b int, now time.Time) int {
+	sa, sb := p.score(a, now), p.score(b, now)
+	if sb < sa {
+		return b
+	}
+	return a
+}
+
+// score is the P2C cost of serving from slot i: lower is better. It is built
+// from signals the pool already owns plus an optional headroom probe, which is
+// what makes it different from "fastest": a recently-429ed or nearly-spent
+// key is avoided even while its gates are technically open, so load moves
+// before a failure forces it.
+func (p *accountPool) score(i int, now time.Time) float64 {
+	s := &p.accts[i]
+	// Recently rate-limited: the strike count already gated the cooldown, so
+	// this only breaks ties among open slots — a key that just recovered is
+	// still the likelier one to hit the wall again.
+	score := float64(min(s.strikes, 5)) * 8
+	// Speed: unknown keys take a middle penalty rather than being starved
+	// (a fresh pool has no samples and must still circulate).
+	if t := s.speed.tps(); t > 0 {
+		score += 40 * (1 - math.Min(t, p2cSpeedRef)/p2cSpeedRef)
+	} else {
+		score += 20
+	}
+	// Recency: discourage hammering the key that just served (bounded, so a
+	// single fast account is still preferred over a slow one).
+	if !s.lastUsed.IsZero() {
+		if rec := now.Sub(s.lastUsed); rec > 0 && rec < 60*time.Second {
+			score += 12 * (1 - rec.Seconds()/60)
+		}
+	}
+	// Subscription headroom (#79): a key whose plan is nearly spent is
+	// deprioritized BEFORE it starts refusing.
+	if p.headroom != nil {
+		if h, ok := p.headroom(s.acct.Name); ok {
+			score += math.Min(80, (100-h)/1.25)
+			if h <= 10 {
+				score += 10 // about to be unusable: strong, not absolute (others may be worse)
+			}
+		}
+	}
+	return score
+}
+
+// deckPick serves strict-random: each open slot is used once per shuffled
+// deck before any repeats (uniform wear without the clustering of pure
+// randomness). The deck holds slot indexes; entries that are not open now are
+// skipped and retried on a later request.
+func (p *accountPool) deckPick(open []int) int {
+	inOpen := func(i int) bool {
+		for _, o := range open {
+			if o == i {
+				return true
+			}
+		}
+		return false
+	}
+	for tries := 0; tries < 2; tries++ {
+		for p.deckPos < len(p.deck) {
+			i := p.deck[p.deckPos]
+			p.deckPos++
+			if inOpen(i) {
+				return i
+			}
+		}
+		// Deck exhausted (or all remaining entries are blocked): reshuffle.
+		p.deck = make([]int, len(p.accts))
+		for i := range p.deck {
+			p.deck[i] = i
+		}
+		rand.Shuffle(len(p.deck), func(a, b int) { p.deck[a], p.deck[b] = p.deck[b], p.deck[a] })
+		p.deckPos = 0
+	}
+	return open[0]
+}
+
+// SetSelection installs the pick strategy and optional headroom probe (#81).
+func (d *Def) SetSelection(mode string, headroom func(acct string) (float64, bool)) {
+	d.Selection = mode
+	if d.pool != nil {
+		d.pool.selection = mode
+		d.pool.headroom = headroom
+		d.pool.deck, d.pool.deckPos = nil, 0
+	}
 }

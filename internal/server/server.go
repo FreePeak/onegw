@@ -210,6 +210,16 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		} else {
 			def.Accounts = []provider.Account{{Name: "default", APIKey: p.APIKey, BaseURL: p.BaseURL}}
 		}
+		// Rotation policy (#84): global [rotation] merged with the
+		// provider override, installed before the pool is built so the new
+		// pool carries it from its first pick.
+		def.SetRotationPolicy(rotationPolicy(cfg.Rotation, p.Rotation))
+		// Account-selection strategy (#81), with the #79 subscription
+		// headroom probe wired in for p2c. The closure resolves at call
+		// time, so snapshots refreshed by the poller are always current.
+		def.SetSelection(p.Selection, func(acct string) (float64, bool) {
+			return s.subscriptionHeadroom(def.Name, acct)
+		})
 		s.wireOAuthTokens(cfg, def)
 		pool.Set(def)
 		// Materialize the kind's default catalog onto the config copy so
@@ -251,7 +261,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			prov, model, _ := strings.Cut(t, "/")
 			targets = append(targets, router.Target{Provider: prov, Model: model})
 		}
-		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets, Strategy: c.Strategy})
+		combos = append(combos, &router.Combo{Name: c.Name, Targets: targets, Strategy: c.Strategy, RoundRobinLimit: c.RoundRobinLimit})
 	}
 	rt.SetCombos(combos)
 	rt.SetTaskRouting(cfg.TaskRoutingOn())
@@ -304,6 +314,12 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	}
 
 	old := s.state.Load()
+	// Terminal billing state survives a reload (#80): the vendor still
+	// refuses these keys. A rotated credential does NOT carry over, which is
+	// the operator's recovery path.
+	if old != nil {
+		provider.CarryInvalidated(old.pool, pool)
+	}
 	s.state.Store(&state{
 		cfg:    cfg,
 		pool:   pool,
@@ -412,6 +428,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /admin/config/password", s.handleAdminPassword)
 	mux.HandleFunc("PUT /admin/config/providers", s.handleAdminProviderEdit)
 	mux.HandleFunc("PATCH /admin/config/providers/{name}/disabled", s.handleAdminProviderDisabled)
+	mux.HandleFunc("POST /admin/api/v1/providers/{name}/accounts/{acct}/reset", s.handleAdminAccountReset)
 	mux.HandleFunc("PUT /admin/config/combos", s.handleAdminComboEdit)
 	mux.HandleFunc("POST /v1/chat/completions", s.withIdempotency(translat.FmtOpenAI, s.handleOpenAI))
 	mux.HandleFunc("POST /v1/completions", s.withIdempotency(translat.FmtOpenAI, s.handleOpenAI))
@@ -652,6 +669,16 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 // fall-through and Retry-After semantics depend on it. Any other cooling
 // (upstream 429s) falls back to the router's default 429 + Retry-After.
 func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIError {
+	// Every account terminal (#80): the honest answer is "this provider is
+	// unfunded", not a rate limit — waiting does not help, an operator
+	// top-up + reset (or a key rotation) does. 503 keeps the combo
+	// fall-through contract of the other capacity errors.
+	if def.AllInvalidated() {
+		return &types.APIError{Status: 503, Type: "provider_accounts_unfunded", Code: "insufficient_quota",
+			RetryAfter: "300",
+			Message: fmt.Sprintf("provider %s: all %d account(s) refused for billing (%s); top up the balance and reset them from the dashboard, or rotate the keys",
+				def.Name, len(def.Accounts), strings.Join(def.Invalidated(), ", "))}
+	}
 	if q := s.cur().quota; q != nil {
 		if st, ok := q.Status(def.Name, time.Now()); ok && st.Exhausted {
 			cool := time.Until(st.WindowEnd)
@@ -735,7 +762,20 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
-		if alwaysThinking400(apiErr) {
+		if apiErr.PaymentRequired() {
+			// Terminal for this credential (#80): the vendor refused it for
+			// billing reasons, which no amount of waiting fixes. Marking it
+			// out of rotation is the difference between one doomed upstream
+			// attempt per request forever and one per account; the combo
+			// falls through to the next target exactly like the #48 gated
+			// family, but WITHOUT the ladder that would keep re-offering it.
+			if def.Invalidate(acct) {
+				log.Printf("server: invalidated %s/%s after upstream billing refusal (%s); re-enable from the dashboard or rotate the key",
+					def.Name, acctName(acct), apiErr.Message)
+				s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
+			}
+			apiErr.Fallbackable = true
+		} else if alwaysThinking400(apiErr) {
 			// Runtime self-healing for providers whose config lacks the
 			// always_thinking globs (a combo can mix models with different
 			// thinking modes): remember the model, and let Execute retry

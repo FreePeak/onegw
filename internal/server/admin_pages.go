@@ -977,11 +977,12 @@ type providerEditView struct {
 }
 
 type acctEditView struct {
-	Name    string `json:"name"`
-	BaseURL string `json:"base_url,omitempty"`
-	Weight  int    `json:"weight,omitempty"`
-	RPM     int    `json:"rpm,omitempty"`
-	HasKey  bool   `json:"has_key,omitempty"`
+	Name        string `json:"name"`
+	BaseURL     string `json:"base_url,omitempty"`
+	Weight      int    `json:"weight,omitempty"`
+	RPM         int    `json:"rpm,omitempty"`
+	HasKey      bool   `json:"has_key,omitempty"`
+	Invalidated bool   `json:"invalidated,omitempty"` // terminal billing refusal (#80)
 }
 
 func providerEditViews(st *state) []providerEditView {
@@ -1004,9 +1005,18 @@ func providerEditViews(st *state) []providerEditView {
 				src = []config.Acct{{Name: "default", APIKey: p.APIKey}}
 			}
 		}
+		term := map[string]bool{}
+		if st.pool != nil {
+			if def, ok := st.pool.Get(p.Name); ok {
+				for _, n := range def.Invalidated() {
+					term[n] = true
+				}
+			}
+		}
 		for _, a := range src {
 			v.Accounts = append(v.Accounts, acctEditView{
-				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM, HasKey: a.APIKey != "",
+				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM,
+				HasKey: a.APIKey != "", Invalidated: term[a.Name],
 			})
 		}
 		out = append(out, v)
