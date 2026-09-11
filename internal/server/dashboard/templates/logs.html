@@ -88,7 +88,7 @@
       '<td class="num mono">' + kfmt(e.saved) + '</td>' +
       '<td class="err mono">' + (e.err ? '<span title="' + escq(e.err) + '">' + esc(short(e.err)) + '</span>' : '') + '</td>';
     const det = document.createElement('tr');
-    det.className = 'det';
+    det.className = 'det ' + cls(e);
     det.style.display = 'none';
     det.innerHTML = '<td colspan="13"><div class="detbody mono">' + detText(e) + '</div></td>';
     row.onclick = () => { det.style.display = det.style.display === 'none' ? '' : 'none'; };
