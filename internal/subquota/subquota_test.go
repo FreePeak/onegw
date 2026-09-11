@@ -204,6 +204,23 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 	}
 }
 
+func TestParseCommandCodeFloorsNearCap(t *testing.T) {
+	// 34.9/35 = 99.71%: spendable headroom remains. Rounding (int(pct+0.5))
+	// read this as 100 and re-parked the account every poll cycle — the
+	// window is exhausted only when used >= cap.
+	windows, _, err := parseCommandCode([]byte(
+		`{"credits":{"monthlyCredits":5},"windowLimits":{"weekly":{"used":34.9,"cap":35}}}`), 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if windows[0].Name != "Weekly window" || windows[0].Used != 99 {
+		t.Fatalf("near-cap window = %+v, want floored 99 (not rounded 100)", windows[0])
+	}
+	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
+		t.Fatal("99.71% used must not park")
+	}
+}
+
 func TestCommandCodePlanLabel(t *testing.T) {
 	for id, want := range map[string]string{
 		"individual-goat":     "Command Code · GOAT",
@@ -449,6 +466,43 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 	}
 }
 
+func TestProbeCommandCodeSoftCallsFailOpen(t *testing.T) {
+	// whoami and subscriptions are enrichment: a 500 on either must NOT
+	// mark the snapshot failed (parkIfExhausted early-returns on Err, so
+	// a leak would silently stop parking while the credits call is fine).
+	cc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/alpha/whoami", "/alpha/billing/subscriptions":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		case "/alpha/billing/credits":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"credits": map[string]any{"monthlyCredits": 10.28, "purchasedCredits": 0, "freeCredits": 0},
+				"windowLimits": map[string]any{
+					"weekly": map[string]any{"used": 35.0018, "cap": 35, "exceeded": true, "resetAt": 1789539876848},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cc.Close()
+
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "cc", AcctName: "harvey", AcctKey: "sk-cc",
+		Dialect: CommandCode, URL: cc.URL}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("exhausted weekly window never parked despite failing enrichment calls")
+	}
+	for _, s := range tr.All() {
+		if s.Err != "" {
+			t.Fatalf("soft-call failure must not fail the snapshot: %s", s.Err)
+		}
+	}
+}
 func TestTrackerResolvesLiveKey(t *testing.T) {
 	// A rotated/rotating bearer must reach the probe AND invalidate the
 	// cache entry: same (provider, account), fresh key -> fresh snapshot

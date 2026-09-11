@@ -629,10 +629,16 @@ func parseCommandCode(body []byte, status int) ([]Window, string, string) {
 			continue // window not configured for this plan
 		}
 		pct := w.used / w.cap * 100
-		if pct > 100 {
-			pct = 100 // over-cap usage still parks at 100%
+		if pct < 0 {
+			pct = 0
 		}
-		windows = append(windows, Window{Name: w.name, Used: int(pct + 0.5), Resets: asReset(w.reset)})
+		if pct > 100 {
+			pct = 100 // over-cap usage parks at 100%
+		}
+		// Floor, never round: the window is exhausted only when used >=
+		// cap. Rounding made 99.5-99.99% read 100 and re-park an account
+		// that still had spendable headroom every poll cycle.
+		windows = append(windows, Window{Name: w.name, Used: int(pct), Resets: asReset(w.reset)})
 	}
 	// Credits pool (monthly + purchased + free remaining). The vendor does
 	// not return period spend on this endpoint, so the window reads 0%
