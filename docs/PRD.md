@@ -1431,6 +1431,19 @@ Two distinctions worth keeping straight, both easy to get wrong:
   WITH the decay guard — adopting the level without the decay reproduces that
   deadlock. #78's deadlock does not exist today, so this is a design constraint on
   new work, not a bug.
+- **Shared-edge attribution (the flip side of the above).** OmniRoute's
+  `isNetworkErrorRotatable` rotates on a network error only when the account has
+  its own egress; a shared-egress fault propagates instead of poisoning every
+  sibling's ladder. onegw's `flapStrike` implements that insight provider-wide
+  ("not tied to an account: the fault indicts the provider's edge"), which is the
+  right shape for the common case. The narrower edge: accounts carry an optional
+  per-account `base_url` override (`Acct.BaseURL`), so a provider is not
+  guaranteed to be one host — if a mixed-host provider is ever configured, a
+  network fault on one account's host would open the provider-wide breaker for
+  healthy accounts on the shared host. Refine to host-scoped fault attribution
+  when that configuration appears; today's live config has no account-level
+  `base_url`, so this is a precondition, not a filed issue.
+
 - **Affinity vs rotation.** OmniRoute caps connection stickiness at
   `stickyRoundRobinLimit` successes because its sticky mode spreads LOAD. onegw's
   `sticky = "5m"` pin exists to keep a session's prompt cache warm and has no
