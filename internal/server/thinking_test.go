@@ -65,6 +65,10 @@ func TestAlwaysThinking400Signature(t *testing.T) {
 		{Status: 400, Code: "400001", Type: "invalid_request_error",
 			Message: "The request is invalid: 该模型始终思考，不支持关闭思考；请使用 low、high 或 max。"},
 		{Status: 400, Message: "This model always thinks; please use low, high, or max."},
+		// commandcode zod enum rejection, verbatim from the live upstream
+		// (2026-09-11 probe): same always-thinking family.
+		{Status: 400, Code: "400", Type: "invalid_request_error",
+			Message: `Invalid option: expected one of "low"|"medium"|"high"|"xhigh"|"max"`},
 	}
 	for _, e := range yes {
 		e := e
