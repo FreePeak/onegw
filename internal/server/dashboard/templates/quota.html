@@ -1,10 +1,10 @@
-{{define "hdr"}}<span>{{len .}} tracked windows</span>{{end}}
+{{define "hdr"}}<span>{{len .Windows}} tracked windows{{if .Subs}} · {{len .Subs}} subscriptions{{end}}</span>{{end}}
 {{define "content"}}
 <div class="tblwrap">
 <table>
 <thead><tr><th>provider</th><th>window</th><th class="num">tokens used</th><th class="num">limit</th><th></th><th class="num">requests</th><th class="num">limit</th><th>resets</th><th>state</th></tr></thead>
 <tbody>
-{{range .}}<tr>
+{{range .Windows}}<tr>
   <td><b>{{.Provider}}</b></td><td>{{.Window}}</td>
   <td class="num">{{compact .UsedTokens}}</td>
   <td class="num">{{if .LimitTokens}}{{compact .LimitTokens}}{{else}}<span class="text-mut">track only</span>{{end}}</td>
@@ -15,6 +15,29 @@
   <td>{{if .Exhausted}}<span class="pill err">exhausted</span>{{else if .LimitTokens}}<span class="pill ok">ok</span>{{else}}<span class="pill">tracking</span>{{end}}</td>
 </tr>
 {{else}}<tr><td colspan="9" class="empty">no quota windows configured — set <code class="chip">quota_window</code> on a provider</td></tr>{{end}}
+</tbody>
+</table>
+</div>
+
+<h2>Subscription quota <span class="text-mut">upstream-reported · polled every minute</span></h2>
+<div class="tblwrap">
+<table>
+<thead><tr><th>provider</th><th>account</th><th>plan</th><th>window</th><th style="width:120px">used</th><th>resets</th><th>state</th></tr></thead>
+<tbody>
+{{range $row := .Subs}}
+{{if $row.Err}}<tr>
+  <td><b>{{$row.Provider}}</b></td><td>{{$row.Account}}</td><td class="text-mut">{{$row.Plan}}</td>
+  <td colspan="2" class="text-mut" title="probed {{$row.Fetched}} via {{$row.Dialect}}">{{$row.Err}}</td>
+  <td>—</td><td><span class="pill err">probe failed</span></td>
+</tr>{{else}}{{$exh := $row.Exhausted}}{{range $row.Windows}}<tr>
+  <td><b>{{$row.Provider}}</b></td><td>{{$row.Account}}</td>
+  <td>{{$row.Plan}}<span class="text-mut"> · {{$row.Dialect}}</span></td>
+  <td>{{.Name}}</td>
+  <td><div class="bar"><i class="{{.BarClass}}" style="width:{{.Pct}}%"></i></div> <span class="num">{{.Pct}}%</span></td>
+  <td>{{if .Resets}}in {{.Resets}}{{else}}—{{end}}</td>
+  <td>{{if $exh}}<span class="pill err">exhausted</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
+</tr>{{end}}{{end}}
+{{else}}<tr><td colspan="7" class="empty">no subscription providers — set <code class="chip">subscription_quota</code> on a provider ("opencode-go", "zai" or "zai-cn")</td></tr>{{end}}
 </tbody>
 </table>
 </div>
