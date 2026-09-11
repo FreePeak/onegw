@@ -26,7 +26,13 @@ var assets map[string][]byte
 
 // NavItem is one sidebar entry. Group names render as section runs —
 // consecutive items sharing a Group get one heading.
-type NavItem struct{ ID, Href, Label, Group string }
+type NavItem struct {
+	ID, Href, Label, Group string
+	// Icon is the sidebar glyph's inner SVG markup (stroke paths,
+	// currentColor, 24x24 viewBox). Rendered raw — static package-level
+	// constants, never user data; template.HTML bypasses escaping.
+	Icon template.HTML
+}
 
 // Shell is the data every page template sees at the top level. V carries
 // the page-specific view (content/scripts/hdr blocks execute with V as dot).
