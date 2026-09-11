@@ -12,6 +12,12 @@ unset → 647/676 output tokens, 395/392 reasoning, 6.2-6.5s; low → 246/234, 5
 value), the onegw_provider_prefill_tokens_per_second_x100{provider,model,bucket} gauge, and
 the speed_order ring rows. Live-verified on the scratch gateway: steer combo (qwen configured
 first) served by glm at 2.2-4.2s; reasoning tokens 50 with default_effort vs 392-395 unset.
+STATUS CORRECTION (2026-09-11, after this stamp was written): this work was landed on master
+as 276032f by the rotation session as an explicit handover (green gate passed, owner idle ~3h)
+— the "uncommitted, pending review" state above is superseded. NOT yet deployed: the live
+gateway (10264) still runs the pre-276032f build, so size-aware steering and default_effort are
+NOT affecting live routing until the user approves a redeploy. Revert is one command
+(git revert 276032f) if review after the fact finds a problem.
 The post-200 stall watchdog was dropped on evidence (headers→first chunk 0.07-1.38s), and the
 per-first-byte-budget change stays forbidden — docs/b-ai-free-tier-limits.md §6 records the
 regression trap and the peer's occupancy pick as the fix for the timeout storm. Composes with
