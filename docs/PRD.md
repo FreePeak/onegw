@@ -1438,6 +1438,19 @@ concurrency gate plus P2C in-flight balancing over the shared account. Note both
 per connection — onegw's #79 subquota poller is exactly that feed, which is why
 #81's P2C and these orderings can share one scoring layer.
 
+**Rotation trigger policy** (`open-sse/services/rotationConfig.ts`). Which error
+classes rotate at all, and only after how many of them inside what window, is a
+runtime policy: `OMNIROUTE_ROTATION_ENABLED`, per-status switches
+(`ROTATE_ON_{429,500,502,400}`; 400 off by default), `ROTATE_{status}_THRESHOLD`
+(default 1 = immediate) and `ROTATE_{status}_WINDOW_SECONDS` (default 120),
+plus per-connection `providerSpecificData.rotationOverrides`. Implemented as pure
+functions + sliding-window counters, no DB on the hot path. onegw deliberately
+keeps this half in code, not config: `types.Retryable()` is a fixed status set,
+and the classification refinements that mattered came from live RCA (shared-wall
+429s, model-scoped benches, wording-vs-behaviour walls) rather than operator
+tuning — the evaluation for whether any of it becomes a knob is "did a real
+incident need a per-deployment value?", which so far it did not.
+
 **Failure classification feeds all of them** (`open-sse/services/accountFallback.ts`,
 2129 lines): per-provider profiles (base/max cooldown, backoff steps, circuit
 breakers), error-rule matching by status *and body text*, 429
