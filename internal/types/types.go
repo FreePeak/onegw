@@ -392,6 +392,18 @@ func (e *APIError) ReasoningEchoRequired() bool {
 // lets 503s fall through, but the ladder and the Retry-After stamping
 // must also treat them as shared-wall, not per-key load.
 //
+// Distributor channel-pool exhaustion carries the same medicine:
+// one-api/new-api resellers answer 503 "No available channel for model
+// <X> under group default (distributor)" when every upstream channel
+// fronting THAT MODEL is empty or disabled (b-ai/glm-5.3-flash live
+// 2026-09-11 06:14Z, seq 595). The verdict indicts the (provider, model)
+// lane for every key: same-target retries and account rotation are all
+// doomed, and it must not feed the provider-wide flap breaker either
+// (edgeFault exempts shared walls). Per the 1da3c2e contract it rides
+// the per-request shared-wall fall-through — no wording park, keys stay
+// warm, and each request pays at most one doomed call before the next
+// combo leg serves.
+//
 // A behaviour-proven SharedWall (provider burst detection on a
 // wording-less 429) short-circuits the text matching entirely.
 func (e *APIError) SharedConcurrency() bool {
@@ -405,7 +417,8 @@ func (e *APIError) SharedConcurrency() bool {
 	if e.Status == 503 {
 		probe := strings.ToLower(e.Code + " " + e.Message)
 		return strings.Contains(probe, "cache-only admission") ||
-			strings.Contains(probe, "gateway overloaded")
+			strings.Contains(probe, "gateway overloaded") ||
+			strings.Contains(probe, "no available channel")
 	}
 	if e.Status != 429 {
 		return false
