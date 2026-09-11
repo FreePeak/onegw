@@ -1,3 +1,34 @@
+*Last updated: 2026-09-11 (dynamic per-provider quota windows (#85, b96eac5, live pid 94769):
+the local quota_window was a fixed enum (5h | daily | weekly), so a provider whose real cap
+resets monthly — or on any other period — could not be modelled, and an exhausted combo leg
+still burned upstream attempts until the gate cooled it. Windows are now DATA: a calendar kind
+(daily / weekly / monthly, month resetting at the 1st 00:00 UTC with quota_reset_anchor phasing
+the grid to the anchor's day-of-month, clamped to shorter months so a 31st anchor resets on
+Feb 28/29) or ANY positive Go duration ("5h", "48h", "90m") rolling on the existing 5h grid
+machinery (rollingPeriod); config.Validate rejects junk loudly instead of tracking nothing.
+Enforcement itself was already window-agnostic and needed no change: an exhausted provider
+cools its WHOLE account pool until its OWN WindowEnd and answers 503 provider_quota_exhausted
++ Retry-After, so Execute skips the leg with ZERO upstream attempts and the combo falls through
+to the next target — and when that provider's window rolls, the counters reset and the park
+expires at the same instant, resuming service with no reload and no manual un-park. Each
+provider's park is exactly as long as its own window (5h frees at +5h, monthly at the 1st).
+The vendor-reported side (#79) already parks per account until the vendor's own reset, so both
+quota sources now reject/resume dynamically. Dashboard: the provider editor's quota-window
+field became input + datalist (was a select) so a custom duration round-trips instead of
+silently resetting to "off" — the splice-corruption family again. Verification: monthly grid +
+anchor clamp + custom-duration + rollover-clears-exhaustion + inherit unit tests; config
+accept/reject table; e2e TestQuotaAutoRejectAndDynamicResume drives a REAL 2s rolling window
+through the HTTP surface (exhausted leg skipped with zero upstream traffic, direct 503 +
+Retry-After, then auto-resume after the reset) — impossible before with a 5h floor; both
+directions mutation-checked (neutering the pool-empty quota override, and the monthly clamp,
+each turn the tests red). Live proof on a scratch gateway (port 18096, mock upstream, own
+/tmp data_dir): combo mock/m -> monthly/m2 — req1 served by the mock leg, tracker flips
+exhausted, req2 served by m2 with exactly ONE upstream hit (the exhausted leg was never
+called), req3 after the 2s reset served by m again; monthly reports 2026-09-01T00:00:00Z ->
+2026-10-01T00:00:00Z. Deployed zero-drop to :8080 (overlap + explicit-PID drain, single
+listener verified). No live provider sets a local quota_window yet — that is an operator
+config choice, now expressible for any period. Earlier:)*
+
 *Last updated: 2026-09-11 (OmniRoute rotation-strategy research + issues #80/#81/#82):
 deep-read of OmniRoute's three rotation layers from source — (1) per-key health rotation
 (apiKeyRotator.ts + chatCore/keyHealth.ts: 401 warning→invalid at threshold 2, 402 terminal
