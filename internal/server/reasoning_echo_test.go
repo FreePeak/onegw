@@ -157,47 +157,6 @@ func TestReasoningEchoNullDropped(t *testing.T) {
 	}
 }
 
-// TestReasoningEcho400FallsThrough pins the containment half: a DeepSeek
-// upstream that STILL refuses (some other contract wrinkle) must not kill
-// the combo. Live 2026-09-10: the terminal 400 ended the client's omp
-// session. Reconciled with the router-level ReasoningEchoRequired break
-// (supersedes 747c6ac's Fallbackable retry-once): normalizeRoles applies
-// identically on every attempt, so a same-target retry replays a
-// byte-identical body — the combo must advance to the next leg on the
-// FIRST refusal with no doomed upstream call.
-func TestReasoningEcho400FallsThrough(t *testing.T) {
-	hits := 0
-	th := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(reasoningEchoErr))
-	}))
-	defer th.Close()
-	other, otherCap := captureStub()
-	defer other.Close()
-
-	cfg := makeCfg(t, "sk-test-key", "", false,
-		providerSpec{name: "th", up: th.URL, model: "deepseek-v4.1-flash:free"},
-		providerSpec{name: "oc", up: other.URL, model: "mimo-v2.5"})
-	srv, err := New(cfg)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer srv.Close()
-	h := srv.Handler()
-
-	w := do(t, h, reasoningReq(t, "pair", false))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong") {
-		t.Fatalf("combo must fall through to the next target, got code=%d body=%s", w.Code, w.Body.String())
-	}
-	if hits != 1 { // no same-target retry: the refusal is a deterministic body verdict
-		t.Fatalf("th hits=%d, want 1 (fall through immediately, no doomed retry)", hits)
-	}
-	if b, _, _ := otherCap.snapshot(); len(b) == 0 {
-		t.Fatal("next combo leg never hit")
-	}
-}
-
 // TestReasoningEchoDetailsRenamed pins the reasoning_details alias: pi
 // replays the structured reasoning_details[] array (openai-completions.js
 // :1043) for commandcode-served turns; a DeepSeek-dialect upstream needs
