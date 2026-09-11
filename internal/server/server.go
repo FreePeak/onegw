@@ -186,6 +186,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			AlwaysThinking:   p.AlwaysThinking,
 			NoThinking:       p.NoThinking,
 			DefaultEffort:    p.DefaultEffort,
+			EchoReasoning:    p.EchoReasoning,
 			CacheProfile:     p.CacheProfile,
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
@@ -1261,8 +1262,23 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 // prepareUpstreamBody returns the body to send upstream. Same format →
 // verbatim (with the model field rewritten to the routed upstream model);
 // different format → full translate via the unified model. def (may be nil
-// in tests) carries thinking-knob adaptation for the routed model.
+// in tests) carries thinking-knob adaptation and reasoning-echo synthesis
+// for the routed model. OpenAI-dialect outputs additionally get the
+// replay-echo synthesis (synthesizeReasoningEcho): thinking-mode upstreams
+// validate the REPLAYED history, and bodies built from other legs' turns
+// legitimately lack reasoning_content.
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
+	out, err := buildUpstreamBody(upstream, client, body, upstreamModel, def)
+	if err != nil {
+		return nil, err
+	}
+	if upstream == translat.FmtOpenAI {
+		out = synthesizeReasoningEcho(out, upstreamModel, def)
+	}
+	return out, nil
+}
+
+func buildUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	if upstream == client {
 		var err error
 		body, err = rewriteModel(body, upstreamModel)
@@ -1398,6 +1414,66 @@ func normalizeRoles(body []byte) ([]byte, error) {
 		return body, nil
 	}
 	return out, nil
+}
+
+// reasoningEchoPlaceholder fills assistant turns that have no reasoning
+// field at all when the routed upstream demands the replay echo. Short on
+// purpose: one per cross-leg turn, and the wording was live-verified
+// accepted by Console Go's validator on 2026-09-11 (the full 1671-message
+// failing body served 200 with every missing turn filled by exactly this
+// string).
+const reasoningEchoPlaceholder = "(context elided)"
+
+// synthesizeReasoningEcho fills missing reasoning_content on assistant
+// turns for providers whose upstream validates the REPLAYED history in
+// thinking mode (def.ReasoningEchoModel). The proven trigger shape
+// (opencode/deepseek-v4.1-flash, seq 2666, three-way bisect 2026-09-11):
+// the request ends on a TOOL RESULT — a pending tool-loop continuation —
+// and ANY assistant turn in the history lacks the echo. A trailing user
+// turn disables the validation upstream, so bodies are left byte-identical
+// there (cache-stable for the common turn shape). normalizeRoles runs
+// BEFORE this: aliases (reasoning, reasoning_text) are already renamed, so
+// a present reasoning_content is the complete contract; an empty one or a
+// present-but-unusable reasoning_details still counts as missing.
+// Returns body unchanged unless something was filled.
+func synthesizeReasoningEcho(body []byte, model string, def *provider.Def) []byte {
+	if def == nil || !def.ReasoningEchoModel(model) {
+		return body
+	}
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body // not an object; forward verbatim
+	}
+	msgs, ok := root["messages"].([]any)
+	if !ok || len(msgs) == 0 {
+		return body
+	}
+	last, ok := msgs[len(msgs)-1].(map[string]any)
+	if !ok || last["role"] != "tool" {
+		return body // not a tool-loop continuation; no echo validation upstream
+	}
+	changed := false
+	for _, mv := range msgs {
+		m, ok := mv.(map[string]any)
+		if !ok || m["role"] != "assistant" {
+			continue
+		}
+		if s, _ := m["reasoning_content"].(string); s != "" {
+			continue
+		}
+		m["reasoning_content"] = reasoningEchoPlaceholder
+		changed = true
+	}
+	if !changed {
+		return body
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 // flattenReasoningDetails joins the readable entries of an AI-SDK-style
