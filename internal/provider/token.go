@@ -92,8 +92,9 @@ func oauthKey(provider, account string) string {
 // AccountState is a point-in-time snapshot of one rotation slot
 // (diagnostics, tests).
 type AccountState struct {
-	Name    string
-	Cooling bool
+	Name        string
+	Cooling     bool
+	Invalidated bool // terminal billing refusal (#80); no timer clears it
 }
 
 // PoolStates snapshots every account's cooldown state.
@@ -106,8 +107,9 @@ func (p *accountPool) states() []AccountState {
 	out := make([]AccountState, 0, len(p.accts))
 	for i := range p.accts {
 		out = append(out, AccountState{
-			Name:    p.accts[i].acct.Name,
-			Cooling: now.Before(p.accts[i].cooldown),
+			Name:        p.accts[i].acct.Name,
+			Cooling:     now.Before(p.accts[i].cooldown),
+			Invalidated: p.accts[i].invalidated,
 		})
 	}
 	return out
