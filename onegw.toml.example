@@ -84,6 +84,23 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # (combos fall through to the next target) — and resumes automatically
 # when the window rolls. Each provider's park is as long as ITS window: a
 # 5h window frees at +5h, a monthly one at the 1st.
+# Account selection among OPEN slots (#81): "" (default: least-busy, then
+# fastest recent decode speed, round-robin among equals) | "p2c" (health
+# score: strikes, speed, recency, subscription headroom when subscription_quota
+# is also set) | "least-used" | "strict-random" | "random". Every mode still
+# respects the per-key occupancy gate (a key with a call in flight yields).
+# selection = "p2c"
+#
+# Rotation policy (#84): override the global [rotation] table for this
+# provider. Only the POLICY is tunable; which errors count as rate limits,
+# shared walls, model refusals or billing refusals stays in code because
+# those rules came from live incidents.
+# [providers.rotation]
+# cooldown_base = "10s"     # first 429 bench (default)
+# cooldown_cap = "60s"      # adaptive ladder ceiling (default)
+# flap_threshold = 4        # edge faults before the pool parks (default)
+# flap_open = "15s"         # whole-pool park while the breaker is open (default)
+# model_bench_ttl = "5m"    # model-scoped refusal bench (default)
 # quota_window = "5h"
 # quota_reset_anchor = "2026-01-01T00:00:00Z"
 # quota_limit_tokens = 2000000
@@ -203,6 +220,14 @@ targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/dee
 # decode speed (tokens/sec EWMA, shown on the dashboard Overview). Legs
 # with no speed data keep the configured order; nothing is ever removed
 # from the chain. Default "" keeps the configured sequence verbatim.
+#
+# strategy = "round-robin" (#82) distributes load instead: the leg that just
+# served stays FIRST for round_robin_limit consecutive successes (default 3,
+# max 1000), then rotation advances to the next leg. The full fallback chain
+# is preserved — only the starting point moves — so a leg that starts
+# failing still falls through. round_robin_limit requires the strategy.
+# strategy = "round-robin"
+# round_robin_limit = 3
 
 # Model tiering (issue #44 step 1, config-only): define a cheap combo and a
 # strong combo, then point the agent CLI's role slots at them (smol/tiny ->
