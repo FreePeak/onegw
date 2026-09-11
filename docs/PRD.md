@@ -1,3 +1,24 @@
+*Last updated: 2026-09-11 (failover deep-dive fan-out (4 scouts) → two fixes + config trims, commit 2e28d44, live pid 23608):
+(1) header-timeout STORM bench — a lone pre-first-byte abort stays request-shaped (unchanged
+design), but 3 header-budget 504s on the same (provider, model) inside a tumbling 3-min window
+now bench that leg for 3 min via #72 BenchModel, so Execute skips it at zero cost instead of
+every request re-burning the 75s budget (b-ai 09-10 16:29-16:48 storm: 52 timeouts, zero state);
+tests pin storm-benches / lone-does-not / window-tumbles with a literal-3 mutation trap.
+(2) commandcode's zod effort-400 (`Invalid option: expected one of "low"|"medium"|"high"|...`,
+56 client-visible chain-kills lifetime) joined the always-thinking learn+coerce family — live
+proof post-deploy: 400 now triggers the same-target retry instead of surfacing. Config: both
+combos trimmed of the dead legs — commandcode/deepseek-v4-flash (weekly cap, dead until
+09-16T06:24Z — RE-ADD AFTER) and opencode/deepseek-v4-flash (0/6 since 09-07). Live
+response_header_timeout lowered 120s→75s (user call: fail faster, rotate sooner). Scout
+findings on the record: gateway adds ~25-35ms CPU per 300-400KB combo request and ZERO fixed
+blocking hops (TTFB is ~99% upstream); h2 flow-control starvation is structurally impossible
+(Go grants 1GiB conn window / 4MiB stream, auto-replenished — the 7702820 ping fix was the
+right transport lever); the 4x-body budget reservation held for stream lifetime is the known
+RAM-vs-saturation ceiling (~60x 400KB bodies to starve; revisit if concurrency grows);
+router Backoff's SharedConcurrency tier is dead code (breaks at router.go:439 first) — flagged,
+not yet removed; TestCursorKindEndToEnd hangs on clean origin/master (pre-existing flake,
+needs its own RCA))
+
 *Last updated: 2026-09-11 (throughput metrics + speed steering, 7567e41+ec958b9, live pid 70807:
 the user-reported throughput collapse (22 → 6 tok/s average) RCA'd with simultaneous 120-token
 streaming probes across every dev/free combo leg: b-ai/glm-5.3-flash — combo leg #1 — served
