@@ -8,7 +8,15 @@ vendor's own exceeded flags agree live), and a monthly credits pool window reads
 healthy and 100% only when monthly+purchased+free remaining are all zero AND the credits object
 is present (absent credits must fail open, never park). 401/403 = probe error, fail-open.
 SnapshotURL override semantics differ for this dialect: subscription_url replaces the API BASE.
-Live onegw.toml: commandcode → subscription_quota = "commandcode". Earlier:)*
+Live onegw.toml: commandcode → subscription_quota = "commandcode". Landed 90b1f79,
+live pid 53497 (peer's /tmp/onegw-echo-bin carries the dialect): commandcode/harvey serving,
+plan "Command Code · Go", 5h 0% / Weekly 0% / Credits (monthly) 0%, reset 2026-09-27 (the
+configured account probed healthy from its first cycle — the exhausted-weekly shape in the
+parser/e2e tests came from the calibration key, not this account). Follow-up 461efb2: window
+percents are FLOORED, not rounded — 34.9/35 reads 99 (headroom remains, no park), used>=cap
+reads 100 (park); rounding parked 99.5-99.99% accounts every cycle. Soft-call guards:
+whoami/subscriptions failures leave Err empty while credits still parks; absent credits
+object emits no credits window (fail-open on shape change). Earlier:)*
 *Last updated: 2026-09-11 (speed_order yellow: main row LIVE on pid 81871; expanded-detail coloring committed but NOT deployed):
 `logs.html` row coloring: `speed_order` rows (the prefill-order decision ring rows) render in
 the `code-4xx` warn-yellow class instead of the generic kind-red `code-err`, matching their
