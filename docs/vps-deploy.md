@@ -59,8 +59,11 @@ data_dir = "/var/lib/onegw"      # absolute — the unit's ReadWritePaths and
                                  # deploy_vps.sh both require it (a relative
                                  # data_dir is rejected by the deploy script)
 admin_password = ""              # leave empty: comes from ONEGW_ADMIN_PASSWORD
-                                 # in the env file. NEVER leave both unset on a
-                                 # VPS: the in-code default is "admin".
+                                 # in the env file; with neither set, first
+                                 # boot generates a random password, stores it
+                                 # in /var/lib/onegw/admin_password and logs it
+                                 # once (the guessable "admin" in-code default
+                                 # is gone — still set it explicitly).
 # max_body_bytes (32 MiB) / buffered_budget_bytes (48 MiB) defaults are fine;
 # raise response_header_timeout (e.g. "120s") for massive thinking prefills
 # over slow links.
