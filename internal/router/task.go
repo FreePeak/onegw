@@ -17,7 +17,10 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+
+	"onegw/internal/provider"
 )
 
 // TaskLevel is the classified difficulty of one request.
@@ -329,27 +332,96 @@ func (r *Router) applyTaskRouting(ctx context.Context, res *Resolution) {
 	}
 }
 
-// reorderBySpeed stable-sorts res.Targets by each leg's recent decode
-// speed (tokens/sec EWMA, provider speed.go), fastest first. Legs with no
-// speed data report 0 and keep the configured order among themselves; the
-// full chain is preserved — only the order changes.
-func (r *Router) reorderBySpeed(res *Resolution) {
+// reorderBySpeed stable-sorts res.Targets so the leg expected to finish THIS
+// request first comes first. Two scoring regimes, chosen per request (never
+// mixed within one comparison):
+//
+//   - Default: the leg's recent decode speed (tokens/sec EWMA,
+//     provider/speed.go), fastest first — unchanged behavior.
+//   - Size-aware: when the request is at least provider.PrefillMattersAt
+//     input tokens and at least one leg has prefill samples for that size
+//     bucket, every leg is scored by PREDICTED seconds (measured prefill for
+//     the bucket + a nominal reply at the leg's decode speed), fastest
+//     first. This is the fix for the measured failure mode where a leg with
+//     the best decode number still answers last: b-ai ring evidence
+//     2026-09-11 — 232,621 input tokens, 0.96s decode, 73.7s end to end.
+//
+// Legs with no data report 0 and keep the configured order among themselves;
+// the full chain is preserved — only the order changes.
+func (r *Router) reorderBySpeed(ctx context.Context, res *Resolution) {
 	type scored struct {
 		t Target
 		s float64
+	}
+	inTokens := inputSizeFrom(ctx)
+	byPrefill := false
+	if inTokens >= provider.PrefillMattersAt {
+		for _, t := range res.Targets {
+			if def, ok := r.pool.Get(t.Provider); ok &&
+				def.ModelPrefillSamples(t.Model, provider.PrefillBucket(inTokens)) >= provider.MinPrefillSamplesForOrdering {
+				byPrefill = true
+				break
+			}
+		}
 	}
 	order := make([]scored, len(res.Targets))
 	for i, t := range res.Targets {
 		s := 0.0
 		if def, ok := r.pool.Get(t.Provider); ok {
-			s = def.ModelTPS(t.Model)
+			if byPrefill {
+				if secs := def.PredictSeconds(t.Model, inTokens); secs > 0 {
+					// Higher must mean better for the shared sort below.
+					s = -secs
+				}
+			} else {
+				s = def.ModelTPS(t.Model)
+			}
 		}
 		order[i] = scored{t, s}
 	}
+	before := make([]Target, len(res.Targets))
+	copy(before, res.Targets)
 	sort.SliceStable(order, func(i, j int) bool { return order[i].s > order[j].s })
 	for i := range order {
 		res.Targets[i] = order[i].t
 	}
+	// Log only the size-aware reorder: the decision line is the proof an
+	// operator can read that measured PREFILL (not decode) chose the serving
+	// order for this request — the two can disagree, and only one of them
+	// contains the cost that dominates a 200K-token request.
+	if byPrefill {
+		for i := range before {
+			if before[i] != res.Targets[i] {
+				r.logSpeedDecision(res, inTokens)
+				break
+			}
+		}
+	}
+}
+
+// logSpeedDecision emits one #19-ring row recording a size-aware (prefill)
+// reorder, through the same server-owned sink as the task-routing decision.
+func (r *Router) logSpeedDecision(res *Resolution, inTokens int64) {
+	if r.SpeedLog == nil {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("prefill-order in~")
+	b.WriteString(strconv.FormatInt(inTokens, 10))
+	b.WriteString("tok: ")
+	for i, t := range res.Targets {
+		if i > 0 {
+			b.WriteString(" > ")
+		}
+		b.WriteString(t.Provider)
+		b.WriteString("/")
+		b.WriteString(t.Model)
+	}
+	detail := b.String()
+	if len(detail) > maxTaskLogDetail {
+		detail = detail[:maxTaskLogDetail]
+	}
+	r.SpeedLog(res.Model, detail)
 }
 
 // reorderByTask stable-sorts res.Targets so the best fit comes first:
