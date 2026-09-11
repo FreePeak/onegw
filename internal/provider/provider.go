@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"path"
@@ -268,6 +269,13 @@ type Def struct {
 	// Defs, re-syncing it with the on-disk config.
 	modelMu    sync.RWMutex
 	modelBench map[string]time.Time
+
+	// Header-timeout storm tracking (see noteHeaderTimeout): per-model
+	// strikes of the gateway's own pre-first-byte aborts in a tumbling
+	// window. A lone timeout stays request-shaped (the design note at
+	// edgeFault); a storm of them indicts the (provider, model) leg.
+	htMu      sync.Mutex
+	htStrikes map[string]htWindow
 }
 
 // LearnAlwaysThinking records model as runtime-discovered always-thinking
@@ -372,6 +380,62 @@ func (d *Def) ModelBenched(model string) (benched bool, ready time.Time) {
 		return false, time.Time{}
 	}
 	return true, until
+}
+
+// ---------------------------------------------------------------------------
+// Header-timeout storm bench
+// ---------------------------------------------------------------------------
+
+// A lone pre-first-byte abort (the gateway's own ResponseHeaderTimeout,
+// classified NoSameTargetRetry) stays request-shaped by design: one oversized
+// prefill on a serving provider must not exile the model for everyone
+// (see the edgeFault doc). But a STORM of them on the same (provider, model)
+// within a short window indicts the leg itself — b-ai 2026-09-10 16:29-16:48
+// and 2026-09-11: every request re-burned the full header budget on leg #1
+// because the timeout recorded zero state. Three strikes inside the tumbling
+// window bench the model briefly (shorter than ModelBenchTTL: congestion,
+// not deprovisioning); the next request then skips the leg with a ZERO-cost
+// fall-through instead of a 75s wait.
+const (
+	headerTimeoutStrikes = 3               // timeouts before the leg is benched
+	headerTimeoutWindow  = 3 * time.Minute // tumbling: re-armed by each strike
+	headerTimeoutBench   = 3 * time.Minute // bench TTL for a confirmed storm
+)
+
+// htWindow is one model's strike window.
+type htWindow struct {
+	count int
+	since time.Time
+}
+
+// noteHeaderTimeout records one header-budget abort on model and benches the
+// (provider, model) leg once headerTimeoutStrikes timeouts land inside
+// headerTimeoutWindow of each other. Call BenchModel outside htMu (it takes
+// modelMu; lock order htMu→modelMu must stay consistent — never invert).
+func (d *Def) noteHeaderTimeout(model string, now time.Time) {
+	d.htMu.Lock()
+	if d.htStrikes == nil {
+		d.htStrikes = make(map[string]htWindow)
+	}
+	w := d.htStrikes[model]
+	if w.count == 0 || now.Sub(w.since) > headerTimeoutWindow {
+		w = htWindow{count: 1, since: now}
+	} else {
+		w.count++
+	}
+	benched := false
+	if w.count >= headerTimeoutStrikes {
+		delete(d.htStrikes, model) // fresh window after a trip
+		benched = true
+	} else {
+		d.htStrikes[model] = w
+	}
+	d.htMu.Unlock()
+	if benched {
+		d.BenchModel(model, headerTimeoutBench)
+		log.Printf("provider %s: model %s benched %s after %d header-timeout strikes",
+			d.Name, model, headerTimeoutBench, headerTimeoutStrikes)
+	}
 }
 
 // AllowsPassthrough reports whether the provider declares the OpenAI-format
@@ -1377,7 +1441,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 	resp, err := d.httpClient().Do(req)
 	if err != nil {
 		apiErr := transportErr(ctx, err)
-		if edgeFault(apiErr) {
+		if apiErr.NoSameTargetRetry {
+			// Header-budget abort: strike the storm bench. A lone timeout
+			// changes nothing downstream (it breaks to the next leg in
+			// Execute); three in-window bench the leg so the next request
+			// skips it at zero cost instead of burning another budget.
+			d.noteHeaderTimeout(model, time.Now())
+		} else if edgeFault(apiErr) {
 			// Dial/TLS failures and timeouts are provider-edge shaped:
 			// they count toward the flap breaker, not the account ladder.
 			d.pool.flapStrike()
