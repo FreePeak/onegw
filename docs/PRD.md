@@ -1,10 +1,22 @@
-*Last updated: 2026-09-11 (speed_order log rows now yellow in the dashboard — deployed, live pid 81871):
+*Last updated: 2026-09-11 (speed_order yellow: main row LIVE on pid 81871; expanded-detail coloring committed but NOT deployed):
 `logs.html` row coloring: `speed_order` rows (the prefill-order decision ring rows) render in
 the `code-4xx` warn-yellow class instead of the generic kind-red `code-err`, matching their
 advisory "weigh it, don't trust the head leg blindly" semantics — an unsampled leg still
 sorts to the front by the s=0 promotion rule, and `in~Ntok` is an estimate, not billed usage.
 `task_routing` keeps green; unclassified kinds keep red. Built from HEAD + the single template
-hunk (no peer WIP swept), embedded templates → binary redeploy required. Earlier:)*
+hunk (no peer WIP swept), embedded templates → binary redeploy required.
+Follow-up (same day): the EXPANDED detail body (the `detText` block under a clicked row) now
+follows the row color too — `det.className = 'det ' + cls(e)` + `#logtbl .det.code-4xx
+.detbody { text-warn }` (admin.src.css, static/admin.css regenerated via scripts/dashboard-css.sh).
+DEPLOY BLOCKED: onegw.toml:202 now carries the peer's `subscription_quota = "commandcode"`
+for commandcode, which only the peer's uncommitted config.go/subquota.go WIP validates — a
+clean-HEAD binary fails at load (`unknown subscription_quota "commandcode"`), so any HEAD+color
+redeploy aborts until that WIP lands or the value is removed; the live gateway's SIGHUP hot
+reload fails on the same value right now (dashboard config saves will not apply until then).
+CORRECTION to the rotation stamp below: its "NOT yet deployed / live gateway (10264)" note is
+stale — the speed_order row the user pasted (ts 15:58:19Z, old pid 38841) proves size-aware
+steering + default_effort were ALREADY live before the 16:06:55Z deploy; no unapproved routing
+work was switched on by it. Earlier:)*
 *Last updated: 2026-09-11 (b-ai size-aware prefill steering RESTORED on the rotation master — uncommitted, pending review):
 the b-ai free-tier research + implementation lost in the working-tree reset was recovered
 whole from the peer auto-snapshot (wip/peer-snapshot-20260911-182333, 741d0ac) and
