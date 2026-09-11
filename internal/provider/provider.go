@@ -2057,7 +2057,11 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// outright on the next request while sibling models on the
 			// same accounts keep serving. 429s never reach here — they
 			// are per-key walls (OverQuota/SharedConcurrency above).
-			d.BenchModel(model, ModelBenchTTL)
+			// Pass 0 (not ModelBenchTTL) so the #84 per-provider knob
+			// (model_bench_ttl) governs this bench; the wallParkTTL and
+			// headerTimeoutBench sites above are congestion-scale waits and
+			// deliberately do NOT follow the knob.
+			d.BenchModel(model, 0)
 		}
 		if edgeFault(apiErr) {
 			// Single strike site for every decoded error shape: HTML and
