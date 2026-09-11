@@ -173,7 +173,7 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 	found := false
 	for _, w := range drained {
 		if w.Name == creditsWindow {
-			found, w.Used = true, w.Used
+			found = true
 			if w.Used != 100 {
 				t.Fatalf("drained credits window = %+v, want 100%%", w)
 			}
