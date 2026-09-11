@@ -184,6 +184,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			ExtraHeaders:     p.ExtraHeader,
 			Models:           p.Models,
 			AlwaysThinking:   p.AlwaysThinking,
+			NoThinking:       p.NoThinking,
 			CacheProfile:     p.CacheProfile,
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
@@ -745,6 +746,17 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 				log.Printf("server: learned always-thinking %s/%s from upstream 400; future requests coerce effort upfront", def.Name, model)
 			}
 			apiErr.Fallbackable = true
+		} else if noThinkingConflict400(apiErr) {
+			// Same medicine for the mirror failure (live kilocode 2026-09-11:
+			// "reasoning_effort and reasoning.effort are both provided with
+			// conflicting values" — the upstream duplicates the knob itself,
+			// so ANY effort value is fatal): learn the model as no-thinking,
+			// retry once with the knobs stripped, then fall through. Without
+			// this mark the 400 is terminal and kills the whole combo chain.
+			if def.LearnNoThinking(model) {
+				log.Printf("server: learned no-thinking %s/%s from upstream conflict 400; future requests strip effort upfront", def.Name, model)
+			}
+			apiErr.Fallbackable = true
 		}
 		return nil, apiErr
 	}
@@ -1187,7 +1199,7 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 // prepareUpstreamBody returns the body to send upstream. Same format →
 // verbatim (with the model field rewritten to the routed upstream model);
 // different format → full translate via the unified model. def (may be nil
-// in tests) carries always-thinking adaptation for the routed model.
+// in tests) carries thinking-knob adaptation for the routed model.
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	if upstream == client {
 		var err error
@@ -1195,7 +1207,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 		if err != nil {
 			return nil, err
 		}
-		body = adaptAlwaysThinking(body, upstreamModel, def)
+		body = adaptThinkingBody(body, upstreamModel, def)
 		return normalizeRoles(body)
 	}
 	switch client {
@@ -1205,7 +1217,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel
-		coerceAlwaysThinkingUnified(u, upstreamModel, def)
+		adaptThinkingUnified(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	case translat.FmtAnthropic:
 		u, err := translat.DecodeAnthropicRequest(body)
@@ -1213,7 +1225,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel
-		coerceAlwaysThinkingUnified(u, upstreamModel, def)
+		adaptThinkingUnified(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	case translat.FmtGemini:
 		u, err := translat.DecodeGeminiRequest(body)
@@ -1221,7 +1233,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 			return nil, err
 		}
 		u.Model = upstreamModel // model arrives in the URL path on this surface
-		coerceAlwaysThinkingUnified(u, upstreamModel, def)
+		adaptThinkingUnified(u, upstreamModel, def)
 		return encodeFor(upstream, u)
 	default:
 		return rewriteModel(body, upstreamModel)
@@ -1407,11 +1419,28 @@ func alwaysThinking400(e *types.APIError) bool {
 	return false
 }
 
-// coerceAlwaysThinkingUnified applies the always-thinking adaptation to a
-// decoded unified request before cross-format encoding — the typed-struct
-// counterpart of adaptAlwaysThinking, which only runs on the same-format
-// raw-body branch (#50 residual from #17). Same discipline, adapted to the
-// unified model:
+// noThinkingConflict400 reports whether an upstream 400 is the "any
+// reasoning knob is fatal" rejection (live kilocode 2026-09-11: kilo's
+// openrouter gateway duplicates reasoning_effort into reasoning.effort
+// and rejects ANY value with "conflicting values" — the resolved free
+// rotation carries no thinking mode at all). Same shape family as
+// alwaysThinking400: deliberately narrow, status-gated.
+func noThinkingConflict400(e *types.APIError) bool {
+	if e == nil || e.Status != 400 {
+		return false
+	}
+	return strings.Contains(e.Message, "reasoning_effort") &&
+		strings.Contains(e.Message, "reasoning.effort") &&
+		strings.Contains(e.Message, "conflicting")
+}
+
+// adaptThinkingUnified applies the thinking-knob adaptation to a decoded
+// unified request before cross-format encoding — the typed-struct
+// counterpart of adaptThinkingBody, which only runs on the same-format
+// raw-body branch (#50 residual from #17). A no-thinking match WINS over
+// always-thinking when both globs apply (kilo-auto/* rotation): its knobs
+// are stripped outright, because the upstream rejects any value at all.
+// Same discipline otherwise, adapted to the unified model:
 //   - u.ReasoningEffort is coerced only when the client set it (empty stays
 //     empty — knobs are never invented): none|minimal|medium → low,
 //     xhigh → max, unrecognized → high.
@@ -1423,8 +1452,16 @@ func alwaysThinking400(e *types.APIError) bool {
 //     upstream default (thinking on) apply, mirroring the same-format
 //     disable-drop. Disable forms never decode into the unified struct, so
 //     there is nothing else to strip.
-func coerceAlwaysThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provider.Def) {
-	if def == nil || !def.AlwaysThinkingModel(upstreamModel) {
+func adaptThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provider.Def) {
+	if def == nil {
+		return
+	}
+	if def.NoThinkingModel(upstreamModel) {
+		u.ReasoningEffort = ""
+		u.Thinking = nil
+		return
+	}
+	if !def.AlwaysThinkingModel(upstreamModel) {
 		return
 	}
 	if u.ReasoningEffort != "" {
@@ -1433,16 +1470,25 @@ func coerceAlwaysThinkingUnified(u *types.ChatRequest, upstreamModel string, def
 	u.Thinking = nil
 }
 
-// adaptAlwaysThinking rewrites disable-thinking knobs out of a raw
-// same-format body when the routed model belongs to an always-thinking
-// provider (def != nil and model matches AlwaysThinking globs). OpenAI
+// adaptThinkingBody rewrites thinking knobs on a raw same-format body when
+// the routed model belongs to a no-thinking or always-thinking provider
+// (def != nil and the model matches NoThinking/AlwaysThinking globs; a
+// no-thinking match wins). No-thinking: reasoning_effort, thinking and
+// enable_thinking are deleted outright — the upstream has no thinking mode
+// and rejects ANY reasoning knob (live kilocode 2026-09-11: kilo's gateway
+// duplicates reasoning_effort into reasoning.effort and 400s "conflicting
+// values" for the rotating kilo-auto/free alias). The top-level reasoning
+// OBJECT is kilo's accepted dialect and stays. Always-thinking OpenAI
 // dialect: reasoning_effort none|minimal|medium → low (GLM accepts only
 // low|high|max); thinking{type:disabled} and enable_thinking:false are
 // dropped so the upstream default (thinking on) applies. Knobs are never
-// added — only explicit disable requests are rewritten. Returns body
-// unchanged when not applicable.
-func adaptAlwaysThinking(body []byte, model string, def *provider.Def) []byte {
-	if def == nil || !def.AlwaysThinkingModel(model) {
+// added. Returns body unchanged when not applicable.
+func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
+	if def == nil {
+		return body
+	}
+	noThink := def.NoThinkingModel(model)
+	if !noThink && !def.AlwaysThinkingModel(model) {
 		return body
 	}
 	var root map[string]any
@@ -1452,26 +1498,35 @@ func adaptAlwaysThinking(body []byte, model string, def *provider.Def) []byte {
 		return body // not an object; forward verbatim
 	}
 	changed := false
-	if v, ok := root["reasoning_effort"]; ok {
-		if s, ok := v.(string); ok {
-			if c := coerceEffort(s); c != s {
-				root["reasoning_effort"] = c
+	if noThink {
+		for _, key := range []string{"reasoning_effort", "thinking", "enable_thinking"} {
+			if _, ok := root[key]; ok {
+				delete(root, key)
 				changed = true
 			}
 		}
-	}
-	for _, key := range []string{"thinking", "enable_thinking"} {
-		if v, ok := root[key]; ok {
-			switch tv := v.(type) {
-			case map[string]any:
-				if t, _ := tv["type"].(string); t == "disabled" {
-					delete(root, key)
+	} else {
+		if v, ok := root["reasoning_effort"]; ok {
+			if s, ok := v.(string); ok {
+				if c := coerceEffort(s); c != s {
+					root["reasoning_effort"] = c
 					changed = true
 				}
-			case bool:
-				if !tv {
-					delete(root, key)
-					changed = true
+			}
+		}
+		for _, key := range []string{"thinking", "enable_thinking"} {
+			if v, ok := root[key]; ok {
+				switch tv := v.(type) {
+				case map[string]any:
+					if t, _ := tv["type"].(string); t == "disabled" {
+						delete(root, key)
+						changed = true
+					}
+				case bool:
+					if !tv {
+						delete(root, key)
+						changed = true
+					}
 				}
 			}
 		}
