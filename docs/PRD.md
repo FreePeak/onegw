@@ -1,3 +1,16 @@
+*Last updated: 2026-09-11 (distributor channel-empty 503 → shared-wall fall-through, 5e4c6b1, live pid 23877):
+b-ai's one-api distributor answers 503 "No available channel for model glm-5.3-flash under group
+default (distributor)" when its upstream channel pool for the model is empty (live 06:14Z, seq 595).
+The error was plain-retryable, so Router.Execute burned the same-target retry ladder (rotate keys +
+100ms backoff) into the dead lane on every request before the combo's next leg served; the repeated
+latency produced client cancels (seq 574, 499 client_closed) and a recurring 503 loop across agent
+turns. Fix: classify the wording in SharedConcurrency()'s 503 branch — the lane the admission-wall
+503s already ride — so each request pays ONE doomed call, then falls through to the next combo leg
+immediately; keys stay warm (no account bench), the flap breaker stays exempt (the verdict indicts
+one model lane, not the provider edge), and direct routes surface Retry-After=2. No wording park:
+per 1da3c2e, parks break the fast-path whole-body replay contract. Mutation-verified regression
+tests at all three layers (types classify, provider Do keys-warm/no-park/no-flap-strike, router
+fall-through-after-one-call + direct-route Retry-After). Earlier:)*
 *Last updated: 2026-09-11 (README refactor, docs-only: dashboard screenshot moved into
 the hero above the fold, Quick start relocated ahead of Why/Features, Contents table,
 TL;DR callout + feature-chip row, release + build badges added (v0.19.0, release.yml);
