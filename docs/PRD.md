@@ -1,3 +1,22 @@
+*Last updated: 2026-09-11 (OmniRoute rotation-strategy research + issues #80/#81/#82):
+deep-read of OmniRoute's three rotation layers from source — (1) per-key health rotation
+(apiKeyRotator.ts + chatCore/keyHealth.ts: 401 warning→invalid at threshold 2, 402 terminal
+immediately, 2xx reset, persisted health + manual dashboard reset, A3 guard so one key's 401
+never disables the connection), (2) account selection strategies in auth.ts (fill-first /
+sticky round-robin with stickyRoundRobinLimit + backoffLevel LRU penalty and its auto-decay
+deadlock fix / p2c with a composed health score incl. quota headroom / random / least-used /
+cost-optimized / strict-random shuffle-deck), (3) combo-target sticky round-robin
+(combo/rrState.ts rrCounters+rrStickyTargets, "9router parity", limit chain clamped 1..1000),
+all fed by accountFallback.ts's provider profiles + rule matching + 429 subclassification.
+onegw today covers most of layer 2 (weighted RR + cooldown skip + RPM buckets + shared-wall +
+model bench + speed-EWMA pick + identity sticky-pinning) and layers 1/3 are the gaps.
+Distilled into the PRD's new "Rotation strategy (OmniRoute deep-dive)" section under Routing
+model, and filed as issues #80 (terminal 402 key invalidation + one-dead-key guard), #81 (pool
+selection strategies: p2c/least-used/strict-random with #79 quota-headroom scoring), #82
+(sticky round-robin combos with round_robin_limit). Shared insight recorded: selection should
+keep penalizing a recently-429ed account AFTER its cooldown expires, not only skip it while
+cooling. Earlier:)*
+
 *Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 546f997):
 follow-up to the splice-corruption fix (ace1969). The editor prefill synthesizes rows for legacy
 top-level credentials (providerEditViews: keys → "key-N", api_key → "default"), but the splice knew
@@ -1313,6 +1332,69 @@ Compared against the two reference gateways ( LiteLLM README + docs,
   `base_url` override (40+ providers reachable: OpenRouter, GLM, Kimi,
   DeepSeek, Groq, ...). B.AI, GLM, and OpenRouter routes live-verified.
 
+### Rotation strategy (OmniRoute deep-dive, 2026-09-11)
+
+Researched from source: OmniRoute rotates at **three layers**, each with its
+own state and failure semantics. Kept here as the design reference for
+onegw's rotation work (#80/#81/#82); onegw already covers much of layer 2.
+
+**Layer 1 — key rotation inside one account group** (`open-sse/services/apiKeyRotator.ts`,
+`handlers/chatCore/keyHealth.ts`). Round-robin over a primary + `extraApiKeys[]`
+with a per-key health machine (`active|warning|invalid`): 401 → failure
+(warning at 1, invalid at 2), **402 → terminal immediately** ("the depleted key
+must not be returned by the rotator again until credits are added"), 2xx →
+reset to active. The request's chosen key is persisted (`selectedKeyId`) so
+retries stick to it unless it went invalid. Health survives restarts; the
+dashboard can reset a key manually. The **A3 guard** (`connectionHasExtraKeys`)
+ensures one key's 401 never disables the whole connection.
+
+**Layer 2 — account/connection selection within a provider** (`src/sse/services/auth.ts`).
+Session affinity is evaluated first, then a per-provider `fallbackStrategy`:
+`fill-first` (default), `round-robin` (sticky-RR: stay on the most-recent
+connection up to `stickyRoundRobinLimit`, default 3, then switch to LRU
+**penalizing `backoffLevel > 0`** — with auto-decay to 0 once
+`rateLimitedUntil` passes, avoiding the "needs a success to reset but never
+gets picked" deadlock), `p2c` (power-of-two-choices over a health score:
+`quotaExhausted×200 + quotaBlocked×80 + errorPenalty + min(40,backoffLevel×8)
++ quotaHeadroomPenalty + min(12,consecutiveUse×2) + recency + priority`; ties →
+headroom desc → priority → id), `random`, `least-used` (LRU),
+`cost-optimized` (priority asc), `strict-random` (shuffle-deck: every account
+once before reshuffling). Fallback scenarios skip stickiness and go straight
+LRU.
+
+**Layer 3 — combo-target rotation** (`open-sse/services/combo/rrState.ts`).
+Per-combo `rrCounters` + `rrStickyTargets`: stay on the winning target for up
+to `stickyLimit` consecutive successes, then advance the counter (state resets
+on restart by design; limit chain: per-combo → `comboStickyRoundRobinLimit` →
+`stickyRoundRobinLimit`, clamped 1..1000). The module comment marks it
+"9router parity".
+
+**Failure classification feeds all three** (`open-sse/services/accountFallback.ts`,
+2129 lines): per-provider profiles (base/max cooldown, backoff steps, circuit
+breakers), error-rule matching by status *and body text*, 429
+subclassification (RPM/TPM/RPD, subscription/session/weekly quota text), and
+Retry-After parsing.
+
+**Relationship to the Non-goals line.** The Non-goals section excludes
+"advanced LB strategies … runtime dashboard config as the primary path" — that
+exclusion targets *platform* machinery (runtime-configured, multi-tenant
+policy engines). The #80/#81/#82 ports stay inside onegw's constraints by
+construction: config-file only (one TOML knob per provider/combo), in-memory
+state that resets on reload, no new storage, and no per-tenant concepts. If a
+strategy cannot be expressed as a config knob with in-memory state, it stays
+out.
+
+**Mapping to onegw.** Layer 2 is largely present: `accountPool` does weighted
+round-robin with cooldown skip, RPM buckets, shared-wall handling, model
+benching, decode-speed EWMA pick (`fastest`), and identity sticky-pinning.
+Layers 1 and 3 are the real gaps — hence #80 (terminal key invalidation on
+402 + the one-dead-key guard), #82 (sticky round-robin combos), #81 (pool
+selection strategies: p2c / least-used / strict-random, fed by the #79
+subscription-quota headroom). One transferable insight for all three:
+**selection should keep penalizing a recently-429ed account after its cooldown
+expires**, not just skip it while cooling — otherwise every expiry wave
+re-selects the same tired key.
+
 ## Key decisions
 
 - **net/http only, no web framework** — fewer deps, predictable memory.
@@ -1394,6 +1476,9 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
+| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) | OmniRoute rotation research 2026-09-11 |
+| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck); keeps penalizing recently-429ed accounts after cooldown expiry | OmniRoute rotation research 2026-09-11 |
+| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) | OmniRoute rotation research 2026-09-11 |
 
 ### Recommended implementation order (2026-09-08)
 
