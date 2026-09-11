@@ -1,3 +1,14 @@
+*Last updated: 2026-09-11 (commandcode subscription quota dialect (#79), ported from OmniRoute's
+open-sse/services/usage/command-code.ts, endpoints live-verified on a GOAT plan key): the
+subquota tracker gained "commandcode" — providers.subscription_quota = "commandcode" polls the
+/alpha billing surface per account (whoami for orgId scoping, GET /alpha/billing/credits as the
+load-bearing call, /alpha/billing/subscriptions soft-enriching plan + credits reset). Windows:
+five_hour + weekly are USD used/cap percents (over-cap clamps to 100 — the parking signal; the
+vendor's own exceeded flags agree live), and a monthly credits pool window reads 0% while
+healthy and 100% only when monthly+purchased+free remaining are all zero AND the credits object
+is present (absent credits must fail open, never park). 401/403 = probe error, fail-open.
+SnapshotURL override semantics differ for this dialect: subscription_url replaces the API BASE.
+Live onegw.toml: commandcode → subscription_quota = "commandcode". Earlier:)*
 *Last updated: 2026-09-11 (speed_order yellow: main row LIVE on pid 81871; expanded-detail coloring committed but NOT deployed):
 `logs.html` row coloring: `speed_order` rows (the prefill-order decision ring rows) render in
 the `code-4xx` warn-yellow class instead of the generic kind-red `code-err`, matching their
@@ -6,8 +17,11 @@ sorts to the front by the s=0 promotion rule, and `in~Ntok` is an estimate, not 
 `task_routing` keeps green; unclassified kinds keep red. Built from HEAD + the single template
 hunk (no peer WIP swept), embedded templates → binary redeploy required.
 Follow-up (same day): the EXPANDED detail body (the `detText` block under a clicked row) now
-follows the row color too — `det.className = 'det ' + cls(e)` + `#logtbl .det.code-4xx
-.detbody { text-warn }` (admin.src.css, static/admin.css regenerated via scripts/dashboard-css.sh).
+follows the row color for decision rows ONLY — `det.className = e.kind === 'speed_order' ?
+'det warn-det' : 'det'` + `#logtbl .det.warn-det .detbody { text-warn }` (kind-scoped, not
+status-scoped: the first cut `.det.code-4xx .detbody` would also have tinted real 4xx request
+detail bodies amber while 5xx stayed gray — inconsistency nobody asked for). admin.src.css +
+static/admin.css regenerated via scripts/dashboard-css.sh. Still NOT deployed (same block).
 DEPLOY BLOCKED: onegw.toml:202 now carries the peer's `subscription_quota = "commandcode"`
 for commandcode, which only the peer's uncommitted config.go/subquota.go WIP validates — a
 clean-HEAD binary fails at load (`unknown subscription_quota "commandcode"`), so any HEAD+color

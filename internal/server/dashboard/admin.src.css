@@ -489,7 +489,7 @@ html[data-theme="light"] { color-scheme: light; }
   #logtbl .detbody { @apply whitespace-pre-wrap px-1 text-[11.5px] leading-relaxed text-mut; overflow-wrap: anywhere; }
   #logtbl .code-2xx { @apply text-ok; }
   #logtbl .code-4xx { @apply text-warn; }
-  #logtbl .det.code-4xx .detbody { @apply text-warn; }
+  #logtbl .det.warn-det .detbody { @apply text-warn; }
   #logtbl .code-5xx, #logtbl .code-err { @apply text-err; }
 
   /* providers grid (9router-style cards) */
