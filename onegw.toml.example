@@ -81,6 +81,19 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # quota_limit_tokens = 2000000
 # quota_limit_requests = 500
 #
+# Subscription quota (issue #79): ask the VENDOR how much of the plan's own
+# windows is left (ported from 9router's usage services). The gateway probes
+# the dialect's usage endpoint once per minute per account and surfaces the
+# percentages + reset times on the Quota dashboard and
+# GET /admin/api/v1/subscription. An account whose window is 100% consumed
+# parks until the vendor's reset (re-checked every cycle), so combos fall
+# through instead of burning doomed attempts. Values: "opencode-go"
+# (OpenCode Zen Go: rolling 5h / weekly / monthly), "zai" (GLM Coding Plan
+# via api.z.ai: session 5h + weekly credits), "zai-cn" (bigmodel.cn).
+# subscription_url overrides the dialect's endpoint (mirrors/tests).
+# subscription_quota = "opencode-go"
+# subscription_url = "https://opencode.ai/zen/go/v1/usage"
+#
 # Passthrough surfaces: opt this provider into OpenAI-format endpoints served
 # verbatim without translation. Values: "embeddings", "stt" (POST
 # /v1/audio/transcriptions), "tts" (POST /v1/audio/speech). Bodies relay
