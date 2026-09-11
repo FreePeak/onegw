@@ -365,6 +365,7 @@ windows — used percent and reset time — on the Quota page and
 | `opencode-go` | `https://opencode.ai/zen/go/v1/usage` | rolling 5h, weekly, monthly (%) |
 | `zai` | `https://api.z.ai/api/monitor/usage/quota/limit` | session (5h), weekly (credits or tokens, % + plan level) |
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
+| `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`) | 5-hour + weekly USD windows (used/cap), monthly credits pool; plan label from subscriptions |
 
 An account whose vendor-reported window is **fully consumed** parks until
 the vendor's stated reset (capped at one poll cycle so an early reset or a
