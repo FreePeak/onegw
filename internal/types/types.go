@@ -417,27 +417,6 @@ func (e *APIError) SharedConcurrency() bool {
 		strings.Contains(probe, "cold-request admission rejected")
 }
 
-// ModelWall reports whether the error NAMES a model-scoped upstream
-// budget — the reseller's "current model <X> limit <N>" family or a bare
-// "Concurrency limit <N>" — a wall shared by every key fronting the
-// model, so the (provider, model) pair can be parked for one burst
-// window instead of every request re-discovering the wall. Engine
-// admission walls ("BackendAdmissionRejected", "cache-only admission",
-// "cold-request admission", "gateway overloaded") are per-request
-// prefill-shape rejections and deliberately excluded: other requests
-// keep serving the same model, so parking it would skip servable
-// capacity.
-func (e *APIError) ModelWall() bool {
-	if e == nil {
-		return false
-	}
-	probe := strings.ToLower(e.Code + " " + e.Message)
-	if strings.Contains(probe, "admission") || strings.Contains(probe, "gateway overloaded") {
-		return false
-	}
-	return strings.Contains(probe, "concurrency limit") || modelLimitRe.MatchString(e.Code+" "+e.Message)
-}
-
 // modelLimitRe matches the Tencent reseller's model-limit wall family —
 // "The request rate exceeds the current model <X> limit <N>" with X ∈
 // {Concurrency, TPM, RPM, …} (b-ai/glm-5.3-flash live 2026-09-10). The
