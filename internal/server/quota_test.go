@@ -45,12 +45,20 @@ func newCountingUpstream(model string) *countingUpstream {
 // "pair") with a request limit on the primary.
 func quotaCfg(t *testing.T, primary, fallback *countingUpstream, primaryLimit int64, dataDir string) *config.Config {
 	t.Helper()
+	return quotaCfgWindow(t, primary, fallback, primaryLimit, "5h", dataDir)
+}
+
+// quotaCfgWindow is quotaCfg with the primary's quota_window chosen by the
+// caller — the dynamic per-provider window (rolling durations, calendar
+// kinds) the enforcement and auto-resume must follow.
+func quotaCfgWindow(t *testing.T, primary, fallback *countingUpstream, primaryLimit int64, window, dataDir string) *config.Config {
+	t.Helper()
 	cfg := &config.Config{}
 	cfg.Server.DataDir = dataDir
 	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test-gw"}}
 	cfg.Providers = []config.ProviderCfg{
 		{Name: "primary", Kind: "openai", BaseURL: primary.srv.URL, APIKey: "sk-test-up",
-			Models: []string{"primary/m"}, QuotaWindow: "5h", QuotaLimitRequests: primaryLimit},
+			Models: []string{"primary/m"}, QuotaWindow: window, QuotaLimitRequests: primaryLimit},
 		{Name: "fallback", Kind: "openai", BaseURL: fallback.srv.URL, APIKey: "sk-test-up",
 			Models: []string{"fallback/m"}},
 	}
@@ -375,5 +383,78 @@ func waitQuotaObserved(t *testing.T, srv *Server, name string, wantReqs int64) {
 			t.Fatalf("quota never observed %d requests", wantReqs)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestQuotaAutoRejectAndDynamicResume is the end-to-end proof of the
+// per-provider dynamic quota window in a combo: a provider whose rolling
+// window is exhausted must answer WITHOUT an upstream attempt (the doomed
+// call would burn the vendor's quota counter), the combo falls through to
+// the healthy leg, and when that provider's own window times back the
+// gateway resumes calling it — automatically, no reload, no un-park. The
+// window here is a real 2s rolling duration; the same code path serves
+// "5h", "48h" or "monthly", only the reset instant differs.
+func TestQuotaAutoRejectAndDynamicResume(t *testing.T) {
+	primary := newCountingUpstream("m")
+	defer primary.srv.Close()
+	fallback := newCountingUpstream("m")
+	defer fallback.srv.Close()
+
+	cfg := quotaCfgWindow(t, primary, fallback, 1, "2s", "memory")
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+	h := srv.Handler()
+
+	// The first combo request fills the 1-request window.
+	w := do(t, h, authed(t, "pair", "sk-test-gw"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request: status %d body %s", w.Code, w.Body.String())
+	}
+	if primary.hits.Load() != 1 {
+		t.Fatalf("first request should have hit the primary, hits=%d", primary.hits.Load())
+	}
+	// Exhausted: the combo must skip the primary leg with ZERO upstream
+	// attempts and the fallback serves.
+	before := primary.hits.Load()
+	w = do(t, h, authed(t, "pair", "sk-test-gw"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("combo while primary exhausted: status %d body %s", w.Code, w.Body.String())
+	}
+	if primary.hits.Load() != before {
+		t.Fatalf("exhausted provider must receive no traffic, hits %d -> %d", before, primary.hits.Load())
+	}
+
+	// A direct request has no other leg: honest 503 + Retry-After, again
+	// with zero upstream traffic.
+	w = do(t, h, authed(t, "primary/m", "sk-test-gw"))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("exhausted direct request: want 503, got %d body %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Fatal("503 must carry Retry-After")
+	}
+	if primary.hits.Load() != before {
+		t.Fatalf("rejected direct request reached the upstream, hits=%d", primary.hits.Load())
+	}
+
+	// The window times back: counters roll to a fresh window and the
+	// account park expires with it, so the primary serves the combo again.
+	deadline := time.Now().Add(6 * time.Second)
+	for {
+		if primary.hits.Load() > before {
+			break
+		}
+		w = do(t, h, authed(t, "pair", "sk-test-gw"))
+		if w.Code != http.StatusOK {
+			t.Fatalf("combo after reset: status %d body %s", w.Code, w.Body.String())
+		}
+		if time.Now().After(deadline) {
+			st, _ := srv.cur().quota.Status("primary", time.Now())
+			t.Fatalf("primary never resumed serving (status %+v)", st)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
