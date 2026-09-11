@@ -1,3 +1,40 @@
+*Last updated: 2026-09-11 (cross-account burst-wall park + bench-recency ok(), commit 092179c, live pid 89451):
+the user's seq-5977 RCA — b-ai's one-api edge answers shared-limit bursts with a raw 429 and an
+EMPTY body (no Retry-After, no window, no limit wording), invisible to the 103c253 text
+classifiers, so every such 429 took the per-key ladder while the ring (5960-6000) showed three
+DIFFERENT accounts striking the same (b-ai, qwen3.8-flash) within 2s and the same keys serving
+200s seconds later — the cross-account signature of a shared lane, where account rotation can
+only re-hit the wall. Now: (1) provider.wallStrike — a SECOND distinct account 429ing one
+(provider, model) inside 5s proves the burst: the error is marked SharedWall (SharedConcurrency()
+reports it → Execute falls through to the next combo leg immediately, the user's "switch model
+right away"), the triggering key is NOT benched, and the pair parks for 6s (wallParkTTL) so
+sibling requests skip it with ZERO upstream attempts until expiry; the evidence window resets per
+proven burst (a continuing wall re-proves every park; live scratch e2e: request 1 burns k1+k2 then
+serves leg 2; request 2 at +1s serves with zero wall hits; probe at +7s re-proves). (2) The
+wording-matched model-limit family gets the same park via the new types.ModelWall() (engine
+admission walls stay request-shaped → never park). (3) BenchModel takes max-extend semantics: a
+6s burst park can never shorten a 5-min #72 lockout or the peer's 3-min storm bench. (4) ok()
+recency rule: strikes always reset, but a bench stamped DURING the successful request's flight
+survives it (the straggler success that un-benched mnhatlinh 4s into its 10s bench let the wall
+re-hit the same key at 5991; the pool grants the same key to overlapping requests), while a bench
+predating the request still clears (the #48 deposit-recovery path); accountState gains benchedAt,
+dead Def.OK removed. Tests pin burst/prove/reset/park, model-wall park, admission non-park,
+ok-recency both directions, router SharedWall fall-through + zero-attempt skip; every fix
+mutation-checked (neuter→FAIL→restore). E2E against a live-binary scratch gateway on :18080 with
+a 429-stub upstream matched the ring predictions exactly. Comparative research for the strategy
+(user goal): 9router = unbounded inner account loop + 429 retry-count 0 (rotate at once) +
+exponential 2s→5min ladders + 3×429/60s→15min strikes, no scoring anywhere; OmniRoute = narrowest
+blast radius (model lockout < connection cooldown < provider breaker, 429 never trips the
+provider), lazy deadline timestamps, Retry-After honored verbatim with backoff reset, P2C/DRR
+target strategies scored by successRate+latency, predictive-TTFT skip, stream-throughput
+watchdog, per-account semaphores/admission control; litellm = per-deployment cooldowns (429
+immediate unless the group has no alternatives, else >50% fails/min in a rolling window; 5s
+default park, DualCache/Redis counters) + rpm/tpm-aware simple-shuffle default, least-busy,
+latency-based and cost-based strategies, model-level fallback chains. onegw's shipped stack now
+covers the same triage — health-gated pool (ladder + benches that STICK), scoped parks (account /
+model / provider-flap), speed-steered legs (7567e41) — with the burst detector adding the
+behavioural signal none of the three have for wording-less walls.)*
+
 *Last updated: 2026-09-11 (failover deep-dive fan-out (4 scouts) → two fixes + config trims, commit 2e28d44, live pid 23608):
 (1) header-timeout STORM bench — a lone pre-first-byte abort stays request-shaped (unchanged
 design), but 3 header-budget 504s on the same (provider, model) inside a tumbling 3-min window
