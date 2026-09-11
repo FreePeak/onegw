@@ -233,3 +233,73 @@ func TestPrepareUpstreamBodyCrossFormatAlwaysThinking(t *testing.T) {
 		}
 	}
 }
+
+// TestNoThinkingStrip pins the kilo-auto/* contract (live 2026-09-11 seq
+// 1798): kilo's gateway duplicates reasoning_effort into reasoning.effort
+// and rejects ANY value with "conflicting values", so a no_thinking model
+// must have every reasoning knob stripped outright — coercion (which keeps
+// a knob on the wire) would still 400.
+func TestNoThinkingStrip(t *testing.T) {
+	def := &provider.Def{NoThinking: []string{"kilo-auto/*"}}
+
+	// Same-format: what omp sends on the free combo (effort xhigh plus
+	// disable knobs) must leave the gateway without any reasoning knob.
+	body := []byte(`{"model":"m","reasoning_effort":"xhigh","thinking":{"type":"disabled"},"enable_thinking":false,"messages":[]}`)
+	out, err := prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "kilo-auto/free", def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, knob := range []string{"reasoning_effort", "thinking", "enable_thinking"} {
+		if strings.Contains(string(out), knob) {
+			t.Errorf("no-thinking model received %s knob: %s", knob, out)
+		}
+	}
+
+	// Cross-format (Anthropic surface → OpenAI wire): the unified path
+	// must clear the effort before encoding.
+	out, err = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtAnthropic,
+		[]byte(`{"model":"claude-x","max_tokens":64,"reasoning_effort":"medium","messages":[{"role":"user","content":"hi"}]}`), "kilo-auto/free", def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "reasoning_effort") {
+		t.Errorf("reasoning_effort leaked onto an OpenAI wire for a no-thinking model: %s", out)
+	}
+
+	// A no-thinking match wins over always-thinking when both globs apply.
+	both := &provider.Def{AlwaysThinking: []string{"kilo-auto/*"}, NoThinking: []string{"kilo-auto/*"}}
+	out, err = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "kilo-auto/free", both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "reasoning_effort") {
+		t.Errorf("coercion leaked a knob that no-thinking must strip: %s", out)
+	}
+
+	// Untouched without a match.
+	out, err = prepareUpstreamBody(translat.FmtOpenAI, translat.FmtOpenAI, body, "other/model", def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"reasoning_effort":"xhigh"`) {
+		t.Errorf("no-thinking globs must not touch other models: %s", out)
+	}
+}
+
+// TestNoThinkingConflict400 pins the runtime-heal classifier: the live
+// kilo conflict 400 must be recognized (learned no-thinking + Fallbackable
+// retry) while ordinary invalid-request 400s and non-400s stay terminal.
+func TestNoThinkingConflict400(t *testing.T) {
+	live := &types.APIError{Status: 400, Message: `"reasoning_effort" and "reasoning.effort" are both provided with conflicting values`}
+	if !noThinkingConflict400(live) {
+		t.Errorf("live kilo conflict 400 not classified: %+v", live)
+	}
+	for _, e := range []*types.APIError{
+		{Status: 400, Message: "invalid model"},
+		{Status: 429, Message: `"reasoning_effort" and "reasoning.effort" are both provided with conflicting values`},
+	} {
+		if noThinkingConflict400(e) {
+			t.Errorf("must not classify: %+v", e)
+		}
+	}
+}

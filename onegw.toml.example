@@ -66,6 +66,7 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # (medium->low, disable knobs dropped). Globs: path.Match, "*" does not
 # cross "/".
 # always_thinking = ["glm-5.3*"]
+# no_thinking   = ["kilo-auto/*"]  # no thinking mode: effort/thinking knobs stripped
 # Quota window (issue #7): track usage per provider against a reset window
 # and optionally enforce limits. quota_window = "5h" | "daily" | "weekly"
 # ("" = off). daily resets at UTC midnight, weekly at ISO Monday 00:00 UTC,
@@ -140,6 +141,7 @@ kind = "opencode"               # OpenCode Zen Go subscription; base_url default
 # models = [...]                # optional; omitted = full live Go catalog (35 models).
                                 # gpt-*/grok-*/muse-spark-* auto-route to /v1/responses.
 # always_thinking = ["glm-5.3*"]
+# no_thinking   = ["kilo-auto/*"]  # no thinking mode: effort/thinking knobs stripped
 # keys = ["...", "..."]         # one account per key — or use accounts:
 [[providers.accounts]]
 name = "key-1"
