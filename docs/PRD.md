@@ -1,6 +1,7 @@
 *Last updated: 2026-09-11 (README refactor, docs-only: dashboard screenshot moved into
 the hero above the fold, Quick start relocated ahead of Why/Features, Contents table,
-TL;DR callout + feature-chip row, release + build badges added (v0.19.0, release.yml).
+TL;DR callout + feature-chip row, release + build badges added (v0.19.0, release.yml);
+follow-up: first-run admin-password pointer added to the Quick start install paragraph.
 No code or config change. Earlier:)*
 *Last updated: 2026-09-11 (client-delivered tok/s + sidebar icon rail + wording-park revert, 1da3c2e+97e9427+15263ae):
 (1) fix(provider) 1da3c2e — the wording-path model park (Concurrency/TPM limit 429 -> 6s BenchModel)
