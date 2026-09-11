@@ -435,6 +435,26 @@ func (e *APIError) SharedConcurrency() bool {
 // {Concurrency, TPM, RPM, …} (b-ai/glm-5.3-flash live 2026-09-10). The
 // message names the MODEL's budget, never the key, so every variant is a
 // shared wall.
+// ModelWall reports whether the error NAMES a model-scoped upstream
+// budget — the reseller's "current model <X> limit <N>" family or a bare
+// "Concurrency limit <N>" — a wall shared by every key fronting the model.
+// Unlike the behaviour-proven SharedWall, wording alone does not park the
+// (provider, model) pair: a lone wording wall is exactly the transient the
+// fast path's whole-body replay is designed to ride out (stream_relay
+// whole=true -> buffered re-entry, 2026-09-09 contract), so Do parks only
+// on the SECOND sight within wallWindow — wording proves the lane is
+// shared, the second strike proves it is sustained.
+func (e *APIError) ModelWall() bool {
+	if e == nil {
+		return false
+	}
+	probe := strings.ToLower(e.Code + " " + e.Message)
+	if strings.Contains(probe, "admission") || strings.Contains(probe, "gateway overloaded") {
+		return false
+	}
+	return strings.Contains(probe, "concurrency limit") || modelLimitRe.MatchString(e.Code+" "+e.Message)
+}
+
 var modelLimitRe = regexp.MustCompile(`(?i)request rate exceeds the current model \w+ limit`)
 
 // rateWindowRe matches the request-count window a 429 body names — the
