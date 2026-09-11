@@ -2,6 +2,9 @@ package subquota
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -121,6 +124,97 @@ func TestParseZaiErrors(t *testing.T) {
 		_, _, err := parseZai([]byte(tc.body), tc.status)
 		if err == "" {
 			t.Fatalf("status %d body %.40s: want error containing %q", tc.status, tc.body, tc.want)
+		}
+	}
+}
+
+func TestParseCommandCodeWindows(t *testing.T) {
+	// Live-verified 2026-09-11 (GOAT plan, weekly window exhausted).
+	body := []byte(`{"credits":{"belowThreshold":false,"creditThreshold":0,
+		"monthlyCredits":10.2868762875,"purchasedCredits":0,"freeCredits":0},
+		"windowLimits":{"limited":true,"exceeded":"weekly",
+		"fiveHour":{"used":0,"cap":14,"exceeded":false,"resetAt":0},
+		"weekly":{"used":35.0018639599,"cap":35,"exceeded":true,"resetAt":1789539876848}}}`)
+	windows, plan, err := parseCommandCode(body, 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "Command Code" {
+		t.Fatalf("plan = %q, want default label", plan)
+	}
+	if len(windows) != 3 {
+		t.Fatalf("want 3 windows, got %d: %+v", len(windows), windows)
+	}
+	if windows[0].Name != "5-hour window" || windows[0].Used != 0 {
+		t.Fatalf("5-hour window = %+v", windows[0])
+	}
+	if windows[0].Resets != nil {
+		t.Fatal("epoch-zero resetAt must produce no reset instant")
+	}
+	if windows[1].Name != "Weekly window" || windows[1].Used != 100 {
+		t.Fatalf("weekly window = %+v (used 35.0018/cap 35 must park at 100%%)", windows[1])
+	}
+	if windows[1].Resets == nil || windows[1].Resets.UnixMilli() != 1789539876848 {
+		t.Fatalf("weekly reset = %+v", windows[1].Resets)
+	}
+	if windows[2].Name != creditsWindow || windows[2].Used != 0 {
+		t.Fatalf("credits window = %+v (healthy pool must read 0%%, not invented)", windows[2])
+	}
+}
+
+func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
+	// All three pools zero: nothing left to bill — parks.
+	drained, _, err := parseCommandCode([]byte(
+		`{"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":0},
+		"windowLimits":{"fiveHour":{"used":1,"cap":14}}}`), 200)
+	if err != "" {
+		t.Fatalf("drained pool errored: %s", err)
+	}
+	found := false
+	for _, w := range drained {
+		if w.Name == creditsWindow {
+			found, w.Used = true, w.Used
+			if w.Used != 100 {
+				t.Fatalf("drained credits window = %+v, want 100%%", w)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("drained credits pool must surface a credits window")
+	}
+	// Absent credits object must NOT fake a drained pool (shape change
+	// must fail open, never park a serving account).
+	noCredits, _, err := parseCommandCode([]byte(
+		`{"windowLimits":{"fiveHour":{"used":1,"cap":14}}}`), 200)
+	if err != "" || len(noCredits) != 1 {
+		t.Fatalf("absent credits = %+v err=%s, want single window, no error", noCredits, err)
+	}
+	// Unusable shape errors.
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{401, `{}`}, {403, `{}`}, {500, `{}`},
+		{200, `{`},
+		{200, `{"windowLimits":null,"credits":null}`},
+	} {
+		if _, _, err := parseCommandCode([]byte(tc.body), tc.status); err == "" {
+			t.Fatalf("status %d body %.30s: want error", tc.status, tc.body)
+		}
+	}
+}
+
+func TestCommandCodePlanLabel(t *testing.T) {
+	for id, want := range map[string]string{
+		"individual-goat":     "Command Code · GOAT",
+		"individual-pro":      "Command Code · Pro",
+		"team-pro":            "Command Code · Team Pro",
+		"individual-ultra-5x": "Command Code · Ultra 5x",
+		"weird-plan":          "", // unrecognized: caller keeps the default
+		"":                    "",
+	} {
+		if got := commandCodePlanLabel(id); got != want {
+			t.Fatalf("plan %q = %q, want %q", id, got, want)
 		}
 	}
 }
@@ -268,8 +362,90 @@ func TestDefaultURLPerDialect(t *testing.T) {
 	if DefaultURL(ZaiCN) != "https://open.bigmodel.cn/api/monitor/usage/quota/limit" {
 		t.Fatal("zai-cn default URL drifted")
 	}
+	if DefaultURL(CommandCode) != "https://api.commandcode.ai" {
+		t.Fatal("commandcode default URL drifted from the OmniRoute-verified base")
+	}
 	if DefaultURL("nope") != "" || ValidDialect("nope") {
 		t.Fatal("unknown dialect must have no URL and be invalid")
+	}
+}
+
+func TestProbeCommandCodeEndToEnd(t *testing.T) {
+	// Full probe against a stub vendor: whoami grants no org, credits
+	// carries an exhausted weekly window, subscriptions labels the plan
+	// and stamps the credits reset. URL override = API base.
+	cc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer sk-cc" {
+			t.Errorf("commandcode probe auth = %q", got)
+		}
+		switch r.URL.Path {
+		case "/alpha/whoami":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "org": nil})
+		case "/alpha/billing/credits":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"credits": map[string]any{"monthlyCredits": 10.28, "purchasedCredits": 0, "freeCredits": 0},
+				"windowLimits": map[string]any{
+					"limited": true, "exceeded": "weekly",
+					"fiveHour": map[string]any{"used": 0, "cap": 14, "exceeded": false, "resetAt": 0},
+					"weekly":   map[string]any{"used": 35.0018, "cap": 35, "exceeded": true, "resetAt": 1789539876848},
+				},
+			})
+		case "/alpha/billing/subscriptions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{
+				"planId": "individual-goat", "currentPeriodEnd": "2026-10-02T02:03:39.000Z",
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cc.Close()
+
+	tr := NewAt([]Target{{Provider: "cc", AcctName: "linh", AcctKey: "sk-cc",
+		Dialect: CommandCode, URL: cc.URL}}, nil, nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	var snaps []Snapshot
+	for time.Now().Before(deadline) {
+		if snaps = tr.All(); len(snaps) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(snaps) != 1 {
+		t.Fatalf("snapshot never settled: %+v", snaps)
+	}
+	s := snaps[0]
+	if s.Err != "" {
+		t.Fatalf("probe error: %s", s.Err)
+	}
+	if s.Plan != "Command Code · GOAT" {
+		t.Fatalf("plan = %q, want GOAT label", s.Plan)
+	}
+	var credits *Window
+	for i := range s.Windows {
+		if s.Windows[i].Name == creditsWindow {
+			credits = &s.Windows[i]
+		}
+		if s.Windows[i].Name == "Weekly window" && s.Windows[i].Used != 100 {
+			t.Fatalf("weekly = %+v, want exhausted", s.Windows[i])
+		}
+	}
+	if credits == nil {
+		t.Fatalf("credits window missing: %+v", s.Windows)
+	}
+	if credits.Resets == nil || credits.Resets.UTC().Format(time.RFC3339) != "2026-10-02T02:03:39Z" {
+		t.Fatalf("credits reset = %+v, want billing period end", credits.Resets)
+	}
+	// And the exhausted weekly window must park via the normal hook.
+	parked := make(chan struct{}, 1)
+	tr2 := NewAt([]Target{{Provider: "cc", AcctName: "linh", AcctKey: "sk-cc",
+		Dialect: CommandCode, URL: cc.URL}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr2.Stop()
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("exhausted weekly window never parked the account")
 	}
 }
 

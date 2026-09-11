@@ -6,7 +6,8 @@
 // against locally configured limits): subquota asks the vendor how much of
 // the subscription itself is left — OpenCode Go's rolling 5h/weekly/monthly
 // percentages and the z.ai GLM Coding Plan's session (5h)/weekly credit or
-// tokens limits — per provider account, with the vendor's own reset times.
+// tokens limits and CommandCode's USD billing windows — per provider
+// account, with the vendor's own reset times.
 //
 // A background loop probes every target on a fixed 60s cadence. Probes are
 // fail-open: a failed request keeps the last snapshot, records the error,
@@ -24,6 +25,7 @@ import (
 	"hash/fnv"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,15 +35,16 @@ import (
 
 // Dialect names for providers.subscription_quota (config.go).
 const (
-	OpenCodeGo = "opencode-go" // OpenCode Zen Go subscription
-	Zai        = "zai"         // z.ai GLM Coding Plan (international)
-	ZaiCN      = "zai-cn"      // GLM Coding Plan (China, bigmodel.cn)
+	OpenCodeGo  = "opencode-go" // OpenCode Zen Go subscription
+	Zai         = "zai"         // z.ai GLM Coding Plan (international)
+	ZaiCN       = "zai-cn"      // GLM Coding Plan (China, bigmodel.cn)
+	CommandCode = "commandcode" // CommandCode /alpha billing (GOAT/Go/Pro plans)
 )
 
 // ValidDialect reports whether name is a subscription quota dialect.
 func ValidDialect(name string) bool {
 	switch name {
-	case OpenCodeGo, Zai, ZaiCN:
+	case OpenCodeGo, Zai, ZaiCN, CommandCode:
 		return true
 	}
 	return false
@@ -58,6 +61,11 @@ func DefaultURL(dialect string) string {
 		return "https://api.z.ai/api/monitor/usage/quota/limit"
 	case ZaiCN:
 		return "https://open.bigmodel.cn/api/monitor/usage/quota/limit"
+	case CommandCode:
+		// OmniRoute's command-code.ts API base. For this dialect the URL
+		// override replaces the BASE (the probe appends its own /alpha/
+		// ... paths), not one full endpoint.
+		return "https://api.commandcode.ai"
 	}
 	return ""
 }
@@ -302,6 +310,11 @@ func (t *Tracker) parkIfExhausted(tgt Target, snap Snapshot) {
 
 // probeHTTP fetches one target and decodes it per dialect.
 func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
+	if tgt.Dialect == CommandCode {
+		// Multi-endpoint dialect (OmniRoute fetches whoami + credits +
+		// subscriptions + summary); URL is a BASE, not one endpoint.
+		return t.probeCommandCode(ctx, tgt)
+	}
 	url := tgt.URL
 	if url == "" {
 		url = DefaultURL(tgt.Dialect)
@@ -468,6 +481,211 @@ func parseZai(body []byte, status int) ([]Window, string, string) {
 		plan = strings.ToUpper(l[:1]) + strings.ToLower(l[1:])
 	}
 	return windows, plan, ""
+}
+
+// probeCommandCode ports OmniRoute's usage/command-code.ts: one GET per
+// /alpha surface (whoami → orgId, billing/credits → windows + credit pool,
+// billing/subscriptions → plan + period, usage/summary → period spend), all
+// bearer-authenticated against the API base. Credits is the load-bearing
+// call (its windowLimits carry the exhausted flags); everything else
+// enriches but never fails the probe.
+func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
+	base := tgt.URL
+	if base == "" {
+		base = DefaultURL(CommandCode)
+	}
+	base = strings.TrimSuffix(base, "/")
+	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: CommandCode, URL: base, FetchedAt: t.now()}
+
+	get := func(path string) (int, []byte, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+		if err != nil {
+			return 0, nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tgt.AcctKey)
+		req.Header.Set("Accept", "application/json")
+		resp, err := t.client.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			return resp.StatusCode, nil, err
+		}
+		return resp.StatusCode, body, nil
+	}
+
+	// whoami is optional: it only scopes the billing queries to an org
+	// (OmniRoute continues without orgId on any failure).
+	q := ""
+	if _, body, err := get("/alpha/whoami"); err == nil {
+		var who struct {
+			Org *struct {
+				ID string `json:"id"`
+			} `json:"org"`
+		}
+		if json.Unmarshal(body, &who) == nil && who.Org != nil && strings.TrimSpace(who.Org.ID) != "" {
+			q = "?orgId=" + url.QueryEscape(strings.TrimSpace(who.Org.ID))
+		}
+	}
+
+	status, body, err := get("/alpha/billing/credits" + q)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	windows, plan, perr := parseCommandCode(body, status)
+	if perr != "" {
+		snap.Err = perr
+		return snap
+	}
+	snap.Windows = windows
+
+	// Subscriptions enrich the plan label and the credits reset; a missing
+	// subscription (team orgs, rotated keys) must not fail the probe.
+	if _, body, err := get("/alpha/billing/subscriptions" + q); err == nil {
+		var sub struct {
+			Data struct {
+				PlanID           string `json:"planId"`
+				CurrentPeriodEnd any    `json:"currentPeriodEnd"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(body, &sub) == nil {
+			if p := commandCodePlanLabel(sub.Data.PlanID); p != "" {
+				plan = p
+			}
+			if reset := asReset(sub.Data.CurrentPeriodEnd); reset != nil {
+				// The credits pool resets with the billing period; only
+				// fill it when the vendor's credits call didn't already
+				// give that window its own reset.
+				for i := range snap.Windows {
+					if snap.Windows[i].Name == creditsWindow && snap.Windows[i].Resets == nil {
+						snap.Windows[i].Resets = reset
+					}
+				}
+			}
+		}
+	}
+	snap.Plan = plan
+	return snap
+}
+
+// creditsWindow is the monthly credit-pool window name (see parseCommandCode).
+const creditsWindow = "Credits (monthly)"
+
+// parseCommandCode decodes the live-verified /alpha/billing/credits shape:
+//
+//	{"credits":{"monthlyCredits":10.28,"purchasedCredits":0,"freeCredits":0},
+//	 "windowLimits":{"limited":true,"exceeded":"weekly",
+//	   "fiveHour":{"used":0,"cap":14,"exceeded":false,"resetAt":0},
+//	   "weekly":{"used":35.0018,"cap":35,"exceeded":true,
+//	             "resetAt":1789539876848}}}}
+//
+// Windows: five_hour/weekly roll USD used against cap; credits is the
+// monthly pool (monthly + purchased + free remaining) against the pool
+// total. The weekly window above IS exhausted (used >= cap) — the shape
+// that parks the account.
+func parseCommandCode(body []byte, status int) ([]Window, string, string) {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return nil, "", "CommandCode API key was rejected — reconnect or rotate the key."
+	}
+	if status != http.StatusOK {
+		return nil, "", "CommandCode credits API error (" + strconv.Itoa(status) + ")."
+	}
+	var data struct {
+		Credits *struct {
+			MonthlyCredits   float64 `json:"monthlyCredits"`
+			PurchasedCredits float64 `json:"purchasedCredits"`
+			FreeCredits      float64 `json:"freeCredits"`
+		} `json:"credits"`
+		WindowLimits struct {
+			FiveHour struct {
+				Used    float64 `json:"used"`
+				Cap     float64 `json:"cap"`
+				ResetAt float64 `json:"resetAt"`
+			} `json:"fiveHour"`
+			Weekly struct {
+				Used    float64 `json:"used"`
+				Cap     float64 `json:"cap"`
+				ResetAt float64 `json:"resetAt"`
+			} `json:"weekly"`
+		} `json:"windowLimits"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, "", "CommandCode credits response is not valid JSON."
+	}
+	windows := make([]Window, 0, 3)
+	for _, w := range []struct {
+		name  string
+		used  float64
+		cap   float64
+		reset float64
+	}{
+		{"5-hour window", data.WindowLimits.FiveHour.Used, data.WindowLimits.FiveHour.Cap, data.WindowLimits.FiveHour.ResetAt},
+		{"Weekly window", data.WindowLimits.Weekly.Used, data.WindowLimits.Weekly.Cap, data.WindowLimits.Weekly.ResetAt},
+	} {
+		if w.cap <= 0 {
+			continue // window not configured for this plan
+		}
+		pct := w.used / w.cap * 100
+		if pct > 100 {
+			pct = 100 // over-cap usage still parks at 100%
+		}
+		windows = append(windows, Window{Name: w.name, Used: int(pct + 0.5), Resets: asReset(w.reset)})
+	}
+	// Credits pool (monthly + purchased + free remaining). The vendor does
+	// not return period spend on this endpoint, so the window reads 0%
+	// while the pool still has headroom — parked only when the pool itself
+	// is drained. OmniRoute derives the total from usage/summary; here the
+	// window is informational (no false parks from invented totals).
+	if data.Credits != nil {
+		remaining := data.Credits.MonthlyCredits + data.Credits.PurchasedCredits + data.Credits.FreeCredits
+		credits := Window{Name: creditsWindow, Used: 0}
+		if remaining < 0 {
+			remaining = 0
+		}
+		if remaining == 0 {
+			credits.Used = 100 // drained pool parks until the vendor refills
+		}
+		windows = append(windows, credits)
+	}
+	if len(windows) == 0 {
+		return nil, "", "CommandCode credits response did not contain valid quota data."
+	}
+	return windows, "Command Code", ""
+}
+
+// commandCodePlanLabel maps OmniRoute's PLAN_LABELS; unknown ids fall back
+// to a title-cased split (individual-goat → Goat) so the row never shows an
+// empty plan.
+func commandCodePlanLabel(planID string) string {
+	switch planID {
+	case "individual-goat":
+		return "Command Code · GOAT"
+	case "individual-go":
+		return "Command Code · Go"
+	case "individual-pro":
+		return "Command Code · Pro"
+	case "individual-max-10x":
+		return "Command Code · Max 10×"
+	case "individual-max-20x":
+		return "Command Code · Max 20×"
+	case "team-pro":
+		return "Command Code · Team Pro"
+	}
+	id := strings.TrimPrefix(planID, "individual-")
+	id = strings.TrimPrefix(id, "team-")
+	if id == planID || id == "" {
+		return "" // unrecognized shape: keep the default label
+	}
+	parts := strings.Split(id, "-")
+	for i, p := range parts {
+		if p != "" {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return "Command Code · " + strings.Join(parts, " ")
 }
 
 // asPercent clamps a vendor percentage (number or numeric string) to 0-100.
