@@ -156,6 +156,19 @@ type ProviderCfg struct {
 	// enable_thinking outright instead of coercing them.
 	NoThinking []string `toml:"no_thinking"`
 
+	// EchoReasoning lists model globs (path.Match; "*" does not cross "/")
+	// whose upstreams run a DeepSeek-dialect thinking mode that validates
+	// the REPLAYED history: on a tool-loop continuation (the request's last
+	// message is a tool result) every assistant turn must carry
+	// reasoning_content, including turns other combo legs served without
+	// any reasoning at all (live 2026-09-11, opencode/deepseek-v4.1-flash
+	// seq 2666: 400 "The `reasoning_content` in the thinking mode must be
+	// passed back to the API" — three-way bisect proved the trigger is
+	// tool-continuation + any echo-less assistant turn). The server
+	// synthesizes a short placeholder for those turns before forwarding.
+	// Off by default: bodies are byte-identical unless the provider opts in.
+	EchoReasoning []string `toml:"echo_reasoning"`
+
 	// DefaultEffort caps the reasoning effort for always-thinking models when
 	// the client sent NO reasoning knob at all ("" = disabled). Measured on
 	// b-ai/glm-5.3-flash 2026-09-11 (same prompt, n=2): unset → vendor default
