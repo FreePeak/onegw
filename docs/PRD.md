@@ -1,4 +1,4 @@
-*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), live pid TBD:
+*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), 5683bdc, live pid 95082:
 ported from 9router's open-sse/services/usage/{opencode-go,glm}.js + OmniRoute's
 opencodeQuotaFetcher.ts. internal/subquota polls the VENDOR's own subscription usage
 per (provider, account) — "" off | "opencode-go" (GET https://opencode.ai/zen/go/v1/usage:
@@ -22,7 +22,7 @@ e2e (stub vendors → JSON + page render + exhausted zai account parked while th
 opencode account keeps serving; no-providers null→[]). Verified in a detached worktree
 on pristine HEAD (config+subquota+provider+quota suites green; the combined server run
 reproduces the pre-existing stream-fast-path bench bleed on clean HEAD, not a
-regression). Live onegw.toml: opencode → subscription_quota = "opencode-go", glm → "zai".
+regression). Live config (BOTH onegw.toml and ~/.onegw/onegw.toml): opencode → subscription_quota = "opencode-go", glm → "zai". Live proof on the serving binary: glm/harvey plan "Lite" — Session (5h) 23% (resets in 5.0h), Weekly (7d) 75% (in 3.2d); opencode key-1 rolling 0% / weekly 2% / monthly 28%, key-2 rolling 68% / weekly 34% / monthly 67% — per-key windows now visible for the first time; the Quota page renders 8 window rows with countdowns, zero exhausted pills (nothing parked — correct while every window has headroom). Zero-drop deployed (markers ok, single listener 95082, health x2).
 Earlier:)*
 *Last updated: 2026-09-11 (provider toggle/update splice corruption fix, ace1969, live pid 88714):
 the dashboard's provider on/off toggle and PUT editor corrupted onegw.toml on the shapes the live
