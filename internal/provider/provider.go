@@ -203,6 +203,15 @@ type Def struct {
 	// server rewrites such requests instead of forwarding them.
 	AlwaysThinking []string `toml:"always_thinking"`
 
+	// NoThinking lists model globs (path.Match syntax; "*" does not cross
+	// "/") whose upstreams have no thinking mode at all and must never
+	// receive reasoning-effort/thinking knobs (kilo-auto/*: kilo's gateway
+	// duplicates reasoning_effort into reasoning.effort and rejects ANY
+	// value with "conflicting values" — live 2026-09-11). The server
+	// strips the knobs outright — strictly stronger than AlwaysThinking's
+	// coercion, which keeps an accepted knob on the wire.
+	NoThinking []string `toml:"no_thinking"`
+
 	// CacheProfile opts the provider into upstream prompt-cache anchoring
 	// (issue #34, set from ProviderCfg.CacheProfile): "claude-anchor"
 	// re-anchors Anthropic cache_control breakpoints after normalization,
@@ -251,13 +260,15 @@ type Def struct {
 
 	speed speedState // decode-speed EWMAs (speed.go): per-model + provider-wide
 
-	// learnedAT records models discovered at runtime to reject
-	// thinking-effort/disable knobs (GLM 1210-family 400) even though they
-	// are not listed in AlwaysThinking. Learned state lives on the Def on
-	// purpose: a SIGHUP reload rebuilds the pool with fresh Defs, which
-	// re-syncs it with the on-disk config.
+	// learnedAT/learnedNT record models discovered at runtime: to coerce
+	// thinking-effort/disable knobs (GLM 1210-family 400) or to strip ANY
+	// reasoning knob (effort-conflict 400, kilocode), even though they are
+	// not listed in AlwaysThinking/NoThinking. Learned state lives on the
+	// Def on purpose: a SIGHUP reload rebuilds the pool with fresh Defs,
+	// which re-syncs it with the on-disk config.
 	learnedMu sync.RWMutex
 	learnedAT map[string]struct{}
+	learnedNT map[string]struct{}
 
 	// modelBenched records (model → bench-until) for upstream refusals
 	// that indict the MODEL, not the credential (types.APIError.ModelScoped:
@@ -306,6 +317,37 @@ func (d *Def) AlwaysThinkingModel(model string) bool {
 	d.learnedMu.RLock()
 	defer d.learnedMu.RUnlock()
 	_, ok := d.learnedAT[model]
+	return ok
+}
+
+// LearnNoThinking records model as runtime-discovered no-thinking (its
+// upstream rejected ANY reasoning knob with the effort-conflict 400) and
+// reports whether this call newly learned it, so callers can log once.
+func (d *Def) LearnNoThinking(model string) bool {
+	d.learnedMu.Lock()
+	defer d.learnedMu.Unlock()
+	if d.learnedNT == nil {
+		d.learnedNT = make(map[string]struct{})
+	}
+	if _, ok := d.learnedNT[model]; ok {
+		return false
+	}
+	d.learnedNT[model] = struct{}{}
+	return true
+}
+
+// NoThinkingModel reports whether the routed upstream model matches one of
+// the provider's no-thinking globs (path.Match syntax) or was learned
+// no-thinking at runtime (see LearnNoThinking).
+func (d *Def) NoThinkingModel(model string) bool {
+	for _, pat := range d.NoThinking {
+		if ok, err := path.Match(pat, model); err == nil && ok {
+			return true
+		}
+	}
+	d.learnedMu.RLock()
+	defer d.learnedMu.RUnlock()
+	_, ok := d.learnedNT[model]
 	return ok
 }
 

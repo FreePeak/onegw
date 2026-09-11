@@ -10,7 +10,7 @@ import (
 
 // anchorCacheProfile applies the provider's configured cache_profile to a
 // fully prepared upstream body (issue #34). It must run LAST in the
-// request pipeline — after ApplyRaw / rewriteModel / adaptAlwaysThinking /
+// request pipeline — after ApplyRaw / rewriteModel / adaptThinkingBody /
 // normalizeRoles / translation — because client cache_control markers
 // point at pre-normalization offsets, and a stale anchor costs a full
 // prefix rewrite (mirrors 9router's anchorClaudeCache, which also runs

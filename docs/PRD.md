@@ -24,6 +24,30 @@ on pristine HEAD (config+subquota+provider+quota suites green; the combined serv
 reproduces the pre-existing stream-fast-path bench bleed on clean HEAD, not a
 regression). Live config (BOTH onegw.toml and ~/.onegw/onegw.toml): opencode → subscription_quota = "opencode-go", glm → "zai". Live proof on the serving binary: glm/harvey plan "Lite" — Session (5h) 23% (resets in 5.0h), Weekly (7d) 75% (in 3.2d); opencode key-1 rolling 0% / weekly 2% / monthly 28%, key-2 rolling 68% / weekly 34% / monthly 67% — per-key windows now visible for the first time; the Quota page renders 8 window rows with countdowns, zero exhausted pills (nothing parked — correct while every window has headroom). Zero-drop deployed (markers ok, single listener 95082, health x2).
 Earlier:)*
+*Last updated: 2026-09-11 (kilo-auto/free reasoning-knob conflict 400 — no_thinking strip, live-verified):
+seq 1798 (onegw.toml, kilocode/kilo-auto/free, account mnhatlinh.doan@gmail.com) —
+400 upstream_error "reasoning_effort" and "reasoning.effort" are both provided with
+conflicting values. RCA (direct probes against api.kilo.ai/api/openrouter, account key):
+kilo's openrouter gateway rejects ANY top-level reasoning_effort on kilo-auto/free —
+low/medium/minimal/none/max/xhigh ALL 400 with that exact message, while bodies with
+no knob (and reasoning:{effort} object-only) serve: the alias rotates upstream to
+non-thinking free models (observed dots-studio/dots-3-note-preview:free), and kilo
+duplicates the knob internally — the "both provided" wording is kilo's own collision,
+not the client's (omp captures show a single reasoning_effort). onegw's always_thinking
+=["kilo-auto/*"] made it worse: the coercion (xhigh→max) kept a knob on the wire, so
+the conflict 400 was TERMINAL for the combo leg chain. Fix — mirror mechanism of
+always_thinking: (1) per-provider `no_thinking` globs (config.ProviderCfg +
+provider.Def.NoThinkingModel, runtime LearnNoThinking like learnedAT) — routed models
+get reasoning_effort/thinking/enable_thinking STRIPPED outright (same-format
+adaptThinkingBody and cross-format adaptThinkingUnified; the always-thinking functions
+renamed from adapt/coerceAlwaysThinking* to cover both gates; a no-thinking match wins
+over always-thinking); (2) noThinkingConflict400 classifier: the conflict 400 is now
+learned + Fallbackable, so an unlisted model self-heals with one stripped retry
+instead of killing the combo. Regression tests TestNoThinkingStrip /
+TestNoThinkingConflict400 (mutation-checked: neutering either strip branch or the
+classifier fails them); live config: kilocode always_thinking=["z-ai/glm-*"] +
+no_thinking=["kilo-auto/*"]. Earlier:
+
 *Last updated: 2026-09-11 (provider toggle/update splice corruption fix, ace1969, live pid 88714):
 the dashboard's provider on/off toggle and PUT editor corrupted onegw.toml on the shapes the live
 config actually contains. Root causes, all in internal/server/admin_config_edit.go line splicers:
