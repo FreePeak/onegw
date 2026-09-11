@@ -13,9 +13,20 @@ model bench + speed-EWMA pick + identity sticky-pinning) and layers 1/3 are the 
 Distilled into the PRD's new "Rotation strategy (OmniRoute deep-dive)" section under Routing
 model, and filed as issues #80 (terminal 402 key invalidation + one-dead-key guard), #81 (pool
 selection strategies: p2c/least-used/strict-random with #79 quota-headroom scoring), #82
-(sticky round-robin combos with round_robin_limit). Shared insight recorded: selection should
-keep penalizing a recently-429ed account AFTER its cooldown expires, not only skip it while
-cooling. Earlier:)*
+(sticky round-robin combos with round_robin_limit). SELF-CORRECTION in the same pass — the
+first wording INVERTED the source and was fixed here plus in the section below: OmniRoute does
+NOT keep penalizing a 429ed account after its window expires; it grades the penalty
+(backoffLevel, up to 40 points in the P2C score) while the account is still recovering and
+auto-decays it to 0 once rateLimitedUntil passes, precisely so a recovering account cannot
+become never-selected. A graded recent-429 term for onegw is therefore ONEGW'S OWN direction
+(tracked in #78, cross-linked there), and any such term must carry the same decay-to-zero
+guard or it reintroduces the deadlock OmniRoute engineered against. Also verified as ALREADY
+COVERED, no issue filed: onegw's per-account OAuth single-flight + rotated-refresh-token merge
+with the never-null guard (internal/oauth/manager.go refresh: absent refresh_token keeps the
+stored one) matches OmniRoute's non-rotating-provider protection; and OmniRoute's
+isNetworkErrorRotatable (only rotate on network errors when the account has its own egress)
+is the twin of onegw's flapStrike ("not tied to an account: the fault indicts the provider's
+edge"). Open-work table noted stale (stops at #58 while #68-#82 exist) -> #83. Earlier:)*
 
 *Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 546f997):
 follow-up to the splice-corruption fix (ace1969). The editor prefill synthesizes rows for legacy
@@ -1369,7 +1380,21 @@ on restart by design; limit chain: per-combo → `comboStickyRoundRobinLimit` �
 `stickyRoundRobinLimit`, clamped 1..1000). The module comment marks it
 "9router parity".
 
-**Failure classification feeds all three** (`open-sse/services/accountFallback.ts`,
+**Layer 4 — credential (refresh-token) rotation** (`open-sse/services/refreshSerializer.ts`,
+`src/lib/tokenHealthCheck.ts`). Providers whose refresh tokens are SINGLE-USE
+(`ROTATING_REFRESH_PROVIDERS`, e.g. Codex/OpenAI sharing one Auth0 client_id across accounts)
+must never refresh concurrently: two parallel refreshes present the same single-use token, the
+second is rejected, and the vendor revokes the whole token family. OmniRoute serializes per
+ROTATION GROUP (`serializeRefresh` + `rotationGroupFor`), and separately guarantees that a
+refresh response OMITTING `refresh_token` (Google-family non-rotating tokens) never nulls the
+stored one. onegw's `internal/oauth` already covers both shapes at its scale: single-flight is
+per ACCOUNT (`busy` map), the token store merges by newer `UpdatedAt` so a CLI refresh and the
+gateway cannot clobber each other's rotated token, and `refresh()` keeps the stored
+refresh_token when the response omits it. Delta, conditional and NOT filed as an issue: if a
+multi-account OAuth provider sharing ONE client_id is ever added, move the single-flight key
+from account to rotation group (the trigger condition to watch).
+
+**Failure classification feeds all of them** (`open-sse/services/accountFallback.ts`,
 2129 lines): per-provider profiles (base/max cooldown, backoff steps, circuit
 breakers), error-rule matching by status *and body text*, 429
 subclassification (RPM/TPM/RPD, subscription/session/weekly quota text), and
@@ -1387,13 +1412,30 @@ out.
 **Mapping to onegw.** Layer 2 is largely present: `accountPool` does weighted
 round-robin with cooldown skip, RPM buckets, shared-wall handling, model
 benching, decode-speed EWMA pick (`fastest`), and identity sticky-pinning.
-Layers 1 and 3 are the real gaps — hence #80 (terminal key invalidation on
+Layer 2 is largely covered but lacks the STRATEGY MENU (one distribution rule,
+not seven); layers 1 and 3 are absent. Hence #80 (terminal key invalidation on
 402 + the one-dead-key guard), #82 (sticky round-robin combos), #81 (pool
 selection strategies: p2c / least-used / strict-random, fed by the #79
-subscription-quota headroom). One transferable insight for all three:
-**selection should keep penalizing a recently-429ed account after its cooldown
-expires**, not just skip it while cooling — otherwise every expiry wave
-re-selects the same tired key.
+subscription-quota headroom).
+
+Two distinctions worth keeping straight, both easy to get wrong:
+
+- **Graded vs boolean cooldown.** onegw's cooldown is boolean: an account is
+  either cooling or fully re-admitted, and expiry alone re-admits it (`available()`
+  checks the cooldown, not the strike count). OmniRoute's `backoffLevel` is graded,
+  so P2C can rank a partially-recovered account while it is still blocked — and the
+  level is **auto-decayed to 0 at window expiry**, with the source warning that
+  omitting the decay "permanently deprioritizes accounts … creating a deadlock where
+  the account needs a successful request to reset but never gets selected". So a
+  graded recent-429 term in onegw is onegw's own direction (#78), and it must ship
+  WITH the decay guard — adopting the level without the decay reproduces that
+  deadlock. #78's deadlock does not exist today, so this is a design constraint on
+  new work, not a bug.
+- **Affinity vs rotation.** OmniRoute caps connection stickiness at
+  `stickyRoundRobinLimit` successes because its sticky mode spreads LOAD. onegw's
+  `sticky = "5m"` pin exists to keep a session's prompt cache warm and has no
+  success cap — deliberate, not a gap. #82's sticky round-robin is the combo-target
+  analogue of OmniRoute's cap, a separate knob from session affinity.
 
 ## Key decisions
 
@@ -1477,8 +1519,9 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
 | #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) | OmniRoute rotation research 2026-09-11 |
-| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck); keeps penalizing recently-429ed accounts after cooldown expiry | OmniRoute rotation research 2026-09-11 |
+| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it | OmniRoute rotation research 2026-09-11 |
 | #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) | OmniRoute rotation research 2026-09-11 |
+| #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |
 
 ### Recommended implementation order (2026-09-08)
 
