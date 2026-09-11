@@ -214,10 +214,13 @@ type ProviderCfg struct {
 	// SubscriptionQuota opts the provider into UPSTREAM-reported
 	// subscription quota tracking (issue #79, ported from 9router's
 	// usage services and OmniRoute's quota preflight): "" (off) |
-	// "opencode-go" | "zai" | "zai-cn". The gateway probes the vendor's
-	// own usage endpoint per account and parks accounts whose windows
-	// the vendor reports exhausted. SubscriptionURL overrides the
-	// dialect's default endpoint (self-hosted mirrors, tests).
+	// "opencode-go" | "zai" | "zai-cn" | "commandcode". The gateway
+	// probes the vendor's own usage endpoint per account and parks
+	// accounts whose windows the vendor reports exhausted. For
+	// commandcode, SubscriptionURL overrides the API BASE
+	// (https://api.commandcode.ai) — the probe appends /alpha paths.
+	// Other dialects: SubscriptionURL overrides the full endpoint
+	// (self-hosted mirrors, tests).
 	SubscriptionQuota string `toml:"subscription_quota"`
 	SubscriptionURL   string `toml:"subscription_url"`
 	// Rotation overrides the global [rotation] policy for this provider
@@ -553,9 +556,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
 		}
 		switch p.SubscriptionQuota {
-		case "", "opencode-go", "zai", "zai-cn":
+		case "", "opencode-go", "zai", "zai-cn", "commandcode":
 		default:
-			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai or zai-cn)", p.Name, p.SubscriptionQuota)
+			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai, zai-cn or commandcode)", p.Name, p.SubscriptionQuota)
 		}
 		if err := validateRotation(p.Rotation, "provider "+p.Name+" rotation"); err != nil {
 			return err
