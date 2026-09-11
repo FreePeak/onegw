@@ -210,12 +210,38 @@ type ProviderCfg struct {
 	// dialect's default endpoint (self-hosted mirrors, tests).
 	SubscriptionQuota string `toml:"subscription_quota"`
 	SubscriptionURL   string `toml:"subscription_url"`
+	// Rotation overrides the global [rotation] policy for this provider
+	// (#84), field-by-field; empty fields inherit.
+	Rotation RotationCfg `toml:"rotation"`
+	// Selection picks among this provider's OPEN account slots (#81):
+	// "" (default: fastest recent decode speed, round-robin among equals) |
+	// "p2c" (health score: strikes, speed, recency, subscription headroom) |
+	// "least-used" | "strict-random" (shuffle deck) | "random".
+	Selection string `toml:"selection"`
 	// Passthrough opts the provider into the narrow OpenAI-format surfaces
 	// served without translation: "embeddings", "stt", "tts".
 	Passthrough []string `toml:"passthrough"`
 	// Tiers declares per-model task-routing metadata (issue #54):
 	// power 0–150, vision/reasoning flags, context/output limits.
 	Tiers []TierCfg `toml:"tier"`
+}
+
+// RotationCfg tunes the rotation mechanics (#84): how long a rate-limited
+// account is benched, how many edge faults park the whole provider and for
+// how long, and how long a model-scoped refusal benches a model. Every field
+// is optional; unset (or zero) keeps onegw's shipped default, so an existing
+// config behaves byte-identically. Only the POLICY is tunable — which errors
+// count as rate limits, shared walls, model refusals or billing refusals
+// stays in code, because those rules came from live incidents.
+//
+// Written as [rotation] for the global defaults and [providers.rotation] to
+// override one provider field-by-field.
+type RotationCfg struct {
+	CooldownBase  string `toml:"cooldown_base"`   // first 429 bench (default 10s)
+	CooldownCap   string `toml:"cooldown_cap"`    // ladder ceiling (default 60s)
+	FlapThreshold int    `toml:"flap_threshold"`  // edge faults before the pool parks (default 4)
+	FlapOpen      string `toml:"flap_open"`       // whole-pool park (default 15s)
+	ModelBenchTTL string `toml:"model_bench_ttl"` // model-scoped refusal bench (default 5m)
 }
 
 // Acct is one provider account.
@@ -257,6 +283,10 @@ type ComboCfg struct {
 	// every leg stays in the chain as fallback. Legs with no speed data
 	// keep the configured order.
 	Strategy string `toml:"strategy"`
+	// RoundRobinLimit (strategy = "round-robin", #82): consecutive
+	// successes that keep one combo leg at the front before rotation moves
+	// on. 0 = default 3; bounded 1..1000.
+	RoundRobinLimit int `toml:"round_robin_limit"`
 }
 
 // Config is the whole file.
@@ -272,7 +302,10 @@ type Config struct {
 	// never shadow a real provider/model or combo name.
 	Aliases map[string]string `toml:"aliases"`
 	OAuth   OAuthCfg          `toml:"oauth"` // device-flow accounts; see oauth.go (#2)
-	Update  UpdateCfg         `toml:"update"`
+	// Rotation is the global rotation policy (#84); [providers.rotation]
+	// overrides it field-by-field.
+	Rotation RotationCfg `toml:"rotation"`
+	Update   UpdateCfg   `toml:"update"`
 	// adminPwConfigured: the operator chose the admin password (config key,
 	// env, or a stored <data_dir>/admin_password); adminPwGenerated: this
 	// process minted and persisted it on first boot. Both unexported, so the
@@ -436,6 +469,9 @@ func (c *Config) Validate() error {
 	if err := validateKeys(c.Auth.KeyList); err != nil {
 		return err
 	}
+	if err := validateRotation(c.Rotation, "rotation"); err != nil {
+		return err
+	}
 	// A typo'd check_interval ("24hr") must fail the load, not silently
 	// check daily — UpdateEvery's fallback is only for untouched configs.
 	if s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval)); s != "" {
@@ -511,6 +547,14 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai or zai-cn)", p.Name, p.SubscriptionQuota)
 		}
+		if err := validateRotation(p.Rotation, "provider "+p.Name+" rotation"); err != nil {
+			return err
+		}
+		switch p.Selection {
+		case "", "p2c", "least-used", "strict-random", "random":
+		default:
+			return fmt.Errorf("provider %s unknown selection %q (want p2c, least-used, strict-random or random)", p.Name, p.Selection)
+		}
 
 		switch p.CacheProfile {
 		case "", "none", "claude-anchor", "dashscope-marker", "sticky-key":
@@ -575,8 +619,14 @@ func (c *Config) Validate() error {
 		if comboNames[strings.ToLower(cb.Name)] {
 			return fmt.Errorf("duplicate combo %s", cb.Name)
 		}
-		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" {
-			return fmt.Errorf("combo %s strategy %q must be \"order\" or \"fastest\"", cb.Name, cb.Strategy)
+		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" && cb.Strategy != "round-robin" {
+			return fmt.Errorf("combo %s strategy %q must be \"order\", \"fastest\" or \"round-robin\"", cb.Name, cb.Strategy)
+		}
+		if cb.RoundRobinLimit < 0 || cb.RoundRobinLimit > 1000 {
+			return fmt.Errorf("combo %s round_robin_limit %d out of range (0 = default 3, max 1000)", cb.Name, cb.RoundRobinLimit)
+		}
+		if cb.RoundRobinLimit > 0 && cb.Strategy != "round-robin" {
+			return fmt.Errorf("combo %s sets round_robin_limit without strategy = \"round-robin\"", cb.Name)
 		}
 		comboNames[strings.ToLower(cb.Name)] = true
 		for _, t := range cb.Targets {
@@ -689,6 +739,46 @@ func validHeaderName(s string) bool {
 		}
 	}
 	return true
+}
+
+// validateRotation checks one RotationCfg layer (#84). Durations must parse
+// and be positive; the cap must not sit below the base; a threshold of 0
+// means "unset" (the default applies) so only negatives are rejected.
+func validateRotation(r RotationCfg, where string) error {
+	dur := func(name, s string) (time.Duration, error) {
+		if s == "" {
+			return 0, nil
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return 0, fmt.Errorf("%s %s invalid duration %q: %w", where, name, s, err)
+		}
+		if d <= 0 {
+			return 0, fmt.Errorf("%s %s must be positive, got %q", where, name, s)
+		}
+		return d, nil
+	}
+	base, err := dur("cooldown_base", r.CooldownBase)
+	if err != nil {
+		return err
+	}
+	cap_, err := dur("cooldown_cap", r.CooldownCap)
+	if err != nil {
+		return err
+	}
+	if base > 0 && cap_ > 0 && cap_ < base {
+		return fmt.Errorf("%s cooldown_cap %s is below cooldown_base %s", where, r.CooldownCap, r.CooldownBase)
+	}
+	if _, err := dur("flap_open", r.FlapOpen); err != nil {
+		return err
+	}
+	if _, err := dur("model_bench_ttl", r.ModelBenchTTL); err != nil {
+		return err
+	}
+	if r.FlapThreshold < 0 {
+		return fmt.Errorf("%s flap_threshold must be >= 0 (0 = default), got %d", where, r.FlapThreshold)
+	}
+	return nil
 }
 
 // Load reads and validates the TOML file at path.

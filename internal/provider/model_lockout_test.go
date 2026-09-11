@@ -237,3 +237,26 @@ func TestDoDoesNotBenchModelOn429(t *testing.T) {
 		t.Fatal("429 must still bench the ACCOUNT (ladder intact)")
 	}
 }
+
+// The #84 knob must reach the REAL refusal path. Regression guard for the
+// trap where the site passed ModelBenchTTL explicitly, which skipped the
+// `ttl <= 0 → d.benchTTL()` fallback and made model_bench_ttl inert while a
+// synthetic BenchModel(m, 0) test still passed.
+func TestModelBenchTTLKnobAppliesToRefusalPath(t *testing.T) {
+	srv, _ := mkModelStub(t, 403, zhipuModelDeniedBody, "blocked")
+	def := &Def{Name: "zhipu", Kind: KindOpenAI, BaseURL: srv.URL,
+		Accounts: []Account{{Name: "a", APIKey: "k1"}}}
+	def.Rotation = RotationPolicy{BenchTTL: time.Minute}
+	NewPool().Set(def)
+
+	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr == nil {
+		t.Fatal("want the 403 relayed")
+	}
+	benched, ready := def.ModelBenched("blocked")
+	if !benched {
+		t.Fatal("no model bench after the refusal")
+	}
+	if d := time.Until(ready); d > 90*time.Second {
+		t.Fatalf("model_bench_ttl ignored on the refusal path: benched until +%v (want ~1m, not the 5m default)", d)
+	}
+}
