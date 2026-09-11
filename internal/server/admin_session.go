@@ -128,6 +128,15 @@ func (a *adminSessions) count() int {
 	return len(a.m)
 }
 
+// clear drops every live session — used when the admin password changes:
+// tokens stay bound to the password they were issued for, so they are
+// already dead; this just frees the table immediately.
+func (a *adminSessions) clear() {
+	a.mu.Lock()
+	a.m = map[string]adminSession{}
+	a.mu.Unlock()
+}
+
 func (g *loginGuard) blocked(ip string) (bool, time.Duration) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

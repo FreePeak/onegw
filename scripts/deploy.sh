@@ -31,11 +31,13 @@ CONFIG="./onegw.toml"
 # abort after NEW was started: never leave an unverified NEW instance bound.
 abort() { [ -z "${NEW_PID:-}" ] || [ "$DRY_RUN" = 1 ] || kill -TERM "$NEW_PID" 2>/dev/null || true; die "$1"; }
 DRY_RUN=0
+FORCE_STALE=0
 
-usage() { echo "usage: $0 [--dry-run] [--binary PATH] [--config PATH]" >&2; exit 2; }
+usage() { echo "usage: $0 [--dry-run] [--force-stale] [--binary PATH] [--config PATH]" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --force-stale) FORCE_STALE=1 ;;
     --binary)  [ $# -ge 2 ] || usage; BIN="$2"; shift ;;
     --config)  [ $# -ge 2 ] || usage; CONFIG="$2"; shift ;;
     *) usage ;;
@@ -51,6 +53,25 @@ run() { # run <desc> <cmd...>: execute, or print only under --dry-run
   if [ "$DRY_RUN" = 1 ]; then echo "  [dry-run] $*"; else shift; "$@"; fi
 }
 
+# check_markers <binary>: stale-build guardrail (#59). Four peer deploy
+# generations on 2026-09-09 shipped binaries predating the #56 RPM governor,
+# resurrecting the b-ai 429 storm. Loose (UNANCHORED) strings matches
+# discriminate current master — stripped -trimpath builds mangle method
+# symbols into dotted forms, so anchored patterns false-negative:
+#   newTokenBucket       #56 per-account RPM governor (729c190)
+#   upstream_empty_body  honest empty-body upstream errors (289cd47)
+check_markers() {
+  [ -x "$1" ] || die "binary not executable: $1"
+  # grep -q closes the pipe on first match, so strings dies of SIGPIPE and
+  # pipefail turns a SUCCESSFUL match into a pipeline failure — a good
+  # binary was reported stale (live 2026-09-09, issue #62 follow-up).
+  # Count instead: the full stream is consumed, exit status is grep's.
+  MISSING=""
+  [ "$(strings "$1" | grep -c newTokenBucket)" -ge 1 ] || MISSING="$MISSING newTokenBucket(#56)"
+  [ "$(strings "$1" | grep -c upstream_empty_body)" -ge 1 ] || MISSING="$MISSING upstream_empty_body(289cd47)"
+  [ -z "$MISSING" ] || die "binary $1 missing feature marker(s):$MISSING — rebuild from git archive origin/master (or pass --force-stale for deliberate archaeology deploys)"
+}
+
 # Resolve CONFIG to an absolute path: the NEW instance outlives this
 # script, and a relative -config would make its cwd load-bearing.
 CONFIG=$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")
@@ -62,7 +83,18 @@ PORT=$(sed -n 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p'
 PORT=${PORT:-127.0.0.1:8080}
 PORT=${PORT##*:}
 ADMIN_PW=$(sed -n 's/^[[:space:]]*admin_password[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -1)
-ADMIN_PW=${ADMIN_PW:-admin}
+if [ -z "$ADMIN_PW" ]; then
+  # Empty/absent key means first-run generation: the live credential is
+  # persisted under the data dir (internal/config/adminpw.go), NOT "admin".
+  DATA_DIR=$(sed -n 's/^[[:space:]]*data_dir[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -1)
+  case "$DATA_DIR" in
+    /*) ;;
+    "") DATA_DIR="" ;;
+    *) DATA_DIR="$(dirname "$CONFIG")/$DATA_DIR" ;;
+  esac
+  [ -n "$DATA_DIR" ] && [ -f "$DATA_DIR/admin_password" ] && ADMIN_PW=$(cat "$DATA_DIR/admin_password")
+fi
+ADMIN_PW=${ADMIN_PW:-${ONEGW_ADMIN_PASSWORD:-admin}}
 HEALTH="http://127.0.0.1:$PORT/admin/health"
 
 # --- snapshot the CURRENT listener set BEFORE anything is touched.
@@ -85,10 +117,20 @@ NEW_BIN="$BIN"
 if [ -z "$NEW_BIN" ]; then
   NEW_BIN="$(mktemp -t onegw-new.XXXXXX)"
   step "1. build NEW binary -> $NEW_BIN"
-  run "go build" env CGO_ENABLED=0 go build -o "$NEW_BIN" ./cmd/onegw
+  run "go build" env CGO_ENABLED=0 go build -ldflags "-X onegw/internal/update.version=$(git rev-parse --short HEAD 2>/dev/null || echo devel)" -o "$NEW_BIN" ./cmd/onegw
 else
   [ -x "$NEW_BIN" ] || die "binary not executable: $NEW_BIN"
   step "1. using prebuilt binary $NEW_BIN"
+fi
+
+# --- 1b. stale-build guardrail (#59): runs BEFORE anything touches the
+# running service (no kill/swap/listener yet), so an abort is always
+# side-effect free. Skipped under --dry-run (no real binary is built there)
+# and --force-stale.
+if [ "$DRY_RUN" != 1 ] && [ "$FORCE_STALE" != 1 ]; then
+  step "1b. feature marker check"
+  check_markers "$NEW_BIN"
+  echo "  markers ok (newTokenBucket, upstream_empty_body)"
 fi
 
 # --- 2. start NEW overlapping the live listener. SO_REUSEPORT makes the
