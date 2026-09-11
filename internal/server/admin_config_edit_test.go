@@ -519,3 +519,123 @@ func TestProviderDisabledToggleNestedRoundTrip(t *testing.T) {
 		t.Fatalf("toggle round trip not byte-exact:\n%s", diffLines(before, got))
 	}
 }
+
+// editLegacyToml mirrors the legacy credential shapes the live configs
+// actually contain (e.g. the keys-style opencode block): `keys = [...]`
+// and bare `api_key` — provider blocks with NO [[providers.accounts]]
+// tables. config.Defaults expands keys into "key-N" accounts at every
+// Load, and the editor prefill (providerEditViews) synthesizes exactly
+// those names, so a Save must carry the key material into the rendered
+// account tables and supersede the legacy lines. Superseding nothing
+// duplicates every key into a keyless row on the next Load (pool
+// round-robins the keyless one → 401s); dropping unrepresented material
+// is silent credential loss.
+const editLegacyToml = `# gateway config (legacy-credential edit fixture)
+[server]
+data_dir = "memory"
+admin_password = "pw-test"
+
+[auth]
+keys = ["key-a"]
+
+[[providers]]
+name = "lk"
+kind = "openai"
+base_url = "http://lk.local"
+# keys = ["sk-old-1"] — a superseded note; comments never match
+keys = ["sk-test-lk1-secret", "sk-test-lk2-secret"]
+always_thinking = ["glm-5.3*"]
+
+[[providers]]
+name = "lm"
+kind = "openai"
+base_url = "http://lm.local"
+keys = [
+  "sk-test-lm1-secret",
+  "sk-test-lm2-secret",
+]
+
+[[providers]]
+name = "lp"
+kind = "openai"
+base_url = "http://lp.local"
+api_key = "sk-test-lp-secret"
+`
+
+// The live keys-style shape: the UI round-trip sends only the row names
+// the prefill synthesized. The save converts the block to account tables
+// with the original keys carried over and removes the superseded line.
+func TestProviderEditLegacyKeysConverted(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editLegacyToml)
+
+	// Precondition: Defaults expands the keys array into key-N accounts —
+	// the names the prefill sends back, with blank key fields.
+	lk := srv.cur().cfg.Providers[0]
+	if len(lk.Accounts) != 2 || lk.Accounts[0].Name != "key-1" || lk.Accounts[0].APIKey != "sk-test-lk1-secret" {
+		t.Fatalf("fixture keys-expansion precondition broke: %+v", lk.Accounts)
+	}
+
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"lk","kind":"openai","base_url":"http://lk.local","models":["m1"],"accounts":[{"name":"key-1"},{"name":"key-2"}]}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT lk: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if strings.Contains(file, `keys = ["sk-test-lk1-secret"`) {
+		t.Fatalf("legacy keys line survived a superseding accounts save:\n%s", file)
+	}
+	if got := strings.Count(file, "sk-test-lk1-secret"); got != 1 {
+		t.Fatalf("lk1 key material appears %d times, want exactly 1:\n%s", got, file)
+	}
+	lk = srv.cur().cfg.Providers[0]
+	if len(lk.Accounts) != 2 || lk.Accounts[0].Name != "key-1" || lk.Accounts[0].APIKey != "sk-test-lk1-secret" ||
+		lk.Accounts[1].Name != "key-2" || lk.Accounts[1].APIKey != "sk-test-lk2-secret" {
+		t.Fatalf("reloaded lk accounts (want exactly one keyed pair): %+v", lk.Accounts)
+	}
+	if len(lk.AlwaysThinking) != 1 {
+		t.Fatalf("lk lost always_thinking during conversion: %+v", lk)
+	}
+}
+
+// A multi-line keys array must convert too — including removing every
+// line the array spans (an orphaned continuation line is a parse error).
+func TestProviderEditLegacyMultiLineKeysConverted(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editLegacyToml)
+
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"lm","kind":"openai","base_url":"http://lm.local","accounts":[{"name":"key-1"},{"name":"key-2"}]}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT lm: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	for _, want := range []string{"sk-test-lm1-secret", "sk-test-lm2-secret"} {
+		if got := strings.Count(file, want); got != 1 {
+			t.Fatalf("%q appears %d times, want exactly 1:\n%s", want, got, file)
+		}
+	}
+	lm := srv.cur().cfg.Providers[1]
+	if len(lm.Accounts) != 2 || lm.Accounts[0].APIKey != "sk-test-lm1-secret" || lm.Accounts[1].APIKey != "sk-test-lm2-secret" {
+		t.Fatalf("reloaded lm accounts: %+v", lm.Accounts)
+	}
+}
+
+// A bare api_key provider prefills as one row named "default"; the save
+// converts the credential into the account table instead of writing a
+// keyless "default" row next to the surviving line.
+func TestProviderEditLegacyAPIKeyConverted(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editLegacyToml)
+
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"lp","kind":"openai","base_url":"http://lp.local","accounts":[{"name":"default"}]}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT lp: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if got := strings.Count(file, "sk-test-lp-secret"); got != 1 {
+		t.Fatalf("lp key material appears %d times, want exactly 1:\n%s", got, file)
+	}
+	lp := srv.cur().cfg.Providers[2]
+	if len(lp.Accounts) != 1 || lp.Accounts[0].Name != "default" || lp.Accounts[0].APIKey != "sk-test-lp-secret" || lp.APIKey != "" {
+		t.Fatalf("reloaded lp accounts: %+v (provider APIKey %q)", lp.Accounts, lp.APIKey)
+	}
+}
