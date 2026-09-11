@@ -55,6 +55,10 @@ type streamScan struct {
 // and normalizeRoles need the full body, so those requests stay buffered.
 func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt translat.Format, ak *config.AuthKey) (handled bool) {
 	st := s.cur()
+	// Delivery clock starts here; the ctx is tagged at the relay call —
+	// NOT via r.WithContext, which would fork the request object and let
+	// streamFallback's body restoration land on a copy proxy() never sees.
+	d := &delivery{start: time.Now()}
 
 	// Declared-size gate mirrors the buffered path's 413 semantics. Chunked
 	// bodies (unknown length) are not capped mid-stream: bytes are never
@@ -87,6 +91,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	if err := json.Unmarshal(prefix[sc.modelQuoteStart:sc.modelQuoteEnd+1], &model); err != nil || model == "" {
 		return s.streamFallback(r, prefix, whole)
 	}
+	d.model = s.boundedModel(model)
 
 	res, rerr := st.router.Resolve(model)
 	if rerr != nil {
@@ -235,7 +240,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	// caller), so savedTokens is 0. The byte count is read after Do
 	// returns: the transport has consumed the body by then. Used only for
 	// the len/4 usage estimate, exactly like the buffered path.
-	_ = s.relayResponse(w, cres, def, t.Model, clientFmt, clientFmt, sc.stream, int(src.n), 0, ak, r.Context())
+	_ = s.relayResponse(w, cres, def, t.Model, clientFmt, clientFmt, sc.stream, int(src.n), 0, ak, withDelivery(r.Context(), d))
 	return true
 }
 
