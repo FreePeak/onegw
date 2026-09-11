@@ -1,3 +1,23 @@
+*Last updated: 2026-09-12 (reasoning-echo CONVERGED: echo_reasoning knob + runtime learn,
+live pid 95900): the two parallel implementations of the seq-198/2666 fix are reconciled on ONE
+knob — ProviderCfg/Def \`EchoReasoning\` + toml \`echo_reasoning\` (45ccd03) — and the runtime-learn
+layer (c5c5d7f, merged d10a2a2) consumes the SAME gate: learnedRE/LearnReasoningEcho on Def
+mirrors learnedAT/learnedNT, attempt() classifies the echo-refusal 400 (types.ReasoningEchoRequired)
+and grants exactly ONE Fallbackable retry on a FRESH learn (that retry's body carries the newly
+synthesized echoes; an already-known echo model replays byte-identically, stays non-Fallbackable,
+and the router's ReasoningEchoRequired break falls through after ONE attempt — no per-request
+MaxAttempts burn), and proxyStream's eligibility guard reroutes echo_reasoning/learned models to
+the buffered pipeline (the raw fast path bypasses prepareUpstreamBody, so the refusal would
+repeat on every client retry there otherwise). Reloads drop learned state (Defs rebuild) — the
+echo_reasoning globs in onegw.toml keep the deterministic half. The echo test stub's refusal
+predicate was fixed (bad was OR-ed and never cleared: every tool-tail body refused, so the
+serve-assertions could only pass through the fallback leg); the no-retry pin is superseded by
+learn-scoped tests (reasoning_echo_learn_test.go: serve-on-retry, upfront fill, repeat-refusal
+containment, per-model scoping, stream gate). Regression replay (the old hand-off probe):
+seq-2666-shaped body, opencode/deepseek-v4.1-flash, stream true → 200 SSE; buffered 200; combo
+"free" 200. Live pid 95900 (onegw-echo-rt2, master + c5c5d7f, single listener verified). Both
+combos now run strategy="order" (free first; dev included 00:30 — prefill steering was promoting
+opencode first on large hermes requests). Earlier:)*
 *Last updated: 2026-09-11 (commandcode subscription quota dialect (#79), ported from OmniRoute's
 open-sse/services/usage/command-code.ts, endpoints live-verified on a GOAT plan key): the
 subquota tracker gained "commandcode" — providers.subscription_quota = "commandcode" polls the
