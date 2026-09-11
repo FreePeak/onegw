@@ -80,12 +80,19 @@
       </div>
       <div class="field">
         <label for="pf-qw">quota window</label>
-        <select id="pf-qw" name="quota_window">
-          <option value="">off</option>
-          <option value="5h">5h</option>
-          <option value="daily">daily</option>
-          <option value="weekly">weekly</option>
-        </select>
+        <!-- Input + datalist, not a select: a provider configured with a
+             custom rolling window (quota_window = "48h") must round-trip
+             through this form. A select would reset an unknown value to
+             "off" on save (the splice-corruption family). -->
+        <input id="pf-qw" name="quota_window" list="pf-qw-opts" type="text"
+               autocomplete="off" placeholder="5h | daily | weekly | monthly | 48h">
+        <datalist id="pf-qw-opts">
+          <option value=""></option>
+          <option value="5h"></option>
+          <option value="daily"></option>
+          <option value="weekly"></option>
+          <option value="monthly"></option>
+        </datalist>
       </div>
     </div>
     <div class="grid grid-cols-2 gap-3">
