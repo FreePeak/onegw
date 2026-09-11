@@ -1,7 +1,8 @@
 *Last updated: 2026-09-11 (dynamic per-provider quota windows (#85, b96eac5, live pid 94769):
 the local quota_window was a fixed enum (5h | daily | weekly), so a provider whose real cap
-resets monthly — or on any other period — could not be modelled, and an exhausted combo leg
-still burned upstream attempts until the gate cooled it. Windows are now DATA: a calendar kind
+resets monthly — or on any other period — could not be modelled at all (leg rejection itself
+already worked: the attempt()/stream_relay gates answer before def.Do, proven by frozen
+upstream hits in the live proof). Windows are now DATA: a calendar kind
 (daily / weekly / monthly, month resetting at the 1st 00:00 UTC with quota_reset_anchor phasing
 the grid to the anchor's day-of-month, clamped to shorter months so a 31st anchor resets on
 Feb 28/29) or ANY positive Go duration ("5h", "48h", "90m") rolling on the existing 5h grid
