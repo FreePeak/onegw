@@ -21,6 +21,7 @@ package subquota
 import (
 	"context"
 	"encoding/json"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"sort"
@@ -123,6 +124,10 @@ type Tracker struct {
 	client      *http.Client
 	now         func() time.Time
 	every       time.Duration
+	// resolveKey returns the CURRENT bearer for (provider, account) at
+	// probe time — OAuth-managed accounts rotate their token in the
+	// background, so a key captured at build time goes stale.
+	resolveKey func(provider, acct string) string
 	// probe overrides the HTTP probe (tests).
 	probe func(ctx context.Context, t *Tracker, tgt Target) Snapshot
 
@@ -133,13 +138,13 @@ type Tracker struct {
 }
 
 // New builds a tracker over targets and starts its poll loop.
-func New(targets []Target, onExhausted func(Target, time.Time)) *Tracker {
-	return NewAt(targets, onExhausted, nil, pollEvery, nil, nil)
+func New(targets []Target, onExhausted func(Target, time.Time), resolveKey func(provider, acct string) string) *Tracker {
+	return NewAt(targets, onExhausted, nil, resolveKey, pollEvery, nil, nil)
 }
 
 // NewAt is New with injectable probe, cadence, client and clock (tests);
 // every <= 0 resets to the 60s default.
-func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(context.Context, *Tracker, Target) Snapshot, every time.Duration, client *http.Client, now func() time.Time) *Tracker {
+func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(context.Context, *Tracker, Target) Snapshot, resolveKey func(provider, acct string) string, every time.Duration, client *http.Client, now func() time.Time) *Tracker {
 	if every <= 0 {
 		every = pollEvery
 	}
@@ -152,6 +157,7 @@ func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(con
 	t := &Tracker{
 		targets:     targets,
 		onExhausted: onExhausted,
+		resolveKey:  resolveKey,
 		client:      client,
 		now:         now,
 		every:       every,
@@ -198,17 +204,20 @@ func (t *Tracker) Inherit(o *Tracker) {
 	if t == nil || o == nil {
 		return
 	}
-	keep := make(map[string]struct{}, len(t.targets))
+	prefixes := make(map[string]struct{}, len(t.targets))
 	for _, tgt := range t.targets {
-		keep[tgt.Provider+"\x00"+tgt.AcctName] = struct{}{}
+		prefixes[tgt.Provider+"\x00"+tgt.AcctName+"\x00"] = struct{}{}
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for key, snap := range o.snaps {
-		if _, ok := keep[key]; ok {
-			t.snaps[key] = snap
+		for prefix := range prefixes {
+			if strings.HasPrefix(key, prefix) {
+				t.snaps[key] = snap
+				break
+			}
 		}
 	}
 }
@@ -235,6 +244,11 @@ func (t *Tracker) poll() {
 		wg.Add(1)
 		go func(tgt Target) {
 			defer wg.Done()
+			if t.resolveKey != nil {
+				if k := t.resolveKey(tgt.Provider, tgt.AcctName); k != "" {
+					tgt.AcctKey = k
+				}
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 			defer cancel()
 			var snap Snapshot
@@ -243,8 +257,18 @@ func (t *Tracker) poll() {
 			} else {
 				snap = t.probeHTTP(ctx, tgt)
 			}
-			key := tgt.Provider + "\x00" + tgt.AcctName
+			sum := fnv.New32a()
+			_, _ = sum.Write([]byte(tgt.AcctKey))
+			prefix := tgt.Provider + "\x00" + tgt.AcctName + "\x00"
+			key := prefix + strconv.FormatUint(uint64(sum.Sum32()), 16)
 			t.mu.Lock()
+			// One snapshot per (provider, account): a rotated key lands
+			// under a new hash and replaces the old entry outright.
+			for k := range t.snaps {
+				if k != key && strings.HasPrefix(k, prefix) {
+					delete(t.snaps, k)
+				}
+			}
 			t.snaps[key] = snap
 			t.mu.Unlock()
 			t.parkIfExhausted(tgt, snap)
