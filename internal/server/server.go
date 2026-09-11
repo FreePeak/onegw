@@ -257,7 +257,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		// classifier changed (model field = client model, kind =
 		// "task_routing", err = decision detail).
 		rt.TaskLog = func(model, detail string) {
-			s.observeLog("", model, "", 0, "task_routing", types.Usage{}, 0, detail, 0, 0)
+			s.observeLog("", model, "", 0, "task_routing", types.Usage{}, 0, detail, 0, 0, 0, 0)
 		}
 	}
 	rt.SetAliases(cfg.Aliases)
@@ -456,6 +456,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !ok {
 		return
 	}
+	d := &delivery{start: time.Now(), model: s.boundedModel(model)}
 	s.inflight.Add(1)
 	defer s.inflight.Add(-1)
 	release, ok := s.acquireForBody(r)
@@ -494,7 +495,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execCtx := router.WithIdentity(r.Context(), requestIdentity(r.Header, ak))
+	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -519,6 +520,8 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !ok {
 		return
 	}
+	d := &delivery{start: time.Now()}
+
 	s.inflight.Add(1)
 	defer s.inflight.Add(-1)
 	// Opt-in streaming passthrough: relay same-format bodies without a
@@ -545,6 +548,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	}
 	model := peekModel(body)
 	stream := peekStream(body)
+	d.model = s.boundedModel(model)
 	if !s.enforceRateLimits(w, clientFmt, ak) {
 		return
 	}
@@ -569,7 +573,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
-	execCtx := router.WithIdentity(r.Context(), requestIdentity(r.Header, ak))
+	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -924,7 +928,25 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 	if q := s.cur().quota; q != nil {
 		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
 	}
-	s.m.success(def.Name, model, acctName(res.Acct), rec, savedTokens, ms, tps)
+	// Client-experienced delivery: the winning attempt's output tokens
+	// over the WHOLE request wall (handler entry -> now), failed attempts,
+	// account rotations and backoff included — the throughput the client
+	// (omp) actually received. Folded into the per-client-model EWMA and
+	// stamped on the ring row alongside the decode pair.
+	e2eMs, dtps := int64(0), 0.0
+	if d := deliveryFrom(ctx); d != nil && rec.OutputTokens > 0 {
+		wall := time.Since(d.start)
+		ttft := res.FirstByte.Sub(d.start)
+		if ttft < 0 {
+			ttft = 0
+		}
+		if wall > 0 {
+			e2eMs = wall.Milliseconds()
+			dtps = float64(rec.OutputTokens) / wall.Seconds()
+			s.m.delivered.observe(d.model, rec.OutputTokens, wall, ttft, time.Now())
+		}
+	}
+	s.m.success(def.Name, model, acctName(res.Acct), rec, savedTokens, ms, tps, e2eMs, dtps)
 	return nil
 }
 

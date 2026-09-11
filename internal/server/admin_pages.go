@@ -240,6 +240,10 @@ type logEntry struct {
 	// tokens/sec (0 when unknown — failures, synthetic replies).
 	Ms  int64   `json:"ms,omitempty"`
 	Tps float64 `json:"tps,omitempty"`
+	// End-to-end client view of the winning attempt: whole-request wall in
+	// ms and delivered tok/s (0 when the request had no delivery context).
+	E2EMs int64   `json:"e2e_ms,omitempty"`
+	DTps  float64 `json:"dtps,omitempty"`
 }
 
 type requestLog struct {
@@ -320,14 +324,14 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 
 // observeLog is the single hook the proxy paths call on completion.
 // ms/tps carry the decode phase's duration and tokens/sec (0 = unknown).
-func (s *Server) observeLog(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64) {
+func (s *Server) observeLog(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64, e2eMs int64, dtps float64) {
 	if s.reqlog == nil {
 		return
 	}
 	s.reqlog.record(logEntry{
 		TS: time.Now().Unix(), Model: model, Provider: provider, Account: acct, Code: code, Kind: kind,
 		In: u.InputTokens, Out: u.OutputTokens, CacheRead: u.CacheReadTokens, Saved: saved, Err: errMsg,
-		Ms: ms, Tps: tps,
+		Ms: ms, Tps: tps, E2EMs: e2eMs, DTps: dtps,
 	})
 }
 

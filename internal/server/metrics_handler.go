@@ -28,6 +28,10 @@ type gatewayMetrics struct {
 	budgetCap  *metrics.Family // onegw_budget_cap_bytes
 	uptime     *metrics.Family // onegw_uptime_seconds
 	provTPS    *metrics.Family // onegw_provider_tokens_per_second_x100
+	clientTPS  *metrics.Family // onegw_client_delivered_tokens_per_second_x100
+	clientTTFT *metrics.Family // onegw_client_tokens_to_first_byte_ms
+
+	delivered *deliveredTracker // client-experienced tok/s + TTFT per client model
 }
 
 func newGatewayMetrics() *gatewayMetrics {
@@ -43,12 +47,19 @@ func newGatewayMetrics() *gatewayMetrics {
 		budgetCap:  reg.Gauge("onegw_budget_cap_bytes", "Capacity of the global buffered-memory budget in bytes."),
 		uptime:     reg.Gauge("onegw_uptime_seconds", "Seconds since the gateway process started."),
 		provTPS:    reg.Gauge("onegw_provider_tokens_per_second_x100", "Decode-speed EWMA (output tokens/sec) per provider, scaled x100 (int64 registry); refreshed at scrape, absent until the provider served streaming replies.", "provider"),
+		clientTPS:  reg.Gauge("onegw_client_delivered_tokens_per_second_x100", "Delivered tokens/sec EWMA per CLIENT model (output tokens of the winning attempt over the whole request wall time — failed attempts, rotation and backoff included), scaled x100 (int64 registry); refreshed at scrape, absent until the model served >=4 output tokens.", "model"),
+		clientTTFT: reg.Gauge("onegw_client_tokens_to_first_byte_ms", "First-byte TTFT EWMA in ms per CLIENT model (handler entry -> first upstream byte; failed attempts, rotation and backoff all land in it); refreshed at scrape.", "model"),
+
+		delivered: &deliveredTracker{},
 	}
 }
 
 // success records one completed upstream attempt and its token accounting.
 // Called exactly where usage.Observe runs so /metrics and /admin/usage agree.
-func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, savedTokens int64, ms int64, tps float64) {
+// e2eMs/dtps carry the CLIENT view on successful rows (0 when the
+// request had no delivery context): the winning attempt's tokens over the
+// whole request wall, matched with the decode pair ms/tps above.
+func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, savedTokens int64, ms int64, tps float64, e2eMs int64, dtps float64) {
 	m.requests.Inc(provider, model, "200")
 	for _, e := range [...]struct {
 		typ string
@@ -65,7 +76,7 @@ func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, sa
 			m.tokens.Add(e.n, provider, model, e.typ)
 		}
 	}
-	m.logReq(provider, model, acct, 200, "", u, savedTokens, "", ms, tps)
+	m.logReq(provider, model, acct, 200, "", u, savedTokens, "", ms, tps, e2eMs, dtps)
 }
 
 // logReq routes one completion into the #19 ring; nil-safe because tests
@@ -74,9 +85,9 @@ func (m *gatewayMetrics) success(provider, model, acct string, u types.Usage, sa
 // "why" and not just "what" — it is diagnostic payload, not a secret:
 // it can contain model names, request ids, and upstream error prose.
 // ms/tps are the decode phase's duration and tokens/sec (0 when unknown).
-func (m *gatewayMetrics) logReq(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64) {
+func (m *gatewayMetrics) logReq(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64, e2eMs int64, dtps float64) {
 	if m.srv != nil {
-		m.srv.observeLog(provider, model, acct, code, kind, u, saved, truncErr(errMsg), ms, tps)
+		m.srv.observeLog(provider, model, acct, code, kind, u, saved, truncErr(errMsg), ms, tps, e2eMs, dtps)
 	}
 }
 
@@ -125,7 +136,7 @@ func (m *gatewayMetrics) upstreamErr(provider, model, acct string, herr *types.A
 	}
 	m.requests.Inc(provider, model, strconv.Itoa(status))
 	m.errors.Inc(provider, "upstream_error")
-	m.logReq(provider, model, acct, status, kind, types.Usage{}, 0, msg, 0, 0)
+	m.logReq(provider, model, acct, status, kind, types.Usage{}, 0, msg, 0, 0, 0, 0)
 }
 
 // boundedModel clamps a routed model string to config-defined routes
@@ -147,7 +158,7 @@ func (s *Server) boundedModel(model string) string {
 func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 	m.requests.Inc("", "unresolved", strconv.Itoa(status))
 	m.errors.Inc("", "no_route")
-	m.logReq("", "", "", status, "no_route", types.Usage{}, 0, errMsg, 0, 0)
+	m.logReq("", "", "", status, "no_route", types.Usage{}, 0, errMsg, 0, 0, 0, 0)
 }
 
 // saturated records a request rejected because the buffered-memory budget
@@ -155,13 +166,13 @@ func (m *gatewayMetrics) noRoute(status int, errMsg string) {
 func (m *gatewayMetrics) saturated() {
 	m.requests.Inc("", "", "503")
 	m.errors.Inc("", "budget_saturated")
-	m.logReq("", "", "", 503, "budget_saturated", types.Usage{}, 0, "", 0, 0)
+	m.logReq("", "", "", 503, "budget_saturated", types.Usage{}, 0, "", 0, 0, 0, 0)
 }
 
 // tooLarge records a request rejected because its body exceeded the body cap.
 func (m *gatewayMetrics) tooLarge() {
 	m.requests.Inc("", "", "413")
-	m.logReq("", "", "", 413, "no_route", types.Usage{}, 0, "", 0, 0)
+	m.logReq("", "", "", 413, "no_route", types.Usage{}, 0, "", 0, 0, 0, 0)
 }
 
 // invalidBody records an attempt aborted before the upstream call because
@@ -169,7 +180,7 @@ func (m *gatewayMetrics) tooLarge() {
 // It is a client-side 400, not one of the three error kinds.
 func (m *gatewayMetrics) invalidBody(provider, model, acct, errMsg string) {
 	m.requests.Inc(provider, model, "400")
-	m.logReq(provider, model, acct, 400, "", types.Usage{}, 0, errMsg, 0, 0)
+	m.logReq(provider, model, acct, 400, "", types.Usage{}, 0, errMsg, 0, 0, 0, 0)
 }
 
 // handleMetrics serves GET /metrics in the Prometheus text exposition
@@ -205,6 +216,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			if d, ok := st.pool.Get(name); ok && !d.Disabled {
 				m.provTPS.Set(int64(d.ProviderTPS()*100), name)
 			}
+		}
+	}
+	if m.delivered != nil {
+		for _, r := range m.delivered.rows() {
+			m.clientTPS.Set(int64(r.TPS*100), r.Model)
+			m.clientTTFT.Set(int64(r.TTFTMs), r.Model)
 		}
 	}
 
