@@ -148,6 +148,13 @@ type ProviderCfg struct {
 	// "/") that reason unconditionally upstream and reject
 	// disable-thinking knobs; see README.
 	AlwaysThinking []string `toml:"always_thinking"`
+	// NoThinking lists model globs (path.Match; "*" does not cross "/")
+	// whose upstreams have NO thinking mode and reject reasoning knobs
+	// entirely — kilo's openrouter gateway duplicates reasoning_effort
+	// into reasoning.effort and 400s "conflicting values" on any value
+	// (live 2026-09-11). The server strips reasoning_effort/thinking/
+	// enable_thinking outright instead of coercing them.
+	NoThinking []string `toml:"no_thinking"`
 
 	// CacheProfile opts the provider into upstream prompt-cache anchoring
 	// (issue #34): "" or "none" (default) forwards request bodies
