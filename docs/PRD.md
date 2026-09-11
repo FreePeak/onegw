@@ -1,3 +1,10 @@
+*Last updated: 2026-09-11 (rotation follow-ups MERGED + DEPLOYED — 225625a, live pid 10264):
+PR #86 merged on GitHub; the main tree synced to origin/master (peer WIP preserved on
+wip/peer-snapshot-20260911-182333 + /tmp patches); zero-drop deployed via scripts/deploy.sh
+(markers ok, single listener 10264, health x2, live probe 200). All four features live:
+config-off by default except #80's terminal classification (a 402 vendor answer now
+permanently benches the key). The #79 subscription tracker continues unchanged. Earlier:
+
 *Last updated: 2026-09-11 (rotation follow-ups implemented in PR #86 — #80 terminal billing refusals, #81 selection strategies, #82 sticky round-robin combos, #84 tunable rotation policy):
 one branch, four features, **nothing deployed and no live config touched** — the running gateway was
 verified untouched by lsof before and after the evidence run, which used a scratch instance on
@@ -1692,9 +1699,9 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
-| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
-| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
-| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **implemented, PR #86 (pending merge)**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |
 | #84 | Make rotation policy configurable (cooldown base/cap, flap threshold/window, model-bench TTL, per-status rotate-after-N-in-window) — **partially implemented, PR #86 (pending merge)**: the five cooldown/threshold/TTL knobs ship (global `[rotation]` + `[providers.rotation]`, shipped values as defaults, config-off by default); the **per-status rotate-after-N-in-window gate is NOT included** (it changes failure semantics; the shipped default is rotate-immediately, so it only matters for an orchestrator damping rotation) — tracked as remaining scope on this issue | OmniRoute rotation research 2026-09-11 |
 
