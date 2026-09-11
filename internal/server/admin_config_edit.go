@@ -233,11 +233,12 @@ type tomlBlock struct{ start, end int }
 // ---------------------------------------------------------------------------
 // scanBlocks returns every block of the exact section header (e.g.
 // "[[providers]]", "[[combo]]"). A block extends through nested
-// sub-tables of the same section ("[[providers.accounts]]") and ends at
-// the next different header line or EOF. Comment lines never start
+// sub-tables of the same section — "[[providers.accounts]]" and
+// "[providers.extra_headers]" alike — and ends at the next different
+// header line or EOF. Comment lines never start
 // blocks (headers must begin with "[").
 func scanBlocks(lines []string, header string) []tomlBlock {
-	nested := strings.TrimSuffix(header, "]]") + "." // "[[providers."
+	root := strings.Trim(header, "[]") + "." // "[[providers]]" → "providers."
 	var out []tomlBlock
 	cur := -1
 	for i, ln := range lines {
@@ -251,8 +252,10 @@ func scanBlocks(lines []string, header string) []tomlBlock {
 				out = append(out, tomlBlock{cur, i})
 			}
 			cur = i
-		case strings.HasPrefix(t, nested):
-			// nested sub-table ([[providers.accounts]]) — part of the block
+		case strings.HasPrefix(t, "[["+root) || strings.HasPrefix(t, "["+root):
+			// nested sub-table of the same section, either bracket form
+			// ("[[providers.accounts]]", "[providers.extra_headers]") —
+			// part of the block (cursor's machineId lives in the latter)
 		default:
 			if cur >= 0 {
 				out = append(out, tomlBlock{cur, i})
@@ -375,6 +378,12 @@ func parseAccounts(block []string) map[string]config.Acct {
 
 // editProviderBlock applies the managed upserts to one block's lines.
 func editProviderBlock(block []string, req providerEditReq, old map[string]config.Acct) []string {
+	// Strip the old account tables first: their stranded content is hoisted
+	// into the top region, so the upserts below replace the hoisted
+	// `models` line in place instead of writing a second copy.
+	if req.Accounts != nil {
+		block = removeAccountTables(block)
+	}
 	block = upsertScalar(block, "kind", tsv("kind", req.Kind))
 	if req.BaseURL != "" {
 		block = upsertScalar(block, "base_url", tsv("base_url", req.BaseURL))
@@ -414,9 +423,8 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 	} else {
 		block = removeScalar(block, "quota_limit_requests")
 	}
-	// accounts: rewrite the nested sub-tables when the request carries any
+	// accounts: re-render the nested sub-tables when the request carries any
 	if req.Accounts != nil {
-		block = removeAccountTables(block)
 		for _, a := range req.Accounts {
 			key := a.APIKey
 			if key == "" {
@@ -480,10 +488,11 @@ func removeScalar(block []string, key string) []string {
 }
 
 // topRegionEnd returns the index of the first nested-table header in the
-// block (or len(block)).
+// block (or len(block)). Any header form counts: a key below
+// "[providers.extra_headers]" belongs to that table, not to the provider.
 func topRegionEnd(block []string) int {
 	for i := 1; i < len(block); i++ {
-		if strings.HasPrefix(strings.TrimSpace(block[i]), "[[") {
+		if strings.HasPrefix(strings.TrimSpace(block[i]), "[") {
 			return i
 		}
 	}
@@ -491,24 +500,56 @@ func topRegionEnd(block []string) int {
 }
 
 // removeAccountTables strips every [[providers.accounts]] sub-table from
-// the block (they are re-rendered from the request).
+// the block (they are re-rendered from the request). Only content an Acct
+// actually models is dropped: a hand-written config can leave comments or
+// provider-level knobs below an account header — where TOML silently
+// re-parents them into that account — and those lines are hoisted back
+// into the block's top-level region instead of being deleted with it.
 func removeAccountTables(block []string) []string {
-	var out []string
-	skipping := false
+	var out, hoisted []string
+	inAcct := false
 	for _, ln := range block {
 		t := strings.TrimSpace(ln)
-		if strings.HasPrefix(t, "[") {
-			skipping = t == "[[providers.accounts]]"
-			if skipping {
-				continue
+		if strings.HasPrefix(t, "[") { // any header ends the account region
+			inAcct = t == "[[providers.accounts]]"
+			if !inAcct {
+				out = append(out, ln)
 			}
-		}
-		if skipping {
 			continue
 		}
-		out = append(out, ln)
+		if !inAcct {
+			out = append(out, ln)
+			continue
+		}
+		if t == "" || isAcctField(t) {
+			continue // re-rendered from the request
+		}
+		hoisted = append(hoisted, ln)
 	}
-	return out
+	if len(hoisted) == 0 {
+		return out
+	}
+	// Hoisted lines join the top-level region, where the scalar upserts
+	// see them (and TOML gives them back to the provider).
+	top := topRegionEnd(out)
+	res := make([]string, 0, len(out)+len(hoisted))
+	res = append(res, out[:top]...)
+	res = append(res, hoisted...)
+	return append(res, out[top:]...)
+}
+
+// isAcctField reports whether a trimmed line sets one of config.Acct's
+// fields — the only content removeAccountTables may drop.
+func isAcctField(t string) bool {
+	eq := strings.Index(t, "=")
+	if eq <= 0 {
+		return false
+	}
+	switch strings.TrimSpace(t[:eq]) {
+	case "name", "api_key", "base_url", "weight", "rpm":
+		return true
+	}
+	return false
 }
 
 func renderAccountTable(a acctEdit, key string) []string {

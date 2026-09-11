@@ -88,3 +88,24 @@ func TestValidateComboStrategy(t *testing.T) {
 		}
 	}
 }
+
+// Duplicate account names inside one provider shadow each other in the
+// account pool — a silent config corruption (a dashboard splice once
+// produced exactly this shape and validated fine). Reject loudly.
+func TestValidateRejectsDuplicateAccountName(t *testing.T) {
+	mk := func(acctName string) *Config {
+		return &Config{Providers: []ProviderCfg{{
+			Name: "p", Kind: "openai", APIKey: "sk-x",
+			Accounts: []Acct{
+				{Name: acctName, APIKey: "sk-1"},
+				{Name: acctName, APIKey: "sk-2"},
+			},
+		}}}
+	}
+	if err := mk("acct").Validate(); err == nil || !strings.Contains(err.Error(), "duplicate account") {
+		t.Fatalf("duplicate account name must be rejected, got %v", err)
+	}
+	if err := mk("").Validate(); err != nil {
+		t.Fatalf("nameless accounts are out of scope, got %v", err)
+	}
+}

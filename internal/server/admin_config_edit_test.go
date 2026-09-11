@@ -363,3 +363,159 @@ func TestDisabledProviderNotAdvertised(t *testing.T) {
 		t.Fatalf("live config not disabled: %+v", st)
 	}
 }
+
+// editNestedToml mirrors the two block shapes that exist in the live
+// onegw.toml — and that the line-based splicers corrupted:
+//
+//	ph — a SINGLE-bracket nested table ([providers.extra_headers], the
+//	     cursor provider's machineId) between the provider keys and its
+//	     accounts;
+//	ps — provider knobs (always_thinking, models) stranded AFTER its
+//	     [[providers.accounts]] tables, where TOML silently re-parents them
+//	     into the last account instead of the provider.
+const editNestedToml = `# gateway config (nested-table edit fixture)
+[server]
+data_dir = "memory"
+admin_password = "pw-test"
+
+[auth]
+keys = ["key-a"]
+
+[[providers]]
+name = "ph"
+kind = "openai"
+base_url = "http://ph.local"
+# machineId pins the account identity — hand-set comment
+[providers.extra_headers]
+x-machine-id = "mid-1"
+
+[[providers.accounts]]
+name = "acct-h"
+# session token — hand-set comment
+api_key = "sk-test-acct-h-secret"
+
+# --- the next provider is documented by this comment ---
+[[providers]]
+name = "ps"
+kind = "openai"
+base_url = "http://ps.local"
+[[providers.accounts]]
+name = "acct-s1"
+api_key = "sk-test-acct-s1-secret"
+[[providers.accounts]]
+name = "acct-s2"
+api_key = "sk-test-acct-s2-secret"
+# hand-set provider knobs, stranded below the accounts
+always_thinking = ["glm-5.3*"]
+models = ["s1"]
+`
+
+// The cursor-shaped block: a Save must splice exactly ONE account table
+// (carrying the on-disk key over), keep the single-bracket nested table,
+// and drop nothing.
+func TestProviderEditNestedSingleBracketTable(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editNestedToml)
+
+	body := `{"name":"ph","kind":"openai","base_url":"http://ph.local","models":["h1"],"accounts":[{"name":"acct-h"}]}`
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT ph: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if got := strings.Count(file, `name = "acct-h"`); got != 1 {
+		t.Fatalf("acct-h tables = %d, want 1 (save duplicated the account):\n%s", got, file)
+	}
+	for _, want := range []string{
+		`api_key = "sk-test-acct-h-secret"`, // key carried over: the account sits below the nested table
+		"[providers.extra_headers]",
+		`x-machine-id = "mid-1"`,
+		"# machineId pins the account identity — hand-set comment",
+		"# session token — hand-set comment", // account comment preserved, not dropped
+	} {
+		if !strings.Contains(file, want) {
+			t.Fatalf("file missing %q after save:\n%s", want, file)
+		}
+	}
+	ph := srv.cur().cfg.Providers[0]
+	if len(ph.Accounts) != 1 || ph.Accounts[0].APIKey != "sk-test-acct-h-secret" {
+		t.Fatalf("reloaded ph accounts: %+v", ph.Accounts)
+	}
+	if ph.ExtraHeader["x-machine-id"] != "mid-1" || len(ph.Models) != 1 || ph.Models[0] != "h1" {
+		t.Fatalf("reloaded ph lost nested table or models: %+v", ph)
+	}
+
+	// Saving the same form again must not grow the mess: idempotent output.
+	w = adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second PUT ph: %d %s", w.Code, w.Body.String())
+	}
+	if again := mustReadFile(t, path); again != file {
+		t.Fatalf("second save changed the file:\n%s", diffLines(file, again))
+	}
+}
+
+// The opencode-shaped block: knobs stranded inside the last account table
+// are provider keys by intent — a Save must return them to provider scope
+// instead of deleting them or writing a second copy above.
+func TestProviderEditStrandedKeysRehoisted(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editNestedToml)
+
+	// Precondition: TOML has already re-parented them, so the live provider
+	// has neither models nor always_thinking.
+	if got := srv.cur().cfg.Providers[1]; len(got.Models) != 0 || len(got.AlwaysThinking) != 0 {
+		t.Fatalf("fixture no longer reproduces the stranding: %+v", got)
+	}
+
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"ps","kind":"openai","base_url":"http://ps.local","models":["s1","s2"],"accounts":[{"name":"acct-s1"},{"name":"acct-s2"}]}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT ps: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if got := strings.Count(file, "always_thinking"); got != 1 {
+		t.Fatalf("always_thinking lines = %d, want 1 (deleted or duplicated by save):\n%s", got, file)
+	}
+	if got := strings.Count(file, "models = "); got != 1 {
+		t.Fatalf("models lines = %d, want 1 (save wrote a second copy):\n%s", got, file)
+	}
+	ps := srv.cur().cfg.Providers[1]
+	if len(ps.AlwaysThinking) != 1 || ps.AlwaysThinking[0] != "glm-5.3*" {
+		t.Fatalf("reloaded ps lost always_thinking: %+v", ps)
+	}
+	if strings.Join(ps.Models, ",") != "s1,s2" {
+		t.Fatalf("reloaded ps models: %v", ps.Models)
+	}
+	if len(ps.Accounts) != 2 || ps.Accounts[0].APIKey != "sk-test-acct-s1-secret" || ps.Accounts[1].APIKey != "sk-test-acct-s2-secret" {
+		t.Fatalf("reloaded ps accounts: %+v", ps.Accounts)
+	}
+}
+
+// The on/off toggle on a block that owns a nested table: exactly one
+// `disabled` key appears in that block only, and toggling back restores
+// the file byte-for-byte.
+func TestProviderDisabledToggleNestedRoundTrip(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editNestedToml)
+	before := mustReadFile(t, path)
+
+	if w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/ph/disabled", `{"disabled":true}`, true); w.Code != http.StatusOK {
+		t.Fatalf("PATCH disable: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if got := strings.Count(file, "disabled = true"); got != 1 {
+		t.Fatalf("disabled lines = %d, want 1:\n%s", got, file)
+	}
+	st := srv.cur().cfg.Providers
+	if !st[0].Disabled {
+		t.Fatalf("ph not disabled after toggle: %+v", st[0])
+	}
+	if st[1].Disabled {
+		t.Fatalf("toggle leaked into ps: %+v", st[1])
+	}
+
+	if w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/ph/disabled", `{"disabled":false}`, true); w.Code != http.StatusOK {
+		t.Fatalf("PATCH enable: %d %s", w.Code, w.Body.String())
+	}
+	if got := mustReadFile(t, path); got != before {
+		t.Fatalf("toggle round trip not byte-exact:\n%s", diffLines(before, got))
+	}
+}
