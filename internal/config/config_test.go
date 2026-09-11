@@ -109,3 +109,28 @@ func TestValidateRejectsDuplicateAccountName(t *testing.T) {
 		t.Fatalf("nameless accounts are out of scope, got %v", err)
 	}
 }
+
+// Quota windows accept the calendar kinds plus any positive Go duration
+// ("5h", "48h", "90m") — the per-provider dynamic reset the enforcement
+// gate parks on. Junk must fail loudly (a silently mis-parsed window
+// would track nothing or park forever).
+func TestValidateQuotaWindow(t *testing.T) {
+	// "" is off — legal only without limits (limits need a window).
+	c0 := &Config{Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k"}}}
+	if err := c0.Validate(); err != nil {
+		t.Errorf("off window must pass, got %v", err)
+	}
+	for _, w := range []string{"5h", "48h", "90m", "daily", "weekly", "monthly"} {
+		c := &Config{Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", QuotaWindow: w, QuotaLimitRequests: 1}}}
+		if err := c.Validate(); err != nil {
+			t.Errorf("quota_window %q must pass, got %v", w, err)
+		}
+	}
+	for _, w := range []string{"1month", "0h", "-48h", "weeklyy", "monthlyy"} {
+		c := &Config{Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", QuotaWindow: w, QuotaLimitRequests: 1}}}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "quota_window") {
+			t.Errorf("quota_window %q must be rejected naming the knob, got %v", w, err)
+		}
+	}
+}

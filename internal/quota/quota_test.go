@@ -250,3 +250,101 @@ func Test5hFirstSeenAnchorsWindow(t *testing.T) {
 		t.Fatalf("window should still be the first one: %+v", st)
 	}
 }
+
+// TestWindowMonthlyCalendar checks the default monthly grid: calendar
+// months bounded at the 1st, 00:00 UTC.
+func TestWindowMonthlyCalendar(t *testing.T) {
+	l := Limits{Window: Monthly}
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	start, end := currentWindow(l, time.Time{}, now)
+	want := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	if !start.Equal(want) || !end.Equal(want.AddDate(0, 1, 0)) {
+		t.Fatalf("monthly window wrong: %v..%v", start, end)
+	}
+	// The last minute of August is still August's window.
+	prev, _ := currentWindow(l, time.Time{}, want.Add(-time.Minute))
+	if !prev.Equal(want.AddDate(0, -1, 0)) {
+		t.Fatalf("pre-boundary should be August, got %v", prev)
+	}
+}
+
+// TestWindowMonthlyAnchorPhaseClamp checks an anchored monthly grid: the
+// anchor's day-of-month phases the resets, clamped to shorter months (a
+// 31st anchor must never produce a phantom Feb 31).
+func TestWindowMonthlyAnchorPhaseClamp(t *testing.T) {
+	a := time.Date(2026, 1, 31, 9, 0, 0, 0, time.UTC)
+	l := Limits{Window: Monthly, Anchor: a}
+	// Mid-Feb: inside Jan 31 09:00 → Feb 28 09:00.
+	start, end := currentWindow(l, a, time.Date(2026, 2, 27, 12, 0, 0, 0, time.UTC))
+	if !start.Equal(a) || !end.Equal(time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("Feb window wrong: %v..%v", start, end)
+	}
+	// Feb 28 10:00 opens the clamped window itself, ending Mar 31 09:00.
+	start, end = currentWindow(l, a, time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC))
+	if !start.Equal(time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)) ||
+		!end.Equal(time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("clamped boundary window wrong: %v..%v", start, end)
+	}
+}
+
+// TestWindowCustomDuration checks that any positive Go duration becomes a
+// rolling grid on the 5h machinery: "48h" floors onto the anchor grid.
+func TestWindowCustomDuration(t *testing.T) {
+	l := Limits{Window: "48h"}
+	anchor := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	start, end := currentWindow(l, anchor, anchor.Add(49*time.Hour))
+	if !start.Equal(anchor.Add(48*time.Hour)) || !end.Equal(anchor.Add(96*time.Hour)) {
+		t.Fatalf("48h grid wrong: %v..%v", start, end)
+	}
+	// Junk specs track nothing.
+	for _, bad := range []string{"1month", "0h", "-5h", "weeklyy"} {
+		if s, _ := currentWindow(Limits{Window: bad}, anchor, anchor); !s.IsZero() {
+			t.Fatalf("invalid window %q must produce a zero window, got %v", bad, s)
+		}
+	}
+}
+
+// TestRolloverResetsExhaustion is the auto-resume contract at tracker
+// level for the dynamic kinds: a monthly window that exhausted mid-month
+// is clean at the 1st 00:00 UTC, and a "90m" rolling window is clean one
+// period after its grid start. The enforcement gate parks until WindowEnd,
+// so the counters resetting there is exactly when service resumes.
+func TestRolloverResetsExhaustion(t *testing.T) {
+	now := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
+	tr := New(map[string]Limits{
+		"mo":  {Window: Monthly, LimitRequests: 1},
+		"cus": {Window: "90m", LimitRequests: 1},
+	}, nil, time.Hour)
+	defer tr.Stop()
+	tr.Observe("mo", 0, 1, now)
+	tr.Observe("cus", 0, 1, now)
+	if st, _ := tr.Status("mo", now); !st.Exhausted {
+		t.Fatalf("monthly window should exhaust: %+v", st)
+	}
+	if st, _ := tr.Status("cus", now); !st.Exhausted {
+		t.Fatalf("90m window should exhaust: %+v", st)
+	}
+	// Monthly: resumes at the 1st of next month; 90m grid: one period on.
+	if st, _ := tr.Status("mo", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)); st.Exhausted || !st.WindowStart.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("monthly must roll at the 1st: %+v", st)
+	}
+	if st, _ := tr.Status("cus", now.Add(91*time.Minute)); st.Exhausted {
+		t.Fatalf("90m window must roll after 90m: %+v", st)
+	}
+}
+
+// TestInheritCarriesDynamicWindows: hot reload must keep a monthly
+// window's accumulated counters (a fresh month-start grid match).
+func TestInheritCarriesDynamicWindows(t *testing.T) {
+	now := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
+	limits := map[string]Limits{"mo": {Window: Monthly, LimitTokens: 100}}
+	old := New(limits, nil, time.Hour)
+	defer old.Stop()
+	old.Observe("mo", 60, 1, now)
+	tr := New(limits, nil, time.Hour)
+	defer tr.Stop()
+	tr.Inherit(old)
+	if st, _ := tr.Status("mo", now); st.UsedTokens != 60 || st.WindowStart.Day() != 1 {
+		t.Fatalf("reload lost the monthly window: %+v", st)
+	}
+}
