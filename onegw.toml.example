@@ -7,7 +7,10 @@ listen = "127.0.0.1:8080"      # loopback-only default; "0.0.0.0:8080" exposes t
 data_dir = "data"              # usage.db lives here; "memory" disables persistence
 max_body_bytes = 33554432      # 32 MiB per-request cap
 buffered_budget_bytes = 50331648 # 48 MiB global buffered-path budget
-admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides
+admin_password = ""            # ONEGW_ADMIN_PASSWORD overrides; if neither is
+                               # set, first boot generates a random password,
+                               # stores it in <data_dir>/admin_password (0600)
+                               # and prints it once in the startup log
 # Pre-first-byte upstream budget: dial + TLS + full request-body upload +
 # upstream prefill. 60s default aborts massive thinking-model prefills
 # (100-300K-token sessions) with "http2: timeout awaiting response headers".

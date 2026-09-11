@@ -254,6 +254,12 @@ type Config struct {
 	Aliases map[string]string `toml:"aliases"`
 	OAuth   OAuthCfg          `toml:"oauth"` // device-flow accounts; see oauth.go (#2)
 	Update  UpdateCfg         `toml:"update"`
+	// adminPwConfigured: the operator chose the admin password (config key,
+	// env, or a stored <data_dir>/admin_password); adminPwGenerated: this
+	// process minted and persisted it on first boot. Both unexported, so the
+	// TOML codec never sees them. See adminpw.go.
+	adminPwConfigured bool
+	adminPwGenerated  bool
 }
 
 // Defaults fills zero values with production-safe defaults.
@@ -271,10 +277,17 @@ func (c *Config) Defaults() {
 	if c.Server.BufferCap == 0 {
 		c.Server.BufferCap = 48 << 20
 	}
+	// Configuredness is recorded where the value is supplied, so the
+	// built-in fallback stays recognisable as "nobody chose a password"
+	// (adminpw.go): first boot then generates a real credential instead.
 	if c.Server.AdminPassword == "" {
-		c.Server.AdminPassword = os.Getenv("ONEGW_ADMIN_PASSWORD")
+		if v := os.Getenv("ONEGW_ADMIN_PASSWORD"); v != "" {
+			c.Server.AdminPassword = v
+		}
 	}
-	if c.Server.AdminPassword == "" {
+	if c.Server.AdminPassword != "" {
+		c.adminPwConfigured = true
+	} else {
 		c.Server.AdminPassword = "admin"
 	}
 	if c.Usage.FlushInterval == "" {
@@ -645,7 +658,11 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	anchorDataDir(&cfg, path)
-	cfg.Defaults()
+	cfg.Defaults() // records adminPwConfigured for a config key or env value
+	// Read-only tail (Load doubles as the config-edit validator, so it must
+	// never write): a password-less config adopts the credential an earlier
+	// boot stored under the data dir. Generation lives in startup.
+	cfg.UseStoredAdminPassword()
 	if err := cfg.Auth.decodeKeys(md); err != nil {
 		return nil, err
 	}
