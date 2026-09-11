@@ -457,6 +457,19 @@ func (c *Config) Validate() error {
 		if p.Kind != "searxng" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
 			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
 		}
+		// Two accounts with the same name silently shadow each other in the
+		// account pool and make every keyless carry-over edit ambiguous —
+		// reject the shape loudly (the config-edit splices rely on this).
+		seenAcct := make(map[string]bool, len(p.Accounts))
+		for _, a := range p.Accounts {
+			if a.Name == "" {
+				continue
+			}
+			if seenAcct[a.Name] {
+				return fmt.Errorf("provider %s duplicate account %s", p.Name, a.Name)
+			}
+			seenAcct[a.Name] = true
+		}
 		switch p.QuotaWindow {
 		case "", "5h", "daily", "weekly":
 		default:
