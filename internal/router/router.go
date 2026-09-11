@@ -478,15 +478,19 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 					break
 				}
 				if err.ReasoningEchoRequired() {
-					// DeepSeek thinking-mode echo refusal (commandcode
-					// 2026-09-10 seqs 2455/2621/2812: 400 "The
-					// `reasoning_content` in the thinking mode must be
-					// passed back to the API."). A deterministic body-contract
-					// 400: same-target retries replay the identical body and
-					// can only re-burn the pool, and the sibling combo legs
-					// (opencode/deepseek-v4-flash, tokenharbor) serve the same
-					// model family — fall through like the 404 verdict above;
-					// a direct route surfaces the 400 honestly.
+					// DeepSeek thinking-mode echo refusal (2026-09-10
+					// tokenharbor seqs 2455/2621/2812; 2026-09-11 opencode
+					// seqs 198/2666). attempt() grants ONE Fallbackable
+					// retry when the refusal newly teaches the model the
+					// echo contract — that retry carries synthesized
+					// reasoning_content, new information the first attempt
+					// lacked. Reaching this break means the contract was
+					// already known (config glob or earlier learn) and the
+					// filled body STILL refused: the body is byte-
+					// deterministic again, same-target retries can only
+					// re-burn the pool, and the sibling combo legs serve the
+					// same model family — fall through like the 404 verdict
+					// above; a direct route surfaces the 400 honestly.
 					break
 				}
 				return err

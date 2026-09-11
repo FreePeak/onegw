@@ -807,6 +807,26 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 				log.Printf("server: learned no-thinking %s/%s from upstream conflict 400; future requests strip effort upfront", def.Name, model)
 			}
 			apiErr.Fallbackable = true
+		} else if apiErr.ReasoningEchoRequired() {
+			// Fourth member of the learned-contract family (live
+			// opencode/deepseek-v4.1-flash 2026-09-11 seqs 198 and 2666):
+			// the DeepSeek thinking-mode echo refusal names a CONTRACT the
+			// gateway can satisfy — synthesizeReasoningEcho fills the
+			// assistant turns that carry no echo. The bounded retry is
+			// granted only when the fill is NEW information: a first-time
+			// learn (or a model the echo_reasoning globs do not yet cover)
+			// changes the body, while an already-known echo model replays
+			// byte-identically — marking those Fallbackable would burn
+			// MaxAttempts on every request and starve the router's
+			// ReasoningEchoRequired break, so they fall through to the
+			// next combo target immediately.
+			known := def.ReasoningEchoModel(model)
+			if def.LearnReasoningEcho(model) {
+				log.Printf("server: learned reasoning-echo %s/%s from upstream 400; future requests fill missing assistant echoes upfront", def.Name, model)
+			}
+			if !known {
+				apiErr.Fallbackable = true
+			}
 		}
 		return nil, apiErr
 	}

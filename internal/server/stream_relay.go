@@ -106,6 +106,11 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	t := res.Targets[0]
 	def, ok := st.pool.Get(t.Provider)
 	if !ok || def.UpstreamFormat(t.Model) != clientFmt || def.AlwaysThinkingModel(t.Model) ||
+		// Echo synthesis needs the buffered pipeline (2026-09-11): the
+		// raw fast path bypasses prepareUpstreamBody entirely, so an
+		// echo_reasoning or runtime-learned model must not ride it —
+		// the refusal would repeat on every client retry.
+		def.ReasoningEchoModel(t.Model) ||
 		// Cache-profile anchoring requires the buffered pipeline
 		// (issue #34): the raw fast path bypasses prepareUpstreamBody.
 		(def.CacheProfile != "" && def.CacheProfile != "none") ||
@@ -229,6 +234,17 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 			// consults AlwaysThinkingModel), where the body is coerced.
 			if def.LearnAlwaysThinking(t.Model) {
 				log.Printf("server: learned always-thinking %s/%s from upstream 400; future stream requests go buffered", def.Name, t.Model)
+			}
+		}
+		if apiErr.ReasoningEchoRequired() {
+			// Same medicine as always-thinking above: no replay is
+			// possible single-shot, but the learned flag reroutes every
+			// future stream request for this model to the buffered
+			// pipeline (the eligibility guard consults
+			// ReasoningEchoModel), where synthesizeReasoningEcho fills
+			// the missing echoes before the upstream call.
+			if def.LearnReasoningEcho(t.Model) {
+				log.Printf("server: learned reasoning-echo %s/%s from upstream 400; future stream requests go buffered", def.Name, t.Model)
 			}
 		}
 		if w.Header().Get("Content-Type") == "" {
