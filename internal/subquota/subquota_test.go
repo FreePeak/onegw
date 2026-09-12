@@ -129,13 +129,14 @@ func TestParseZaiErrors(t *testing.T) {
 }
 
 func TestParseCommandCodeWindows(t *testing.T) {
-	// Live-verified 2026-09-11 (GOAT plan, weekly window exhausted).
+	// Live-verified 2026-09-12 (GOAT plan, weekly window exhausted, credits
+	// pool 10.29 remaining of 70 total: spend 59.87 → 85% used).
 	body := []byte(`{"credits":{"belowThreshold":false,"creditThreshold":0,
 		"monthlyCredits":10.2868762875,"purchasedCredits":0,"freeCredits":0},
 		"windowLimits":{"limited":true,"exceeded":"weekly",
 		"fiveHour":{"used":0,"cap":14,"exceeded":false,"resetAt":0},
 		"weekly":{"used":35.0018639599,"cap":35,"exceeded":true,"resetAt":1789539876848}}}`)
-	windows, plan, err := parseCommandCode(body, 200)
+	windows, plan, err := parseCommandCode(body, 200, 59.86947193020002)
 	if err != "" {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -157,8 +158,13 @@ func TestParseCommandCodeWindows(t *testing.T) {
 	if windows[1].Resets == nil || windows[1].Resets.UnixMilli() != 1789539876848 {
 		t.Fatalf("weekly reset = %+v", windows[1].Resets)
 	}
-	if windows[2].Name != creditsWindow || windows[2].Used != 0 {
-		t.Fatalf("credits window = %+v (healthy pool must read 0%%, not invented)", windows[2])
+	if windows[2].Name != creditsWindow || windows[2].Used != 85 {
+		t.Fatalf("credits window = %+v (spend 59.87/70 total = 85.5%% floored to 85, not 0)", windows[2])
+	}
+	// The credits pool still has headroom — only the weekly window parks.
+	w, ok := (Snapshot{Windows: windows}).exhaustedWindow()
+	if !ok || w.Name != "Weekly window" {
+		t.Fatalf("want weekly exhausted, got %+v ok=%v", w, ok)
 	}
 }
 
@@ -166,7 +172,7 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 	// All three pools zero: nothing left to bill — parks.
 	drained, _, err := parseCommandCode([]byte(
 		`{"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":0},
-		"windowLimits":{"fiveHour":{"used":1,"cap":14}}}`), 200)
+		"windowLimits":{"fiveHour":{"used":1,"cap":14}}}`), 200, 6)
 	if err != "" {
 		t.Fatalf("drained pool errored: %s", err)
 	}
@@ -185,7 +191,7 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 	// Absent credits object must NOT fake a drained pool (shape change
 	// must fail open, never park a serving account).
 	noCredits, _, err := parseCommandCode([]byte(
-		`{"windowLimits":{"fiveHour":{"used":1,"cap":14}}}`), 200)
+		`{"windowLimits":{"fiveHour":{"used":1,"cap":14}}}`), 200, 5)
 	if err != "" || len(noCredits) != 1 {
 		t.Fatalf("absent credits = %+v err=%s, want single window, no error", noCredits, err)
 	}
@@ -198,7 +204,7 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 		{200, `{`},
 		{200, `{"windowLimits":null,"credits":null}`},
 	} {
-		if _, _, err := parseCommandCode([]byte(tc.body), tc.status); err == "" {
+		if _, _, err := parseCommandCode([]byte(tc.body), tc.status, 0); err == "" {
 			t.Fatalf("status %d body %.30s: want error", tc.status, tc.body)
 		}
 	}
@@ -209,15 +215,47 @@ func TestParseCommandCodeFloorsNearCap(t *testing.T) {
 	// read this as 100 and re-parked the account every poll cycle — the
 	// window is exhausted only when used >= cap.
 	windows, _, err := parseCommandCode([]byte(
-		`{"credits":{"monthlyCredits":5},"windowLimits":{"weekly":{"used":34.9,"cap":35}}}`), 200)
+		`{"credits":{"monthlyCredits":5},"windowLimits":{"weekly":{"used":34.9,"cap":35}}}`), 200, 0)
 	if err != "" {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	if windows[0].Name != "Weekly window" || windows[0].Used != 99 {
 		t.Fatalf("near-cap window = %+v, want floored 99 (not rounded 100)", windows[0])
 	}
+	// spend 0 = summary unavailable: the credits window keeps the old
+	// informational 0% (fail-open) instead of inventing a total.
+	if windows[1].Name != creditsWindow || windows[1].Used != 0 {
+		t.Fatalf("credits window without spend = %+v, want informational 0%%", windows[1])
+	}
 	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
 		t.Fatal("99.71% used must not park")
+	}
+}
+
+func TestParseCommandCodeCreditsPercent(t *testing.T) {
+	// Live-verified Go plan (linhdmn): spend 6.176 + remaining 3.824 →
+	// 61.8% used, floored 61; headroom remains, no park.
+	goPlan, _, err := parseCommandCode([]byte(
+		`{"credits":{"monthlyCredits":3.82358716,"purchasedCredits":0,"freeCredits":0},
+		"windowLimits":{"fiveHour":{"used":0,"cap":3},"weekly":{"used":0.00214221,"cap":6}}}`), 200, 6.17641284)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if got := goPlan[len(goPlan)-1]; got.Name != creditsWindow || got.Used != 61 {
+		t.Fatalf("credits window = %+v, want 61%% (spend 6.176 of 10.0)", got)
+	}
+	if _, ok := (Snapshot{Windows: goPlan}).exhaustedWindow(); ok {
+		t.Fatal("credits pool with headroom must not park")
+	}
+	// Over-counted spend cannot fabricate the drained park: the fraction
+	// floors below 100, so only remaining == 0 (or absent grant) parks.
+	over, _, err := parseCommandCode([]byte(
+		`{"credits":{"monthlyCredits":1},"windowLimits":{"fiveHour":{"used":0,"cap":3}}}`), 200, 1e6)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if got := over[len(over)-1]; got.Used != 99 {
+		t.Fatalf("credits window = %+v, want floored 99 (spend alone must not park)", got)
 	}
 }
 
@@ -388,9 +426,10 @@ func TestDefaultURLPerDialect(t *testing.T) {
 }
 
 func TestProbeCommandCodeEndToEnd(t *testing.T) {
-	// Full probe against a stub vendor: whoami grants no org, credits
-	// carries an exhausted weekly window, subscriptions labels the plan
-	// and stamps the credits reset. URL override = API base.
+	// Full probe against a stub vendor: whoami grants no org, usage/summary
+	// carries period spend, credits carries an exhausted weekly window,
+	// subscriptions labels the plan and stamps the credits reset. URL
+	// override = API base.
 	cc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer sk-cc" {
 			t.Errorf("commandcode probe auth = %q", got)
@@ -398,9 +437,14 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 		switch r.URL.Path {
 		case "/alpha/whoami":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "org": nil})
+		case "/alpha/usage/summary":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"totalCost": 59.86947193020002, "totalMonthlyCredits": 59.86947193020002,
+				"periodBasis": "billing-period",
+			})
 		case "/alpha/billing/credits":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"credits": map[string]any{"monthlyCredits": 10.28, "purchasedCredits": 0, "freeCredits": 0},
+				"credits": map[string]any{"monthlyCredits": 10.2868762875, "purchasedCredits": 0, "freeCredits": 0},
 				"windowLimits": map[string]any{
 					"limited": true, "exceeded": "weekly",
 					"fiveHour": map[string]any{"used": 0, "cap": 14, "exceeded": false, "resetAt": 0},
@@ -450,6 +494,11 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 	if credits == nil {
 		t.Fatalf("credits window missing: %+v", s.Windows)
 	}
+	// Summary spend turns the pool into a real percent: 59.87 of 70.16
+	// (spend + remaining) = 85.3%, floored 85 — not the old flat 0%.
+	if credits.Used != 85 {
+		t.Fatalf("credits used = %+v, want 85%% from summary spend", credits)
+	}
 	if credits.Resets == nil || credits.Resets.UTC().Format(time.RFC3339) != "2026-10-02T02:03:39Z" {
 		t.Fatalf("credits reset = %+v, want billing period end", credits.Resets)
 	}
@@ -465,14 +514,14 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 		t.Fatal("exhausted weekly window never parked the account")
 	}
 }
-
 func TestProbeCommandCodeSoftCallsFailOpen(t *testing.T) {
-	// whoami and subscriptions are enrichment: a 500 on either must NOT
-	// mark the snapshot failed (parkIfExhausted early-returns on Err, so
-	// a leak would silently stop parking while the credits call is fine).
+	// whoami, usage/summary and subscriptions are enrichment: a 500 on
+	// any must NOT mark the snapshot failed (parkIfExhausted early-returns
+	// on Err, so a leak would silently stop parking while the credits
+	// call is fine).
 	cc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/alpha/whoami", "/alpha/billing/subscriptions":
+		case "/alpha/whoami", "/alpha/usage/summary", "/alpha/billing/subscriptions":
 			http.Error(w, "boom", http.StatusInternalServerError)
 		case "/alpha/billing/credits":
 			_ = json.NewEncoder(w).Encode(map[string]any{
