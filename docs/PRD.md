@@ -1,3 +1,27 @@
+*Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 + 7eec788 on origin — code
+landed, live credential pending one browser approval): researched OmniRoute + 9router +
+xAI/OpenClaw docs to put the user's consumer SuperGrok plan behind onegw's xAI surfaces. One
+auth.x.ai device session (public client b1a00492-…, scope
+`offline_access grok-cli:access api:access`) serves BOTH api.x.ai (OpenAI chat-completions +
+/v1/responses; SuperGrok serves grok-4.5 on the Responses wire only — a chat body 422s
+"missing input") and cli-chat-proxy.grok.com (Grok Build, OAuth-JWT-only, fingerprint-gated).
+Landed: subquota dialect "grok-cli" (GET /v1/billing?format=credits with
+`x-grok-client-mode: cli` → the ONE shared weekly pool from `creditUsagePercent`; the
+productUsage array is a legend, never split into bars; reset from `currentPeriod.end`, plan
+label from the bearer JWT's `tier` claim at zero extra HTTP; percents floored so 99.6 % never
+parks); `[[oauth.accounts]] owner = "<prov>/<acct>"` so several provider entries share ONE
+stored session (xAI rotates device sessions — a second login would knock the first out; the
+borrower runs no refresh goroutine and a failed refresh cools every account on the key); and
+the two missing proxy fingerprint headers (`X-XAI-Token-Auth: xai-grok-cli`,
+`x-grok-cli-version`) on the openai-responses kind. The `cursor` provider is NOT reachable this
+way: api2.cursor.sh authenticates a Cursor WorkOS session JWT only (live: composer-2.5 +
+gemini-3.8-flash serve "OK"; every Grok id tried returns the upstream's empty-turn 502).
+Deployed 60b8f49 zero-drop (pid 81206): the Quota page's xai row already reports plan
+"Grok · SuperGrok" with the honest fail-open probe error until
+`onegw-oauth login -provider xai -account mnhatlinh.doan@gmail.com -data-dir ~/.onegw/data`
+completes (keepalive loop publishes a live code at /tmp/onegw-xai-code.txt; codes last ~15 min).
+Skipped deliberately: the grok.com cookie surface (sso+sso-rw behind Cloudflare TLS
+fingerprinting) and the vendor's weekly-pool gRPC credits probe. Earlier:)*
 *Last updated: 2026-09-12 23:20 (opencode-free WIRED INTO LIVE CONFIG — provider only, no combo
 change; reload 200 on pid 71565, zero drop): onegw.toml gained an `opencode-free` block (models
 pinned to the five keyless-200 ids; muse-spark-*-free deliberately excluded until the binary
