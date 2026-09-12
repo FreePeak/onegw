@@ -738,6 +738,35 @@ A refresh failure cools every account that resolves that key, and the Quota
 page's `parked` marker shows it. `onegw-oauth login` is always run against the
 **owner** entry.
 
+### Grok subscriptions (SuperGrok / Grok Build)
+
+A consumer **SuperGrok** (or X Premium/Premium+/SuperGrok Heavy) plan is
+reachable with one `auth.x.ai` device-code session — no API key and no
+per-token billing. xAI exposes that same session on two surfaces, and onegw
+can front either:
+
+| surface | base URL | wire | notes |
+|---|---|---|---|
+| Public Model API | `https://api.x.ai` | `kind = "openai"` (chat-completions) | needs scope `api:access` in the token; `grok-4.5` answers on `/v1/responses` only, so a chat-shaped body there fails with 422 `missing input` |
+| Grok Build proxy | `https://cli-chat-proxy.grok.com` | `kind = "openai-responses"` | OAuth JWT only (never an `xai-…` key with the plain client id), Responses wire, fingerprint headers `X-XAI-Token-Auth` + `x-grok-cli-version` + `x-grok-client-*` |
+
+```bash
+onegw-oauth login -provider xai -account you@example.com -data-dir ~/.onegw/data
+```
+
+The gateway stores the session in `oauth-tokens.json`, refreshes it ahead of
+expiry (xAI issues a 6 h `expires_in` but silently kills device tokens at
+~40-45 min, so the loop's default lead is deliberately aggressive), and
+`subscription_quota = "grok-cli"` surfaces the **shared weekly pool** on the
+Quota page — parking the account when that pool hits 100 % instead of
+burning doomed upstream attempts.
+
+Not supported, deliberately: the `grok.com` web surface (needs paired `sso` +
+`sso-rw` browser cookies behind Cloudflare TLS fingerprinting, and rotating
+them is a maintenance trap), and putting SuperGrok behind the `cursor`
+provider — `api2.cursor.sh` authenticates a Cursor session JWT only, and
+xAI's token carries no Cursor entitlement.
+
 ## Surfaces
 
 | Client speaks | Endpoint | Upstream kinds |
