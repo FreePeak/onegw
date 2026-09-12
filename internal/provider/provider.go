@@ -1970,7 +1970,11 @@ func (d *Def) Path(op, model string) string {
 		// model + method appended by caller (needs model name)
 		return ""
 	case KindOpenAIResponses:
-		// Grok CLI answers on the Responses endpoint only.
+		// Grok CLI answers on the Responses endpoint only; its catalog is
+		// the usual /v1/models (OmniRoute + 9router grok-cli modelsUrl).
+		if op == "models" {
+			return "/v1/models"
+		}
 		return "/v1/responses"
 	case KindCommandCode:
 		if op == "models" {
