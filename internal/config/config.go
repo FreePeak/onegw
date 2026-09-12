@@ -580,9 +580,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
 		}
 		switch p.SubscriptionQuota {
-		case "", "opencode-go", "zai", "zai-cn", "commandcode":
+		case "", "opencode-go", "zai", "zai-cn", "commandcode", "grok-cli":
 		default:
-			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai, zai-cn or commandcode)", p.Name, p.SubscriptionQuota)
+			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai, zai-cn, commandcode or grok-cli)", p.Name, p.SubscriptionQuota)
 		}
 		if err := validateRotation(p.Rotation, "provider "+p.Name+" rotation"); err != nil {
 			return err
