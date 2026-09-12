@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"onegw/internal/translat"
 )
 
 // The free tier advertises a curated keyless catalog (verified live
@@ -30,9 +32,20 @@ func TestOpenCodeFreeDefaults(t *testing.T) {
 	if DefaultModels(KindOpenCode) == nil {
 		t.Fatal("paid Go catalog must stay")
 	}
-	// Free tier has no Responses surface: every model routes to chat.
+	// Per-model routing (advisor follow-up, live-probed 2026-09-12: the
+	// muse-spark-*-free pair serves keyless on /zen/v1/responses, while
+	// big-pickle lives on chat-completions).
 	if got := (&Def{Kind: KindOpenCodeFree}).Path("chat", "big-pickle"); got != "/v1/chat/completions" {
 		t.Fatalf("free chat path = %q", got)
+	}
+	if got := (&Def{Kind: KindOpenCodeFree}).Path("chat", "muse-spark-1.3-contributor-free"); got != "/v1/responses" {
+		t.Fatalf("free muse-spark path = %q, want /v1/responses", got)
+	}
+	if got := (&Def{Kind: KindOpenCodeFree}).UpstreamFormat("muse-spark-1.2-contributor-free"); got != translat.FmtResponses {
+		t.Fatalf("free muse-spark format = %v, want FmtResponses", got)
+	}
+	if got := (&Def{Kind: KindOpenCodeFree}).UpstreamFormat("big-pickle"); got != translat.FmtOpenAI {
+		t.Fatalf("free big-pickle format = %v, want FmtOpenAI", got)
 	}
 }
 
