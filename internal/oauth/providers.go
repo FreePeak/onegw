@@ -28,6 +28,15 @@ type Provider struct {
 	Extra         map[string]string // form fields appended to the start request (e.g. referrer)
 	ClientID      string
 
+	// MaxTokenTTL caps the lifetime onegw trusts a token to have, no
+	// matter what the vendor's expires_in claims. xAI answers 21600 (6 h)
+	// for device-flow tokens but revokes them silently at ~40-45 min
+	// (9router's grok-cli login works around the same lie): believing 6 h
+	// means the refresh loop sleeps while every request 403s. It also
+	// stands in when a response carries no expires_in, which would
+	// otherwise read as "no expiry known" and refresh every tick.
+	MaxTokenTTL time.Duration
+
 	// KiloDialect switches the poller to Kilo Code's bespoke device-auth
 	// API (not RFC 8628): initiate POSTs the start URL and returns
 	// {code, verificationUrl, expiresIn}; polls are GETs against
@@ -55,6 +64,9 @@ func Lookup(name string) (Provider, bool) {
 			TokenURL:      "https://auth.x.ai/oauth2/token",
 			Scope:         "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write",
 			Extra:         map[string]string{"referrer": "grok-build"},
+			// SuperGrok device tokens die silently at ~40-45 min despite
+			// the 6 h expires_in, so trust 40 and let the loop rotate.
+			MaxTokenTTL: 40 * time.Minute,
 		}, true
 	case "kilocode":
 		return Provider{
@@ -174,10 +186,23 @@ func (r rfc8628) Poll(ctx context.Context, deviceCode string) (*Token, error) {
 		return nil, fmt.Errorf("%s token poll: no access_token in response", r.p.Name)
 	}
 	tok := Token{AccessToken: raw.AccessToken, RefreshToken: raw.RefreshToken, Scope: raw.Scope}
-	if raw.ExpiresIn > 0 {
-		tok.ExpiresAt = time.Now().Add(time.Duration(raw.ExpiresIn) * time.Second)
-	}
+	tok.ExpiresAt = tokenExpiry(time.Now(), raw.ExpiresIn, r.p.MaxTokenTTL)
 	return &tok, nil
+}
+
+// tokenExpiry turns a vendor expires_in into an instant, capped at the
+// profile's MaxTokenTTL: a vendor that overstates (xAI claims 6 h for
+// device tokens it revokes in ~45 min) or omits the field still gets a
+// lifetime onegw can refresh inside. Zero means "nothing to go on".
+func tokenExpiry(now time.Time, expiresIn int, maxTTL time.Duration) time.Time {
+	ttl := time.Duration(expiresIn) * time.Second
+	if maxTTL > 0 && (ttl <= 0 || ttl > maxTTL) {
+		ttl = maxTTL
+	}
+	if ttl <= 0 {
+		return time.Time{}
+	}
+	return now.Add(ttl)
 }
 
 // ---------------------------------------------------------------------------
