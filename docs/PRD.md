@@ -12,9 +12,10 @@ both call sites in TestGrokCliFingerprintHeaders. (3) Live config added provider
 `owner` borrow of the xai session, staged `disabled = true`: verified the disabled semantics are
 real — 503 `provider_disabled` on a direct hit, absent from /v1/models, combos unaffected (dev →
 "OK"), 12 providers after reload. It flips on only after a probe answers 200 through the gateway,
-and its model list will be pruned to what the catalog returns. Still awaiting the browser
-approval of the device code (keepalive loop publishes it at /tmp/onegw-xai-code.txt); until then
-the xai quota row honestly reports "Grok session token rejected" and fails open. Earlier:)*
+and its model list will be pruned to what the catalog returns. Remaining steps tracked as #89:
+the browser approval of a device code is still outstanding (keepalive loop publishes it at
+/tmp/onegw-xai-code.txt), and until then the xai quota row reports "Grok session token
+rejected" and fails open. Earlier:)*
 *Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 + 7eec788 on origin — code
 landed, live credential pending one browser approval): researched OmniRoute + 9router +
 xAI/OpenClaw docs to put the user's consumer SuperGrok plan behind onegw's xAI surfaces. One
