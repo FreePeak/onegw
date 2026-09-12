@@ -1,3 +1,38 @@
+*Last updated: 2026-09-12 (commandcode subscription quota fixed — credits window reports real
+period spend, zero-drop deployed pid 66474): the commandcode credits window always read 0% while
+the pool had headroom, because /alpha/billing/credits returns only REMAINING credits; the probe
+now also reads period spend from /alpha/usage/summary (soft-fail: totalCost, falling back to
+totalMonthlyCredits) and the window reports spend/(spend+remaining) — OmniRoute's totalCost math,
+which the original #79 port left unported (landed ad2c897). Live-verified: GOAT (harvey) 0% → 85%
+(spend 59.87 + remaining 10.29 = 70 pool), Go (linhdmn) 61% (6.18 + 3.82). Park discipline is
+unchanged and hardened — the fraction floors below 100, so spend alone can never fabricate the
+drained park (only remaining == 0 does), and the GOAT key's real parking signal remains the
+vendor's own weekly window (100%, reset 2026-09-16T06:24:36Z, confirmed by its 429 body). Quota
+dashboard: the subscription state column is now per-window (a parked account's healthy windows no
+longer read "exhausted") and parked accounts carry a "parked" pill in the account cell. Verified:
+unit + e2e pins (85% GOAT / 61% Go / no-false-park), full internal/server + internal/subquota
+suites green (except the pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine
+HEAD), zero-drop deploy with /admin/health, combo 200 through the new pid, and a post-reload
+subscription API re-read. Earlier:)*
+*Last updated: 2026-09-12 23:55 (CORRECTION to the opencode-free stamp below — the free tier DOES
+have a Responses surface): an advisor challenge pressed the "chat-completions only" claim and the
+probe settled it against me: POST https://opencode.ai/zen/v1/responses with muse-spark-1.3-contributor-free
+answers 200 keyless (1.2 too) — the free tier serves the muse-spark family on the Responses wire,
+and my first cut misrouted it (chat path 500'd). Fixed by extending per-model routing to the free
+kind instead of forking it: `case KindOpenCode, KindOpenCodeFree:` in Path plus
+`KindOpenCode || KindOpenCodeFree` in UpstreamFormat, and the catalog gained both
+muse-spark-*-contributor-free ids (each live-probed 200 keyless). The kind itself stays separate
+from `kind = "opencode"` — the advisor's "reuse the Go kind + base_url" alternative was weighed and
+declined on live evidence: (a) OmniRoute deliberately keeps the noauth identity distinct from
+opencode-go (noAuthProviderSiblings.ts #7993: "never unified"); (b) a keyless opencode kind would
+advertise the 35-model PAID catalog by default; (c) its suggested "skip Authorization when the
+token is empty" would REGRESS against the probed wire contract — no header at all takes the
+429 FreeUsageLimitError path while the bare Bearer reads anonymous-200, so that header is
+load-bearing. Verified end-to-end through the scratch gateway: chat client →
+ocfree/muse-spark-1.2-contributor-free answered content "ROUTE-OK", finish stop, usage 15/294
+(upstream answered with a resp_* id = Responses wire, onegw translated back); full suite green.
+Note: /v1/responses is upstream-only, not a client surface (a direct client POST answers 405 for
+every kind). Earlier:)*
 *Last updated: 2026-09-12 23:30 (opencode-free keyless kind, 8ec5a52): learned from OmniRoute's
 noauth "opencode" provider (alias oc — keyless https://opencode.ai/zen/v1, session header is the
 only hard requirement, bare-Bearer reads anonymous) and ported the pattern into onegw as
@@ -33,6 +68,16 @@ window is ≥335,933 tokens, so tokenrouter's z-ai/glm-5.3-free (262,144) is the
 the durable follow-up is per-leg `context` tier declarations (field exists in provider.ModelTier, currently
 unconfigured) so oversized bodies skip the small-window leg BEFORE the ~14s upload — the 400-break fix is the
 fallback, not the optimization. Earlier:)*
+*Last updated: 2026-09-12 (cavoti provider added DISABLED, config-only hot-reload, pid 69187
+unchanged): marketplace router https://cavoti.com/v1 (kind=openai, 81-model catalog incl.
+claude-5/opus-4-8, gpt-5.4..6-astra, glm-5.3(-flash), deepseek-v4.1-flash(-0910); key valid, label
+"onegw"). ZERO completions: flash models first 503 reward_coupon_unavailable /
+financial_admission_unavailable (their coupon-billing admission flapping; request NOT executed,
+16–45s per attempt), then cleanly 402 insufficient_marketplace_balance (3.9s):
+authoritative_balance_usd=0, marketplace_credit_limit_usd=0.10 — every model 402s until the
+account is topped up / a reward coupon attaches (catalog has NO :free ids). Landed disabled=true
+(combos skip, direct routes 503 provider_disabled, hidden from /v1/models); enable = flip flag +
+PUT /admin/config/reload once a leg proves 200. Earlier:)*
 *Last updated: 2026-09-12 late (free-capacity ladder v3, reload=200, all three aliases 200): the earlier b-ai-led chains were invalidated by the vendor — b-ai's free tier went BILLING-DEAD today (all 8 accounts `insufficient_quota` on every free model after the 10:00 UTC+8 pricing event; peer's removal was right), and tokenharbor's rolling-7-day free allowance is exhausted (429, pool retry ~3388s). Live-probed capacity as of this stamp: tokenrouter/z-ai/glm-5.3-free (direct vendor probe 200, 6.2s) and kilocode/kilo-auto/free (gateway 200). Chain now `free`/`dev` = tokenrouter → kilocode/kilo-auto/free → tokenharbor/deepseek-v4.1-flash:free (kept as a ~0.5ms pool-empty leg — serves free the moment its window resets) → glm coding-plan (metered) → opencode-go (paid last resort); `fast` = opencode-led strategy="fastest" (fixed leg-5 typo b-ai/qwen-3.8-flash → crop; b-ai out). Kilocode/openrouter/free (liquid/lfm-2.5-2.6b, 2.6B, ~3.5s — too weak for agent turns) dropped from chains, still requestable. default_effort: tokenrouter gained "low" (vendor-verified 200 on z-ai/glm-5.3-free — cuts the thinking tail on the lane the combos actually ride); glm "low" PENDING a post-reset probe (429 1308 today, window resets 20:18:39 — do NOT wire unverified onto the metered leg); b-ai's "low" now INERT for combos (no b-ai leg; comment updated, still trims direct calls). Verified: TOML parse + combo echo, reload=200, `free` 200 tokenrouter (1.24s), `dev` 200 kilocode kilo-auto/free (1.28s), `fast` 200 opencode key-1 (1.68s). Earlier:)*
 *Last updated: 2026-09-12 (free-max + speed-floor config, reload=200, live pid unchanged): objective — use the free tiers as much as possible while keeping the opencode-go subscription for best token throughput. Changes: (1) b-ai gained `default_effort = "low"` (measured 2026-09-11 win, applies only to always-thinking models with no client effort knob). (2) Combos rewired live-probed 2026-09-12: `free`/`dev` = b-ai/qwen3.8-flash (qwen leads — peer change after the 2026-09-12 10:00 UTC+8 b-ai pricing event demoted glm-5.3-flash from free to paid) → tokenrouter/z-ai/glm-5.3-free (verified 200 live; the in-config "$0.00 balance" comment was stale) → kilocode/kilo-auto/free + kilocode/openrouter/free (verified 200; minimax/minimax-m2.7:free 404s, dropped) → glm/glm-5.3-flash (metered) → opencode/deepseek-v4.1-flash (last-resort paid). `fast` alias added for explicit best-throughput (strategy="fastest", opencode-led — the one place speed re-sort is the intent). tokenrouter `models` list restored (accidentally lost while editing). (3) REJECTED after live probe: tokenharbor `:free` models (all three `free_tier_limit_reached` on distinct accounts, rolling-7-day allowance — rotation futile), orcarouter free legs (both accounts feature-gated, same error), kilocode/minimax (404). Verification: `free` 200 via tokenrouter, `dev` 200 via tokenrouter, `fast` 200 via opencode key-1 (1.96s). (4) Confirmed: dashboard tok/s counters (opencode 14002 vs b-ai 935) are cumulative since process start (speed.go `n int64` monotonic EWMA), so the gap predates today's `strategy="order"` switch; `reorderBySpeed` only fires on SpeedOrder=true (fastest), so opencode's residual share is legitimate fallback from free-leg walls (free took 20.3s on b-ai walling today), not steering. Earlier:)*
 *Last updated: 2026-09-12 (live config, hot-reloaded): free-first steering — b-ai gained
