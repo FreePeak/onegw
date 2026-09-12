@@ -1,6 +1,31 @@
+*Last updated: 2026-09-12 22:00 (context-window overflow falls through, c5f74a1, deployed pid 69187): the
+"Advisor unavailable for onegw/dev" 400 — a 283,915-token advisor request answered by a 262,144-token leg
+(tokenrouter/z-ai/glm-5.3-free; glm's coding plan actually serves 335K, ring-verified) — had TWO causes: no
+leg ever filtered by context window, and Router.Execute treating the 400 as terminal (line 465: not
+Retryable/RegionLocked/Fallbackable → `return err` before later legs could serve). Fix (HEAD + c5f74a1, built
+and zero-drop deployed from the isolated /tmp/onegw-ctxfix worktree — peer WIP in types.go untouched):
+types.APIError.ContextWindowExceeded() classifies the family (z.ai "longer than the model's context length"
+verbatim, OpenAI "maximum context length"/context_length_exceeded, Anthropic "prompt is too long"; GLM effort
+400s and TPM walls keep their contracts) and Execute breaks to the next combo leg WITHOUT benching the model
+(smaller bodies still serve; same-target retries and account rotation are all doomed). Tests:
+TestContextWindowExceededClassification (8 rows incl. negatives) + TestExecuteFallsThroughOnContextWindowOverflow
+(fall-through, single pool attempt, no bench, honest direct-route 400) — both halves mutation-checked; full suite
+green (19 packages). Live proof post-deploy: a 390K-estimated-token request on `dev` fell through a failed
+tokenrouter leg (504) and served 200 with vendor-counted in=335,933 on glm/glm-5.3-flash (20.4s). Earlier:)*
+*Last updated: 2026-09-12 late (free-capacity ladder v3, reload=200, all three aliases 200): the earlier b-ai-led chains were invalidated by the vendor — b-ai's free tier went BILLING-DEAD today (all 8 accounts `insufficient_quota` on every free model after the 10:00 UTC+8 pricing event; peer's removal was right), and tokenharbor's rolling-7-day free allowance is exhausted (429, pool retry ~3388s). Live-probed capacity as of this stamp: tokenrouter/z-ai/glm-5.3-free (direct vendor probe 200, 6.2s) and kilocode/kilo-auto/free (gateway 200). Chain now `free`/`dev` = tokenrouter → kilocode/kilo-auto/free → tokenharbor/deepseek-v4.1-flash:free (kept as a ~0.5ms pool-empty leg — serves free the moment its window resets) → glm coding-plan (metered) → opencode-go (paid last resort); `fast` = opencode-led strategy="fastest" (fixed leg-5 typo b-ai/qwen-3.8-flash → crop; b-ai out). Kilocode/openrouter/free (liquid/lfm-2.5-2.6b, 2.6B, ~3.5s — too weak for agent turns) dropped from chains, still requestable. default_effort: tokenrouter gained "low" (vendor-verified 200 on z-ai/glm-5.3-free — cuts the thinking tail on the lane the combos actually ride); glm "low" PENDING a post-reset probe (429 1308 today, window resets 20:18:39 — do NOT wire unverified onto the metered leg); b-ai's "low" now INERT for combos (no b-ai leg; comment updated, still trims direct calls). Verified: TOML parse + combo echo, reload=200, `free` 200 tokenrouter (1.24s), `dev` 200 kilocode kilo-auto/free (1.28s), `fast` 200 opencode key-1 (1.68s). Earlier:)*
+*Last updated: 2026-09-12 (free-max + speed-floor config, reload=200, live pid unchanged): objective — use the free tiers as much as possible while keeping the opencode-go subscription for best token throughput. Changes: (1) b-ai gained `default_effort = "low"` (measured 2026-09-11 win, applies only to always-thinking models with no client effort knob). (2) Combos rewired live-probed 2026-09-12: `free`/`dev` = b-ai/qwen3.8-flash (qwen leads — peer change after the 2026-09-12 10:00 UTC+8 b-ai pricing event demoted glm-5.3-flash from free to paid) → tokenrouter/z-ai/glm-5.3-free (verified 200 live; the in-config "$0.00 balance" comment was stale) → kilocode/kilo-auto/free + kilocode/openrouter/free (verified 200; minimax/minimax-m2.7:free 404s, dropped) → glm/glm-5.3-flash (metered) → opencode/deepseek-v4.1-flash (last-resort paid). `fast` alias added for explicit best-throughput (strategy="fastest", opencode-led — the one place speed re-sort is the intent). tokenrouter `models` list restored (accidentally lost while editing). (3) REJECTED after live probe: tokenharbor `:free` models (all three `free_tier_limit_reached` on distinct accounts, rolling-7-day allowance — rotation futile), orcarouter free legs (both accounts feature-gated, same error), kilocode/minimax (404). Verification: `free` 200 via tokenrouter, `dev` 200 via tokenrouter, `fast` 200 via opencode key-1 (1.96s). (4) Confirmed: dashboard tok/s counters (opencode 14002 vs b-ai 935) are cumulative since process start (speed.go `n int64` monotonic EWMA), so the gap predates today's `strategy="order"` switch; `reorderBySpeed` only fires on SpeedOrder=true (fastest), so opencode's residual share is legitimate fallback from free-leg walls (free took 20.3s on b-ai walling today), not steering. Earlier:)*
+*Last updated: 2026-09-12 (live config, hot-reloaded): free-first steering — b-ai gained
+`default_effort = "low"` (the measured 2026-09-11 win: 64% fewer output tokens, 46% less wall
+on glm-5.3-flash, applied only when the client sent no knob) so the free legs serve faster and
+spill less to the paid opencode leg under the combos' strategy="order" contract. An attempt to
+insert orcarouter free legs (z-ai/glm-5.3-flash-free, deepseek/deepseek-v4-flash-free) into
+free/dev was reverted after live probes: BOTH orca accounts are feature-gated ("free_rate_limited:
+Free models are not available to this account yet — link a GitHub account or add credits");
+dead ladder legs would burn two doomed attempts per spilled request. Post-change probes: reload
+200, free buffered 200 (served by b-ai glm-5.3-flash), dev stream 200. Earlier:)*
 *Last updated: 2026-09-12 (reasoning-echo CONVERGED: echo_reasoning knob + runtime learn,
 live pid 95900): the two parallel implementations of the seq-198/2666 fix are reconciled on ONE
-knob — ProviderCfg/Def \`EchoReasoning\` + toml \`echo_reasoning\` (45ccd03) — and the runtime-learn
+knob — ProviderCfg/Def `EchoReasoning` + toml `echo_reasoning` (45ccd03) — and the runtime-learn
 layer (c5c5d7f, merged d10a2a2) consumes the SAME gate: learnedRE/LearnReasoningEcho on Def
 mirrors learnedAT/learnedNT, attempt() classifies the echo-refusal 400 (types.ReasoningEchoRequired)
 and grants exactly ONE Fallbackable retry on a FRESH learn (that retry's body carries the newly
