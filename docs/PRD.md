@@ -1,3 +1,18 @@
+*Last updated: 2026-09-12 23:30 (opencode-free keyless kind, 8ec5a52): learned from OmniRoute's
+noauth "opencode" provider (alias oc — keyless https://opencode.ai/zen/v1, session header is the
+only hard requirement, bare-Bearer reads anonymous) and ported the pattern into onegw as
+`kind = "opencode-free"` — default base https://opencode.ai/zen/v1, no credentials configured
+or sent, x-opencode-session always present (client value forwarded, else a stable ses_<32hex>
+derived from the account NAME since there is no key to salt with), curated rotating free catalog
+(big-pickle, mimo-v2.5-free, nemotron-3-ultra-free, nemotron-3.5-lightning-free,
+ling-3.0-flash-fin-free — vendor delists ids without notice, 401 "Model X is not supported"),
+chat-completions only (no /v1/responses surface on this tier), config-validates keyless like
+searxng. Live-verified end-to-end on a scratch gateway (port 18083): catalog advertised, real
+completion served through the free tier (ocfree/ling-3.0-flash-fin-free → 200, content "OK",
+honest usage 22/54 tokens, reasoning in message.reasoning); upstream 429 FreeUsageLimitError
+(IP-scoped anonymous allowance) classified and benched like any provider; streaming proved
+against a local SSE stub on the kind-identical path (chunks + [DONE] relayed, 200). NOT in the
+live config — deploy is an operator decision. Earlier:)*
 *Last updated: 2026-09-12 22:00 (context-window overflow falls through, c5f74a1, deployed pid 69187): the
 "Advisor unavailable for onegw/dev" 400 — a 283,915-token advisor request answered by a 262,144-token leg
 (tokenrouter/z-ai/glm-5.3-free; glm's coding plan actually serves 335K, ring-verified) — had TWO causes: no
