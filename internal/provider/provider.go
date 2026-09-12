@@ -2084,9 +2084,15 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				req.Header.Set("x-cli-environment", "cli")
 				req.Header.Set("x-session-id", newRequestUUID())
 			case KindOpenAIResponses:
-				// Grok CLI fingerprint headers.
+				// Grok CLI fingerprint headers (OmniRoute's
+				// config/grokBuild.ts session set): X-XAI-Token-Auth
+				// marks the credential type the proxy meters by, and
+				// its absence shows up in upstream 401s as
+				// "x_xai_token_auth=none".
 				req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
 				req.Header.Set("x-grok-client-version", "0.2.99")
+				req.Header.Set("x-grok-cli-version", "0.2.97")
+				req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
 			}
 			// applyAuth is the single credential owner for EVERY kind.
 			applyAuth(req.Header, d.Kind, acct.bearerToken())
@@ -2459,9 +2465,11 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		req.Header.Set("x-cli-environment", "cli")
 		req.Header.Set("x-session-id", newRequestUUID())
 	case KindOpenAIResponses:
-		// Grok CLI fingerprint headers.
+		// Grok CLI fingerprint headers (same set as the chat path).
 		req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
 		req.Header.Set("x-grok-client-version", "0.2.99")
+		req.Header.Set("x-grok-cli-version", "0.2.97")
+		req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
 	}
 	applyAuth(req.Header, d.Kind, acct.bearerToken())
 	resp, err := client.Do(req)
