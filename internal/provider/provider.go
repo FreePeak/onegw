@@ -35,10 +35,11 @@ import (
 type Kind string
 
 const (
-	KindOpenAI    Kind = "openai"    // OpenAI Chat Completions (also most clones)
-	KindAnthropic Kind = "anthropic" // Anthropic Messages
-	KindGemini    Kind = "gemini"    // Gemini generateContent
-	KindOpenCode  Kind = "opencode"  // OpenCode Zen Go subscription (OpenAI wire)
+	KindOpenAI       Kind = "openai"        // OpenAI Chat Completions (also most clones)
+	KindAnthropic    Kind = "anthropic"     // Anthropic Messages
+	KindGemini       Kind = "gemini"        // Gemini generateContent
+	KindOpenCode     Kind = "opencode"      // OpenCode Zen Go subscription (OpenAI wire)
+	KindOpenCodeFree Kind = "opencode-free" // OpenCode Zen Free tier, no auth (OpenAI wire)
 	// Custom wire formats (issue #12): commandcode = CommandCode /alpha/generate
 	// NDJSON; openai-responses = Grok CLI Responses API; cursor = skeleton.
 	KindCommandCode     Kind = "commandcode"      // CommandCode NDJSON executor
@@ -689,6 +690,8 @@ func (k Kind) DefaultBaseURL() string {
 		return "https://generativelanguage.googleapis.com"
 	case KindOpenCode:
 		return "https://opencode.ai/zen/go"
+	case KindOpenCodeFree:
+		return "https://opencode.ai/zen/v1"
 	case KindOpenAIResponses:
 		return "https://cli-chat-proxy.grok.com"
 	case KindCursor:
@@ -722,11 +725,29 @@ var openCodeGoModels = []string{
 	"qwen3.8-flash", "qwen3.8-max",
 }
 
+// openCodeFreeModels is the keyless catalog of the OpenCode Zen FREE tier
+// (https://opencode.ai/zen/v1), mirrored from OmniRoute's noauth "opencode"
+// registry and re-probed live 2026-09-12. The upstream rotates this lineup
+// without notice (delisted ids answer 401 "Model X is not supported"), so
+// configs that want the current upstream list should set `models` explicitly.
+// Every model here is chat-completions only: the free tier has no
+// /v1/responses surface.
+var openCodeFreeModels = []string{
+	"big-pickle",
+	"mimo-v2.5-free",
+	"nemotron-3-ultra-free",
+	"nemotron-3.5-lightning-free",
+	"ling-3.0-flash-fin-free",
+}
+
 // DefaultModels returns the stock catalog for kinds with a curated upstream
 // model list; nil = none (the provider advertises only configured models).
 func DefaultModels(k Kind) []string {
-	if k == KindOpenCode {
+	switch k {
+	case KindOpenCode:
 		return openCodeGoModels
+	case KindOpenCodeFree:
+		return openCodeFreeModels
 	}
 	return nil
 }
@@ -1865,6 +1886,12 @@ func (d *Def) Path(op, model string) string {
 			return "/v1/responses"
 		}
 		return "/v1/chat/completions"
+	case KindOpenCodeFree:
+		// The free tier serves chat completions only (no /v1/responses).
+		if op == "models" {
+			return "/v1/models"
+		}
+		return "/v1/chat/completions"
 	default:
 		if op == "models" {
 			return "/v1/models"
@@ -1940,6 +1967,12 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// Credentials are set once below via applyAuth (issue #2: also
 			// resolves OAuth tokens).
 			switch d.Kind {
+			case KindOpenCodeFree:
+				// Free tier: no credential → session id derived from the
+				// account NAME (stable, per-account; there is no apiKey).
+				// applyAuth below emits "Authorization: Bearer " which the
+				// free tier treats as anonymous (verified live 2026-09-12).
+				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientHeader(clientHdr, OpenCodeSessionHeader), acct.Name))
 			case KindAnthropic:
 				req.Header.Set("anthropic-version", "2023-06-01")
 			case KindOpenCode:
@@ -2315,6 +2348,8 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	switch d.Kind {
 	case KindAnthropic:
 		req.Header.Set("anthropic-version", "2023-06-01")
+	case KindOpenCodeFree:
+		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.Name))
 	case KindOpenCode:
 		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.bearerToken()))
 	case KindCommandCode:
