@@ -46,8 +46,9 @@ Free models are not available to this account yet — link a GitHub account or a
 dead ladder legs would burn two doomed attempts per spilled request. Post-change probes: reload
 200, free buffered 200 (served by b-ai glm-5.3-flash), dev stream 200. Earlier:)*
 
-*Last updated: 2026-09-12 (b-ai 503 RCA + billing parole, zero-drop deployed pid 85592 —
-binary from ad82e42; lsof single listener, health ok, direct b-ai 200 in 1.2s, dev combo 200):
+*Last updated: 2026-09-13 (b-ai 503 RCA + billing parole, zero-drop REDEPLOYED pid 36763 —
+stable artifact /tmp/onegw-live built from origin/master 455f1b6; lsof single listener, health
+ok, direct b-ai/qwen3.8-flash 200 in 3.5s, 11 providers incl. opencode-free):
 the reported
 `provider_accounts_unfunded` 503 on b-ai had two layers. (1) Trigger, vendor-side: the
 10:00 UTC+8 pricing event made every free key answer `credit insufficient balance:
@@ -70,7 +71,16 @@ Retry-After names the soonest recheck instead of a flat 300. Combo chains keep t
 is a separate probe-gated call. Tests: provider parole cycle + straggler recency +
 reload-carries-clock, server e2e self-heal after vendor recovery; mutation-checked 4 ways.
 `go test ./... -skip TestCursorKindEndToEnd` green (the skip is pre-existing at HEAD: it
-dials the real cursor host). Earlier:)*
+dials the real cursor host). REDEPLOY NOTE: the first artifact (/tmp/onegw-parole-bin2,
+pid 85592) was deleted by cleanup while the process still ran the unlinked inode — unre-executable
+by any crash/OOM/reboot respawn — hence pid 36763 from the stable /tmp/onegw-live. DEPLOY
+WARNING for peers: the shared worktree's local master (`ed12019`) does NOT contain `c75dc18`
+(verified: zero `billingParole`/`invalidatedAt` in its provider.go) while origin/master does —
+run `git fetch && git merge origin/master` in the main tree BEFORE building any deploy, or the
+self-heal silently reverts while this stamp still claims it live. No deploy.sh marker added:
+`strings` misses interned Go literals (a 455f1b6 build shows `opencode-free` = 0 yet serves
+it), so a marker would false-block; `billing_parole` (3 hits) is the one safe marker if ever
+added, after a `--dry-run` proof. Earlier:)*
 
 *Last updated: 2026-09-12 (reasoning-echo CONVERGED: echo_reasoning knob + runtime learn,
 live pid 95900): the two parallel implementations of the seq-198/2666 fix are reconciled on ONE
