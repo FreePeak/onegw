@@ -316,7 +316,7 @@ env overrides:
 | `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup (90 MiB soft limit, GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
-providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "searxng" | "openai-responses"`, optional
+providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-free" | "searxng" | "openai-responses"`, optional
 `base_url`, models, multiple `[[providers.accounts]]` or the `keys = [...]`
 multi-key shortcut), combos, server limits, saver and usage settings.
 `data_dir = "memory"` disables persistence.
@@ -349,6 +349,28 @@ between the Responses wire and whichever client surface asked — so
 clients, streaming and non-streaming alike. A Responses stream that closes
 without `response.completed` is surfaced as an upstream error, never a
 clean finish.
+
+### OpenCode Zen Free tier
+
+`kind = "opencode-free"` fronts the keyless public Free tier of the same
+vendor (what OmniRoute exposes as its no-auth `opencode` provider):
+`base_url` defaults to `https://opencode.ai/zen/v1`, no credentials are
+configured or sent (a bare `Bearer` reads as anonymous upstream), and the
+gateway always sends `x-opencode-session` — client value when present, else
+a stable derived id — which is the free tier's only hard requirement. The
+catalog is a small rotating `-free` lineup (`big-pickle`,
+`mimo-v2.5-free`, `nemotron-3-ultra-free`, …; the vendor delists ids
+without notice — delisted models answer 401 `Model X is not supported`, so
+pin `models` to what you've probed). Every model speaks
+`/v1/chat/completions` only — there is no Responses surface on this tier.
+Rate limits are IP-scoped and anonymous: upstream 429s (`FreeUsageLimitError`)
+bench the provider like any other, and combos fall through.
+
+```toml
+[[providers]]
+name = "opencode-free"
+kind = "opencode-free"          # keyless — no api_key line at all
+```
 
 ### Subscription quota tracking
 
