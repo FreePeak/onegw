@@ -493,6 +493,24 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 					// above; a direct route surfaces the 400 honestly.
 					break
 				}
+				if err.ContextWindowExceeded() {
+					// Context-window overflow (live 2026-09-12, `dev` combo: a
+					// 283,915-token advisor request reached z-ai/glm-5.3-free
+					// and got 400 "The input (283915 tokens) is longer than
+					// the model's context length (262144 tokens)"). The body is
+					// deterministic and EVERY account of this provider holds
+					// the same window, so a same-target retry or an account
+					// rotation only re-uploads ~1 MiB for the same verdict.
+					// Sibling combo legs with LARGER windows are the correct
+					// next hop (same-day ring proof that they exist and serve
+					// this size: kilocode/kilo-auto/free 200 at 271,204 input
+					// tokens, opencode/deepseek-v4.1-flash 200 at 283,064).
+					// Deliberately NOT a model bench: this model serves every
+					// smaller body fine, and benching it would exile a healthy
+					// leg for one oversized request. A direct route (no next
+					// target) still surfaces the 400 honestly.
+					break
+				}
 				return err
 			}
 			if err.Fallbackable && err.Status == 403 {
