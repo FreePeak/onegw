@@ -20,7 +20,9 @@
 package subquota
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"hash/fnv"
 	"io"
@@ -39,12 +41,13 @@ const (
 	Zai         = "zai"         // z.ai GLM Coding Plan (international)
 	ZaiCN       = "zai-cn"      // GLM Coding Plan (China, bigmodel.cn)
 	CommandCode = "commandcode" // CommandCode /alpha billing (GOAT/Go/Pro plans)
+	GrokCli     = "grok-cli"    // SuperGrok shared weekly pool (cli-chat-proxy)
 )
 
 // ValidDialect reports whether name is a subscription quota dialect.
 func ValidDialect(name string) bool {
 	switch name {
-	case OpenCodeGo, Zai, ZaiCN, CommandCode:
+	case OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli:
 		return true
 	}
 	return false
@@ -66,6 +69,10 @@ func DefaultURL(dialect string) string {
 		// override replaces the BASE (the probe appends its own /alpha/
 		// ... paths), not one full endpoint.
 		return "https://api.commandcode.ai"
+	case GrokCli:
+		// OmniRoute's grokQuotaFetcher: the SuperGrok shared weekly pool.
+		// Same base the Grok Build CLI uses for everything else.
+		return "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 	}
 	return ""
 }
@@ -327,6 +334,11 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 	}
 	req.Header.Set("Authorization", "Bearer "+tgt.AcctKey)
 	req.Header.Set("Accept", "application/json")
+	if tgt.Dialect == GrokCli {
+		// OmniRoute's grokQuotaFetcher fingerprint (x-grok-client-mode:
+		// cli is what the endpoint keys its response shape on).
+		req.Header.Set("x-grok-client-mode", "cli")
+	}
 	resp, err := t.client.Do(req)
 	if err != nil {
 		snap.Err = err.Error()
@@ -344,6 +356,8 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 		snap.Windows, snap.Err = parseOpenCodeGo(body, resp.StatusCode)
 	case Zai, ZaiCN:
 		snap.Windows, snap.Plan, snap.Err = parseZai(body, resp.StatusCode)
+	case GrokCli:
+		snap.Windows, snap.Plan, snap.Err = parseGrokCli(tgt.AcctKey, body, resp.StatusCode)
 	default:
 		snap.Err = "unknown subscription quota dialect " + strconv.Quote(tgt.Dialect)
 	}
@@ -721,6 +735,156 @@ func commandCodePlanLabel(planID string) string {
 		}
 	}
 	return "Command Code · " + strings.Join(parts, " ")
+}
+
+// grokTierLabels maps the auth.x.ai access-token `tier` claim (9router's
+// usage/grok-cli.js tier map). Display only: upstream stays authoritative
+// for entitlement, so an unknown value degrades to the plain vendor name.
+var grokTierLabels = map[string]string{
+	"0": "Free",
+	"1": "SuperGrok",
+	"2": "X Basic",
+	"3": "X Premium",
+	"4": "X Premium Plus",
+	"5": "SuperGrok Heavy",
+	"6": "SuperGrok Lite",
+}
+
+// grokPlanLabel reads the tier claim out of an auth.x.ai JWT without any
+// network call — the billing probe already holds the bearer, so the plan
+// costs zero extra requests (9router's planFromAccessToken does the same).
+func grokPlanLabel(jwt string) string {
+	parts := strings.Split(jwt, ".")
+	if len(parts) < 2 {
+		return "Grok"
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "Grok"
+	}
+	var claims struct {
+		Tier json.Number `json:"tier"`
+	}
+	if json.Unmarshal(raw, &claims) != nil {
+		return "Grok"
+	}
+	if label, ok := grokTierLabels[claims.Tier.String()]; ok {
+		return "Grok · " + label
+	}
+	return "Grok"
+}
+
+// parseGrokCli decodes OmniRoute's grokQuotaFetcher shape from
+// GET https://cli-chat-proxy.grok.com/v1/billing?format=credits:
+//
+//	{"config":{"creditUsagePercent":62.4,"currentPeriod":
+//	  {"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-09-17T00:00:00Z"},
+//	  "productUsage":[{"product":"grok-build","usagePercent":41}]}}
+//
+// creditUsagePercent is the ONE shared weekly pool; productUsage is a
+// breakdown legend and is deliberately never split into extra windows
+// (9router's own warning), so exactly one window is emitted and 100 %
+// parks the account.
+func parseGrokCli(token string, body []byte, status int) ([]Window, string, string) {
+	plan := grokPlanLabel(token)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return nil, plan, "Grok session token rejected — re-run: onegw-oauth login -provider xai"
+	}
+	if status != http.StatusOK {
+		return nil, plan, "Grok billing API error (" + strconv.Itoa(status) + ")."
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var data struct {
+		Config struct {
+			CreditUsagePercent  any `json:"creditUsagePercent"`
+			CreditUsagePercent2 any `json:"credit_usage_percent"`
+			CurrentPeriod       struct {
+				Type any `json:"type"`
+				End  any `json:"end"`
+			} `json:"currentPeriod"`
+		} `json:"config"`
+	}
+	if err := dec.Decode(&data); err != nil {
+		return nil, plan, "Grok billing response is not valid JSON."
+	}
+	raw := data.Config.CreditUsagePercent
+	if raw == nil {
+		raw = data.Config.CreditUsagePercent2
+	}
+	used, ok := grokPercent(raw)
+	if !ok {
+		return nil, plan, "Grok billing response did not contain valid quota data."
+	}
+	windows := []Window{{Name: grokPeriodName(grokString(data.Config.CurrentPeriod.Type)), Resets: grokReset(data.Config.CurrentPeriod.End), Used: used}}
+	return windows, plan, ""
+}
+
+// grokPercent reads a vendor percent as a NUMBER or a numeric STRING and
+// FLOORS it: rounding made 99.5-99.99 % read 100 and re-park an account
+// the vendor still considered spendable (the commandcode lesson).
+func grokPercent(v any) (int, bool) {
+	var f float64
+	switch x := v.(type) {
+	case float64:
+		f = x
+	case json.Number:
+		parsed, err := x.Float64()
+		if err != nil {
+			return 0, false
+		}
+		f = parsed
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		if err != nil {
+			return 0, false
+		}
+		f = parsed
+	default:
+		return 0, false
+	}
+	if f < 0 {
+		f = 0
+	}
+	if f > 100 {
+		f = 100
+	}
+	return int(f), true
+}
+
+// grokString renders a scalar field that may arrive as a JSON string or
+// number; anything else reads as empty.
+func grokString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	}
+	return ""
+}
+
+// grokPeriodName titles the pool after the vendor's period type
+// (USAGE_PERIOD_TYPE_WEEKLY → "Weekly pool").
+func grokPeriodName(typ string) string {
+	switch strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(typ, "USAGE_PERIOD_TYPE_"))) {
+	case "WEEKLY":
+		return "Weekly pool"
+	case "MONTHLY":
+		return "Monthly pool"
+	case "DAILY":
+		return "Daily pool"
+	}
+	return "Usage pool"
+}
+
+// grokReset decodes a period end that arrives either as an RFC3339 /
+// epoch value or in the protobuf-JSON {seconds, nanos} shape.
+func grokReset(v any) *time.Time {
+	if x, ok := v.(map[string]any); ok {
+		return asReset(x["seconds"])
+	}
+	return asReset(v)
 }
 
 // asPercent clamps a vendor percentage (number or numeric string) to 0-100.
