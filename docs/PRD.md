@@ -1,3 +1,15 @@
+*Last updated: 2026-09-12 23:20 (opencode-free WIRED INTO LIVE CONFIG — provider only, no combo
+change; reload 200 on pid 71565, zero drop): onegw.toml gained an `opencode-free` block (models
+pinned to the five keyless-200 ids; muse-spark-*-free deliberately excluded until the binary
+carries 44bd2b7's per-model Responses routing — the RUNNING binary predates it, so listing them
+would route to chat and 500). Validated on a scratch port with the live binary first, then hot
+reloaded: /admin/api/v1/providers shows opencode-free alongside the paid opencode. Production
+proof: POST /v1/chat/completions model=opencode-free/ling-3.0-flash-fin-free → 200, usage
+495/80 (content empty on finish=length — the free models reason by default, need ~200+ tokens,
+same trap as the Go test models). A 429 FreeUsageLimitError between successes is the vendor's
+IP-scoped anonymous allowance (roughly one request per minute after probe bursts) — plumbing
+correct, benches and falls through like any provider. ~/.onegw/onegw.toml NOT synced (different,
+older file; the live process does not read it). Earlier:)*
 *Last updated: 2026-09-12 (commandcode subscription quota fixed — credits window reports real
 period spend, zero-drop deployed pid 66474): the commandcode credits window always read 0% while
 the pool had headroom, because /alpha/billing/credits returns only REMAINING credits; the probe
@@ -14,7 +26,7 @@ unit + e2e pins (85% GOAT / 61% Go / no-false-park), full internal/server + inte
 suites green (except the pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine
 HEAD), zero-drop deploy with /admin/health, combo 200 through the new pid, and a post-reload
 subscription API re-read. Earlier:)*
-*Last updated: 2026-09-12 23:55 (CORRECTION to the opencode-free stamp below — the free tier DOES
+*Last updated: 2026-09-12 22:58 (CORRECTION to the opencode-free stamp below — the free tier DOES
 have a Responses surface): an advisor challenge pressed the "chat-completions only" claim and the
 probe settled it against me: POST https://opencode.ai/zen/v1/responses with muse-spark-1.3-contributor-free
 answers 200 keyless (1.2 too) — the free tier serves the muse-spark family on the Responses wire,
@@ -33,7 +45,7 @@ ocfree/muse-spark-1.2-contributor-free answered content "ROUTE-OK", finish stop,
 (upstream answered with a resp_* id = Responses wire, onegw translated back); full suite green.
 Note: /v1/responses is upstream-only, not a client surface (a direct client POST answers 405 for
 every kind). Earlier:)*
-*Last updated: 2026-09-12 23:30 (opencode-free keyless kind, 8ec5a52): learned from OmniRoute's
+*Last updated: 2026-09-12 22:15 (opencode-free keyless kind, 8ec5a52): learned from OmniRoute's
 noauth "opencode" provider (alias oc — keyless https://opencode.ai/zen/v1, session header is the
 only hard requirement, bare-Bearer reads anonymous) and ported the pattern into onegw as
 `kind = "opencode-free"` — default base https://opencode.ai/zen/v1, no credentials configured
