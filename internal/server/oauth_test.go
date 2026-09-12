@@ -193,6 +193,47 @@ func TestOAuthTokenInjectedUpstream(t *testing.T) {
 	}
 }
 
+func TestOAuthOwnerBorrowSharesOneSession(t *testing.T) {
+	// One SuperGrok device login carries every surface that borrows it:
+	// xAI rotates device sessions, so a second holder would knock the
+	// first out. The borrower resolves the owner's token and stores none.
+	f := &fakeIdP{}
+	idpURL, upstreamURL := f.start(t)
+	cfg := oauthCfg(t, idpURL, upstreamURL)
+	cfg.Providers = append(cfg.Providers, config.ProviderCfg{
+		Name:     "grokbuild",
+		Kind:     "openai",
+		BaseURL:  upstreamURL,
+		Accounts: []config.Acct{{Name: "main", APIKey: "sk-test-static-fallback"}},
+	})
+	cfg.OAuth.Accounts = append(cfg.OAuth.Accounts, config.OAuthAccount{
+		Provider: "grokbuild", Account: "main", Service: "xai", Owner: "xai/main",
+	})
+	cfg.Defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("borrow config invalid: %v", err)
+	}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	loginOAuth(t, s, cfg)
+
+	for _, model := range []string{"xai/grok-4.6", "grokbuild/grok-build-0.1"} {
+		rec := do(t, s.Handler(), oauthChat(model, "sk-test-gw"))
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d %s", model, rec.Code, rec.Body.String())
+		}
+		if got := f.seenBearer.Load().(string); got != "Bearer at-live-1" {
+			t.Fatalf("%s upstream saw %q, want the owner's session token", model, got)
+		}
+	}
+	if keys := s.oauth.Store().Keys(); len(keys) != 1 || keys[0] != "xai/main" {
+		t.Fatalf("token store keys = %v, want only the owner session", keys)
+	}
+}
+
 func TestOAuthRefreshBeforeExpirySwap(t *testing.T) {
 	f := &fakeIdP{}
 	idpURL, upstreamURL := f.start(t)
@@ -331,6 +372,31 @@ func TestOAuthConfigValidation(t *testing.T) {
 		accts := cfg.OAuthAccounts()
 		if len(accts) != 1 || accts[0].Account != "default" || accts[0].Service != "xai" {
 			t.Fatalf("defaults wrong: %+v", accts)
+		}
+	})
+
+	t.Run("owner borrow validated", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Server.DataDir = "memory"
+		cfg.Providers = []config.ProviderCfg{
+			{Name: "xai", Kind: "openai", APIKey: "sk-test-x"},
+			{Name: "grokbuild", Kind: "openai", APIKey: "sk-test-g"},
+		}
+		cfg.OAuth.Accounts = []config.OAuthAccount{
+			{Provider: "xai", Account: "main", Service: "xai"},
+			{Provider: "grokbuild", Account: "main", Service: "xai", Owner: "xai/main"},
+		}
+		cfg.Defaults()
+		if err := cfg.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		cfg.OAuth.Accounts[1].Owner = "grokbuild/main"
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "borrows itself") {
+			t.Fatalf("want self-borrow error, got %v", err)
+		}
+		cfg.OAuth.Accounts[1].Owner = "ghost/none"
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "not a declared") {
+			t.Fatalf("want dangling-owner error, got %v", err)
 		}
 	})
 }
