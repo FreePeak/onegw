@@ -1,3 +1,19 @@
+*Last updated: 2026-09-12 (commandcode subscription quota fixed — credits window reports real
+period spend, zero-drop deployed pid 66474): the commandcode credits window always read 0% while
+the pool had headroom, because /alpha/billing/credits returns only REMAINING credits; the probe
+now also reads period spend from /alpha/usage/summary (soft-fail: totalCost, falling back to
+totalMonthlyCredits) and the window reports spend/(spend+remaining) — OmniRoute's totalCost math,
+which the original #79 port left unported (landed ad2c897). Live-verified: GOAT (harvey) 0% → 85%
+(spend 59.87 + remaining 10.29 = 70 pool), Go (linhdmn) 61% (6.18 + 3.82). Park discipline is
+unchanged and hardened — the fraction floors below 100, so spend alone can never fabricate the
+drained park (only remaining == 0 does), and the GOAT key's real parking signal remains the
+vendor's own weekly window (100%, reset 2026-09-16T06:24:36Z, confirmed by its 429 body). Quota
+dashboard: the subscription state column is now per-window (a parked account's healthy windows no
+longer read "exhausted") and parked accounts carry a "parked" pill in the account cell. Verified:
+unit + e2e pins (85% GOAT / 61% Go / no-false-park), full internal/server + internal/subquota
+suites green (except the pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine
+HEAD), zero-drop deploy with /admin/health, combo 200 through the new pid, and a post-reload
+subscription API re-read. Earlier:)*
 *Last updated: 2026-09-12 22:00 (context-window overflow falls through, c5f74a1, deployed pid 69187): the
 "Advisor unavailable for onegw/dev" 400 — a 283,915-token advisor request answered by a 262,144-token leg
 (tokenrouter/z-ai/glm-5.3-free; glm's coding plan actually serves 335K, ring-verified) — had TWO causes: no
