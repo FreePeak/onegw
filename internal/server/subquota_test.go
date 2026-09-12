@@ -101,13 +101,18 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 		t.Fatalf("windows missing: %s", body)
 	}
 
-	// Dashboard page renders the subscription section.
+	// Dashboard page renders the subscription section, and renders it
+	// per-window: the parked zai account carries exactly one parked
+	// marker (account cell), the healthy opencode account none.
 	w = do(t, srv.Handler(), adminReq(t, "/admin/ui/quota"))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Subscription quota") {
 		t.Fatalf("quota page: %d: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "no quota windows") {
 		t.Fatal("local-window empty state must survive the page rework")
+	}
+	if n := strings.Count(w.Body.String(), ">parked<"); n != 1 {
+		t.Fatalf("parked marker count = %d, want exactly the parked zai account", n)
 	}
 
 	// The exhausted zai account is parked: pool returns nothing ready.
