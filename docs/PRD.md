@@ -1,3 +1,20 @@
+*Last updated: 2026-09-13 (SuperGrok follow-through: 6e29d50 deployed, Grok Build provider
+staged DISABLED, pid 16283): three fixes after the first landing. (1) The live reload of the
+borrower entry failed on the running binary — `OAuthAccounts()` defaults `service` from the
+provider name, so validateOAuth rejected every natural borrower with "unknown oauth service
+grokbuild"; borrowers now skip that check (key + duplicate rules first, owner validation, service
+only for real logins), mutation-checked by restoring the old order (fails the new assertion).
+(2) `Path("models")` returned `/v1/responses` for the openai-responses kind, so FetchModels GETed
+the chat endpoint; discovery now uses `/v1/models` like both reference repos' modelsUrl, pinned
+together with the four fingerprint headers (`X-XAI-Token-Auth` + client/cli identifier+version) on
+both call sites in TestGrokCliFingerprintHeaders. (3) Live config added provider `grokbuild`
+(kind=openai-responses, base cli-chat-proxy.grok.com, models grok-build + grok-build-0.1) with an
+`owner` borrow of the xai session, staged `disabled = true`: verified the disabled semantics are
+real — 503 `provider_disabled` on a direct hit, absent from /v1/models, combos unaffected (dev →
+"OK"), 12 providers after reload. It flips on only after a probe answers 200 through the gateway,
+and its model list will be pruned to what the catalog returns. Still awaiting the browser
+approval of the device code (keepalive loop publishes it at /tmp/onegw-xai-code.txt); until then
+the xai quota row honestly reports "Grok session token rejected" and fails open. Earlier:)*
 *Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 — code landed, live
 credential pending one browser approval): researched OmniRoute + 9router + xAI/OpenClaw docs to
 put the user's consumer SuperGrok plan behind onegw's xAI surfaces. Findings: one
