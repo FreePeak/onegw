@@ -19,7 +19,10 @@ import (
 // flow, /token answers per a scripted sequence of poll outcomes.
 type fake8628 struct {
 	expiresIn int // advertised device-code lifetime, seconds (0 = 2)
-
+	// tokenExpires overrides expires_in on ISSUED tokens (0 = 3600), so a
+	// test can hand the client an overstated vendor expiry — exactly what
+	// xAI does with SuperGrok device tokens (6 h claimed, ~45 min real).
+	tokenExpires    int
 	mu              sync.Mutex
 	polls           int
 	outcomes        []pollOutcome // consumed per poll; last one repeats
@@ -40,6 +43,14 @@ type pollOutcome struct {
 func (f *fake8628) expiresInOr(def int) int {
 	if f.expiresIn > 0 {
 		return f.expiresIn
+	}
+	return def
+}
+
+// tokenExpiresOr returns the fake's configured lifetime for issued tokens.
+func (f *fake8628) tokenExpiresOr(def int) int {
+	if f.tokenExpires > 0 {
+		return f.tokenExpires
 	}
 	return def
 }
@@ -84,7 +95,7 @@ func (f *fake8628) handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "at-" + strconv.FormatInt(n, 10),
 				"refresh_token": "rt-" + strconv.FormatInt(n, 10),
-				"expires_in":    3600,
+				"expires_in":    f.tokenExpiresOr(3600),
 				"scope":         "api:access",
 			})
 		case "refresh_token":
@@ -94,7 +105,7 @@ func (f *fake8628) handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "at-" + strconv.FormatInt(n, 10),
 				"refresh_token": "rt-" + strconv.FormatInt(n, 10), // rotation
-				"expires_in":    3600,
+				"expires_in":    f.tokenExpiresOr(3600),
 			})
 		default:
 			w.WriteHeader(400)
@@ -643,5 +654,52 @@ func TestLookupAndPollerSelection(t *testing.T) {
 	}
 	if fmt.Sprint(Providers()) != "[kilocode xai]" {
 		t.Fatalf("Providers() = %v", Providers())
+	}
+}
+
+func TestMaxTokenTTLBoundsOverstatedVendorExpiry(t *testing.T) {
+	// xAI hands out expires_in=21600 for SuperGrok device tokens and then
+	// revokes them at ~40-45 min. Believing the vendor leaves the refresher
+	// asleep while every request 403s, so the profile cap wins on BOTH the
+	// device grant and the refresh grant.
+	f := &fake8628{tokenExpires: 21600, outcomes: []pollOutcome{{}}}
+	srv := f.server()
+	defer srv.Close()
+	p := xaiLike(srv.URL)
+	p.MaxTokenTTL = 40 * time.Minute
+
+	store := NewTokenStore("memory")
+	mgr := NewManager(store)
+	defer mgr.Stop()
+	spec := AccountSpec{Key: "xai/main", Provider: p}
+
+	tok, err := mgr.Login(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if d := time.Until(tok.ExpiresAt); d > 41*time.Minute || d < 38*time.Minute {
+		t.Fatalf("device grant trusted the 6 h claim: %v until expiry, want the 40 m cap", d)
+	}
+
+	mgr.Sync([]AccountSpec{spec})
+	if err := mgr.RefreshNow(context.Background(), spec.Key); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	stored, _ := store.Get(spec.Key)
+	if d := time.Until(stored.ExpiresAt); d > 41*time.Minute || d < 38*time.Minute {
+		t.Fatalf("refresh grant restored the long window: %v until expiry, want the cap", d)
+	}
+	if stored.RefreshToken != "rt-2" {
+		t.Fatalf("rotated refresh token not persisted: %+v", stored)
+	}
+
+	// A profile without a cap still honours the vendor verbatim (Kilo).
+	if d := time.Until(tokenExpiry(time.Now(), 21600, 0)); d < 5*time.Hour {
+		t.Fatalf("uncapped profile clamped to %v, want the full grant", d)
+	}
+	// And a missing expires_in resolves to the cap, never to "unknown",
+	// which would otherwise refresh on every single tick.
+	if d := time.Until(tokenExpiry(time.Now(), 0, 40*time.Minute)); d > 41*time.Minute || d < 38*time.Minute {
+		t.Fatalf("missing expires_in = %v, want the cap", d)
 	}
 }
