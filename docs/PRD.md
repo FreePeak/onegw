@@ -1,3 +1,30 @@
+*Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 — code landed, live
+credential pending one browser approval): researched OmniRoute + 9router + xAI/OpenClaw docs to
+put the user's consumer SuperGrok plan behind onegw's xAI surfaces. Findings: one
+auth.x.ai device-flow session (public client b1a00492-…, scope
+`offline_access grok-cli:access api:access`) serves BOTH api.x.ai (OpenAI chat-completions +
+/v1/responses; SuperGrok serves grok-4.5 only on the Responses wire — a chat body 422s
+\"missing input\") and cli-chat-proxy.grok.com (Grok Build, OAuth-JWT-only, fingerprint-gated);
+grok.com app-chat needs browser `sso`+`sso-rw` cookies behind Cloudflare TLS fingerprinting and
+was deliberately skipped. Landed: (1) subquota dialect \"grok-cli\" — polls
+GET /v1/billing?format=credits with `x-grok-client-mode: cli`, surfaces the ONE shared weekly
+pool from `creditUsagePercent` (productUsage is a legend, never split into bars), reset from
+`currentPeriod.end` (RFC3339 or protobuf {seconds}), plan label decoded from the bearer JWT's
+`tier` claim at zero HTTP cost, percents floored so 99.6 % never parks; (2) `[[oauth.accounts]]
+owner = \"<prov>/<acct>\"` — several provider entries share ONE stored session (xAI rotates device
+sessions, so a second login would knock the first out), the borrower runs no refresh goroutine
+and a failed refresh cools every account on that key, with self-borrow/dangling-ref validation;
+(3) the two missing Grok proxy fingerprint headers (`X-XAI-Token-Auth: xai-grok-cli`,
+`x-grok-cli-version`) on the openai-responses kind — the proxy's own 401 body names
+`x_xai_token_auth=none` as the rejection reason. NOT applicable to the `cursor` provider: that
+wire is api2.cursor.sh, which accepts only a Cursor WorkOS session JWT (exp 2026-11-02, no
+refresh flow — re-import on rotation) and holds no xAI entitlement; verified live it still
+serves composer-2.5 and gemini-3.8-flash, while every Grok id tried (auto, grok-4.3,
+grok-4.5-high/medium, grok-4.6) returns the upstream's empty-turn 502. Outstanding: run
+`onegw-oauth login -provider xai -account mnhatlinh.doan@gmail.com -data-dir ~/.onegw/data`
+(codes live ~15 min; a keepalive loop keeps one published at /tmp/onegw-xai-code.txt) —
+the gateway then owns and auto-refreshes the token, the dead 2026-09-07 static JWT stops
+being the bearer, and the weekly pool appears on the Quota page. Earlier:)*
 *Last updated: 2026-09-12 (commandcode subscription quota fixed — credits window reports real
 period spend, zero-drop deployed pid 66474): the commandcode credits window always read 0% while
 the pool had headroom, because /alpha/billing/credits returns only REMAINING credits; the probe
