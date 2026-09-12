@@ -115,10 +115,12 @@ func ResponsesOnlyModel(model string) bool {
 }
 
 // UpstreamFormat returns the wire format the routed model actually speaks
-// on this provider. Only KindOpenCode varies per model (chat-completions
-// for the open-weight catalog, Responses API for gpt/grok/muse-spark).
+// on this provider. KindOpenCode and KindOpenCodeFree vary per model:
+// chat-completions for the open-weight catalog, Responses API for the
+// gpt/grok/muse-spark families (live-verified on BOTH tiers 2026-09-12:
+// muse-spark-1.2/1.3-contributor-free serve keyless on /zen/v1/responses).
 func (d *Def) UpstreamFormat(model string) translat.Format {
-	if d.Kind ***REMOVED*** KindOpenCode && ResponsesOnlyModel(model) {
+	if (d.Kind ***REMOVED*** KindOpenCode || d.Kind ***REMOVED*** KindOpenCodeFree) && ResponsesOnlyModel(model) {
 		return translat.FmtResponses
 	}
 	return d.Kind.Format()
@@ -729,15 +731,18 @@ var openCodeGoModels = []string{
 // (https://opencode.ai/zen/v1), mirrored from OmniRoute's noauth "opencode"
 // registry and re-probed live 2026-09-12. The upstream rotates this lineup
 // without notice (delisted ids answer 401 "Model X is not supported"), so
-// configs that want the current upstream list should set `models` explicitly.
-// Every model here is chat-completions only: the free tier has no
-// /v1/responses surface.
+// configs that want the current upstream list should set `models`
+// explicitly. Every entry here returned a keyless 200 in that probe; the
+// muse-spark-*-free pair serves on the Responses wire
+// (/zen/v1/responses), which Path/UpstreamFormat route per model.
 var openCodeFreeModels = []string{
 	"big-pickle",
 	"mimo-v2.5-free",
 	"nemotron-3-ultra-free",
 	"nemotron-3.5-lightning-free",
 	"ling-3.0-flash-fin-free",
+	"muse-spark-1.2-contributor-free",
+	"muse-spark-1.3-contributor-free",
 }
 
 // DefaultModels returns the stock catalog for kinds with a curated upstream
@@ -1878,18 +1883,16 @@ func (d *Def) Path(op, model string) string {
 		return "" // base_url IS the /alpha/generate endpoint
 	case KindCursor:
 		return "" // skeleton
-	case KindOpenCode:
+	case KindOpenCode, KindOpenCodeFree:
+		// Both tiers route per model: the gpt-*/grok-*/muse-spark*
+		// families live on /v1/responses (ResponsesOnlyModel; the free
+		// tier's muse-spark-*-free included — live-probed 2026-09-12),
+		// everything else on /v1/chat/completions.
 		if op ***REMOVED*** "models" {
 			return "/v1/models"
 		}
 		if ResponsesOnlyModel(model) {
 			return "/v1/responses"
-		}
-		return "/v1/chat/completions"
-	case KindOpenCodeFree:
-		// The free tier serves chat completions only (no /v1/responses).
-		if op ***REMOVED*** "models" {
-			return "/v1/models"
 		}
 		return "/v1/chat/completions"
 	default:

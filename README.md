@@ -359,12 +359,14 @@ configured or sent (a bare `Bearer` reads as anonymous upstream), and the
 gateway always sends `x-opencode-session` — client value when present, else
 a stable derived id — which is the free tier's only hard requirement. The
 catalog is a small rotating `-free` lineup (`big-pickle`,
-`mimo-v2.5-free`, `nemotron-3-ultra-free`, …; the vendor delists ids
-without notice — delisted models answer 401 `Model X is not supported`, so
-pin `models` to what you've probed). Every model speaks
-`/v1/chat/completions` only — there is no Responses surface on this tier.
-Rate limits are IP-scoped and anonymous: upstream 429s (`FreeUsageLimitError`)
-bench the provider like any other, and combos fall through.
+`mimo-v2.5-free`, `nemotron-3-ultra-free`, `muse-spark-*-free`, …; the
+vendor delists ids without notice — delisted models answer 401 `Model X
+is not supported`, so pin `models` to what you've probed). Endpoint
+routing matches the Go tier per model: `muse-spark-*` (the `-free` pair
+included, live-verified) serves on the Responses wire, everything else on
+`/v1/chat/completions` — onegw translates either way. Rate limits are
+IP-scoped and anonymous: upstream 429s (`FreeUsageLimitError`) bench the
+provider like any other, and combos fall through.
 
 ```toml
 [[providers]]

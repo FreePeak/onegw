@@ -193,8 +193,9 @@ api_key = ""                    # fill or use env
 name = "opencode-free"
 kind = "opencode-free"            # base_url defaults to https://opencode.ai/zen/v1
 # models = [...]                  # optional; omitted = curated free catalog
-                                  # (big-pickle, *-free models; chat-only, no
-                                  # /v1/responses surface on this tier)
+                                  # (big-pickle + the live *-free lineup;
+                                  # muse-spark-*-free auto-routes to
+                                  # /v1/responses like the Go tier)
 
 # OpenAI Responses-wire upstream (e.g. orcarouter.ai): clients keep using
 # /v1/chat/completions; onegw translates to {base_url}/responses.
