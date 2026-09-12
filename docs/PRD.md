@@ -1,3 +1,14 @@
+*Last updated: 2026-09-13 (cursor `auto` lane fixed, 38cf5b6, deployed pid 28905): the provider
+advertised `auto`, which Cursor has never had as a model id — the encoder put the client string on
+the wire verbatim, so every `cursor/auto` request ended the AgentService turn with zero content
+(502 "cursor: empty response"). Both reference implementations rewrite it (`resolveRequestedModel`:
+auto → default), and the root cause was proven live before touching code: same session, same path,
+`cursor/auto` empty while `cursor/default` → "PONG". Now mapped on both cursor wires (AgentService
+field 9, ChatService Model{1} under field 5 — tools and "-thinking" ids route there), pinned by
+TestEncodeCursorAgentRequestRewritesAutoLane, and verified through the gateway after deploy:
+`cursor/auto` → "PONG" (11.4k tokens), `composer-2.5` unaffected, tools path answers. The
+auto-{cost,balance,intelligence} preference is dropped rather than guessed (Cursor's
+ModelParameter sub-fields are unrecovered here; the comment names the upgrade path). Earlier:)*
 *Last updated: 2026-09-13 (SuperGrok follow-through: 6e29d50 deployed, Grok Build provider
 staged DISABLED, pid 16283): three fixes after the first landing. (1) The live reload of the
 borrower entry failed on the running binary — `OAuthAccounts()` defaults `service` from the
