@@ -559,7 +559,26 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 	if len(sys) > 0 {
 		userText = "[System]\n" + strings.Join(sys, "\n\n") + "\n\n" + userText
 	}
-	return buildAgentRunFrame(userText, u.Model), nil
+	return buildAgentRunFrame(userText, cursorRequestedModel(u.Model)), nil
+}
+
+// cursorRequestedModel maps a client model id onto the id Cursor's
+// AgentService recognizes. Cursor has no "auto" lane: both reference
+// implementations rewrite auto* → "default" before the wire, and live
+// evidence agrees — "cursor/auto" ends the turn with zero content (the
+// gateway surfaces it as 502 empty response) while "cursor/default" answers.
+//
+// The auto-{cost,balance,intelligence} preference cannot ride: it needs
+// Cursor's model_parameters sub-fields, which this builder does not emit, so
+// the preference is dropped and the lane becomes Cursor's own default.
+// Upgrade path: add the ModelDetails parameter field numbers and emit
+// {id:"optimization", value:"cost"|"balance"|"intelligence"}.
+func cursorRequestedModel(model string) string {
+	switch model {
+	case "auto", "auto-cost", "auto-balance", "auto-intelligence":
+		return "default"
+	}
+	return model
 }
 
 // ---------------------------------------------------------------------------
@@ -626,8 +645,8 @@ func EncodeCursorChatRequest(u *types.ChatRequest) ([]byte, error) {
 	req = pbUvarint(req, 2, 1)
 	req = pbBytes(req, 3, nil) // empty instruction
 	req = pbUvarint(req, 4, 1)
-	req = pbBytes(req, 5, append(pbString(nil, 1, u.Model), pbBytes(nil, 4, nil)...)) // Model{name, empty}
-	req = pbBytes(req, 8, nil)                                                        // web tool
+	req = pbBytes(req, 5, append(pbString(nil, 1, cursorRequestedModel(u.Model)), pbBytes(nil, 4, nil)...)) // Model{name, empty}
+	req = pbBytes(req, 8, nil)                                                                              // web tool
 	req = pbUvarint(req, 13, 1)
 	req = pbBytes(req, 15, cursorSetting())
 	req = pbUvarint(req, 19, 1)

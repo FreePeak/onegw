@@ -140,6 +140,72 @@ func TestEncodeCursorAgentRequestFoldsSystem(t *testing.T) {
 	}
 }
 
+// TestEncodeCursorAgentRequestRewritesAutoLane pins the model-id mapping
+// Cursor needs: it has no "auto" model, and sending the id verbatim ends the
+// AgentService turn with zero content (live: cursor/auto → empty,
+// cursor/default → "PONG"). Real ids must ride unchanged.
+func TestEncodeCursorAgentRequestRewritesAutoLane(t *testing.T) {
+	wireModel := func(model string) string {
+		t.Helper()
+		u := &types.ChatRequest{Model: model, Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "hi"}}},
+		}}
+		body, err := EncodeCursorAgentRequest(u)
+		if err != nil {
+			t.Fatalf("%s: %v", model, err)
+		}
+		f, err := pbDecode(body[5:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		rrF, ok := pbGet(f, 1)
+		if !ok {
+			t.Fatal("run_request (field 1) missing")
+		}
+		rr, err := pbDecode(rrF.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mf, _ := pbGet(rr, 9)
+		mm, _ := pbDecode(mf.Value)
+		return pbFirst(mm, 1)
+	}
+	for model, want := range map[string]string{
+		"auto":              "default",
+		"auto-cost":         "default",
+		"auto-balance":      "default",
+		"auto-intelligence": "default",
+		"gpt-5.2":           "gpt-5.2",
+		"composer-2.5":      "composer-2.5",
+	} {
+		if got := wireModel(model); got != want {
+			t.Fatalf("agent wire: model %q said %q, want %q", model, got, want)
+		}
+		// Tool schemas and "-thinking" ids ride ChatService instead, which
+		// carries the model in Model{1} under field 5 — same mapping.
+		body, err := EncodeCursorChatRequest(&types.ChatRequest{Model: model, Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "hi"}}},
+		}})
+		if err != nil {
+			t.Fatalf("%s: chat: %v", model, err)
+		}
+		cf, err := pbDecode(body[5:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		inner, _ := pbGet(cf, 1)
+		cr, err := pbDecode(inner.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmf, _ := pbGet(cr, 5)
+		cmm, _ := pbDecode(cmf.Value)
+		if got := pbFirst(cmm, 1); got != want {
+			t.Fatalf("chat wire: model %q said %q, want %q", model, got, want)
+		}
+	}
+}
+
 func TestEncodeCursorChatRequestCarriesTools(t *testing.T) {
 	u := &types.ChatRequest{
 		Model:    "claude-4.5-haiku",
