@@ -373,7 +373,8 @@ windows — used percent and reset time — on the Quota page and
 | `opencode-go` | `https://opencode.ai/zen/go/v1/usage` | rolling 5h, weekly, monthly (%) |
 | `zai` | `https://api.z.ai/api/monitor/usage/quota/limit` | session (5h), weekly (credits or tokens, % + plan level) |
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
-| `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`) | 5-hour + weekly USD windows (used/cap), monthly credits pool; plan label from subscriptions |
+| `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`) | 5-hour + weekly USD windows (used/cap), monthly credits pool (spend vs pool total); plan label from subscriptions |
+| `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim |
 
 An account whose vendor-reported window is **fully consumed** parks until
 the vendor's stated reset (capped at one poll cycle so an early reset or a
@@ -713,6 +714,29 @@ Tokens never live in TOML; the account's static `api_key` is the fallback
 until a token is stored. Endpoints are overridable per account
 (`device_url` / `token_url` / `client_id` / `scope`) for self-hosted IdPs.
 Kilo Code tokens carry no refresh token — re-run `login` when they expire.
+
+**One session, several surfaces.** A vendor often exposes the same
+subscription on more than one wire (xAI: `api.x.ai` chat-completions and the
+Grok Build Responses proxy). xAI rotates device sessions, so logging in twice
+would knock the first out — instead declare a second account that `owner`
+borrows, which resolves the same stored token and never refreshes it twice:
+
+```toml
+[[oauth.accounts]]            # the login: owns + refreshes the session
+provider = "xai"
+account  = "mnhatlinh.doan@gmail.com"
+service  = "xai"
+
+[[oauth.accounts]]            # borrower: no login of its own
+provider = "grokbuild"        # another [[providers]] entry, any kind
+account  = "mnhatlinh.doan@gmail.com"
+service  = "xai"
+owner    = "xai/mnhatlinh.doan@gmail.com"
+```
+
+A refresh failure cools every account that resolves that key, and the Quota
+page's `parked` marker shows it. `onegw-oauth login` is always run against the
+**owner** entry.
 
 ## Surfaces
 
