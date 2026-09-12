@@ -19,7 +19,8 @@ package server
 // "keep the existing key" (the UI never displays key material, so it
 // cannot echo one back). New accounts with empty keys are written
 // keyless (env ONEGW_PROVIDER_<NAME>_KEY or nothing) — config.Load's
-// validation still refuses credential-less non-searxng providers.
+// validation still refuses credential-less providers except the keyless
+// kinds (searxng, opencode-free).
 
 import (
 	"encoding/json"
