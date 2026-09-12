@@ -83,24 +83,28 @@ func validateOAuth(c *Config) error {
 		if !provNames[a.Provider] {
 			return fmt.Errorf("oauth account references unknown provider %q", a.Provider)
 		}
-		if a.Service != "" && !KnownOAuthService(a.Service) {
-			return fmt.Errorf("oauth account %s/%s: unknown oauth service %q", a.Provider, a.Account, a.Service)
-		}
-		if a.Owner != "" {
-			// A borrowed session is only refreshed by the entry that owns
-			// it, so the reference must name a declared account.
-			if a.Owner == a.Provider+"/"+a.Account {
-				return fmt.Errorf("oauth account %s borrows itself (owner = %q)", a.Provider+"/"+a.Account, a.Owner)
-			}
-			if !ownKeys[a.Owner] {
-				return fmt.Errorf("oauth account %s/%s: owner %q is not a declared [[oauth.accounts]] entry with its own login", a.Provider, a.Account, a.Owner)
-			}
-		}
 		key := a.Provider + "/" + a.Account
 		if seen[key] {
 			return fmt.Errorf("duplicate oauth account %s", key)
 		}
 		seen[key] = true
+		if a.Owner != "" {
+			// A borrowed session is refreshed by the entry that owns it, so
+			// the reference must name a declared account. The service profile
+			// is the owner's business: a borrower resolves no endpoints, so
+			// its (defaulted) service is not checked — OAuthAccounts() fills
+			// it from the provider name, which would reject every borrower.
+			if a.Owner == key {
+				return fmt.Errorf("oauth account %s borrows itself (owner = %q)", key, a.Owner)
+			}
+			if !ownKeys[a.Owner] {
+				return fmt.Errorf("oauth account %s: owner %q is not a declared [[oauth.accounts]] entry with its own login", key, a.Owner)
+			}
+			continue
+		}
+		if a.Service != "" && !KnownOAuthService(a.Service) {
+			return fmt.Errorf("oauth account %s: unknown oauth service %q", key, a.Service)
+		}
 	}
 	return nil
 }

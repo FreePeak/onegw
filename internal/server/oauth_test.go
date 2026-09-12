@@ -398,6 +398,17 @@ func TestOAuthConfigValidation(t *testing.T) {
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "not a declared") {
 			t.Fatalf("want dangling-owner error, got %v", err)
 		}
+		// A borrower writes no service: it resolves no endpoints, so the
+		// profile name defaulted from its provider must not be validated.
+		cfg.OAuth.Accounts[1] = config.OAuthAccount{Provider: "grokbuild", Account: "main", Owner: "xai/main"}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("service-less borrower rejected: %v", err)
+		}
+		// Borrowers collide like any other account.
+		cfg.OAuth.Accounts = append(cfg.OAuth.Accounts, config.OAuthAccount{Provider: "grokbuild", Account: "main", Owner: "xai/main"})
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate oauth account") {
+			t.Fatalf("want duplicate-borrower error, got %v", err)
+		}
 	})
 }
 
