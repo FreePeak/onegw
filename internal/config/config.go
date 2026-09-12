@@ -122,7 +122,7 @@ type UsageCfg struct {
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
 	Name     string   `toml:"name"`
-	Kind     string   `toml:"kind"` // openai | anthropic | gemini | opencode | searxng | openai-responses | commandcode | cursor
+	Kind     string   `toml:"kind"` // openai | anthropic | gemini | opencode | opencode-free | searxng | openai-responses | commandcode | cursor
 	BaseURL  string   `toml:"base_url"`
 	APIKey   string   `toml:"api_key"` // convenience for single-account
 	Keys     []string `toml:"keys"`    // multi-key accounts, one account per key
@@ -519,7 +519,7 @@ func (c *Config) Validate() error {
 		}
 		names["provider:"+p.Name] = true
 		switch p.Kind {
-		case "openai", "anthropic", "gemini", "opencode":
+		case "openai", "anthropic", "gemini", "opencode", "opencode-free":
 		case "openai-responses", "commandcode", "cursor":
 		// Custom wire formats (issue #12). cursor is a fail-fast
 		// skeleton: valid here, errors at request time.
@@ -535,7 +535,9 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("provider %s unknown kind %q", p.Name, p.Kind)
 		}
-		if p.Kind != "searxng" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
+		// opencode-free is the OpenCode Zen FREE tier — keyless by design
+		// (same carve-out shape as searxng).
+		if p.Kind != "searxng" && p.Kind != "opencode-free" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
 			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
 		}
 		// Two accounts with the same name silently shadow each other in the
