@@ -132,10 +132,11 @@ func (s *Server) handleAPISubscription(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type subWinView struct {
-	Name     string
-	Pct      int
-	BarClass string
-	Resets   string
+	Name      string
+	Pct       int
+	BarClass  string
+	Resets    string
+	Exhausted bool
 }
 
 type subRowView struct {
@@ -170,6 +171,7 @@ func (s *Server) subViews() []subRowView {
 			switch {
 			case w.Used >= 100:
 				wv.BarClass = "err"
+				wv.Exhausted = true
 				row.Exhausted = true
 			case w.Used >= 80:
 				wv.BarClass = "warn"

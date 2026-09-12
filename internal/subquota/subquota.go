@@ -484,10 +484,11 @@ func parseZai(body []byte, status int) ([]Window, string, string) {
 }
 
 // probeCommandCode ports OmniRoute's usage/command-code.ts: one GET per
-// /alpha surface (whoami → orgId, billing/credits → windows + credit pool,
-// billing/subscriptions → plan + period, usage/summary → period spend), all
-// bearer-authenticated against the API base. Credits is the load-bearing
-// call (its windowLimits carry the exhausted flags); everything else
+// /alpha surface (whoami → orgId, usage/summary → period spend,
+// billing/credits → windows + credit pool, billing/subscriptions → plan +
+// period), all bearer-authenticated against the API base. Credits is the
+// load-bearing call (its windowLimits carry the exhausted flags); summary
+// turns the credits window into a real used-percent, and everything else
 // enriches but never fails the probe.
 func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 	base := tgt.URL
@@ -530,12 +531,30 @@ func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 		}
 	}
 
+	// Period spend (soft-fail): totalCost — falling back to
+	// totalMonthlyCredits — scopes the credits pool to real usage. The
+	// vendor's own default period is the billing period (live-verified:
+	// periodBasis "billing-period", identical with or without ?since).
+	spend := 0.0
+	if _, body, err := get("/alpha/usage/summary" + q); err == nil {
+		var sum struct {
+			TotalCost           float64 `json:"totalCost"`
+			TotalMonthlyCredits float64 `json:"totalMonthlyCredits"`
+		}
+		if json.Unmarshal(body, &sum) == nil {
+			spend = sum.TotalCost
+			if spend <= 0 {
+				spend = sum.TotalMonthlyCredits
+			}
+		}
+	}
+
 	status, body, err := get("/alpha/billing/credits" + q)
 	if err != nil {
 		snap.Err = err.Error()
 		return snap
 	}
-	windows, plan, perr := parseCommandCode(body, status)
+	windows, plan, perr := parseCommandCode(body, status, spend)
 	if perr != "" {
 		snap.Err = perr
 		return snap
@@ -583,10 +602,10 @@ const creditsWindow = "Credits (monthly)"
 //	             "resetAt":1789539876848}}}}
 //
 // Windows: five_hour/weekly roll USD used against cap; credits is the
-// monthly pool (monthly + purchased + free remaining) against the pool
-// total. The weekly window above IS exhausted (used >= cap) — the shape
-// that parks the account.
-func parseCommandCode(body []byte, status int) ([]Window, string, string) {
+// monthly pool — spend (the /alpha/usage/summary period total) against
+// spend+remaining, OmniRoute's totalCost math. The weekly window above IS
+// exhausted (used >= cap) — the shape that parks the account.
+func parseCommandCode(body []byte, status int, spend float64) ([]Window, string, string) {
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return nil, "", "CommandCode API key was rejected — reconnect or rotate the key."
 	}
@@ -640,19 +659,29 @@ func parseCommandCode(body []byte, status int) ([]Window, string, string) {
 		// that still had spendable headroom every poll cycle.
 		windows = append(windows, Window{Name: w.name, Used: int(pct), Resets: asReset(w.reset)})
 	}
-	// Credits pool (monthly + purchased + free remaining). The vendor does
-	// not return period spend on this endpoint, so the window reads 0%
-	// while the pool still has headroom — parked only when the pool itself
-	// is drained. OmniRoute derives the total from usage/summary; here the
-	// window is informational (no false parks from invented totals).
+	// Credits pool (monthly + purchased + free remaining) against the
+	// pool total = spend (usage/summary period total) + remaining
+	// (OmniRoute's totalCost math, live-verified on a GOAT key:
+	// remaining 10.29 + spend 59.87 = total 70). Drained pool parks;
+	// spend 0 keeps the informational 0% (vendor grants not yet spent).
 	if data.Credits != nil {
 		remaining := data.Credits.MonthlyCredits + data.Credits.PurchasedCredits + data.Credits.FreeCredits
-		credits := Window{Name: creditsWindow, Used: 0}
 		if remaining < 0 {
 			remaining = 0
 		}
-		if remaining == 0 {
+		if spend < 0 {
+			spend = 0
+		}
+		credits := Window{Name: creditsWindow}
+		switch {
+		case spend+remaining <= 0:
+			credits.Used = 100 // nothing granted and nothing spent: drained
+		case remaining == 0:
 			credits.Used = 100 // drained pool parks until the vendor refills
+		default:
+			// Floor: the fraction never reaches 1, so spend alone can
+			// never fabricate the drained park — only remaining == 0 does.
+			credits.Used = int(spend / (spend + remaining) * 100)
 		}
 		windows = append(windows, credits)
 	}
