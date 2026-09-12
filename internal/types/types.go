@@ -386,6 +386,31 @@ func (e *APIError) ReasoningEchoRequired() bool {
 	return e != nil && e.Status == 400 && reasoningEchoRe.MatchString(e.Message)
 }
 
+// contextWindowRe matches the upstream's context-window overflow refusal:
+// the request's input is larger than the model's own window, so THIS target
+// cannot serve THIS body on any account or retry. Vendor dialects:
+//   - z.ai / GLM fronted by new-api resellers (live 2026-09-12, a 283,915-token
+//     advisor request on the `dev` combo): 400 "The input (283915 tokens) is
+//     longer than the model's context length (262144 tokens)."
+//   - OpenAI: "This model's maximum context length is 128000 tokens."
+//     (code context_length_exceeded).
+//   - Anthropic: "prompt is too long: 250000 tokens > 200000 maximum".
+// Deliberately scoped to window wording so quota/TPM 400s ("too many tokens",
+// "current model TPM limit") keep their own contract.
+var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|maximum context|prompt is too long|input is too long`)
+
+// ContextWindowExceeded reports whether a 400 is the upstream's context-window
+// overflow refusal. The verdict is about THIS (provider, model) vs THIS body:
+// every key of the pool holds the same window and the body is deterministic, so
+// a same-target retry re-uploads the same oversized prompt for the same 400.
+// Router.Execute therefore falls through to the next combo target WITHOUT
+// benching the model — smaller bodies still serve fine on it, and a bench
+// would exile a healthy leg for one oversized request. A direct route (no next
+// target) still surfaces the 400 honestly.
+func (e *APIError) ContextWindowExceeded() bool {
+	return e != nil && e.Status == 400 && contextWindowRe.MatchString(e.Type+" "+e.Code+" "+e.Message)
+}
+
 // SharedConcurrency reports whether a 429 is the upstream's model-wide
 // concurrency limit (resellers fronting Tencent GLM: "The request rate
 // exceeds the current model Concurrency limit 1200") rather than a
