@@ -285,8 +285,10 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 	} else {
 		tok.RefreshToken = old.RefreshToken
 	}
-	if raw.ExpiresIn > 0 {
-		tok.ExpiresAt = time.Now().Add(time.Duration(raw.ExpiresIn) * time.Second)
+	// Same cap as the device-flow path: never believe an overstated
+	// vendor expiry, and never fall back to a stale one either.
+	if exp := tokenExpiry(time.Now(), raw.ExpiresIn, spec.Provider.MaxTokenTTL); !exp.IsZero() {
+		tok.ExpiresAt = exp
 	} else {
 		tok.ExpiresAt = old.ExpiresAt
 	}
@@ -306,6 +308,7 @@ func sameSpec(a, b AccountSpec) bool {
 		a.Provider.ClientID != b.Provider.ClientID ||
 		a.Provider.KiloDialect != b.Provider.KiloDialect ||
 		a.Provider.StartTokenURL != b.Provider.StartTokenURL ||
+		a.Provider.MaxTokenTTL != b.Provider.MaxTokenTTL ||
 		len(a.Provider.Extra) != len(b.Provider.Extra) {
 		return false
 	}
