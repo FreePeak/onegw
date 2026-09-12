@@ -183,6 +183,19 @@ api_key = ""                    # fill or use env
 # limit minus 2 (the bucket holds a 2-request burst): rpm = 6 for an
 # 8/min wall. Per-account rpm above works alongside it.
 
+
+# OpenCode Zen FREE tier — keyless public endpoint (OmniRoute's noauth
+# "opencode"/alias oc provider). No api_key needed: the gateway always
+# sends x-opencode-session (client header or a stable derived id) which is
+# the free tier's only requirement. Rate limits apply upstream; the vendor
+# rotates this lineup (delisted ids answer 401 "Model X is not supported").
+[[providers]]
+name = "opencode-free"
+kind = "opencode-free"            # base_url defaults to https://opencode.ai/zen/v1
+# models = [...]                  # optional; omitted = curated free catalog
+                                  # (big-pickle, *-free models; chat-only, no
+                                  # /v1/responses surface on this tier)
+
 # OpenAI Responses-wire upstream (e.g. orcarouter.ai): clients keep using
 # /v1/chat/completions; onegw translates to {base_url}/responses.
 [[providers]]
