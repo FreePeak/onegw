@@ -175,7 +175,11 @@ func cmdLogin(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Printf("Signing in to %s.\nOpen this URL and enter the code:\n\n", p.Name)
+	// Print the resolved store up front: the gateway reads
+	// <config data_dir>/oauth-tokens.json, so a config that overrides
+	// data_dir needs a matching -data-dir. Seeing the path before approving
+	// beats a login that "succeeds" into a file the gateway never reads.
+	fmt.Printf("Signing in to %s (store: %s/oauth-tokens.json).\nOpen this URL and enter the code:\n\n", p.Name, o.dataDir)
 	tok, err := mgr.Login(ctx, oauth.AccountSpec{Key: key, Provider: p}, func(ds oauth.DeviceStart) {
 		url := ds.VerificationURLComplete
 		if url == "" {
