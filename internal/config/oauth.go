@@ -20,12 +20,28 @@ type OAuthAccount struct {
 	// provider config name (e.g. provider "grok" using service "xai").
 	// Default: same as Provider.
 	Service string `toml:"service"`
+	// Owner borrows ANOTHER account's stored session instead of holding a
+	// login of its own: "<provider>/<account>" of a sibling entry. Use it
+	// when one subscription credential serves several wire surfaces (xAI:
+	// api.x.ai chat + the Grok Build Responses proxy) — a second device
+	// login would rotate/invalidate the first session. The owner entry
+	// keeps the refresh goroutine; the borrower only resolves the token.
+	Owner string `toml:"owner"`
 	// Optional overrides of the service profile's endpoints (self-hosted
 	// IdPs, tests). Empty = use the built-in service endpoints.
 	DeviceURL string `toml:"device_url"`
 	TokenURL  string `toml:"token_url"`
 	ClientID  string `toml:"client_id"`
 	Scope     string `toml:"scope"`
+}
+
+// StoreKey is the token-store key this account resolves: its own
+// provider/account, or the borrowed Owner key when set.
+func (a OAuthAccount) StoreKey() string {
+	if a.Owner != "" {
+		return a.Owner
+	}
+	return a.Provider + "/" + a.Account
 }
 
 // OAuthAccounts returns normalized account entries: fills Account and
@@ -45,14 +61,22 @@ func (c *Config) OAuthAccounts() []OAuthAccount {
 }
 
 // validateOAuth checks the [[oauth.accounts]] section: provider references
-// must resolve, service profiles must be known, and no duplicate accounts.
+// must resolve, service profiles must be known, borrowed owners must be
+// declared accounts, and no duplicate accounts.
 func validateOAuth(c *Config) error {
 	provNames := map[string]bool{}
 	for _, p := range c.Providers {
 		provNames[p.Name] = true
 	}
+	accounts := c.OAuthAccounts()
+	ownKeys := map[string]bool{}
+	for _, a := range accounts {
+		if a.Owner == "" {
+			ownKeys[a.StoreKey()] = true
+		}
+	}
 	seen := map[string]bool{}
-	for _, a := range c.OAuth.Accounts {
+	for _, a := range accounts {
 		if a.Provider == "" {
 			return fmt.Errorf("oauth account missing provider")
 		}
@@ -61,6 +85,16 @@ func validateOAuth(c *Config) error {
 		}
 		if a.Service != "" && !KnownOAuthService(a.Service) {
 			return fmt.Errorf("oauth account %s/%s: unknown oauth service %q", a.Provider, a.Account, a.Service)
+		}
+		if a.Owner != "" {
+			// A borrowed session is only refreshed by the entry that owns
+			// it, so the reference must name a declared account.
+			if a.Owner == a.Provider+"/"+a.Account {
+				return fmt.Errorf("oauth account %s borrows itself (owner = %q)", a.Provider+"/"+a.Account, a.Owner)
+			}
+			if !ownKeys[a.Owner] {
+				return fmt.Errorf("oauth account %s/%s: owner %q is not a declared [[oauth.accounts]] entry with its own login", a.Provider, a.Account, a.Owner)
+			}
 		}
 		key := a.Provider + "/" + a.Account
 		if seen[key] {
