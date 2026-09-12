@@ -46,7 +46,9 @@ Free models are not available to this account yet — link a GitHub account or a
 dead ladder legs would burn two doomed attempts per spilled request. Post-change probes: reload
 200, free buffered 200 (served by b-ai glm-5.3-flash), dev stream 200. Earlier:)*
 
-*Last updated: 2026-09-12 (b-ai 503 RCA + billing parole, zero-drop deployed pid 99738): the reported
+*Last updated: 2026-09-12 (b-ai 503 RCA + billing parole, zero-drop deployed pid 85592 —
+binary from ad82e42; lsof single listener, health ok, direct b-ai 200 in 1.2s, dev combo 200):
+the reported
 `provider_accounts_unfunded` 503 on b-ai had two layers. (1) Trigger, vendor-side: the
 10:00 UTC+8 pricing event made every free key answer `credit insufficient balance:
 balance=0 required=NNNN` (log 09:04:41-59Z, 8/8 accounts), which #80 classified correctly
