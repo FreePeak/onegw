@@ -2,9 +2,11 @@ package subquota
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -280,12 +282,145 @@ func TestExhaustedWindowPicksWorst(t *testing.T) {
 		{Name: "Rolling", Used: 99, Resets: &soon},
 		{Name: "Weekly", Used: 100},
 	}}
+
 	w, ok := snap.exhaustedWindow()
 	if !ok || w.Name != "Weekly" || !w.exhausted() {
 		t.Fatalf("want Weekly exhausted, got %+v ok=%v", w, ok)
 	}
 	if _, ok := (Snapshot{Windows: []Window{{Used: 99}}}).exhaustedWindow(); ok {
 		t.Fatal("99% must not count as exhausted")
+	}
+}
+
+// grokTestJWT builds a bare-bones JWT carrying only the claims the plan
+// label reads, so the parser is tested without a live credential.
+func grokTestJWT(tier string) string {
+	head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"ES256"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"tier":` + tier + `}`))
+	return head + "." + payload + ".sig"
+}
+
+func TestParseGrokCliWeeklyPool(t *testing.T) {
+	// Live-verified shape (OmniRoute grokQuotaFetcher): percent USED of the
+	// shared weekly pool, protobuf-JSON period type + {seconds} end.
+	body := []byte(`{"config":{"creditUsagePercent":"62.4",` +
+		`"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":{"seconds":"1789660800","nanos":0}},` +
+		`"productUsage":[{"product":"Grok Build","usagePercent":41},{"product":"Grok Chat","usagePercent":21}],` +
+		`"prepaidBalance":{"val":0},"onDemandCap":{"val":0}}}`)
+	windows, plan, err := parseGrokCli(grokTestJWT("1"), body, 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "Grok · SuperGrok" {
+		t.Fatalf("plan = %q, want the tier-1 label", plan)
+	}
+	// The product breakdown is a LEGEND, not independent quotas: exactly
+	// one window, or the dashboard would double-count one pool.
+	if len(windows) != 1 {
+		t.Fatalf("windows = %+v, want the single shared pool", windows)
+	}
+	w := windows[0]
+	if w.Name != "Weekly pool" || w.Used != 62 {
+		t.Fatalf("pool = %+v, want Weekly pool at floored 62%%", w)
+	}
+	if w.Resets == nil || w.Resets.Unix() != 1789660800 {
+		t.Fatalf("reset = %+v, want the {seconds} period end", w.Resets)
+	}
+	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
+		t.Fatal("62% of the weekly pool must not park")
+	}
+}
+
+func TestParseGrokCliFloorsAndParks(t *testing.T) {
+	// 99.6 %: rounding would park an account the vendor still considers
+	// spendable (the commandcode lesson), so it floors and stays ready.
+	near, _, err := parseGrokCli(grokTestJWT("5"), []byte(
+		`{"config":{"creditUsagePercent":99.6,"currentPeriod":{"end":"2026-09-20T00:00:00Z"}}}`), 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if near[0].Used != 99 || near[0].Name != "Usage pool" {
+		t.Fatalf("near-limit pool = %+v, want floored 99%% with the generic name", near[0])
+	}
+	if _, ok := (Snapshot{Windows: near}).exhaustedWindow(); ok {
+		t.Fatal("99.6% must not park")
+	}
+	// The vendor's own exhausted number DOES park, and percent values
+	// above 100 clamp instead of overflowing the bar.
+	full, plan, err := parseGrokCli(grokTestJWT("5"), []byte(`{"config":{"creditUsagePercent":104}}`), 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "Grok · SuperGrok Heavy" {
+		t.Fatalf("plan = %q, want the tier-5 label", plan)
+	}
+	w, ok := (Snapshot{Windows: full}).exhaustedWindow()
+	if !ok || w.Used != 100 {
+		t.Fatalf("want the pool clamped to 100%% and exhausted, got %+v ok=%v", w, ok)
+	}
+}
+
+func TestParseGrokCliErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{401, `{}`, "onegw-oauth login"},
+		{403, `{}`, "onegw-oauth login"},
+		{500, `{}`, "Grok billing API error (500)"},
+		{200, `{`, "not valid JSON"},
+		{200, `{"config":{"productUsage":[]}}`, "did not contain valid quota data"},
+	} {
+		_, _, err := parseGrokCli(grokTestJWT("1"), []byte(tc.body), tc.status)
+		if !strings.Contains(err, tc.want) {
+			t.Fatalf("status %d body %.30s: want error containing %q, got %q", tc.status, tc.body, tc.want, err)
+		}
+	}
+	// A non-JWT bearer (plain xai- key) still probes; it just carries no
+	// tier claim, so the plan degrades to the vendor name.
+	_, plan, err := parseGrokCli("xai-not-a-jwt", []byte(`{"config":{"creditUsagePercent":3}}`), 200)
+	if err != "" || plan != "Grok" {
+		t.Fatalf("plan = %q err = %q, want the plain vendor name", plan, err)
+	}
+}
+
+func TestProbeGrokCliEndToEnd(t *testing.T) {
+	// The billing probe must carry the client-mode fingerprint the endpoint
+	// keys on, and the snapshot must be parkable from the vendor's percent.
+	var mode string
+	gb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/billing" {
+			http.NotFound(w, r)
+			return
+		}
+		mode = r.Header.Get("x-grok-client-mode")
+		_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{
+			"creditUsagePercent": 100,
+			"currentPeriod":      map[string]any{"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": map[string]any{"seconds": "1789660800"}},
+		}})
+	}))
+	defer gb.Close()
+
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "gb", AcctName: "main", AcctKey: grokTestJWT("1"), Dialect: GrokCli,
+		URL: gb.URL + "/v1/billing?format=credits"}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a 100% weekly pool never parked the account")
+	}
+	snaps := tr.All()
+	if len(snaps) != 1 || snaps[0].Err != "" {
+		t.Fatalf("probe failed: %+v", snaps)
+	}
+	if snaps[0].Plan != "Grok · SuperGrok" || snaps[0].Windows[0].Name != "Weekly pool" {
+		t.Fatalf("snapshot = %+v", snaps[0])
+	}
+	if mode != "cli" {
+		t.Fatalf("x-grok-client-mode = %q, want cli", mode)
 	}
 }
 
