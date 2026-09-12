@@ -710,6 +710,10 @@ onegw-oauth login -provider xai -account main   # prints URL + code, polls, stor
 onegw-oauth list                                # stored accounts + expiry state
 ```
 
+Pass `-data-dir` when your config sets `data_dir` somewhere other than
+`~/.onegw` — the CLI prints the store path it resolved, so a mismatch is
+visible before you approve rather than after a request still 403s.
+
 Tokens never live in TOML; the account's static `api_key` is the fallback
 until a token is stored. Endpoints are overridable per account
 (`device_url` / `token_url` / `client_id` / `scope`) for self-hosted IdPs.
