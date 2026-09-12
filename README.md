@@ -754,12 +754,14 @@ can front either:
 onegw-oauth login -provider xai -account you@example.com -data-dir ~/.onegw/data
 ```
 
-The gateway stores the session in `oauth-tokens.json`, refreshes it ahead of
-expiry (xAI issues a 6 h `expires_in` but silently kills device tokens at
-~40-45 min, so the loop's default lead is deliberately aggressive), and
-`subscription_quota = "grok-cli"` surfaces the **shared weekly pool** on the
-Quota page — parking the account when that pool hits 100 % instead of
-burning doomed upstream attempts.
+The gateway stores the session in `oauth-tokens.json` and refreshes it ahead of
+expiry — but xAI claims `expires_in = 21600` (6 h) for device tokens it then
+revokes silently at ~40-45 min, so the `xai` profile caps the lifetime onegw
+trusts at 40 min (`Provider.MaxTokenTTL`, enforced on both the device grant and
+every rotation). Without that cap the refresher sleeps for hours while every
+`xai/*` request 403s. `subscription_quota = "grok-cli"` then surfaces the
+**shared weekly pool** on the Quota page — parking the account when that pool
+hits 100 % instead of burning doomed upstream attempts.
 
 Not supported, deliberately: the `grok.com` web surface (needs paired `sso` +
 `sso-rw` browser cookies behind Cloudflare TLS fingerprinting, and rotating
