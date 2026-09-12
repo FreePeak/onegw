@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"onegw/internal/config"
 )
@@ -208,5 +209,73 @@ func TestAllAccountsTerminalAnswersUnfunded(t *testing.T) {
 	w = do(t, h, authed(t, "p/m", "sk-test-gw"))
 	if got := up.fail.Load(); got != 1 {
 		t.Fatalf("second request re-burned the terminal key (hits=%d)", got)
+	}
+}
+
+// TestBillingParoleSelfHealsAfterVendorRecovery pins the 2026-09-12 b-ai
+// outage fix end to end: the vendor's pricing event refused every free key
+// (402 insufficient-balance), the vendor then recovered on its own, and the
+// pool stayed parked for hours because terminal billing state had no
+// self-heal. With the parole recheck the same shape recovers by itself:
+// after the billing_parole window elapses the pool re-offers the key as ONE
+// probe, the healed vendor answers 200, the terminal mark clears, and no
+// operator action is ever needed.
+func TestBillingParoleSelfHealsAfterVendorRecovery(t *testing.T) {
+	up := newBillingUpstream("sk-dead")
+	defer up.srv.Close()
+	cfg := billingCfg(up, []config.Acct{{Name: "only", APIKey: "sk-dead"}})
+	// A short window keeps the test fast; the shipped default is 30m.
+	cfg.Rotation = config.RotationCfg{BillingParole: "50ms"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+	h := srv.Handler()
+
+	// The vendor refuses: the key goes terminal, the client sees the honest
+	// 503 provider_accounts_unfunded.
+	w := do(t, h, authed(t, "p/m", "sk-test-gw"))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("refusal phase: want 503 unfunded, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := up.fail.Load(); got != 1 {
+		t.Fatalf("dead key hits = %d, want 1", got)
+	}
+
+	// The vendor heals on its own (pricing event over, grants restored) and
+	// NO operator reset happens. Once the parole window elapses the next
+	// request IS the probe, and the same key must serve it.
+	up.bad = "sk-none"
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		time.Sleep(60 * time.Millisecond)
+		w = do(t, h, authed(t, "p/m", "sk-test-gw"))
+		if w.Code == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pool never self-healed: %d (%s)", w.Code, w.Body.String())
+		}
+	}
+
+	// The mark is gone and the account keeps serving normally.
+	def, ok := srv.cur().pool.Get("p")
+	if !ok {
+		t.Fatal("provider p missing from the live pool")
+	}
+	if names := def.Invalidated(); len(names) != 0 {
+		t.Fatalf("a served probe must clear the terminal mark, got %v", names)
+	}
+	if w := do(t, h, authed(t, "p/m", "sk-test-gw")); w.Code != http.StatusOK {
+		t.Fatalf("post-heal request: %d (%s)", w.Code, w.Body.String())
+	}
+	// The refusal phase cost exactly one doomed attempt; every later refusal
+	// to serve came from the pool-empty gate, not from re-hammering the key.
+	if got := up.fail.Load(); got != 1 {
+		t.Fatalf("dead-key hits = %d, want 1 (only the initial refusal)", got)
 	}
 }

@@ -459,6 +459,44 @@ type RotationPolicy struct {
 	FlapThreshold int           // consecutive edge faults before opening (default flapThreshold)
 	FlapOpen      time.Duration // whole-pool park while open (default flapOpen)
 	BenchTTL      time.Duration // model-scoped bench from a refusal (0 = ModelBenchTTL)
+	// BillingParole is how long a terminal billing refusal (#80) parks an
+	// account before the pool re-offers it as ONE probe. 0 = BillingParole
+	// (the shipped default).
+	BillingParole time.Duration
+}
+
+// BillingParole is the shipped re-probe interval for terminal billing
+// accounts (30m). "Waiting does not add credits" is true for one refusal,
+// but vendors change billing state on their own — top-ups land, monthly
+// grants reset, pricing events get reverted (live 2026-09-12 b-ai: the
+// 10:00 UTC+8 pricing event flipped all 8 free keys to
+// insufficient-balance, and every key answered 200 again ~2.5h later, with
+// the pool still parked until a manual dashboard reset). A probe costs one
+// ~1s attempt per account per window; a success clears the mark, a refusal
+// re-parks for a full window. Same reasoning as ModelBenchTTL, applied to
+// credentials instead of models.
+const BillingParole = 30 * time.Minute
+
+// paroleOpen reports the state of a terminal slot's recheck window under
+// p.mu: (zero, true) when the probe is due now, (instant, false) while the
+// window is still open. A zero stamp (a hand-marked slot the pool never
+// invalidated) never opens — the strict original #80 behavior.
+func (p *accountPool) paroleOpen(s *accountState, now time.Time) (time.Time, bool) {
+	if s.invalidatedAt.IsZero() {
+		return time.Time{}, false
+	}
+	if gate := s.invalidatedAt.Add(p.billingParole()); now.Before(gate) {
+		return gate, false
+	}
+	return time.Time{}, true
+}
+
+// billingParole resolves the pool's effective re-probe interval.
+func (p *accountPool) billingParole() time.Duration {
+	if p.policy.BillingParole > 0 {
+		return p.policy.BillingParole
+	}
+	return BillingParole
 }
 
 // ModelBenchTTL is how long a model-scoped upstream refusal benches the
@@ -955,13 +993,22 @@ func (d *Def) Gated(a *Account) { d.pool.rateLimited(a, 0) }
 
 type accountState struct {
 	acct        Account
-	invalidated bool         // terminal: vendor refused the key for billing (#80); no timer clears it
-	lastUsed    time.Time    // when this slot last served (least-used/recency, #81)
-	cooldown    time.Time    // until when the account is skipped
-	benchedAt   time.Time    // when the ACTIVE cooldown was stamped (ok() recency rule)
-	strikes     int          // consecutive 429s (adaptive ladder); reset on success
-	bucket      *tokenBucket // RPM governor; nil = uncapped (shared across slots)
-	speed       speedSample  // recent decode speed of this account (tokens/sec)
+	invalidated bool // terminal: vendor refused the key for billing (#80)
+	// invalidatedAt is when the vendor LAST refused this credential for
+	// billing (#80 follow-up, live 2026-09-12: b-ai's free tier flipped
+	// every key to insufficient-balance at their 10:00 UTC+8 pricing event
+	// and the vendor recovered on its own ~2.5h later — "no timer" benched
+	// 8 healthy keys until a manual dashboard reset). The pool re-offers
+	// the account as ONE probe once invalidatedAt + billingParole()
+	// elapses; ok() clears the mark with the same recency rule as
+	// cooldowns (a refusal stamped during a request's flight outlives it).
+	invalidatedAt time.Time
+	lastUsed      time.Time    // when this slot last served (least-used/recency, #81)
+	cooldown      time.Time    // until when the account is skipped
+	benchedAt     time.Time    // when the ACTIVE cooldown was stamped (ok() recency rule)
+	strikes       int          // consecutive 429s (adaptive ladder); reset on success
+	bucket        *tokenBucket // RPM governor; nil = uncapped (shared across slots)
+	speed         speedSample  // recent decode speed of this account (tokens/sec)
 	// live counts the upstream calls currently in flight on this slot.
 	// next() prefers the least-busy open slot: per-key concurrency is ~1
 	// on b-ai's free keys (2026-09-11 live: 3 identical 330K-token prefills
@@ -1321,13 +1368,21 @@ func (p *accountPool) slot(a *Account) *accountState {
 // reports an honest soonest-ready for the fall-through Retry-After.
 func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time) {
 	if s.invalidated {
-		// Terminal: no instant makes this slot ready (next() ignores a zero
-		// "ready" when computing the pool's soonest-recovery, so a fully
-		// invalidated pool honestly reports "never" rather than a bogus
-		// Retry-After). Only Revalidate — operator action, or a reload that
-		// changed the credential — clears it.
-		return false, time.Time{}
+		// Terminal (#80): while the vendor still refuses the balance the
+		// slot stays parked. The parole window turns the old "never" into
+		// an honest ready time — the instant the pool will offer the key as
+		// one recheck probe — so a fully terminal pool answers with a
+		// truthful Retry-After instead of a bogus one. Only Revalidate
+		// (operator action, or a reload that changed the credential)
+		// clears the mark immediately.
+		if gate, open := p.paroleOpen(s, now); !open {
+			return false, gate
+		}
 	}
+	// A terminal slot whose parole window has elapsed falls through to the
+	// normal gates below: this pick is the recheck probe. A served probe
+	// clears the mark in ok(); a fresh billing refusal re-stamps the window
+	// in invalidate().
 	cool := !s.cooldown.IsZero() && !now.After(s.cooldown)
 	if s.bucket == nil {
 		if cool {
@@ -1372,6 +1427,18 @@ func (p *accountPool) ok(a *Account, since time.Time) {
 	for i := range p.accts {
 		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			s.strikes = 0
+			if s.invalidated && s.invalidatedAt.Before(since) {
+				// Parole probe paid off (#80 follow-up): the upstream
+				// answered 200, so the billing refusal is over — the
+				// credential is fully back in rotation. Vendor billing
+				// state changes on its own (live b-ai 2026-09-12: 8 keys
+				// parked by the 10:00 UTC+8 pricing event, all serving
+				// 200 again ~2.5h later). Same recency rule as cooldowns
+				// below: a refusal stamped DURING this request's flight is
+				// fresher evidence than the success and must survive it.
+				s.invalidated = false
+				s.invalidatedAt = time.Time{}
+			}
 			if !s.cooldown.IsZero() && s.benchedAt.Before(since) {
 				s.cooldown = time.Time{}
 				s.benchedAt = time.Time{}
@@ -1553,9 +1620,10 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 }
 
 // invalidate marks every slot of a terminal for selection (#80): the vendor
-// refused this credential for billing reasons, a condition no amount of
-// waiting fixes. Returns true when the account was not already terminal, so
-// callers log once per invalidation instead of once per request.
+// refused this credential for billing reasons, which waiting does not fix —
+// until the BillingParole window elapses and the pool re-offers ONE probe.
+// Returns true when the account was not already terminal, so callers log
+// once per invalidation instead of once per request.
 func (p *accountPool) invalidate(a *Account) bool {
 	if p == nil || a == nil {
 		return false
@@ -1569,14 +1637,16 @@ func (p *accountPool) invalidate(a *Account) bool {
 				s.invalidated = true
 				fresh = true
 			}
+			// Stamp the refusal time on every invalidation (including a
+			// parole probe the vendor refused again): the window counts
+			// from the LATEST refusal, so a stubbornly unfunded key is
+			// probed once per window, never re-offered per request.
+			s.invalidatedAt = p.now()
 		}
 	}
 	return fresh
 }
 
-// revalidate clears an account's terminal state (operator action, or the
-// config reload path in CarryInvalidated when the credential changed).
-// Returns true when something was actually cleared.
 func (p *accountPool) revalidate(a *Account) bool {
 	if p == nil || a == nil {
 		return false
@@ -1588,6 +1658,7 @@ func (p *accountPool) revalidate(a *Account) bool {
 		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			if s.invalidated {
 				s.invalidated = false
+				s.invalidatedAt = time.Time{}
 				s.strikes = 0
 				s.cooldown = time.Time{}
 				s.benchedAt = time.Time{}
@@ -1618,10 +1689,39 @@ func (p *accountPool) invalidatedNames() []string {
 
 // Invalidate marks an account terminal after an upstream billing refusal
 // (402 / insufficient_quota — see types.APIError.PaymentRequired). It joins
-// the pool's fault state alongside the 429 ladder, but with no timer: the key
-// stays out of rotation until Revalidate or a reload that rotates the
-// credential. Returns true when this call newly invalidated the account.
+// the pool's fault state alongside the 429 ladder, but without the cooldown
+// escalation: the key sits out a full BillingParole window before ONE
+// recheck probe, and a fresh refusal re-parks it (operator Revalidate or a
+// credential rotation clears it immediately). Returns true when this call
+// newly invalidated the account.
 func (d *Def) Invalidate(a *Account) bool { return d.pool.invalidate(a) }
+
+// SoonestParole reports when the next terminal account becomes eligible for
+// its recheck probe (ok=false when no account is terminal or every window is
+// already elapsed — the latter means a probe is due right now, which the
+// pool-empty path never sees because the probe account is pickable). The
+// unfunded 503's Retry-After uses it so a client that honors the hint
+// retries exactly when the gateway can serve it again.
+func (d *Def) SoonestParole() (time.Time, bool) {
+	if d == nil || d.pool == nil {
+		return time.Time{}, false
+	}
+	d.pool.mu.Lock()
+	defer d.pool.mu.Unlock()
+	var soonest time.Time
+	seen := false
+	for i := range d.pool.accts {
+		if s := &d.pool.accts[i]; s.invalidated {
+			if gate, open := d.pool.paroleOpen(s, d.pool.now()); open {
+				return d.pool.now(), true // a probe is due right now
+			} else if !seen || gate.Before(soonest) {
+				soonest = gate
+				seen = true
+			}
+		}
+	}
+	return soonest, seen
+}
 
 // Revalidate clears an account's terminal state (dashboard/API action).
 func (d *Def) Revalidate(a *Account) bool { return d.pool.revalidate(a) }
@@ -1671,10 +1771,10 @@ func CarryInvalidated(old *Pool, fresh *Pool) {
 		if !ok || od == nil || od.pool == nil || nd == nil || nd.pool == nil {
 			continue
 		}
-		term := make(map[string]struct{}, len(od.pool.accts))
+		term := make(map[string]time.Time, len(od.pool.accts))
 		for i := range od.pool.accts {
 			if s := &od.pool.accts[i]; s.invalidated {
-				term[s.acct.Name+"\x00"+s.acct.APIKey] = struct{}{}
+				term[s.acct.Name+"\x00"+s.acct.APIKey] = s.invalidatedAt
 			}
 		}
 		if len(term) == 0 {
@@ -1682,8 +1782,9 @@ func CarryInvalidated(old *Pool, fresh *Pool) {
 		}
 		for i := range nd.pool.accts {
 			s := &nd.pool.accts[i]
-			if _, ok := term[s.acct.Name+"\x00"+s.acct.APIKey]; ok {
+			if at, ok := term[s.acct.Name+"\x00"+s.acct.APIKey]; ok {
 				s.invalidated = true
+				s.invalidatedAt = at // preserve the recheck clock across reloads
 			}
 		}
 	}

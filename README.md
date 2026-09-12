@@ -197,18 +197,26 @@ Use a combo name as the model to get an ordered fallback chain
   next combo target) instead of burning a doomed upstream attempt.
   The ladder is tunable per deployment or per provider — `[rotation]`
   `cooldown_base`/`cooldown_cap`, `flap_threshold`/`flap_open`,
-  `model_bench_ttl` — with the shipped values as defaults, so an existing
+  `model_bench_ttl`, `billing_parole` — with the shipped values as defaults,
+  so an existing config is unchanged. Which errors rotate at all is
+  deliberately NOT a knob: that classification came from live incidents.
   config is unchanged. Which errors rotate at all is deliberately NOT a knob:
   that classification came from live incidents.
 - **Terminal billing refusals.** A `402` (or an `insufficient_quota` /
   insufficient-balance answer) is not a rate limit, so the credential is
   taken out of rotation instead of being re-offered every 10-60 s: the combo
-  falls through immediately, the console log records one `key_invalidated`
-  row, and the account stays out until an operator clears it
-  (`POST /admin/api/v1/providers/{name}/accounts/{acct}/reset`) or the key is
-  rotated in config. A provider whose every account is terminal answers
-  `503` + `insufficient_quota` naming the accounts, rather than a
-  rate-limit lie.
+  falls through immediately and the console log records one `key_invalidated`
+  row. Vendors change billing state on their own, though (top-ups land,
+  monthly grants reset, pricing events get reverted — live 2026-09-12 b-ai: a
+  pricing event parked all 8 free keys and every key answered 200 again
+  ~2.5h later), so after the `billing_parole` window (default 30m, tunable
+  like the other rotation knobs) the pool re-offers the key as ONE probe: a
+  200 clears the mark, a fresh refusal re-parks for a full window. An
+  operator can still clear the mark immediately
+  (`POST /admin/api/v1/providers/{name}/accounts/{acct}/reset`) or rotate the
+  key in config. A provider whose every account is terminal answers `503` +
+  `insufficient_quota` naming the accounts and the soonest recheck, rather
+  than a rate-limit lie.
 - **Upstream fault intelligence.** Transient upstream faults — proxied
   auth-verify outages (401), one-api distributor parse-reject 400s,
   response-header timeouts (504), model-wide concurrency 429s — are

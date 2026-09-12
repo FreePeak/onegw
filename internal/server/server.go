@@ -680,13 +680,22 @@ func (s *Server) rejectSaturated(w http.ResponseWriter, f translat.Format) {
 // (upstream 429s) falls back to the router's default 429 + Retry-After.
 func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIError {
 	// Every account terminal (#80): the honest answer is "this provider is
-	// unfunded", not a rate limit — waiting does not help, an operator
-	// top-up + reset (or a key rotation) does. 503 keeps the combo
-	// fall-through contract of the other capacity errors.
+	// unfunded", not a rate limit — an operator top-up + reset (or a key
+	// rotation) fixes it fastest. 503 keeps the combo fall-through contract
+	// of the other capacity errors. With the billing-parole recheck, the
+	// pool re-offers keys on its own: Retry-After names the soonest recheck
+	// probe instead of a flat 300, so a client that honors the hint retries
+	// exactly when the gateway can serve it again.
 	if def.AllInvalidated() {
+		ra := "300"
+		if soonest, ok := def.SoonestParole(); ok {
+			if secs := int(time.Until(soonest).Seconds()) + 1; secs > 0 {
+				ra = strconv.Itoa(secs)
+			}
+		}
 		return &types.APIError{Status: 503, Type: "provider_accounts_unfunded", Code: "insufficient_quota",
-			RetryAfter: "300",
-			Message: fmt.Sprintf("provider %s: all %d account(s) refused for billing (%s); top up the balance and reset them from the dashboard, or rotate the keys",
+			RetryAfter: ra,
+			Message: fmt.Sprintf("provider %s: all %d account(s) refused for billing (%s); top up the balance and reset them from the dashboard, or rotate the keys (the pool also re-probes each account automatically)",
 				def.Name, len(def.Accounts), strings.Join(def.Invalidated(), ", "))}
 	}
 	if q := s.cur().quota; q != nil {
@@ -780,7 +789,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 			// falls through to the next target exactly like the #48 gated
 			// family, but WITHOUT the ladder that would keep re-offering it.
 			if def.Invalidate(acct) {
-				log.Printf("server: invalidated %s/%s after upstream billing refusal (%s); re-enable from the dashboard or rotate the key",
+				log.Printf("server: invalidated %s/%s after upstream billing refusal (%s); the pool re-probes it after the billing_parole window (or re-enable from the dashboard / rotate the key)",
 					def.Name, acctName(acct), apiErr.Message)
 				s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
 			}

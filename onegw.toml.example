@@ -101,6 +101,10 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # flap_threshold = 4        # edge faults before the pool parks (default)
 # flap_open = "15s"         # whole-pool park while the breaker is open (default)
 # model_bench_ttl = "5m"    # model-scoped refusal bench (default)
+# billing_parole = "30m"    # terminal-billing (#80) recheck: a 402 /
+#                           # insufficient_quota key parks for this long, then
+#                           # the pool offers it as ONE probe (a 200 clears the
+#                           # mark, a refusal re-parks; default 30m)
 # quota_window = "5h"
 # quota_reset_anchor = "2026-01-01T00:00:00Z"
 # quota_limit_tokens = 2000000

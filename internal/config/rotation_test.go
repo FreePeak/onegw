@@ -19,6 +19,7 @@ cooldown_cap = "9s"
 flap_threshold = 2
 flap_open = "30s"
 model_bench_ttl = "1m"
+billing_parole = "45m"
 
 [[providers]]
 name = "p"
@@ -34,6 +35,9 @@ cooldown_base = "500ms"
 	}
 	if cfg.Rotation.CooldownBase != "3s" || cfg.Rotation.FlapThreshold != 2 {
 		t.Fatalf("global rotation not parsed: %+v", cfg.Rotation)
+	}
+	if cfg.Rotation.BillingParole != "45m" {
+		t.Fatalf("global billing_parole not parsed: %+v", cfg.Rotation)
 	}
 	if cfg.Providers[0].Rotation.CooldownBase != "500ms" {
 		t.Fatalf("provider rotation not parsed: %+v", cfg.Providers[0].Rotation)
@@ -72,6 +76,8 @@ cooldown_base = "30s"
 cooldown_cap = "5s"`,
 		"negative threshold": `[rotation]
 flap_threshold = -1`,
+		"bad billing parole": `[rotation]
+billing_parole = "whenever"`,
 	} {
 		path := filepath.Join(dir, name+" toml")
 		os.WriteFile(path, []byte(body), 0o600)

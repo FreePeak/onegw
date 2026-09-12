@@ -268,6 +268,15 @@ type RotationCfg struct {
 	FlapThreshold int    `toml:"flap_threshold"`  // edge faults before the pool parks (default 4)
 	FlapOpen      string `toml:"flap_open"`       // whole-pool park (default 15s)
 	ModelBenchTTL string `toml:"model_bench_ttl"` // model-scoped refusal bench (default 5m)
+	// BillingParole: how long a terminal billing refusal (#80) parks an
+	// account before the pool re-offers it as ONE probe (default 30m).
+	// Vendors change billing state on their own — top-ups land, monthly
+	// grants reset, pricing events get reverted (live 2026-09-12 b-ai: a
+	// pricing event parked all 8 free keys, and every key answered 200
+	// again ~2.5h later, with the pool still parked until a manual reset) —
+	// so the probe self-heals the pool without operator action. A refusal
+	// re-parks for a full window; a success clears the mark entirely.
+	BillingParole string `toml:"billing_parole"`
 }
 
 // Acct is one provider account.
@@ -801,6 +810,9 @@ func validateRotation(r RotationCfg, where string) error {
 		return err
 	}
 	if _, err := dur("model_bench_ttl", r.ModelBenchTTL); err != nil {
+		return err
+	}
+	if _, err := dur("billing_parole", r.BillingParole); err != nil {
 		return err
 	}
 	if r.FlapThreshold < 0 {

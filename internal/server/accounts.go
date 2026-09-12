@@ -72,6 +72,10 @@ func rotationPolicy(global, over config.RotationCfg) provider.RotationPolicy {
 		CoolCap:  pick(global.CooldownCap, over.CooldownCap),
 		FlapOpen: pick(global.FlapOpen, over.FlapOpen),
 		BenchTTL: pick(global.ModelBenchTTL, over.ModelBenchTTL),
+		// BillingParole recheck interval (#80 follow-up): absent = the
+		// shipped 30m default (the pool re-offers a terminal key as ONE
+		// probe per window; a success clears the mark, a refusal re-parks).
+		BillingParole: pick(global.BillingParole, over.BillingParole),
 	}
 	switch {
 	case over.FlapThreshold != 0:

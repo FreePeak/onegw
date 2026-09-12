@@ -45,6 +45,31 @@ free/dev was reverted after live probes: BOTH orca accounts are feature-gated ("
 Free models are not available to this account yet — link a GitHub account or add credits");
 dead ladder legs would burn two doomed attempts per spilled request. Post-change probes: reload
 200, free buffered 200 (served by b-ai glm-5.3-flash), dev stream 200. Earlier:)*
+
+*Last updated: 2026-09-12 (b-ai 503 RCA + billing parole): the reported
+`provider_accounts_unfunded` 503 on b-ai had two layers. (1) Trigger, vendor-side: the
+10:00 UTC+8 pricing event made every free key answer `credit insufficient balance:
+balance=0 required=NNNN` (log 09:04:41-59Z, 8/8 accounts), which #80 classified correctly
+as terminal. (2) Root cause, ours: #80's mark has no timer — "waiting does not add
+credits" — but the vendor recovered on its own for the still-free models (per-key probe
+2026-09-12 ~18:2x local: qwen3.8-flash 200 on 8/8 keys, mimo-v2.5 200, hy3 429 RPM-limit,
+glm-5.3-flash STILL `insufficient_user_quota` balance=0 — the "every free model" claim in
+the old config comment was wrong; only qwen was ever re-probed), and the `_manifest` C2PA
+bodies some keys return carry `choices`/`usage` alongside the manifest: benign vendor
+provenance, every key translatable. Direct b-ai routes nonetheless kept answering 503 for
+~9h until an operator reset each account by hand — fixed live via
+`POST /admin/api/v1/providers/b-ai/accounts/{acct}/reset` (8/8, gateway 200 in 1.3s), then
+durable: `billing_parole` (default 30m, `[rotation]` global + per-provider like the rest of
+#84) re-offers a terminal key as ONE probe per window — 200 clears the mark (recency rule
+matches the cooldown clear: a refusal stamped during the request's flight survives a
+straggler success), a re-refusal re-parks from the latest verdict, the unfunded 503's
+Retry-After names the soonest recheck instead of a flat 300. Combo chains keep the peer's
+18:38 ladder-v3 shape (no b-ai leg); b-ai is healthy for explicit use and re-adding a leg
+is a separate probe-gated call. Tests: provider parole cycle + straggler recency +
+reload-carries-clock, server e2e self-heal after vendor recovery; mutation-checked 4 ways.
+`go test ./... -skip TestCursorKindEndToEnd` green (the skip is pre-existing at HEAD: it
+dials the real cursor host). Earlier:)*
+
 *Last updated: 2026-09-12 (reasoning-echo CONVERGED: echo_reasoning knob + runtime learn,
 live pid 95900): the two parallel implementations of the seq-198/2666 fix are reconciled on ONE
 knob — ProviderCfg/Def `EchoReasoning` + toml `echo_reasoning` (45ccd03) — and the runtime-learn
@@ -1834,6 +1859,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
 | #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #80b | Billing-parole recheck (root-cause fix for the 2026-09-12 b-ai outage): #80's terminal mark had NO timer and no self-heal, so a transient vendor pricing event parked all 8 free accounts on `insufficient_quota` until a manual dashboard reset — the vendor recovered ~2.5h later and the pool did not. Now `[rotation].billing_parole` (default 30m, per-provider overridable) re-offers a terminal key as ONE probe per window: a 200 clears the mark (with the same recency rule as cooldowns, so a concurrent 402 during the request's flight survives it), a fresh refusal re-parks for a full window, and the unfunded 503's `Retry-After` names the soonest recheck instead of a flat 300 | 2026-09-12 live incident |
 | #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |

@@ -94,7 +94,7 @@ func oauthKey(provider, account string) string {
 type AccountState struct {
 	Name        string
 	Cooling     bool
-	Invalidated bool // terminal billing refusal (#80); no timer clears it
+	Invalidated bool // terminal billing refusal (#80); self-heals via the BillingParole recheck or a success
 }
 
 // PoolStates snapshots every account's cooldown state.
