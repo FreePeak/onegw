@@ -31,7 +31,11 @@ matters for env-less deploys (docker/systemd) where a raised budget used to figh
 Pinned by TestApplyMemoryTuningFollowsBufferBudget (reads back /gc/gomemlimit:bytes: default
 keeps 90 MiB, 200 MiB budget moves the ceiling, zero falls back) and
 TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives); mutation-checked
-(hardcoded-return mutant fails the 200 MiB row). README/ARCHITECTURE/systemd/vps-deploy
+(hardcoded-return mutant fails the 200 MiB row). The RELOAD half was initially untested —
+the #63 harness hand-copied the closure, so dropping the re-tune kept CI green; 01e48b0
+extracts newReloadHook as the one definition both runGateway and the test register, with a
+160 MiB reload fixture + 77 MiB sentinel making the assertion ordering-independent
+(drop-the-call mutant goes red). README/ARCHITECTURE/systemd/vps-deploy
 document the coupling. Deployed zero-drop twice via scripts/deploy.sh --binary from git
 archive of the pushed commit; artifact /tmp/onegw-mem-bin2 — do NOT sweep /tmp/onegw-* (this
 pid maps it). Earlier:)*
