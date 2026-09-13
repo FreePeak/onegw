@@ -34,9 +34,12 @@ having no samples). The client-experienced clocks moved, stated as the ranges th
 COST contract, not a speed claim; dev's steering upside is capped by tokenrouter's provider-wide
 `rpm = 6`, which is why 44-of-136 big requests moved, not all of them. What is left is not routing:
 these chains replay 216K-834K input tokens per step, so the remaining order of magnitude is context
-size on the client, and pre-first-byte will keep tracking it. Residual filed #93: `Prefill` is stamped
+size on the client, and pre-first-byte will keep tracking it. Two residuals filed — #93: `Prefill` is
 from Do()'s entry, so the gateway slot-queue is folded into the prefill EWMA (a 26,076-token request
-measured 142.2s) — a correct wall predictor, a mislabeled vendor rate. Deployed zero-drop from
+measured 142.2s) — a correct wall predictor, a mislabeled vendor rate. #94: with no-data legs sinking, an
+unmeasured leg can now only earn bucket samples via head-leg failure — the s=0 promotion was accidental
+forced exploration, so `strategy = "fastest"` is exploit-only until an explore knob exists (parent #70).
+Deployed zero-drop from
 `git archive` of b2c9dc5 (never the shared dirty tree) via scripts/deploy.sh --binary; artifact
 /tmp/onegw-steer-bin — do NOT sweep /tmp/onegw-* (this pid maps it). Predecessor /tmp/onegw-exp-bin
 (pid 23427, build b7b55e2) drained on a verified single listener; the config levers (gitignored
