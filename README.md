@@ -108,8 +108,13 @@ password is the one credential that *is* generated: it is printed once as
 resource limits, see [`docker-compose.yml`](docker-compose.yml):
 
 ```bash
-docker compose up -d
+ONEGW_KEYS=$(openssl rand -hex 24) docker compose up -d
 ```
+
+That file pins no credentials on purpose: it **refuses to start** without
+`ONEGW_KEYS` (a gateway key is never generated, and the image's `0.0.0.0` bind
+makes one mandatory), and leaves the admin password unset so first boot mints
+one.
 
 ### Build from source
 
