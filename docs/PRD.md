@@ -1,3 +1,18 @@
+*Last updated: 2026-09-13 (README + image config: ONEGW_KEYS is never auto-generated, 8cb4b1d):
+the Docker quick start passes `-e ONEGW_KEYS=change-me` without saying it is mandatory, and
+the comment header of the config baked into the image documented only the admin password's
+first-boot generation — precisely the asymmetry that reads as "the key is probably generated
+for me". Both now state the rule: docker/onegw.default.toml binds 0.0.0.0:8080, and server.go
+apply() fails closed on a non-loopback listener with no auth keys (`refusing to serve
+"0.0.0.0:8080" with no auth keys`) rather than run an open proxy over every upstream account's
+quota; the admin password is the ONE credential that is minted (internal/config/adminpw.go →
+<data_dir>/admin_password 0600 + a single FIRST-RUN log line). A keyless LOOPBACK bind still
+serves openly (authorize() allows everything when the key list is empty), so the requirement is
+bind-dependent — which is why the host installer may generate a gateway key and the image may
+not. Verified on the published image (digest 78125d2): keyless boot exits 1 with that error
+after writing /data/admin_password; keyed boot listens on 0.0.0.0:8080 and gates /v1/models
+(401 bare, 200 with Bearer). Docs and TOML comments only — no code, no live config, no status
+change. Shipped as its own commit, built from the HEAD blob plus these 15 lines, so no peer hunk rides along.*
 *Last updated: 2026-09-13 (README: moving an OAuth session between machines): the
 OAuth section now documents that a login's whole credential state is one file —
 `<data_dir>/oauth-tokens.json`, 0600, no Keychain item and no machine binding (the
