@@ -103,8 +103,8 @@ instead of being served as an open proxy — put a real secret there. The admin
 password is the one credential that *is* generated: it is printed once as
 `FIRST-RUN ADMIN PASSWORD` in `docker logs` and persisted at
 `/data/admin_password`. Pass provider keys as env, e.g.
-`-e ONEGW_PROVIDER_OPENROUTER_KEY=sk-...`; or mount your own config with
-`-v $PWD/onegw.toml:/etc/onegw/onegw.toml:ro`. For a compose setup with
+`-e ONEGW_PROVIDER_OPENROUTER_KEY=sk-...`; or mount a config DIRECTORY with
+`-v onegw-config:/etc/onegw`. For a compose setup with
 resource limits, see [`docker-compose.yml`](docker-compose.yml):
 
 ```bash
@@ -126,7 +126,34 @@ docker exec -it onegw onegw oauth login \
 ```
 
 The account name must match the `[[providers.accounts]]` name in your config
-(the dashboard's provider editor writes both halves for you). To back up or move
+(the dashboard's provider editor writes both halves for you).
+
+**Give `/etc/onegw` a writable directory** — the editor saves straight into the
+config file with an atomic temp-file + rename, so a plain `docker run` used to
+answer 500 `temp file: open /etc/onegw/.onegw-config-*.toml: permission denied`
+until the image chowned that directory to the container user (fixed; rebuild or
+wait for the next tag). A **named volume** is the right way to keep it editable
+*and* durable — Docker seeds it from the image with the correct ownership:
+
+```bash
+docker volume create onegw-config
+docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
+  -e ONEGW_KEYS=... -v onegw-data:/data -v onegw-config:/etc/onegw \
+  ghcr.io/freepeak/onegw:latest
+```
+
+A **directory** mount works too — on a Linux VPS give it to the container's user
+(`chown -R 100:101 ./cfg`), since no share layer translates ownership for you.
+
+A **single-file** mount (`-v $PWD/onegw.toml:/etc/onegw/onegw.toml`) cannot
+support in-page editing, for two independent reasons: the atomic save needs a
+writable directory for its temp file first (images before 2026-09-13 stopped
+right there with `temp file: open /etc/onegw/.onegw-config-*.toml: permission
+denied` — the image now chowns `/etc/onegw`), and even then `rename()` cannot
+replace a bind-mounted file (`device or resource busy`). `:ro` is read-only by
+definition. Keep the file form for a hand-managed config. Without any mount the
+baked config is editable but lives in the container's writable layer and is
+**lost on recreate**. To back up or move
 a container install — volume, config, image, and what survives — see
 [docs/vps-deploy.md § Container installs](docs/vps-deploy.md#container-installs-what-to-back-up-and-how-to-move-it).
 

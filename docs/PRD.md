@@ -1,3 +1,27 @@
+*Last updated: 2026-09-13 (user-reported: the image could not write its own config — /etc/onegw is now chowned to the container user):
+a dashboard "Save & reload" in the shipped container answered 500 `temp file: open
+/etc/onegw/.onegw-config-*.toml: permission denied`. Root cause: the runtime stage COPYs docker/onegw.default.toml into
+/etc/onegw as root, while the gateway runs as the non-root `onegw` user, and the config save is atomic (temp file in the
+SAME directory + rename) — so the directory must be writable, not just the file. Fixed in the Dockerfile with
+`RUN chown onegw:onegw /etc/onegw /etc/onegw/onegw.toml`; a named volume mounted there inherits that ownership, so edits
+also survive a recreate. The four mount modes were measured end to end on the image: baked config -> 200 after the fix (was
+500); `-v name:/etc/onegw` (named volume) -> 200 and survives `docker rm` + recreate; a DIRECTORY mount owned by uid 100 ->
+200; a SINGLE-FILE mount (`-v file.toml:/etc/onegw/onegw.toml`, with or without :ro) -> 500 `rename … device or resource
+busy`, because rename cannot replace a bind-mounted file, so it can only ever be a hand-managed config. Those are TWO
+independent constraints, both now recorded in the docs: the atomic save needs a writable DIRECTORY for its temp
+file (the pre-fix image failed exactly there), and even with one, `rename()` cannot cross a bind-mount point. A
+host DIRECTORY mount is the middle ground, verified with the literal recipe the docs give a Linux VPS
+(`chown -R 100:101 ./cfg`): save 200 and the edit visible on the host file. For a container
+running the PREVIOUS published image the fix is two commands, both verified against ghcr.io/freepeak/onegw:latest
+(78125d2): immediate `docker exec -u 0 onegw chown onegw:onegw /etc/onegw` (500 -> 200, lost on recreate), or durable
+`docker volume create onegw-config` + `docker run --rm --entrypoint chown -u 0 -v onegw-config:/etc/onegw
+ghcr.io/freepeak/onegw:latest -R onegw:onegw /etc/onegw` (200, and the edit survives a recreate). Docs corrected
+accordingly: README § Docker now mandates a writable /etc/onegw and shows the named-volume run; docker-compose.yml ships
+an `onegw-config` volume and warns that a file mount cannot be edited; docs/vps-deploy.md § Container installs exports the
+config as a first-class artifact, restores it into a volume, carries the measured mount matrix, and states that
+`docker commit` is not a migration path (it snapshots the writable layer into an unmanaged image and loses volume
+semantics). Note for that path: the published image predates the OAuth sign-in feature entirely, so on it the chown
+unblocks provider/key edits only — creating an `[[oauth.accounts]]` row and signing in needs the new build.*
 *Last updated: 2026-09-13 (container/CLI parity for the OAuth login path; the docker image now ships both binaries):
 `docker exec -it onegw onegw-oauth login …` failed with "executable file not found in $PATH" because the
 image built and copied only `cmd/onegw` — and the natural repair, `onegw oauth login …`, was worse: the
