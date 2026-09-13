@@ -1,3 +1,28 @@
+*Last updated: 2026-09-13 (dashboard provider-save hardening 4765076 + docker-compose default credentials; registry detail under § Dashboard):
+three defects on the roster path the provider modal drives were fixed before this slice could be trusted with
+subscription accounts. (1) A save DELETED the account fields the editor does not model — per-account
+`base_url` and `weight` are live (server.go copies both into provider.Account) but only the api key was
+carried over from disk, so a routine edit silently re-pointed or re-weighted an account; all unmodeled Acct
+fields now follow the key's keep-unless-sent rule, and `parseAccounts` learned `weight` (a bare TOML integer —
+parseTOMLString, quoted-strings-only, had been reading "" for every one). (2) A save could STRAND a
+credential: the pool is built from [[providers.accounts]] alone once any entry exists, so a keyless row
+orphans the provider-level or env key (ONEGW_PROVIDER_<NAME>_KEY shows up in the editor only as a synthetic
+"default" row with nothing to echo), and config.Load cannot see it because a keyless account satisfies "needs
+api_key, keys, or accounts". Such saves are now refused naming the account and the exact env var
+(config.ProviderEnvPrefix/ProviderKeyEnv, one derivation shared with Defaults); searxng/opencode-free keep
+their carve-out, and the OAuth rows inherit the same honesty — a row with neither key nor service is dead
+weight, so clearing a subscription service requires giving the row a key in that save. (3) Unticking a login
+another provider BORROWS failed with a message about the borrower the operator never touched; the splice now
+names the dependency, and runs before the guard so that case reports the right cause. Verified: three
+regression tests fail-before/pass-after (field carry-over incl. a modeled field still clearing when omitted;
+env-credential refusal with the file untouched AND the running gateway still authenticating; borrower
+dependency message), plus live scratch-gateway proof (UI-shaped save kept `weight = 7` and the entry's
+device_url/scope overrides; keyless untick refused byte-identically; sign-in still landed `Bearer
+at-ui-token` upstream). Full suite green with `-skip TestCursorKindEndToEnd` — that test hangs at pristine
+HEAD in a clean worktree too, now filed as issue #95 instead of living in a session log. Separately,
+docker-compose.yml no longer ships working default credentials: `ONEGW_KEYS: "${ONEGW_KEYS:?...}"` makes
+compose refuse to start without a real key (verified: exit 1 with the message, exit 0 with one) and the admin
+password line is commented out so first boot mints and prints one.*
 *Last updated: 2026-09-13 (dashboard sign-in for [[oauth.accounts]] — adding a Grok / xAI provider account from the UI):
 the console can now ADD and AUTHENTICATE a subscription account; before this it was TOML editing plus
 `onegw-oauth login` in a shell. (1) Provider editor: an account row's new `oauth` select writes the
