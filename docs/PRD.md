@@ -1,3 +1,16 @@
+*Last updated: 2026-09-13 (SuperGrok chain proven end-to-end at the gateway, 9f02b51): the
+pieces had unit coverage but nothing showed the whole path, so `internal/server` now seeds one
+xAI device session into the data dir BEFORE boot (the tracker polls on `New()`, so an in-test
+login would race the first probe) and asserts what the operator actually gets: the borrowed
+`[[oauth.accounts]]` entry that declares no service validates AND reaches upstream with the
+owner's `Bearer at-live-1` rather than the static fallback; the Grok Build provider answers over
+the Responses wire (forced stream aggregated back into a normal completion) carrying
+`X-XAI-Token-Auth` + `x-grok-cli-version` beside that bearer; and the vendor weekly pool
+surfaces as one `Weekly` window at the floored 42 % while the account KEEPS serving — the
+partial-pool must-not-park half, paired with `TestProbeGrokCliEndToEnd`'s 100 % → park. Test-only
+commit: no production code changed, no redeploy needed (live pid 28905 already carries every
+landed change). Verified beyond a single run: `-race` clean, 30 repeats at `-cpu=1`, whole-repo
+sweep green (`TestCursorKindEndToEnd` still skipped as the pre-existing network hang). Earlier:)*
 *Last updated: 2026-09-13 (cursor `auto` lane fixed, 38cf5b6, deployed pid 28905): the provider
 advertised `auto`, which Cursor has never had as a model id — the encoder put the client string on
 the wire verbatim, so every `cursor/auto` request ended the AgentService turn with zero content
@@ -23,46 +36,38 @@ both call sites in TestGrokCliFingerprintHeaders. (3) Live config added provider
 `owner` borrow of the xai session, staged `disabled = true`: verified the disabled semantics are
 real — 503 `provider_disabled` on a direct hit, absent from /v1/models, combos unaffected (dev →
 "OK"), 12 providers after reload. It flips on only after a probe answers 200 through the gateway,
-and its model list will be pruned to what the catalog returns. Remaining steps tracked as #89:
-the browser approval of a device code is still outstanding (keepalive loop publishes it at
-/tmp/onegw-xai-code.txt), and until then the xai quota row reports "Grok session token
+and its model list will be pruned to what the catalog returns. The outstanding steps — the device
+approval, then proving `xai/*` serves, pruning the live catalog, and enabling `grokbuild` only
+after it answers 200 — are tracked as #89; until the approval lands the keepalive loop keeps the
+current URL at /tmp/onegw-xai-code.txt and the xai quota row reports "Grok session token
 rejected" and fails open. Earlier:)*
-*Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 + 7eec788 on origin — code
-landed, live credential pending one browser approval): researched OmniRoute + 9router +
-xAI/OpenClaw docs to put the user's consumer SuperGrok plan behind onegw's xAI surfaces. One
-auth.x.ai device session (public client b1a00492-…, scope
+*Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 — code landed, live
+credential pending one browser approval): researched OmniRoute + 9router + xAI/OpenClaw docs to
+put the user's consumer SuperGrok plan behind onegw's xAI surfaces. Findings: one
+auth.x.ai device-flow session (public client b1a00492-…, scope
 `offline_access grok-cli:access api:access`) serves BOTH api.x.ai (OpenAI chat-completions +
-/v1/responses; SuperGrok serves grok-4.5 on the Responses wire only — a chat body 422s
-"missing input") and cli-chat-proxy.grok.com (Grok Build, OAuth-JWT-only, fingerprint-gated).
-Landed: subquota dialect "grok-cli" (GET /v1/billing?format=credits with
-`x-grok-client-mode: cli` → the ONE shared weekly pool from `creditUsagePercent`; the
-productUsage array is a legend, never split into bars; reset from `currentPeriod.end`, plan
-label from the bearer JWT's `tier` claim at zero extra HTTP; percents floored so 99.6 % never
-parks); `[[oauth.accounts]] owner = "<prov>/<acct>"` so several provider entries share ONE
-stored session (xAI rotates device sessions — a second login would knock the first out; the
-borrower runs no refresh goroutine and a failed refresh cools every account on the key); and
-the two missing proxy fingerprint headers (`X-XAI-Token-Auth: xai-grok-cli`,
-`x-grok-cli-version`) on the openai-responses kind. The `cursor` provider is NOT reachable this
-way: api2.cursor.sh authenticates a Cursor WorkOS session JWT only (live: composer-2.5 +
-gemini-3.8-flash serve "OK"; every Grok id tried returns the upstream's empty-turn 502).
-Deployed 60b8f49 zero-drop (pid 81206): the Quota page's xai row already reports plan
-"Grok · SuperGrok" with the honest fail-open probe error until
+/v1/responses; SuperGrok serves grok-4.5 only on the Responses wire — a chat body 422s
+\"missing input\") and cli-chat-proxy.grok.com (Grok Build, OAuth-JWT-only, fingerprint-gated);
+grok.com app-chat needs browser `sso`+`sso-rw` cookies behind Cloudflare TLS fingerprinting and
+was deliberately skipped. Landed: (1) subquota dialect \"grok-cli\" — polls
+GET /v1/billing?format=credits with `x-grok-client-mode: cli`, surfaces the ONE shared weekly
+pool from `creditUsagePercent` (productUsage is a legend, never split into bars), reset from
+`currentPeriod.end` (RFC3339 or protobuf {seconds}), plan label decoded from the bearer JWT's
+`tier` claim at zero HTTP cost, percents floored so 99.6 % never parks; (2) `[[oauth.accounts]]
+owner = \"<prov>/<acct>\"` — several provider entries share ONE stored session (xAI rotates device
+sessions, so a second login would knock the first out), the borrower runs no refresh goroutine
+and a failed refresh cools every account on that key, with self-borrow/dangling-ref validation;
+(3) the two missing Grok proxy fingerprint headers (`X-XAI-Token-Auth: xai-grok-cli`,
+`x-grok-cli-version`) on the openai-responses kind — the proxy's own 401 body names
+`x_xai_token_auth=none` as the rejection reason. NOT applicable to the `cursor` provider: that
+wire is api2.cursor.sh, which accepts only a Cursor WorkOS session JWT (exp 2026-11-02, no
+refresh flow — re-import on rotation) and holds no xAI entitlement; verified live it still
+serves composer-2.5 and gemini-3.8-flash, while every Grok id tried (auto, grok-4.3,
+grok-4.5-high/medium, grok-4.6) returns the upstream's empty-turn 502. Outstanding: run
 `onegw-oauth login -provider xai -account mnhatlinh.doan@gmail.com -data-dir ~/.onegw/data`
-completes (keepalive loop publishes a live code at /tmp/onegw-xai-code.txt; codes last ~15 min).
-Skipped deliberately: the grok.com cookie surface (sso+sso-rw behind Cloudflare TLS
-fingerprinting) and the vendor's weekly-pool gRPC credits probe. Earlier:)*
-*Last updated: 2026-09-12 23:20 (opencode-free WIRED INTO LIVE CONFIG — provider only, no combo
-change; reload 200 on pid 71565, zero drop): onegw.toml gained an `opencode-free` block (models
-pinned to the five keyless-200 ids; muse-spark-*-free deliberately excluded until the binary
-carries 44bd2b7's per-model Responses routing — the RUNNING binary predates it, so listing them
-would route to chat and 500). Validated on a scratch port with the live binary first, then hot
-reloaded: /admin/api/v1/providers shows opencode-free alongside the paid opencode. Production
-proof: POST /v1/chat/completions model=opencode-free/ling-3.0-flash-fin-free → 200, usage
-495/80 (content empty on finish=length — the free models reason by default, need ~200+ tokens,
-same trap as the Go test models). A 429 FreeUsageLimitError between successes is the vendor's
-IP-scoped anonymous allowance (roughly one request per minute after probe bursts) — plumbing
-correct, benches and falls through like any provider. ~/.onegw/onegw.toml NOT synced (different,
-older file; the live process does not read it). Earlier:)*
+(codes live ~15 min; a keepalive loop keeps one published at /tmp/onegw-xai-code.txt) —
+the gateway then owns and auto-refreshes the token, the dead 2026-09-07 static JWT stops
+being the bearer, and the weekly pool appears on the Quota page. Earlier:)*
 *Last updated: 2026-09-12 (commandcode subscription quota fixed — credits window reports real
 period spend, zero-drop deployed pid 66474): the commandcode credits window always read 0% while
 the pool had headroom, because /alpha/billing/credits returns only REMAINING credits; the probe
@@ -79,40 +84,6 @@ unit + e2e pins (85% GOAT / 61% Go / no-false-park), full internal/server + inte
 suites green (except the pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine
 HEAD), zero-drop deploy with /admin/health, combo 200 through the new pid, and a post-reload
 subscription API re-read. Earlier:)*
-*Last updated: 2026-09-12 22:58 (CORRECTION to the opencode-free stamp below — the free tier DOES
-have a Responses surface): an advisor challenge pressed the "chat-completions only" claim and the
-probe settled it against me: POST https://opencode.ai/zen/v1/responses with muse-spark-1.3-contributor-free
-answers 200 keyless (1.2 too) — the free tier serves the muse-spark family on the Responses wire,
-and my first cut misrouted it (chat path 500'd). Fixed by extending per-model routing to the free
-kind instead of forking it: `case KindOpenCode, KindOpenCodeFree:` in Path plus
-`KindOpenCode || KindOpenCodeFree` in UpstreamFormat, and the catalog gained both
-muse-spark-*-contributor-free ids (each live-probed 200 keyless). The kind itself stays separate
-from `kind = "opencode"` — the advisor's "reuse the Go kind + base_url" alternative was weighed and
-declined on live evidence: (a) OmniRoute deliberately keeps the noauth identity distinct from
-opencode-go (noAuthProviderSiblings.ts #7993: "never unified"); (b) a keyless opencode kind would
-advertise the 35-model PAID catalog by default; (c) its suggested "skip Authorization when the
-token is empty" would REGRESS against the probed wire contract — no header at all takes the
-429 FreeUsageLimitError path while the bare Bearer reads anonymous-200, so that header is
-load-bearing. Verified end-to-end through the scratch gateway: chat client →
-ocfree/muse-spark-1.2-contributor-free answered content "ROUTE-OK", finish stop, usage 15/294
-(upstream answered with a resp_* id = Responses wire, onegw translated back); full suite green.
-Note: /v1/responses is upstream-only, not a client surface (a direct client POST answers 405 for
-every kind). Earlier:)*
-*Last updated: 2026-09-12 22:15 (opencode-free keyless kind, 8ec5a52): learned from OmniRoute's
-noauth "opencode" provider (alias oc — keyless https://opencode.ai/zen/v1, session header is the
-only hard requirement, bare-Bearer reads anonymous) and ported the pattern into onegw as
-`kind = "opencode-free"` — default base https://opencode.ai/zen/v1, no credentials configured
-or sent, x-opencode-session always present (client value forwarded, else a stable ses_<32hex>
-derived from the account NAME since there is no key to salt with), curated rotating free catalog
-(big-pickle, mimo-v2.5-free, nemotron-3-ultra-free, nemotron-3.5-lightning-free,
-ling-3.0-flash-fin-free — vendor delists ids without notice, 401 "Model X is not supported"),
-chat-completions only (no /v1/responses surface on this tier), config-validates keyless like
-searxng. Live-verified end-to-end on a scratch gateway (port 18083): catalog advertised, real
-completion served through the free tier (ocfree/ling-3.0-flash-fin-free → 200, content "OK",
-honest usage 22/54 tokens, reasoning in message.reasoning); upstream 429 FreeUsageLimitError
-(IP-scoped anonymous allowance) classified and benched like any provider; streaming proved
-against a local SSE stub on the kind-identical path (chunks + [DONE] relayed, 200). NOT in the
-live config — deploy is an operator decision. Earlier:)*
 *Last updated: 2026-09-12 22:00 (context-window overflow falls through, c5f74a1, deployed pid 69187): the
 "Advisor unavailable for onegw/dev" 400 — a 283,915-token advisor request answered by a 262,144-token leg
 (tokenrouter/z-ai/glm-5.3-free; glm's coding plan actually serves 335K, ring-verified) — had TWO causes: no
@@ -133,16 +104,6 @@ window is ≥335,933 tokens, so tokenrouter's z-ai/glm-5.3-free (262,144) is the
 the durable follow-up is per-leg `context` tier declarations (field exists in provider.ModelTier, currently
 unconfigured) so oversized bodies skip the small-window leg BEFORE the ~14s upload — the 400-break fix is the
 fallback, not the optimization. Earlier:)*
-*Last updated: 2026-09-12 (cavoti provider added DISABLED, config-only hot-reload, pid 69187
-unchanged): marketplace router https://cavoti.com/v1 (kind=openai, 81-model catalog incl.
-claude-5/opus-4-8, gpt-5.4..6-astra, glm-5.3(-flash), deepseek-v4.1-flash(-0910); key valid, label
-"onegw"). ZERO completions: flash models first 503 reward_coupon_unavailable /
-financial_admission_unavailable (their coupon-billing admission flapping; request NOT executed,
-16–45s per attempt), then cleanly 402 insufficient_marketplace_balance (3.9s):
-authoritative_balance_usd=0, marketplace_credit_limit_usd=0.10 — every model 402s until the
-account is topped up / a reward coupon attaches (catalog has NO :free ids). Landed disabled=true
-(combos skip, direct routes 503 provider_disabled, hidden from /v1/models); enable = flip flag +
-PUT /admin/config/reload once a leg proves 200. Earlier:)*
 *Last updated: 2026-09-12 late (free-capacity ladder v3, reload=200, all three aliases 200): the earlier b-ai-led chains were invalidated by the vendor — b-ai's free tier went BILLING-DEAD today (all 8 accounts `insufficient_quota` on every free model after the 10:00 UTC+8 pricing event; peer's removal was right), and tokenharbor's rolling-7-day free allowance is exhausted (429, pool retry ~3388s). Live-probed capacity as of this stamp: tokenrouter/z-ai/glm-5.3-free (direct vendor probe 200, 6.2s) and kilocode/kilo-auto/free (gateway 200). Chain now `free`/`dev` = tokenrouter → kilocode/kilo-auto/free → tokenharbor/deepseek-v4.1-flash:free (kept as a ~0.5ms pool-empty leg — serves free the moment its window resets) → glm coding-plan (metered) → opencode-go (paid last resort); `fast` = opencode-led strategy="fastest" (fixed leg-5 typo b-ai/qwen-3.8-flash → crop; b-ai out). Kilocode/openrouter/free (liquid/lfm-2.5-2.6b, 2.6B, ~3.5s — too weak for agent turns) dropped from chains, still requestable. default_effort: tokenrouter gained "low" (vendor-verified 200 on z-ai/glm-5.3-free — cuts the thinking tail on the lane the combos actually ride); glm "low" PENDING a post-reset probe (429 1308 today, window resets 20:18:39 — do NOT wire unverified onto the metered leg); b-ai's "low" now INERT for combos (no b-ai leg; comment updated, still trims direct calls). Verified: TOML parse + combo echo, reload=200, `free` 200 tokenrouter (1.24s), `dev` 200 kilocode kilo-auto/free (1.28s), `fast` 200 opencode key-1 (1.68s). Earlier:)*
 *Last updated: 2026-09-12 (free-max + speed-floor config, reload=200, live pid unchanged): objective — use the free tiers as much as possible while keeping the opencode-go subscription for best token throughput. Changes: (1) b-ai gained `default_effort = "low"` (measured 2026-09-11 win, applies only to always-thinking models with no client effort knob). (2) Combos rewired live-probed 2026-09-12: `free`/`dev` = b-ai/qwen3.8-flash (qwen leads — peer change after the 2026-09-12 10:00 UTC+8 b-ai pricing event demoted glm-5.3-flash from free to paid) → tokenrouter/z-ai/glm-5.3-free (verified 200 live; the in-config "$0.00 balance" comment was stale) → kilocode/kilo-auto/free + kilocode/openrouter/free (verified 200; minimax/minimax-m2.7:free 404s, dropped) → glm/glm-5.3-flash (metered) → opencode/deepseek-v4.1-flash (last-resort paid). `fast` alias added for explicit best-throughput (strategy="fastest", opencode-led — the one place speed re-sort is the intent). tokenrouter `models` list restored (accidentally lost while editing). (3) REJECTED after live probe: tokenharbor `:free` models (all three `free_tier_limit_reached` on distinct accounts, rolling-7-day allowance — rotation futile), orcarouter free legs (both accounts feature-gated, same error), kilocode/minimax (404). Verification: `free` 200 via tokenrouter, `dev` 200 via tokenrouter, `fast` 200 via opencode key-1 (1.96s). (4) Confirmed: dashboard tok/s counters (opencode 14002 vs b-ai 935) are cumulative since process start (speed.go `n int64` monotonic EWMA), so the gap predates today's `strategy="order"` switch; `reorderBySpeed` only fires on SpeedOrder=true (fastest), so opencode's residual share is legitimate fallback from free-leg walls (free took 20.3s on b-ai walling today), not steering. Earlier:)*
 *Last updated: 2026-09-12 (live config, hot-reloaded): free-first steering — b-ai gained
@@ -154,6 +115,43 @@ free/dev was reverted after live probes: BOTH orca accounts are feature-gated ("
 Free models are not available to this account yet — link a GitHub account or add credits");
 dead ladder legs would burn two doomed attempts per spilled request. Post-change probes: reload
 200, free buffered 200 (served by b-ai glm-5.3-flash), dev stream 200. Earlier:)*
+
+*Last updated: 2026-09-13 (b-ai 503 RCA + billing parole, zero-drop REDEPLOYED pid 36763 —
+stable artifact /tmp/onegw-live built from origin/master 455f1b6; lsof single listener, health
+ok, direct b-ai/qwen3.8-flash 200 in 3.5s, 11 providers incl. opencode-free):
+the reported
+`provider_accounts_unfunded` 503 on b-ai had two layers. (1) Trigger, vendor-side: the
+10:00 UTC+8 pricing event made every free key answer `credit insufficient balance:
+balance=0 required=NNNN` (log 09:04:41-59Z, 8/8 accounts), which #80 classified correctly
+as terminal. (2) Root cause, ours: #80's mark has no timer — "waiting does not add
+credits" — but the vendor recovered on its own for the still-free models (per-key probe
+2026-09-12 ~18:2x local: qwen3.8-flash 200 on 8/8 keys, mimo-v2.5 200, hy3 429 RPM-limit,
+glm-5.3-flash STILL `insufficient_user_quota` balance=0 — the "every free model" claim in
+the old config comment was wrong; only qwen was ever re-probed), and the `_manifest` C2PA
+bodies some keys return carry `choices`/`usage` alongside the manifest: benign vendor
+provenance, every key translatable. Direct b-ai routes nonetheless kept answering 503 for
+~9h until an operator reset each account by hand — fixed live via
+`POST /admin/api/v1/providers/b-ai/accounts/{acct}/reset` (8/8, gateway 200 in 1.3s), then
+durable: `billing_parole` (default 30m, `[rotation]` global + per-provider like the rest of
+#84) re-offers a terminal key as ONE probe per window — 200 clears the mark (recency rule
+matches the cooldown clear: a refusal stamped during the request's flight survives a
+straggler success), a re-refusal re-parks from the latest verdict, the unfunded 503's
+Retry-After names the soonest recheck instead of a flat 300. Combo chains keep the peer's
+18:38 ladder-v3 shape (no b-ai leg); b-ai is healthy for explicit use and re-adding a leg
+is a separate probe-gated call. Tests: provider parole cycle + straggler recency +
+reload-carries-clock, server e2e self-heal after vendor recovery; mutation-checked 4 ways.
+`go test ./... -skip TestCursorKindEndToEnd` green (the skip is pre-existing at HEAD: it
+dials the real cursor host). REDEPLOY NOTE: the first artifact (/tmp/onegw-parole-bin2,
+pid 85592) was deleted by cleanup while the process still ran the unlinked inode — unre-executable
+by any crash/OOM/reboot respawn — hence pid 36763 from the stable /tmp/onegw-live. DEPLOY
+WARNING for peers: the shared worktree's local master (`ed12019`) does NOT contain `c75dc18`
+(verified: zero `billingParole`/`invalidatedAt` in its provider.go) while origin/master does —
+run `git fetch && git merge origin/master` in the main tree BEFORE building any deploy, or the
+self-heal silently reverts while this stamp still claims it live. No deploy.sh marker added:
+`strings` misses interned Go literals (a 455f1b6 build shows `opencode-free` = 0 yet serves
+it), so a marker would false-block; `billing_parole` (3 hits) is the one safe marker if ever
+added, after a `--dry-run` proof. Earlier:)*
+
 *Last updated: 2026-09-12 (reasoning-echo CONVERGED: echo_reasoning knob + runtime learn,
 live pid 95900): the two parallel implementations of the seq-198/2666 fix are reconciled on ONE
 knob — ProviderCfg/Def `EchoReasoning` + toml `echo_reasoning` (45ccd03) — and the runtime-learn
@@ -1943,6 +1941,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
 | #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #80b | Billing-parole recheck (root-cause fix for the 2026-09-12 b-ai outage): #80's terminal mark had NO timer and no self-heal, so a transient vendor pricing event parked all 8 free accounts on `insufficient_quota` until a manual dashboard reset — the vendor recovered ~2.5h later and the pool did not. Now `[rotation].billing_parole` (default 30m, per-provider overridable) re-offers a terminal key as ONE probe per window: a 200 clears the mark (with the same recency rule as cooldowns, so a concurrent 402 during the request's flight survives it), a fresh refusal re-parks for a full window, and the unfunded 503's `Retry-After` names the soonest recheck instead of a flat 300 | 2026-09-12 live incident |
 | #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |
