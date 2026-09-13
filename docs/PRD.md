@@ -1,3 +1,17 @@
+*Last updated: 2026-09-13 (throughput-metrics reference doc + #90, no code change):
+answered "how is tok/s per model calculated" for both layers and wrote it down as
+docs/throughput-metrics.md — onegw's three clocks (decode EWMA headers→relay-end per
+(provider,model)+account; prefill EWMA per (model,size-bucket); delivered EWMA
+whole-wall per CLIENT model string — the only per-model-keyed gauge), omp's own numbers
+read out of the RUNNING binary omp/18.1.19 (status-line leaf = raw last-assistant-turn
+quotient out*1000/window with a 100ms floor and a same-turn cache replay in the badge;
+vibe SUM across workers; bench = the only per-model aggregate: nearest-rank p50/p95
+over ok runs, tokens/cost are per-run MEANS), shared numerator semantics (upstream-reported,
+max-merged, reasoning-inclusive, no-usage→no-row), and the known distortions (lifetime
+`samples`, write-time-only staleness — #87, per-process state). Includes a TESTED
+per-model p50/p95 recipe computed off the request ring (live proof: b-ai/qwen3.8-flash
+decode p50 57.2 / delivered p50 7.8 tok/s over 374 rows), which became issue #90
+(ring-based per-model distribution, ~30 lines, no new state). Earlier:)*
 *Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 49821):
 the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
 long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
@@ -2261,6 +2275,13 @@ the issue):
   (2026-09-11): vendor's published position (none numeric), what the free tier really is
   (0-Credit promo models), every enforced wall verbatim with its scope, measured per-key
   ceilings, and the reseller lane-variance mechanism behind b-ai throughput collapse.
+- `docs/throughput-metrics.md` — every tok/s number on the box and its exact formula
+  (2026-09-13): onegw's three clocks (decode/prefill/delivered EWMAs, their keys, noise
+  gates, steering consumers) alongside omp's own status-line leaf and bench p50/p95;
+  shared numerator semantics; known distortions (lifetime-`samples`, write-time-only
+  staleness #87, per-process state); tested per-model p50/p95 recipe from the request
+  ring (live: b-ai decode p50 57.2 vs delivered 7.8 tok/s); files #90 (ring-based
+  per-model distribution).
 
 Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
   pages to the UnoRouter design language (user-selected reference,

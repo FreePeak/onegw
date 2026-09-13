@@ -862,6 +862,7 @@ bench/memory.sh        # RSS benchmark with mock upstream
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — request pipeline, memory contract, translation matrices, store schema.
 - GitHub [issues](https://github.com/FreePeak/onegw/issues) — durable task record.
 - `docs/prd-task-tracker.md` — done-history snapshot mirroring issues.
+- [`docs/throughput-metrics.md`](docs/throughput-metrics.md) — every tok/s number (omp + onegw), its exact formula, and tested read-it-yourself recipes.
 
 ## License
 
