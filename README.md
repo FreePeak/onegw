@@ -289,10 +289,14 @@ Eight more pages complete the console:
   highlighted, errors in red): model, status, tokens in/out/cached/saved
   per line. Also available as JSON at `GET /admin/api/v1/logs?limit=N`.
 - **Providers / Combos** — live config views with in-page editing: add or
-  edit a provider (kind, base URL, models, sticky window, account pool) or
-  a combo's fallback chain; each save is spliced into `onegw.toml`,
-  validated, and hot-reloaded into the running gateway. Keys are always
-  masked.
+  edit a provider (kind, base URL, models, responses-wire ids, upstream
+  quota profile, sticky window, account pool) or a combo's fallback chain;
+  each save is spliced into `onegw.toml`, validated, and hot-reloaded into
+  the running gateway. An account row can name an OAuth service (`xai`) for a
+  subscription login instead of a key, and the card then carries the
+  **Sign in** / **Sign out** buttons (see
+  [Grok subscriptions](#grok-subscriptions-supergrok--grok-build)). Keys and
+  tokens are always masked.
 - **Quota / Token Saver** — read-only: local quota windows with reset
   countdowns, upstream-reported subscription windows (OpenCode Go,
   z.ai GLM Coding Plan — see below), and token-saver stats.
@@ -815,6 +819,49 @@ every rotation). Without that cap the refresher sleeps for hours while every
 **shared weekly pool** on the Quota page — parking the account when that pool
 hits 100 % instead of burning doomed upstream attempts.
 
+**Signing in from the dashboard.** The console does the same login the CLI
+does — no TOML editing, no shell:
+
+1. **Providers → `+ Add provider`**: `kind = openai`, base URL
+   `https://api.x.ai`, the model ids you want advertised, and a
+   `responses models` line of `grok-4.5*` for the ids xAI serves on
+   `/v1/responses`. (For the Grok Build proxy instead: `kind =
+   openai-responses`, base URL `https://cli-chat-proxy.grok.com`.)
+2. **`+ account`**: the account name — xAI names sessions after the login, so
+   use e.g. `you@example.com` — and pick the service **`xai`** in that row's
+   select. Leave the key field empty: a subscription account has none. Save
+   writes both `[[providers.accounts]]` and the matching `[[oauth.accounts]]`
+   entry (`service = "xai"`) into `onegw.toml` and hot-reloads the running
+   gateway.
+3. The card now shows `you@example.com · xai · signed-out` with **Sign in**.
+   Clicking it starts the device flow and displays the **code** and the
+   activation link; approve in the browser and the dialog follows the login by
+   itself, flipping the badge to `signed-in · <expiry>` — no restart, and the
+   token lives in `<data_dir>/oauth-tokens.json` (0600), never in the config.
+   **Sign out** deletes that token and leaves the config (and the wiring) in
+   place.
+
+Rows and entries stay in step: clearing a row's service removes its
+`[[oauth.accounts]]` entry again, and a borrower row (`owner` set) shows
+`borrows <key>` instead of a button — its session belongs to the entry that owns
+the login, which is also why a login is only ever started against the owner.
+The buttons are thin wrappers over the admin API, so scripts can drive them
+directly:
+
+```bash
+curl -s -X POST -H "X-Admin-Password: $PW" \
+  'http://127.0.0.1:8080/admin/config/oauth/login?key=xai/you@example.com'  # code + link
+curl -s -H "X-Admin-Password: $PW" http://127.0.0.1:8080/admin/config/oauth/accounts
+curl -s -X POST -H "X-Admin-Password: $PW" \
+  'http://127.0.0.1:8080/admin/config/oauth/logout?key=xai/you@example.com'
+```
+
+One login per account: clicking **Sign in** again while a flow is pending
+re-offers the same code instead of starting a second device login, because xAI
+keeps a single active session per account and two live logins would invalidate
+each other. A pending prompt is process-local — a restart or reload drops the
+prompt (never a stored token), so finish that one with `onegw-oauth login`.
+
 Because xAI serves some ids only on its native Responses endpoint (under an
 OAuth bearer that includes the flagship `grok-4.5`; a chat-shaped body reaching
 `/v1/responses` 422s `missing input`), an `openai`-kind provider can opt ids off
@@ -849,6 +896,7 @@ xAI's token carries no Cursor entitlement.
 | — | `GET /v1/models` | Config-defined model + combo list |
 | — | `GET /admin` | Dashboard (multi-page admin console; `/` redirects there) |
 | — | `GET /admin/health`, `GET /admin/usage` | Admin (password-protected) |
+| — | `GET /admin/config/oauth/accounts`, `POST /admin/config/oauth/login`, `POST /admin/config/oauth/logout` | Subscription (device-flow) sign-in from the dashboard |
 
 Translation maps stop reasons, usage fields (including cache and thinking
 tokens), and tool calls across all three formats. Stream events are re-encoded

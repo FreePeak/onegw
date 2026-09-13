@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"onegw/internal/config"
+	"onegw/internal/oauth"
 	"onegw/internal/provider"
 	"onegw/internal/server/dashboard"
 	"onegw/internal/store"
@@ -917,6 +918,11 @@ type providerView struct {
 	Quota       string   `json:"quota,omitempty"`
 	QuotaLimit  string   `json:"quota_limit,omitempty"`
 	Models      []string `json:"models,omitempty"`
+	// OAuth service profile of each account row ("xai" for a Grok
+	// subscription) with that account's sign-in state; nil when the
+	// provider has no [[oauth.accounts]] entries. The credential lives in
+	// the data dir's token store, never in the config file.
+	OAuth []providerOAuthView `json:"oauth,omitempty"`
 	// Decode-speed EWMA (tokens/sec) and per-account breakdown; empty
 	// until the provider has served streaming replies.
 	TPS    float64             `json:"tps,omitempty"`
@@ -960,20 +966,57 @@ func providerViews(st *state) []providerView {
 	return out
 }
 
+// providerOAuthView is one account's OAuth wiring: the service profile its
+// credential comes from, and how that credential stands. No secret material.
+type providerOAuthView struct {
+	Key         string `json:"key"` // token-store key "provider/account" (login/logout address)
+	Account     string `json:"account"`
+	Service     string `json:"service"`
+	State       string `json:"state"` // signed-in | expired | pending | signed-out | failed
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	Cooling     bool   `json:"cooling,omitempty"`
+	Invalidated bool   `json:"invalidated,omitempty"`
+	Owner       string `json:"owner,omitempty"` // borrower: session belongs to this key
+	Error       string `json:"error,omitempty"`
+}
+
+// attachOAuth copies each provider's OAuth account states into its view, so
+// the grid can show a subscription account's sign-in state next to it (the
+// states come from the store + pool, which providerViews must stay free of:
+// it is a pure function of the config snapshot).
+func (s *Server) attachOAuth(views []providerView) []providerView {
+	states := s.oauthStates()
+	for i := range views {
+		for _, st := range states {
+			if st.Provider != views[i].Name {
+				continue
+			}
+			views[i].OAuth = append(views[i].OAuth, providerOAuthView{
+				Key: st.Key, Account: st.Account, Service: st.Service, State: st.State,
+				ExpiresAt: st.ExpiresAt, Cooling: st.Cooling, Invalidated: st.Invalidated,
+				Owner: st.Owner, Error: st.Error,
+			})
+		}
+	}
+	return views
+}
+
 // providerEditView is the editor-prefill shape for the popup modal. It
 // carries NO secret material: accounts expose has_key only, so an edit
 // round-trip can never echo a key back into the file.
 type providerEditView struct {
-	Name        string         `json:"name"`
-	Kind        string         `json:"kind"`
-	BaseURL     string         `json:"base_url,omitempty"`
-	Models      []string       `json:"models,omitempty"`
-	MaxConc     int            `json:"max_concurrency,omitempty"`
-	Sticky      string         `json:"sticky,omitempty"`
-	QuotaWindow string         `json:"quota_window,omitempty"`
-	QuotaTokens int64          `json:"quota_limit_tokens,omitempty"`
-	QuotaReqs   int64          `json:"quota_limit_requests,omitempty"`
-	Accounts    []acctEditView `json:"accounts,omitempty"`
+	Name              string         `json:"name"`
+	Kind              string         `json:"kind"`
+	BaseURL           string         `json:"base_url,omitempty"`
+	Models            []string       `json:"models,omitempty"`
+	ResponsesModels   []string       `json:"responses_models,omitempty"`
+	SubscriptionQuota string         `json:"subscription_quota,omitempty"`
+	MaxConc           int            `json:"max_concurrency,omitempty"`
+	Sticky            string         `json:"sticky,omitempty"`
+	QuotaWindow       string         `json:"quota_window,omitempty"`
+	QuotaTokens       int64          `json:"quota_limit_tokens,omitempty"`
+	QuotaReqs         int64          `json:"quota_limit_requests,omitempty"`
+	Accounts          []acctEditView `json:"accounts,omitempty"`
 }
 
 type acctEditView struct {
@@ -983,6 +1026,8 @@ type acctEditView struct {
 	RPM         int    `json:"rpm,omitempty"`
 	HasKey      bool   `json:"has_key,omitempty"`
 	Invalidated bool   `json:"invalidated,omitempty"` // terminal billing refusal (#80)
+	OAuth       string `json:"oauth,omitempty"`       // device-flow service profile ("xai"); "" = static key
+	Owner       string `json:"owner,omitempty"`       // borrowed session: the "provider/account" it belongs to
 }
 
 func providerEditViews(st *state) []providerEditView {
@@ -990,8 +1035,15 @@ func providerEditViews(st *state) []providerEditView {
 	for _, p := range st.cfg.Providers {
 		v := providerEditView{
 			Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: p.Models,
+			ResponsesModels: p.ResponsesModels, SubscriptionQuota: p.SubscriptionQuota,
 			MaxConc: p.MaxConc, Sticky: p.Sticky, QuotaWindow: p.QuotaWindow,
 			QuotaTokens: p.QuotaLimitTokens, QuotaReqs: p.QuotaLimitRequests,
+		}
+		oauth := map[string]config.OAuthAccount{}
+		for _, a := range st.cfg.OAuthAccounts() {
+			if a.Provider == p.Name {
+				oauth[a.Account] = a
+			}
 		}
 		src := p.Accounts
 		if len(src) == 0 {
@@ -1017,6 +1069,7 @@ func providerEditViews(st *state) []providerEditView {
 			v.Accounts = append(v.Accounts, acctEditView{
 				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM,
 				HasKey: a.APIKey != "", Invalidated: term[a.Name],
+				OAuth: oauth[a.Name].Service, Owner: oauth[a.Name].Owner,
 			})
 		}
 		out = append(out, v)
@@ -1027,12 +1080,19 @@ func providerEditViews(st *state) []providerEditView {
 type providersPageView struct {
 	Views []providerView
 	Edit  template.JS
+	// OAuthStates is the raw state list for the sign-in dialog (the grid
+	// badges ride along in each providerView); Services lists the built-in
+	// device-flow profiles for the editor's per-account select.
+	OAuthStates []oauthState
+	Services    []string
 }
 
 func (s *Server) providersPage(w http.ResponseWriter, r *http.Request) {
 	v := providersPageView{}
 	if st := s.cur(); st != nil {
-		v.Views = providerViews(st)
+		v.Views = s.attachOAuth(providerViews(st))
+		v.OAuthStates = s.oauthStates()
+		v.Services = oauth.Providers()
 		edits := providerEditViews(st)
 		if b, err := json.Marshal(edits); err == nil {
 			v.Edit = template.JS(b)
@@ -1048,7 +1108,7 @@ func (s *Server) handleAPIProviders(w http.ResponseWriter, r *http.Request) {
 	}
 	var views []providerView
 	if st := s.cur(); st != nil {
-		views = providerViews(st)
+		views = s.attachOAuth(providerViews(st))
 	}
 	writeJSON(w, views)
 }
