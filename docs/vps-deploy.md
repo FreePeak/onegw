@@ -28,10 +28,11 @@ Verified against this tree: flags and paths below are code-checked
 - Admin surface (`/admin`, `/admin/health`, `/admin/events` SSE,
   `/metrics`) is behind the same loopback bind; reach it via ssh tunnel
   (§10) or the proxy (§5).
-- Resource envelope: onegw self-tunes to the 100 MB contract (90 MiB soft
-  heap via `debug.SetMemoryLimit`, GOMAXPROCS capped at 4 —
-  `cmd/onegw/main.go applyMemoryTuning`). The unit adds a MemoryHigh
-  throttle and a MemoryMax backstop (§4).
+- Resource envelope: onegw self-tunes (soft heap limit follows
+  `buffered_budget_bytes` — 90 MiB at the default 48 MiB, budget + 25% above;
+  GOMAXPROCS capped at 4 — `cmd/onegw/main.go applyMemoryTuning`). The unit
+  adds a MemoryHigh throttle and a MemoryMax backstop (§4); raise those and
+  the budget together.
 
 Prereqs: Debian 12 / Ubuntu 22.04+ (systemd ≥ 250 for the unit's
 hardening set), a DNS name for the gateway, key-based ssh access, 512 MB
@@ -65,6 +66,8 @@ admin_password = ""              # leave empty: comes from ONEGW_ADMIN_PASSWORD
                                  # once (the guessable "admin" in-code default
                                  # is gone — still set it explicitly).
 # max_body_bytes (32 MiB) / buffered_budget_bytes (48 MiB) defaults are fine;
+# raising buffered_budget_bytes scales the GC soft limit with it and should
+# come with a matching systemd MemoryHigh/MemoryMax raise;
 # raise response_header_timeout (e.g. "120s") for massive thinking prefills
 # over slow links.
 
