@@ -81,7 +81,8 @@ func opencodeSession(clientVal, apiKey string) string {
 // forwarded verbatim to every upstream (issue #36): xAI's documented
 // prompt-cache stickiness ids and generic session ids. Lookup is
 // case-insensitive (clients pick their own casing); only values the
-// client actually sent are forwarded — nothing is invented here.
+// client actually sent are forwarded here — derivations live in
+// applySessionAffinity.
 var sessionAffinityHeaders = [...]string{
 	"x-grok-conv-id",
 	"x-grok-session-id",
@@ -775,6 +776,12 @@ func DefaultModels(k Kind) []string {
 		return openCodeGoModels
 	case KindOpenCodeFree:
 		return openCodeFreeModels
+	case KindOpenAIResponses:
+		// Static fallback before any live probe (9router's registry
+		// grok-cli.js models): a bare [[providers]] kind="openai-responses"
+		// entry then advertises a working catalog on /v1/models. Operators
+		// who want the live list keep setting `models`.
+		return []string{"grok-build", "grok-4.5"}
 	}
 	return nil
 }
@@ -2015,15 +2022,8 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				req.Header.Set("x-cli-environment", "cli")
 				req.Header.Set("x-session-id", newRequestUUID())
 			case KindOpenAIResponses:
-				// Grok CLI fingerprint headers (OmniRoute's
-				// config/grokBuild.ts session set): X-XAI-Token-Auth
-				// marks the credential type the proxy meters by, and
-				// its absence shows up in upstream 401s as
-				// "x_xai_token_auth=none".
-				req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
-				req.Header.Set("x-grok-client-version", "0.2.99")
-				req.Header.Set("x-grok-cli-version", "0.2.97")
-				req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+				// Grok CLI fingerprint (single owner; see setGrokFingerprint).
+				setGrokFingerprint(req.Header, model, true)
 			}
 			// applyAuth is the single credential owner for EVERY kind.
 			applyAuth(req.Header, d.Kind, acct.bearerToken())
@@ -2269,15 +2269,11 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 		req.ContentLength = contentLen
 	}
 	req.Header.Set("Content-Type", contentType)
-	switch d.Kind {
-	case KindAnthropic:
-		req.Header.Set("x-api-key", acct.APIKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	case KindGemini:
-		req.Header.Set("x-goog-api-key", acct.APIKey)
-	default:
-		req.Header.Set("Authorization", "Bearer "+acct.APIKey)
-	}
+	// Credential via applyAuth, the single owner it is on every other path
+	// — previously this switch used acct.APIKey literally, so an OAuth-only
+	// xAI account sent "Bearer " / "x-api-key: " empty on embeddings,
+	// transcription and speech. Identical headers for static-key accounts.
+	applyAuth(req.Header, d.Kind, acct.bearerToken())
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
@@ -2317,19 +2313,37 @@ func sharedLimit429(status int, code, msg string) bool {
 
 // applySessionAffinity forwards the client's conversation/session ids to
 // the upstream request (issue #36). Client-sent values ride verbatim for
-// EVERY provider — nothing is invented. When the client sent none and the
-// provider opted in via SessionHeader, a stable per-key opaque id is
-// derived instead, so repeat calls with the same credential land on one
-// warm upstream cache (the same trade opencodeSession makes for OpenCode
-// Zen). Kind-specific headers run BEFORE this, so a kind that claims an
-// allow-listed name (commandcode's per-request x-session-id) wins.
+// EVERY provider — nothing is invented, except KindOpenAIResponses, whose
+// proxy contract requires both grok ids on every turn (see the branch
+// below). When the client sent none and the provider opted in via
+// SessionHeader, a stable per-key opaque id is derived instead, so repeat
+// calls with the same credential land on one warm upstream cache (the same
+// trade opencodeSession makes for OpenCode Zen). Kind-specific headers run
+// BEFORE this, so a kind that claims an allow-listed name (commandcode's
+// per-request x-session-id) wins.
 func (d *Def) applySessionAffinity(up, client http.Header, apiKey string) {
 	sent := false
+	grokSent := false
 	for _, name := range sessionAffinityHeaders {
 		if v := clientHeader(client, name); v != "" {
 			up.Set(name, v)
 			sent = true
+			if name == "x-grok-conv-id" || name == "x-grok-session-id" {
+				grokSent = true
+			}
 		}
+	}
+	// Grok Build proxy: 9router's grok-cli executor ALWAYS sends
+	// x-grok-session-id == x-grok-conv-id from one resolved id
+	// (executors/grok-cli.js:376-380). When the client forwarded neither
+	// grok id, derive one stable per credential and set both names — the
+	// session_header knob is then never needed for this kind. Client-sent
+	// values keep winning (issue #36 contract): nothing is invented.
+	if d.Kind == KindOpenAIResponses && !grokSent {
+		id := perKeySession("cache-affinity", apiKey)
+		up.Set("x-grok-conv-id", id)
+		up.Set("x-grok-session-id", id)
+		return
 	}
 	if sent || d.SessionHeader == "" {
 		return
@@ -2396,11 +2410,9 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		req.Header.Set("x-cli-environment", "cli")
 		req.Header.Set("x-session-id", newRequestUUID())
 	case KindOpenAIResponses:
-		// Grok CLI fingerprint headers (same set as the chat path).
-		req.Header.Set("x-grok-client-identifier", "xai-grok-cli")
-		req.Header.Set("x-grok-client-version", "0.2.99")
-		req.Header.Set("x-grok-cli-version", "0.2.97")
-		req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+		// Grok CLI fingerprint (same set as the chat path, minus the
+		// per-attempt chat ids; see setGrokFingerprint).
+		setGrokFingerprint(req.Header, "", false)
 	}
 	applyAuth(req.Header, d.Kind, acct.bearerToken())
 	resp, err := client.Do(req)
