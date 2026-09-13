@@ -82,10 +82,12 @@ AmbientCapabilities=
 UMask=0077
 
 # Resource envelope: onegw self-tunes when the operator has not set
-# GOMEMLIMIT/GOGC/GOMAXPROCS (90 MiB soft heap limit, GOGC=60, GOMAXPROCS
-# capped at 4 — cmd/onegw/main.go applyMemoryTuning). MemoryHigh leaves the
-# GC room to work below the ceiling; MemoryMax is a runaway backstop, not
-# the operating target (PRD: <=100 MB RSS steady state).
+# GOMEMLIMIT/GOGC/GOMAXPROCS — the soft heap limit follows the configured
+# buffered_budget_bytes (90 MiB with the default 48 MiB, budget + 25%
+# headroom above that) so a raised budget is never fought by the GC.
+# MemoryHigh leaves the GC room to work below the ceiling; MemoryMax is a
+# runaway backstop, not the operating target. Raise both alongside
+# buffered_budget_bytes when you raise it.
 MemoryHigh=150M
 MemoryMax=400M
 
