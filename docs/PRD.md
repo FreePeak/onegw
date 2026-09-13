@@ -14,7 +14,7 @@ per-model p50/p95 recipe computed off the request ring (live proof: b-ai/qwen3.8
 16:51 snapshot: decode p50 64.1 / delivered p50 4.9 tok/s over 246 rows — the
 ~14× gap being what decode excludes and delivered includes), which became issue #90
 (ring-based per-model distribution, ~30 lines, no new state). Earlier:)*
-*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 49821):
+*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 23427):
 the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
 long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
 (1) Live config (gitignored onegw.toml): `buffered_budget_bytes` 100 MiB (104857600, set
@@ -36,9 +36,15 @@ the #63 harness hand-copied the closure, so dropping the re-tune kept CI green; 
 extracts newReloadHook as the one definition both runGateway and the test register, with a
 160 MiB reload fixture + 77 MiB sentinel making the assertion ordering-independent
 (drop-the-call mutant goes red). README/ARCHITECTURE/systemd/vps-deploy
-document the coupling. Deployed zero-drop twice via scripts/deploy.sh --binary from git
-archive of the pushed commit; artifact /tmp/onegw-mem-bin2 — do NOT sweep /tmp/onegw-* (this
-pid maps it). Earlier:)*
+document the coupling. Deployed zero-drop via scripts/deploy.sh --binary from git archive of
+the pushed commit (my artifact /tmp/onegw-mem-bin2, pid 49821 — kept on disk, do NOT sweep
+/tmp/onegw-*). SUPERSEDED at 17:26 by a peer deploy: live is pid 23427, `/tmp/onegw-exp-bin`,
+forensics-verified to carry BOTH the budget fix (`heapLimitBytes` present) and origin's
+billing-parole recheck (`billing_parole=3`) — banner `budget: 200 MiB, memlimit: 2048 MiB`,
+`onegw_budget_cap_bytes 209715200`; it predates the 01e48b0 refactor (`newReloadHook=0`),
+which is behavior-preserving/test-only, so no redeploy is owed. Park-state at audit:
+`"invalidated":true` absent with `"has_key"` present (the load-bearing pairing — `omitempty`
+omits false), i.e. zero terminal parks. Earlier:)*
 **Ref-rewrite incident (direction corrected — the first record of this got it backwards), for
 the peers sharing this remote:** the memory-budget change first landed as b59ba41 on the LOCAL
 chain, and local↔origin had diverged BIDIRECTIONALLY: local was missing origin's c75dc18
