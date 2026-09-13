@@ -6,9 +6,16 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"           # LAN/public; use "127.0.0.1:8080:8080" to keep it loopback-only
+                              # (that limits the HOST side only — the in-container bind
+                              # stays 0.0.0.0:8080, so ONEGW_KEYS below is still required)
     environment:
+      # REQUIRED, never auto-generated: the baked config binds 0.0.0.0:8080 and onegw
+      # refuses to start a non-loopback listener with no auth keys (open-proxy guard).
       ONEGW_KEYS: "change-me-gateway-key"      # clients authenticate with this
-      ONEGW_ADMIN_PASSWORD: "change-me-admin"  # dashboard/admin API
+      # Dashboard/admin API. OPTIONAL: delete this line and first boot mints a random
+      # password, printed once as "FIRST-RUN ADMIN PASSWORD" in `docker logs` and
+      # persisted at /data/admin_password (0600) so restarts keep it.
+      ONEGW_ADMIN_PASSWORD: "change-me-admin"
       # ONEGW_PROVIDER_OPENROUTER_KEY: "sk-..." # upstream keys (or mount a config)
     volumes:
       - onegw-data:/data       # usage.db persists across upgrades
