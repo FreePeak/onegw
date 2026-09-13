@@ -1,3 +1,30 @@
+*Last updated: 2026-09-13 (one-command Docker deploy: scripts/docker_deploy.sh):
+the container setup had accumulated steps that each fail in a new way — a gateway key that a re-run must not rotate, a
+config volume the dashboard cannot save into until it is chowned, ONEGW_* credentials that must reach the container, a
+data volume that has to survive recreate, and a health check that needs the real admin password (generated on first
+boot). `scripts/docker_deploy.sh` now owns all of it: it reuses ONEGW_KEYS or the key in onegw-deploy.env (0600,
+gitignored) or mints one and stores it; creates and `chown -R onegw:onegw`s the config volume; forwards every exported
+ONEGW_* variable; runs both volumes with `--restart unless-stopped`; waits for `/admin/health` to answer 200 with the
+password read from the data volume; prints the dashboard URL, key and credential; and detects whether the image even has
+the `onegw oauth` subcommand, telling the operator to rebuild when it does not. `--replace` recreates the container after
+copying the RUNNING config into the volume first, which is the migration path for the installs whose config lives on the
+writable layer. It also INHERITS the running container's
+credentials before generating anything: an install started with `-e ONEGW_KEYS=…` or `-e ONEGW_PROVIDER_*_KEY=…` keeps
+them only in that container's Env, so a replace that minted a fresh key would lock every wired client out — verified by
+migrating a legacy container whose key and provider key existed nowhere else (clean shell env, empty env file): the new
+container carries both, the key is persisted to onegw-deploy.env, and the script reports "no rotation" instead. Verified end to end against the published image (78125d2): fresh deploy (health 200, correct published
+port, forwarded provider env present in the container, dashboard save 200), idempotent re-run with the key preserved, and
+the legacy migration — a baked-config container with two providers added through the API carried `2` providers into the
+config volume (count asserted on both sides), served them after the recreate, took a further save, and kept all three
+across another recreate. That count assertion earned its place twice: it exposed (a) my own earlier "migration verified"
+claim as false — the exported file had never held the edit, so its 200 only showed a save into a fresh default config —
+and (b) a real bug in the script, whose seed wrote through a host bind mount under $TMPDIR, a path Colima/Docker Desktop
+do NOT share (only $HOME), so the copy silently failed and the script aborted mid-migration leaving the legacy container
+running and the volume empty; seeding now goes through a running helper container's mount namespace and reports the
+provider count it carried. A second self-inflicted bug the tests caught: HOST_PORT was parsed from the last field of
+`-p` (the CONTAINER port), so a deployment on 18160 health-checked the host's 8080 — the live gateway — and reported a
+bogus failure. README § Docker is now script-first with the raw equivalent corrected (a generated key instead of
+`change-me`, plus the config volume the editor needs), and docker-compose.yml points at the script.*
 *Last updated: 2026-09-13 (user-reported: the image could not write its own config — /etc/onegw is now chowned to the container user):
 a dashboard "Save & reload" in the shipped container answered 500 `temp file: open
 /etc/onegw/.onegw-config-*.toml: permission denied`. Root cause: the runtime stage COPYs docker/onegw.default.toml into
