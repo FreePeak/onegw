@@ -33,7 +33,7 @@
     {{end}}
   </span></div>{{end}}
   {{if .Models}}<details><summary>{{len .Models}} advertised models</summary>
-  <div class="mono mt-2 leading-8">{{range .Models}}<code class="chip">{{.}}</code> {{end}}</div></details>{{end}}
+  <div class="mono mt-2 leading-8">{{$n := .Name}}{{range .Models}}<code class="chip">{{.}}</code><button class="btn copy sm" data-copy="{{$n}}/{{.}}" title="copy model id {{$n}}/{{.}}" aria-label="copy model id {{$n}}/{{.}}">copy</button> {{end}}</div></details>{{end}}
 </div>
 {{else}}
 <div class="tblwrap"><div class="empty">no providers configured — add one with the button above</div></div>

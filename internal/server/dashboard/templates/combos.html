@@ -5,7 +5,7 @@
 <table>
 <thead><tr><th>combo</th><th>fallback chain (tried in order)</th><th>strategy</th><th></th></tr></thead>
 <tbody>
-{{range .Rows}}<tr><td><b class="mono">{{.Name}}</b></td><td class="mono">{{.Targets}}</td>
+{{range .Rows}}<tr><td><b class="mono">{{.Name}}</b> <button class="btn copy sm" data-copy="{{.Name}}" aria-label="copy combo model id {{.Name}}">copy</button></td><td class="mono">{{.Targets}}</td>
   <td><span class="pill" title="how the router orders this chain at request time">{{.Strategy}}</span></td>
   <td class="text-right"><button class="rowact" data-edit="{{.Name}}" type="button" title="edit combo {{.Name}}" aria-label="edit combo {{.Name}}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round"/></svg>

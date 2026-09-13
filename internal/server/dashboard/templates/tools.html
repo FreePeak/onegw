@@ -1,7 +1,7 @@
 {{define "hdr"}}<span>base URL <code class="chip">{{.BaseURL}}</code></span>{{end}}
 {{define "content"}}
 <p class="sub mt-0">Point an agent CLI at the gateway. The bearer key is one of the
-<code class="chip">auth.keys</code> from your onegw.toml (never shown here) — export it as <code class="chip">ONEGW_KEY</code>.</p>
+<code class="chip">auth.keys</code> gateway keys — copy it from <a href="/admin/ui/settings">Settings → Gateway keys</a>, then export it as <code class="chip">ONEGW_KEY</code>.</p>
 {{range .Presets}}
 <div class="card mb-3">
   <h3 class="normal-case text-[13.5px]">{{.Name}}</h3>
@@ -9,14 +9,4 @@
   <button class="btn copy sm" data-t="c-{{.ID}}">copy</button>
 </div>
 {{end}}
-{{end}}
-{{define "scripts"}}
-<script>
-document.querySelectorAll('.copy').forEach(b => b.onclick = () => {
-  navigator.clipboard.writeText(document.getElementById(b.dataset.t).textContent).then(() => {
-    const t = b.textContent; b.textContent = 'copied ✓';
-    setTimeout(() => b.textContent = t, 1200);
-  });
-});
-</script>
 {{end}}

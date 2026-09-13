@@ -77,7 +77,7 @@
     const t = new Date(e.ts * 1000).toTimeString().slice(0, 8);
     row.innerHTML = '<td class="mono text-mut">' + t + '</td>' +
       '<td class="num mono"><b>' + e.code + '</b></td>' +
-      '<td class="mono">' + esc(route(e)) + '</td>' +
+      '<td class="mono">' + esc(route(e)) + ' <button class="btn copy sm" data-copy="' + escq(route(e)) + '">copy</button></td>' +
       '<td class="mono text-mut">' + esc(e.account || '') + '</td>' +
       '<td class="text-mut">' + (e.kind ? esc(e.kind) : '') + '</td>' +
       '<td class="num mono">' + kfmt(e.in) + '</td>' +
