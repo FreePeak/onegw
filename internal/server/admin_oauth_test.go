@@ -379,21 +379,40 @@ func TestProviderEditorWritesAndClearsOAuthEntry(t *testing.T) {
 		t.Fatalf("login on the new account: %d %s", w.Code, w.Body.String())
 	}
 
-	// Untick: the entry goes, the account row (and its name) stays.
-	body = `{"name":"grokbuild2","kind":"openai-responses","base_url":"http://gb2.invalid","models":["grok-4.5"],
+	// Unticking the service alone would leave a keyless account that is neither
+	// a static key nor a login — it authenticates as nothing while the pool
+	// still dials it — so that save is refused and the file does not move.
+	untick := `{"name":"grokbuild2","kind":"openai-responses","base_url":"http://gb2.invalid","models":["grok-4.5"],
 	          "accounts":[{"name":"ops@example.com"}]}`
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers", untick, true)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("untick without a key must be refused: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "would authenticate as nothing") {
+		t.Fatalf("refusal must say why: %s", w.Body.String())
+	}
+	if !strings.Contains(mustReadFile(t, path), `provider = "grokbuild2"`) {
+		t.Fatalf("refused save must leave the oauth entry alone:\n%s", mustReadFile(t, path))
+	}
+
+	// The supported downgrade: give the row a static key and clear the service.
+	body = `{"name":"grokbuild2","kind":"openai-responses","base_url":"http://gb2.invalid","models":["grok-4.5"],
+	          "accounts":[{"name":"ops@example.com","api_key":"sk-static-1"}]}`
 	if w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true); w.Code != http.StatusOK {
-		t.Fatalf("untick save: %d %s", w.Code, w.Body.String())
+		t.Fatalf("downgrade save: %d %s", w.Code, w.Body.String())
 	}
 	file = mustReadFile(t, path)
 	if strings.Count(file, "[[oauth.accounts]]") != 2 {
-		t.Fatalf("unticking must drop exactly one entry:\n%s", file)
+		t.Fatalf("clearing the service must drop exactly one entry:\n%s", file)
 	}
 	if strings.Contains(file, `provider = "grokbuild2"`) {
-		t.Fatalf("oauth entry for the cleared row survived:\n%s", file)
+		t.Fatalf("oauth entry for the downgraded row survived:\n%s", file)
 	}
 	if !strings.Contains(file, `name = "ops@example.com"`) {
 		t.Fatalf("the account row itself must survive:\n%s", file)
+	}
+	if !strings.Contains(providerBlock(t, file, "grokbuild2"), `api_key = "sk-static-1"`) {
+		t.Fatalf("the downgraded row must keep the key it was given:\n%s", file)
 	}
 	// Clearing the two provider-level fields removes their lines from that
 	// block only (the fixture's own xai block keeps its values: a save must
@@ -549,4 +568,152 @@ func TestProviderViewCarriesOAuthBadges(t *testing.T) {
 	if strings.Contains(w.Body.String(), "rt-1") || strings.Contains(w.Body.String(), "access_token") {
 		t.Fatalf("view must never carry token material: %s", w.Body.String())
 	}
+}
+
+// --- roster round-trip regressions (the save path the OAuth rows ride on) ---
+
+// TestProviderSavePreservesUnmodeledAccountFields: the editor models name /
+// key / rpm only, so a field it cannot express must survive a save instead of
+// being re-rendered away. Per-account base_url and weight are both live
+// (server.go copies them into provider.Account), and losing them silently
+// re-points an account or re-weights the pool.
+func TestProviderSavePreservesUnmodeledAccountFields(t *testing.T) {
+	_, h, path := newTestServerFromFile(t, rosterFixture)
+	before := mustReadFile(t, path)
+
+	// A routine save: same roster by name, nothing else mirrored.
+	body := `{"name":"p1","kind":"openai","base_url":"http://p1.local","accounts":[{"name":"acct1"}]}`
+	if w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	after := mustReadFile(t, path)
+	for _, want := range []string{
+		`base_url = "http://acct1.internal"`, // per-account upstream override (unmodeled)
+		"weight = 3",                         // pool selection weight (unmodeled)
+		`api_key = "sk-acct1"`,               // blank request key keeps the on-disk one
+	} {
+		if !strings.Contains(after, want) {
+			t.Fatalf("account field %q lost by a roster save:\n%s", want, after)
+		}
+	}
+	// rpm IS modeled (the row has an input, prefilled from the file): a request
+	// that leaves it out means "uncapped", so it is legitimately cleared.
+	if strings.Contains(after, "rpm = 7") {
+		t.Fatalf("a modeled field omitted by the request must clear:\n%s", after)
+	}
+	if before == after {
+		t.Fatal("fixture check: the save must have changed something")
+	}
+}
+
+// TestProviderSaveRefusesToStrandEnvCredential: once a provider has any
+// [[providers.accounts]] entry, the pool is built from those entries alone
+// (server.go), so a save that writes a keyless row silently orphans a key that
+// came from ONEGW_PROVIDER_<NAME>_KEY — the provider then authenticates as
+// nothing, and config.Load cannot see it because a keyless account satisfies
+// its "needs api_key, keys, or accounts" check. The save must be refused with
+// the env var named, and the running gateway must keep working.
+func TestProviderSaveRefusesToStrandEnvCredential(t *testing.T) {
+	idp := &oauthIdP{}
+	_, upstreamURL := idp.start(t)
+	t.Setenv("ONEGW_PROVIDER_ENVP_KEY", "sk-from-env")
+	_, h, path := newTestServerFromFile(t, envKeyFixture(upstreamURL))
+	before := mustReadFile(t, path)
+
+	chat := func() string {
+		req := httptest.NewRequest("POST", "/v1/chat/completions",
+			strings.NewReader(`{"model":"m1","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Authorization", "Bearer key-a")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("chat: %d %s", rec.Code, rec.Body.String())
+		}
+		got, _ := idp.seen.Load().(string)
+		return got
+	}
+	if got := chat(); got != "Bearer sk-from-env" {
+		t.Fatalf("precondition: upstream saw %q, want the env key", got)
+	}
+
+	// The editor prefills a synthetic "default" row from the provider key (an
+	// env key is invisible to the file), so a routine save posts exactly this.
+	body := `{"name":"envp","kind":"openai","base_url":"` + upstreamURL + `","models":["m1"],"accounts":[{"name":"default"}]}`
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("keyless roster must be refused, got %d %s\nfile now:\n%s", w.Code, w.Body.String(), mustReadFile(t, path))
+	}
+	if !strings.Contains(w.Body.String(), "ONEGW_PROVIDER_ENVP_KEY") {
+		t.Fatalf("refusal must name the env var that would be orphaned: %s", w.Body.String())
+	}
+	if after := mustReadFile(t, path); after != before {
+		t.Fatalf("refused save must leave the file untouched:\n%s", after)
+	}
+	if got := chat(); got != "Bearer sk-from-env" {
+		t.Fatalf("gateway lost its credential after a refused save: upstream saw %q", got)
+	}
+}
+
+// TestProviderSaveRefusesToBreakBorrower: unticking the subscription box on an
+// account another provider borrows (owner = "<provider>/<account>") would make
+// the candidate fail validation with a message about the BORROWER — a config
+// the operator did not touch and cannot act on. The splice must name the
+// dependency instead.
+func TestProviderSaveRefusesToBreakBorrower(t *testing.T) {
+	idp := &oauthIdP{}
+	idpURL, upstreamURL := idp.start(t)
+	_, h, path := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+	before := mustReadFile(t, path)
+
+	// Save xai with its account no longer marked as a subscription login.
+	body := `{"name":"xai","kind":"openai","base_url":"http://xai.invalid","models":["grok-3"],"accounts":[{"name":"main"}]}`
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("dropping a borrowed owner must be refused, got %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "grokbuild/main") {
+		t.Fatalf("refusal must name the borrower that depends on it: %s", w.Body.String())
+	}
+	if after := mustReadFile(t, path); after != before {
+		t.Fatalf("refused save must leave the file untouched:\n%s", after)
+	}
+}
+
+const rosterFixture = `# roster round-trip fixture
+[server]
+data_dir = "memory"
+admin_password = "pw-test"
+
+[auth]
+keys = ["key-a"]
+
+[[providers]]
+name = "p1"
+kind = "openai"
+base_url = "http://p1.local"
+models = ["m1"]
+
+[[providers.accounts]]
+name = "acct1"
+api_key = "sk-acct1"
+base_url = "http://acct1.internal"
+weight = 3
+rpm = 7
+`
+
+func envKeyFixture(upstreamURL string) string {
+	return `# env-credential fixture: the key is NOT in this file
+[server]
+data_dir = "memory"
+admin_password = "pw-test"
+
+[auth]
+keys = ["key-a"]
+
+[[providers]]
+name = "envp"
+kind = "openai"
+base_url = "` + upstreamURL + `"
+models = ["m1"]
+`
 }
