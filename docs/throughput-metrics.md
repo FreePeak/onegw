@@ -159,19 +159,27 @@ output starts the clock on reasoning models.
    (≥3 prefill samples at ≥32 K before size-aware ordering engages) — which is why a
    `speed_order` row can vanish right after a routine, otherwise uneventful reload.
 4. **Decode vs delivered can legitimately differ by an order of magnitude** — that is
-   the design, not a bug. Same lane, live 2026-09-13: gauge decode EWMA 47.7 tok/s,
-   ring p50 decode 61.4, ring p50 **delivered 4.7** (client-delivered gauge for the
-   `dev` combo alias: 5.7 — different key, see §5). The gap is queue + prefill +
-   rotation + failed attempts, which decode is defined to exclude and delivered is
-   defined to include.
+   the design, not a bug. Same instant, 2026-09-13 16:51 +07 (§5 quotes exactly this
+   command's output): b-ai's gauge decode EWMA **70.6** tok/s against the same leg's
+   ring delivered p50 **4.9** — a ~14× spread. The gap is queue + prefill + rotation +
+   failed attempts, which decode is defined to exclude and delivered is defined to
+   include.
+5. **EWMA digits drift by the minute on a busy gateway, so quote an instant, not a
+   value.** The `dev` delivered gauge on this box read 5.71 mid-morning, then 2.94,
+   6.39, 5.14 and 9.75 across the following hours — same code, same lane, real
+   traffic. A number lifted from this doc or from `/metrics` is a snapshot: carry its
+   timestamp, or re-scrape. The durable content is the ratio, the keys and the gates.
 
 ## 5. How to calculate it yourself (tested recipes)
 
-**Read the live EWMAs** (gauges are ×100):
+**Read the live EWMAs** (gauges are ×100; one command, 2026-09-13 16:51 +07):
 
 ```bash
 curl -s :8080/metrics | grep tokens_per_second
-# onegw_client_delivered_tokens_per_second_x100{model="dev"} 571  → 5.71 tok/s delivered
+onegw_provider_tokens_per_second_x100{provider="b-ai"}         7063  → 70.6 tok/s decode
+onegw_provider_tokens_per_second_x100{provider="tokenrouter"}  6918  → 69.2 tok/s decode
+onegw_client_delivered_tokens_per_second_x100{model="dev"}      514  →  5.1 tok/s delivered
+onegw_client_delivered_tokens_per_second_x100{model="free"}    1427  → 14.3 tok/s delivered
 ```
 
 **Per-LEG p50/p95 RIGHT NOW, no code** — off the #19 request ring, using omp bench's own
@@ -228,30 +236,34 @@ for (p, m), g in sorted(groups.items(), key=lambda kv: -len(kv[1]["tps"])):
 EOF
 ```
 
-Output on the serving gateway, 2026-09-13, verbatim:
+Output on the serving gateway — captured by the same 2026-09-13 16:51 +07 command as
+the gauges above, verbatim:
 
 ```
 ring: 512 rows in window
-b-ai/qwen3.8-flash: decode[n=306 p50=61.4 p95=91.2] | delivered[n=306 p50=4.7 p95=26.8]
-tokenrouter/z-ai/glm-5.3-free: decode[n=103 p50=66.4 p95=246.6] | delivered[n=127 p50=8.4 p95=35.4]
+b-ai/qwen3.8-flash: decode[n=246 p50=64.1 p95=90.3] | delivered[n=246 p50=4.9 p95=23.3]
+tokenrouter/z-ai/glm-5.3-free: decode[n=130 p50=49.2 p95=242.1] | delivered[n=163 p50=7.9 p95=29.1]
 ```
 
-The two `n`s disagree on the second row (103 decode vs 127 delivered) for the reason in
+The two `n`s disagree on the second row (130 decode vs 163 delivered) for the reason in
 §1: the decode fold carries the 200 ms `speedFloor`, the delivered fold deliberately
-carries no time floor — so short replies have a delivered rate and no decode rate.
+carries no time floor — so short replies have a delivered rate and no decode rate. That
+split is the gates showing themselves, worked: 33 replies on that leg finished their
+decode phase in under 200 ms (so `tps` was dropped) but still produced a delivered rate.
 
 **This grouping is per LEG.** `logEntry` has no client-model field: on a success row
 `Model` is the resolved *upstream* model threaded through `Execute` → `attempt(…, m, …)`
 → `relayResponse` (`server.go:639-640,834`), while the client's own string lives only in
 `delivery.model` (`boundedModel`, `server.go:605`). So this table is **not** the same
-quantity as `onegw_client_delivered_tokens_per_second_x100{model="dev"}` (5.7 tok/s) or
-`{model="free"}` (7.0) — same order of magnitude as the per-leg 4.7/8.4 above, different
-key: one answers "how does this lane serve whoever asks", the other "what did the client
-named X actually get". A client-alias distribution therefore cannot come from the ring;
-its cheap home is a bounded sample slice inside `deliveredSample`
-(`client_speed.go:60-64`, which today keeps only `tps/ttftMs/n/last`) — 64 float64s ×
-≤128 keys ≈ 64 KB, under the existing `maxDeliveredKeys` bound, inheriting the existing
-≥4-token gate. The durable-window ceiling and the histogram upgrade path live in #90.
+quantity as `onegw_client_delivered_tokens_per_second_x100{model="dev"}` (5.1 tok/s in
+the snapshot above) or `{model="free"}` (14.3) — same order of magnitude as the per-leg
+4.9/7.9, different key: one answers "how does this lane serve whoever asks", the other
+"what did the client named X actually get". A client-alias distribution therefore
+cannot come from the ring; its cheap home is a bounded sample slice inside
+`deliveredSample` (`client_speed.go:60-64`, which today keeps only `tps/ttftMs/n/last`)
+— 64 float64s × ≤128 keys ≈ 64 KB, under the existing `maxDeliveredKeys` bound,
+inheriting the existing ≥4-token gate. The durable-window ceiling and the histogram
+upgrade path live in #90.
 
 **Probe a lane directly** (per-leg ground truth, when the ring is cold): fire
 simultaneous bounded streaming probes at each combo leg and divide
@@ -267,10 +279,14 @@ leg never falls through in an order-locked combo.
 | decode only | bench `generationTps` (0 when buffered) | per-(provider,model) decode EWMA (A) — feeds steering |
 | prefill | bench `prefillTps` (contaminated when buffered) | prefill EWMA per size bucket (C) — feeds size-aware ordering |
 
-omp's denominator starts at *its* request send and ends at the terminal SSE event,
-so an omp read sits slightly above onegw's handler-entry→relay-end wall by the
-network + client parse time. Neither layer has a per-model **distribution** in the
-gateway — that is #90.
+omp's denominator starts at *its* request send and ends at the terminal SSE event, so an
+omp read sits above onegw's handler-entry→relay-end wall by the network + client parse
+time — and that tail is not observable from the gateway, so onegw's delivered gauge is a
+**proxy** for omp's number, never parity. omp's bench is the only per-model
+**distribution** on this box; the gateway keeps EWMAs plus per-request ring rows, and its
+three per-model keys differ from each other (bench `{provider,model}`, ring
+`(provider, upstream model)`, delivered gauge `{client alias}`). #90 adds the
+distribution to the gateway from state it already holds.
 
 ## 7. Open work this doc files (both tracked as issues; no shadow backlog here)
 
