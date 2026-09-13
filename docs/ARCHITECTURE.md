@@ -37,7 +37,7 @@ client ──HTTP──▶ authorize ─▶ acquireForBody ─▶ readBody (MaxB
 | Streaming | Never acquires budget; byte-copy with `http.Flusher` per event. |
 | Usage sniffer | Rolling window capped at 64 KiB, trimmed to 256 B between matches; regexes run only when a trigger substring appears. |
 | Usage counters | 16 shards × fixed counters (atomics); map key = (provider, model, api_key, day, hour); flush resets counters, keys persist. Memory is independent of request/session volume. |
-| GC | `GOMEMLIMIT=90 MiB` (soft), `GOGC≈60`, GOMAXPROCS capped at 4 when unset. |
+| GC | Soft heap limit follows the buffered budget: 90 MiB with the default 48 MiB budget, `buffered_budget_bytes` + 25% headroom when raised (re-tuned on reload); operator `GOMEMLIMIT` wins. `GOGC≈60`, GOMAXPROCS capped at 4 when unset. |
 | Benchmarks | `bench/memory.sh` with `GODEBUG=madvdontneed=1` (macOS MADV_FREE otherwise overstates RSS). Measured: 17 MiB baseline → 67 MiB peak under 30×800 KB concurrent streams, flat. |
 
 ## Translation matrices
