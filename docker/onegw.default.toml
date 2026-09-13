@@ -19,7 +19,12 @@
 # The dashboard's provider editor (Providers page) writes both halves of that
 # wiring and offers a Sign in button, so the CLI is only needed for scripts.
 #
-# Mount your own config over /etc/onegw/onegw.toml to override any of this.
+# This file is EDITABLE from the dashboard (the provider/combos editor splices
+# into it and hot-reloads), which is why the image chowns /etc/onegw to the
+# container user. To keep those edits across a recreate, mount a writable
+# directory there — `-v onegw-config:/etc/onegw` (a named volume is seeded from
+# this file with the right ownership). A single-file mount cannot be atomically
+# replaced, so in-page saves fail with "device or resource busy".
 
 [server]
 listen = "0.0.0.0:8080"        # in-container bind; publish with -p to reach it

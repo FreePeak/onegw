@@ -40,6 +40,13 @@ COPY --from=build /out/onegw /usr/local/bin/onegw
 # (internal/oauthcmd), so either form works inside the container.
 COPY --from=build /out/onegw-oauth /usr/local/bin/onegw-oauth
 COPY docker/onegw.default.toml /etc/onegw/onegw.toml
+# The dashboard's provider/combos editor saves straight into this file, and the
+# write is atomic (temp file in the same directory + rename). The directory
+# therefore has to be writable by the non-root user, or every in-page save
+# answers 500 "temp file: open /etc/onegw/.onegw-config-*.toml: permission
+# denied" — the bare `docker run` path did exactly that until this line. A named
+# volume mounted here inherits this ownership, so edits also survive a recreate.
+RUN chown onegw:onegw /etc/onegw /etc/onegw/onegw.toml
 
 # Runtime config; /data holds usage.db (bind-mount or named volume it).
 ENV ONEGW_CONFIG=/etc/onegw/onegw.toml \
