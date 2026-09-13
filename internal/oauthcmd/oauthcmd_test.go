@@ -3,6 +3,8 @@ package oauthcmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +54,41 @@ func TestResolveDataDirPrecedence(t *testing.T) {
 			t.Fatalf("got %q, want ~/.onegw", got)
 		}
 	})
+}
+
+// The re-auth promise: `onegw oauth login` pops the sign-in page. $BROWSER
+// must be the opener and receive the (complete) URL verbatim — that is both
+// the user's explicit-choice override and the only writable probe on a CI
+// box. A broken $BROWSER must surface as an error (the CLI prints the URL
+// fallback then), never a hang or a swallowed failure.
+func TestOpenBrowserHonoursBROWSER(t *testing.T) {
+	if runtime.GOOS ***REMOVED*** "windows" {
+		t.Skip("sh stub")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "opened")
+	stub := filepath.Join(dir, "stub.sh")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$1\" > \""+marker+"\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BROWSER", stub)
+
+	const url = "https://accounts.x.ai/oauth2/device?user_code=DFEV-A6SX"
+	if err := openBrowser(url); err != nil {
+		t.Fatalf("openBrowser: %v", err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("browser was never opened: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != url {
+		t.Fatalf("browser opened %q, want %q", got, url)
+	}
+
+	t.Setenv("BROWSER", filepath.Join(dir, "no-such-opener"))
+	if err := openBrowser(url); err ***REMOVED*** nil {
+		t.Fatal("missing opener must error, not claim success")
+	}
 }
 
 // A missing subcommand must not silently do something else.

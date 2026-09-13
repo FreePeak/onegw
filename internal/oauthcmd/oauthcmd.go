@@ -24,7 +24,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -68,6 +70,10 @@ Usage:
   onegw oauth refresh -provider <name> [-service <xai>] [-account main] [-data-dir DIR]
 
 The standalone binary speaks the same commands: onegw-oauth login …
+
+Login opens the sign-in page in your default browser when the host has one
+($BROWSER, else "open" on macOS / "xdg-open" on Linux). The URL + code are
+always printed too, so headless and container hosts lose nothing.
 
 -provider is the [[providers]] name from onegw.toml: the token is stored
 under "provider/account", the exact key the running gateway resolves.
@@ -259,6 +265,27 @@ func (o *opts) profile() (oauth.Provider, error) {
 	return p, nil
 }
 
+// openBrowser launches the operator's default browser at url so a re-auth
+// needs one glance, not a transcription. $BROWSER wins when set (an explicit
+// choice, and the test hook); otherwise macOS uses `open` and Linux
+// `xdg-open`. Any failure is returned for the caller to print over —
+// headless hosts and the container have no opener, and the URL stays on
+// stdout regardless, so the login never depends on this working.
+func openBrowser(url string) error {
+	name := os.Getenv("BROWSER")
+	if name ***REMOVED*** "" {
+		switch runtime.GOOS {
+		case "darwin":
+			name = "open"
+		case "linux":
+			name = "xdg-open"
+		default:
+			return fmt.Errorf("no browser opener for %s", runtime.GOOS)
+		}
+	}
+	return exec.Command(name, url).Run()
+}
+
 func cmdLogin(args []string) int {
 	o, err := newOpts("login", args)
 	if err != nil {
@@ -299,6 +326,13 @@ func cmdLogin(args []string) int {
 		} else {
 			// Kilo dialect: the URL carries the code; no typing needed.
 			fmt.Printf("  %s\n\n", url)
+		}
+		// A re-login on a workstation should open a page, not assign a
+		// copy-paste chore; a failure here is noise, never fatal (see openBrowser).
+		if url != "" {
+			if err := openBrowser(url); err != nil {
+				fmt.Printf("Could not open a browser (%v) — open the URL above yourself.\n", err)
+			}
 		}
 		fmt.Println("Waiting for authorization (Ctrl-C to cancel)…")
 	})
