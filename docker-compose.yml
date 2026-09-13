@@ -24,7 +24,17 @@ services:
       # ONEGW_PROVIDER_OPENROUTER_KEY: "sk-..." # upstream keys (or mount a config)
     volumes:
       - onegw-data:/data       # usage.db persists across upgrades
-      # Optional: run with your own full config instead of the baked default:
+      # Config: the dashboard's provider editor SAVES INTO this file (atomic temp
+      # file + rename), so give it a writable DIRECTORY — a named volume is
+      # initialized from the image with the right ownership and survives a
+      # recreate:
+      - onegw-config:/etc/onegw
+      # A single-file mount does NOT work for in-page editing, for two reasons:
+      # the save's temp file needs a writable DIRECTORY, and even then rename()
+      # cannot replace a bind-mounted file ("device or resource busy"); :ro is
+      # read-only by definition. A DIRECTORY mount does work — hand it to the
+      # container's user on a Linux VPS (chown -R 100:101). Use the file form
+      # only to hand-edit the config:
       # - ./onegw.toml:/etc/onegw/onegw.toml:ro
     mem_limit: 256m            # gateway targets <=100 MB RSS
     cpus: 1
@@ -46,3 +56,4 @@ services:
 
 volumes:
   onegw-data:
+  onegw-config:
