@@ -7,9 +7,13 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -182,5 +186,142 @@ func TestSubscriptionQuotaValidation(t *testing.T) {
 	cfg.Defaults()
 	if err := cfg.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "subscription_quota") {
 		t.Fatalf("unknown dialect must fail validation, got %v", err)
+	}
+}
+
+// TestSuperGrokBorrowedSessionServesAndTracks is the end-to-end proof of the
+// SuperGrok wiring: ONE stored device session carries two different xAI
+// surfaces — the OpenAI chat provider and a borrowed Grok Build provider on
+// the Responses wire — while the vendor's weekly pool lands on
+// /admin/api/v1/subscription at a percent that must NOT park the account.
+//
+// The session is seeded into the data dir BEFORE the server starts, because
+// the tracker polls immediately on New(): logging in mid-test would race that
+// first probe and make the assertions flaky.
+func TestSuperGrokBorrowedSessionServesAndTracks(t *testing.T) {
+	var mu sync.Mutex
+	auth := map[string]string{}
+	var respBody, billingMode string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		auth[r.URL.Path] = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/v1/billing":
+			billingMode = r.Header.Get("x-grok-client-mode")
+		case "/v1/responses":
+			respBody = string(body)
+			auth["xai-token-auth"] = r.Header.Get("X-XAI-Token-Auth")
+			auth["grok-cli-version"] = r.Header.Get("x-grok-cli-version")
+		}
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/v1/billing":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"config":{"creditUsagePercent":42.7,` +
+				`"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-09-20T00:00:00Z"}}}`))
+		case "/v1/responses":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "event: response.created\n"+
+				"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\",\"model\":\"grok-build\"}}\n\n"+
+				"event: response.output_text.delta\n"+
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n"+
+				"event: response.completed\n"+
+				"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\","+
+				"\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\n")
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"c1","object":"chat.completion","model":"grok-4.6",` +
+				`"choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],` +
+				`"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer stub.Close()
+
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	seed := `{"tokens":{"xai/main":{"access_token":"at-live-1","refresh_token":"rt-live-1",` +
+		`"expires_at":"` + now.Add(30*time.Minute).Format(time.RFC3339) +
+		`","updated_at":"` + now.Format(time.RFC3339) + `"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "oauth-tokens.json"), []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{}
+	cfg.Server.DataDir = dir
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test-gw"}}
+	cfg.Providers = []config.ProviderCfg{
+		{Name: "xai", Kind: "openai", BaseURL: stub.URL,
+			Accounts:          []config.Acct{{Name: "main", APIKey: "sk-static-fallback"}},
+			Models:            []string{"grok-4.6"},
+			SubscriptionQuota: "grok-cli", SubscriptionURL: stub.URL + "/v1/billing?format=credits"},
+		{Name: "grokbuild", Kind: "openai-responses", BaseURL: stub.URL,
+			Accounts: []config.Acct{{Name: "main", APIKey: "sk-static-fallback"}},
+			Models:   []string{"grok-build"}},
+	}
+	// The borrower declares no service: OAuthAccounts() defaults it from the
+	// provider name, and validating that value rejected every real borrower.
+	cfg.OAuth.Accounts = []config.OAuthAccount{
+		{Provider: "xai", Account: "main", Service: "xai"},
+		{Provider: "grokbuild", Account: "main", Owner: "xai/main"},
+	}
+	cfg.Defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("borrower config rejected: %v", err)
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+
+	waitSubSnapshots(t, srv, 1)
+
+	// 1) The weekly pool is tracked, and a partial pool keeps the account live.
+	w := do(t, srv.Handler(), adminReq(t, "/admin/api/v1/subscription"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("subscription API: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"name":"Weekly pool"`) || !strings.Contains(body, `"used":42`) {
+		t.Fatalf("weekly pool missing or misread: %s", body)
+	}
+	rec := do(t, srv.Handler(), oauthChat("xai/grok-4.6", "sk-test-gw"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("42%% pool parked the account: %d %s", rec.Code, rec.Body.String())
+	}
+
+	gb := do(t, srv.Handler(), oauthChat("grokbuild/grok-build", "sk-test-gw"))
+	if gb.Code != http.StatusOK {
+		t.Fatalf("grokbuild over the Responses wire: %d %s", gb.Code, gb.Body.String())
+	}
+	if !strings.Contains(gb.Body.String(), "OK") {
+		t.Fatalf("grokbuild reply lost the streamed text: %s", gb.Body.String())
+	}
+	// 2) Both surfaces ride the managed session, not the static fallback key.
+	mu.Lock()
+	bearer, chatBearer := auth["/v1/billing"], auth["/v1/chat/completions"]
+	grokBearer, tokenAuth, cliVer, respBodyCopy := auth["/v1/responses"], auth["xai-token-auth"], auth["grok-cli-version"], respBody
+	mode := billingMode
+	mu.Unlock()
+	for name, got := range map[string]string{
+		"billing probe":  bearer,
+		"chat provider":  chatBearer,
+		"responses wire": grokBearer,
+	} {
+		if got != "Bearer at-live-1" {
+			t.Fatalf("%s sent %q, want the managed OAuth session", name, got)
+		}
+	}
+	if mode != "cli" {
+		t.Fatalf("billing x-grok-client-mode = %q, want cli", mode)
+	}
+	if tokenAuth != "xai-grok-cli" || cliVer ***REMOVED*** "" {
+		t.Fatalf("Grok Build fingerprint headers = %q/%q, want xai-grok-cli + a cli version", tokenAuth, cliVer)
+	}
+	if !strings.Contains(respBodyCopy, `"input"`) || !strings.Contains(respBodyCopy, `"store":false`) {
+		t.Fatalf("upstream body is not the forced Responses shape: %s", respBodyCopy)
 	}
 }
