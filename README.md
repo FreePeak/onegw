@@ -783,6 +783,24 @@ every rotation). Without that cap the refresher sleeps for hours while every
 **shared weekly pool** on the Quota page — parking the account when that pool
 hits 100 % instead of burning doomed upstream attempts.
 
+Because xAI serves some ids only on its native Responses endpoint (under an
+OAuth bearer that includes the flagship `grok-4.5`; a chat-shaped body reaching
+`/v1/responses` 422s `missing input`), an `openai`-kind provider can opt ids off
+the chat wire:
+
+```toml
+[[providers]]
+name = "xai"
+kind = "openai"
+base_url = "https://api.x.ai"
+responses_models = ["grok-4.5*"]   # path.Match globs; empty = everything on chat
+```
+
+Matching models are encoded as Responses (stream forced, `store:false`) and the
+SSE reply is translated back, so OpenAI-speaking clients see an ordinary
+completion. The raw same-format passthrough keys off the per-model format, so an
+opted-in request can never bypass the translation.
+
 Not supported, deliberately: the `grok.com` web surface (needs paired `sso` +
 `sso-rw` browser cookies behind Cloudflare TLS fingerprinting, and rotating
 them is a maintenance trap), and putting SuperGrok behind the `cursor`
