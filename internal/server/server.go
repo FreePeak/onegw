@@ -437,6 +437,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/config", s.handleAdminConfigGet)
 	mux.HandleFunc("PUT /admin/config/reload", s.handleAdminConfigReload)
 	mux.HandleFunc("PATCH /admin/config/keys", s.handleAdminKeys)
+	mux.HandleFunc("GET /admin/config/keys", s.handleAdminKeysGet)
 	mux.HandleFunc("PATCH /admin/config/aliases", s.handleAdminAliases)
 	mux.HandleFunc("PUT /admin/config/password", s.handleAdminPassword)
 	mux.HandleFunc("PUT /admin/config/providers", s.handleAdminProviderEdit)
