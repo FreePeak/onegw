@@ -91,8 +91,35 @@ leaves the running instance and its config untouched.
 ### One command (VPS / cloud, Docker)
 
 ```bash
+./scripts/docker_deploy.sh                       # deploy or refresh, on :8080
+ONEGW_PROVIDER_OPENROUTER_KEY=sk-... ./scripts/docker_deploy.sh --loopback
+```
+
+The script owns every step that is easy to get wrong, because each one has bitten
+someone already: it **mints the gateway key once** and stores it in
+`onegw-deploy.env` (0600) so a re-run cannot rotate it out from under wired
+clients; it **creates and chowns the config volume** so the dashboard's provider
+editor can actually save (atomic temp file + rename needs a writable directory);
+it **forwards every `ONEGW_*` variable** you exported (provider keys, admin
+password); it keeps `usage.db`, `oauth-tokens.json` and a generated admin
+password on a named data volume; and it **waits for `/admin/health` to answer
+with the real password**, then prints the dashboard URL, key and credential.
+Running it again is idempotent, and `--replace` recreates the container after
+copying the running config into the volume first — so in-page edits survive
+(verified end to end: a two-provider config crosses the migration intact).
+`--loopback`, `--publish`, `--image onegw:local`, `--env-file`, `--data-volume`,
+`--config-volume`, `--no-pull`, `--no-verify`, `--help`.
+
+Prefer the raw commands? The equivalent is:
+
+```bash
+docker volume create onegw-config            # editable config lives here
+docker run --rm -u 0 --entrypoint chown -v onegw-config:/etc/onegw \
+  ghcr.io/freepeak/onegw:latest -R onegw:onegw
 docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
-  -e ONEGW_KEYS=change-me -v onegw-data:/data ghcr.io/freepeak/onegw:latest
+  -e ONEGW_KEYS="$(openssl rand -hex 24)" \
+  -v onegw-data:/data -v onegw-config:/etc/onegw \
+  ghcr.io/freepeak/onegw:latest
 ```
 
 Runs the non-root image (~40 MB, healthchecked) with usage data persisted in
