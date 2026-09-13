@@ -290,6 +290,56 @@ Cross-host transfer without files: `GET /admin/usage/export` →
 `POST /admin/usage/import` (X-Admin-Password header on both; the local
 store is written first, fire-and-forget).
 
+### Container installs: what to back up, and how to move it
+
+An install is three things: the image, the config, and the **data volume**.
+The volume holds everything stateful — `usage.db` (+ WAL), `oauth-tokens.json`
+(the subscription logins), `admin_password` when the password was generated,
+`node_id`, and `owner.json`. Credentials you passed as env (`ONEGW_KEYS`,
+`ONEGW_PROVIDER_*_KEY`, `ONEGW_ADMIN_PASSWORD`) are **not** in the container:
+they live in your shell or compose file and must be copied by hand.
+
+```bash
+# on the old host — 1. the volume (stop first for a clean copy; a live copy also
+# works, the WAL comes along and SQLite discards an incomplete tail)
+docker stop onegw
+docker run --rm -v onegw-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/onegw-data-"$(date +%F)".tgz -C /data .
+# 2. the config, if you do not mount it from a git-tracked path
+docker cp onegw:/etc/onegw/onegw.toml ./onegw.toml
+# 3. the image, only when you built it yourself (otherwise pull the same tag)
+docker save ghcr.io/freepeak/onegw:latest | gzip > onegw-image.tgz
+```
+
+```bash
+# on the new host
+docker volume create onegw-data
+docker run --rm -v onegw-data:/data -v "$PWD":/backup alpine \
+  sh -c 'tar xzf /backup/onegw-data-<date>.tgz -C /data'
+docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
+  -e ONEGW_KEYS=... -v onegw-data:/data \
+  -v "$PWD/onegw.toml:/etc/onegw/onegw.toml:ro" ghcr.io/freepeak/onegw:latest
+docker exec onegw onegw oauth list          # the session came along
+```
+
+Verified on 2026-09-13 by restoring into a fresh volume on a second container:
+`usage.db` and `oauth-tokens.json` come back **byte-identical** (md5 match),
+`node_id`/`owner.json` survive, the gateway serves with the restored OAuth
+bearer without a re-login, and a generated admin password survives — the
+restored instance logs **no** `FIRST-RUN ADMIN PASSWORD` and the previous
+password still signs in. The tar preserves the image's uid/gid (100:101), so no
+`chown` is needed.
+
+Two operational notes:
+
+- **Never leave both instances running against the same subscription account.**
+  Each gateway refreshes the session in the background, and a vendor that keeps
+  one active device session (xAI) will have them rotate each other's tokens out.
+  `docker stop onegw` on the old host before starting the new one.
+- The image's `/data` is a plain directory, not a `VOLUME` declaration, so a
+  `docker run` **without** `-v` silently uses a throwaway location. Always name
+  the volume (or use the compose file, which does).
+
 ## 9. Latency sanity checklist
 
 ```bash
