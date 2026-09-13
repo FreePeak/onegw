@@ -39,14 +39,20 @@ Noise gates (why a number can be *absent* rather than 0):
 Where each is consumed vs. merely surfaced:
 
 - **A per-model** steers: `router.reorderBySpeed` sorts combo legs by `ModelTPS`
-  (`internal/router/task.go:377`) — only for combos with `strategy = "fastest"`.
+  — for combos with `strategy = "fastest"`, and only for those below the
+  size gate described next.
 - **A per-account** steers: `accountPool.pickSlot` takes the fastest OPEN slot
-  (round-robin among equals/no-data; `provider.go:2506`).
+  (round-robin among equals/no-data; `provider.go`).
 - **C + A** predict wall time for large prompts: at `inputSize ≥ PrefillMattersAt`
   (32 K tokens) and ≥3 samples in the size bucket, legs are ranked by
-  `PredictSeconds = inTokens/prefillTPS + 256/decodeTPS` (`prefill.go:204`) — the fix
-  for "best decode number, last to answer" (232 K-token prompt: 0.96 s decode,
-  73.7 s wall). Reorders log a `speed_order` ring row.
+  `PredictSeconds = inTokens/prefillTPS + 256/decodeTPS` — the fix for "best
+  decode number, last to answer" (232 K-token prompt: 0.96 s decode, 73.7 s
+  wall). Reorders log a `speed_order` ring row. `strategy = "size-aware"` is
+  this regime ONLY: below 32 K tokens, or with nothing measured for the bucket,
+  the configured chain order is left untouched, so a paid-but-quick-to-prefill
+  leg cannot take the cheap turns on decode speed alone. In both regimes a leg
+  with no sample sorts behind every measured leg (decode: 0 tok/s; prefill:
+  `-Inf`) and keeps its configured place among the other unmeasured legs.
 - **B never steers**; it surfaces on `/metrics`, the ring (`e2e_ms`/`dtps`) and the
   Console Log delivered column.
 
