@@ -74,9 +74,90 @@ func TestAllInvalidatedReportsUnfundedPool(t *testing.T) {
 	if got, _ := def.NextAccount(""); got != nil {
 		t.Fatalf("terminal account must not be offered, got %+v", got)
 	}
-	// A terminal slot is not a cooldown: no instant makes it ready.
-	if ok, ready := def.pool.availableForTest(0); ok || !ready.IsZero() {
-		t.Fatalf("terminal slot must never become ready, got ok=%v ready=%v", ok, ready)
+	// A terminal slot stays parked through its parole window; available()
+	// reports the probe instant (the honest Retry-After for a fully
+	// terminal pool), not a cooldown that might clear for a different
+	// reason. The pin here is "blocked and inside the window".
+	if ok, ready := def.pool.availableForTest(0); ok || ready.IsZero() {
+		t.Fatalf("terminal slot must be parked with a future probe instant, got ok=%v ready=%v", ok, ready)
+	}
+}
+
+// TestBillingParoleReoffersTerminalAfterWindow pins the #80 self-heal
+// (root cause of the 2026-09-12 b-ai outage): the vendor's pricing event
+// refused every free key for hours, then served again on its own — but the
+// terminal marks had no timer, so 8 healthy keys stayed parked until a
+// manual dashboard reset. The contract now:
+//   - inside the window the terminal account is never offered (no burn);
+//   - past the window the account is offered as ONE probe;
+//   - a re-refusal re-arms a full window (one probe per interval, never a
+//     per-request hammer);
+//   - a successful probe clears the terminal mark entirely.
+func TestBillingParoleReoffersTerminalAfterWindow(t *testing.T) {
+	def := &Def{Name: "p", Kind: KindOpenAI, Accounts: []Account{{Name: "a", APIKey: "ka"}}}
+	def.pool = newAccountPool(def.Accounts, 0, 0)
+	cur := time.Now()
+	def.pool.now = func() time.Time { return cur }
+	t.Cleanup(func() { def.pool.now = time.Now })
+
+	a := &def.Accounts[0]
+	def.Invalidate(a)
+	if got, _ := def.NextAccount(""); got != nil {
+		t.Fatalf("inside the parole window the terminal account must not be offered, got %+v", got)
+	}
+
+	// Past the window: the account is re-offered — this pick is the probe.
+	cur = cur.Add(BillingParole + time.Second)
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a" {
+		t.Fatalf("past the parole window the account must be re-offered as a probe, got %+v", got)
+	}
+
+	// The vendor still refuses: a full fresh window re-arms from NOW, so
+	// the next pick one minute later stays parked (no per-request hammer).
+	def.Invalidate(a)
+	cur = cur.Add(time.Minute)
+	if got, _ := def.NextAccount(""); got != nil {
+		t.Fatal("a re-refused probe must re-arm the parole window")
+	}
+
+	// The vendor heals and the second probe succeeds: the mark clears and
+	// the account returns to normal rotation.
+	cur = cur.Add(BillingParole + time.Second)
+	got, _ := def.NextAccount("")
+	if got == nil || got.Name != "a" {
+		t.Fatalf("the second window must re-offer the probe, got %+v", got)
+	}
+	def.pool.ok(a, cur.Add(-time.Second))
+	if names := def.Invalidated(); len(names) != 0 {
+		t.Fatalf("a successful probe must clear the terminal mark, got %v", names)
+	}
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a" {
+		t.Fatal("a healed account must keep serving")
+	}
+}
+
+// TestStragglerSuccessKeepsFreshRefusal pins the recency rule on the parole
+// clear (the seq-5960 shape applied to #80): a 200 whose request started
+// BEFORE a concurrent 402 verdict landed must not resurrect the key that
+// refusal just parked — the fresh verdict outlives the straggler success.
+func TestStragglerSuccessKeepsFreshRefusal(t *testing.T) {
+	def := &Def{Name: "p", Kind: KindOpenAI, Accounts: []Account{{Name: "a", APIKey: "ka"}}}
+	def.pool = newAccountPool(def.Accounts, 0, 0)
+	cur := time.Now()
+	def.pool.now = func() time.Time { return cur }
+	t.Cleanup(func() { def.pool.now = time.Now })
+
+	a := &def.Accounts[0]
+	reqStart := cur // this request began before the refusal verdict landed
+	def.Invalidate(a)
+	def.pool.ok(a, reqStart)
+	if names := def.Invalidated(); len(names) != 1 {
+		t.Fatalf("a success that started before the refusal must not clear it, got %v", names)
+	}
+	// A later success (request started after the verdict) heals the key.
+	def.pool.ok(a, cur.Add(time.Second))
+	if names := def.Invalidated(); len(names) != 0 {
+		t.Fatalf("a fresh success must clear the mark, got %v", names)
 	}
 }
 
