@@ -1726,6 +1726,11 @@ func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
 }
 
 func encodeFor(f translat.Format, u *types.ChatRequest) ([]byte, error) {
+	// Every tool-calling wire insists that a tool result sit immediately after
+	// the assistant turn that made the call; client histories do not deliver
+	// that shape. Repaired once, here, so all six encoders below (and every
+	// combo leg they serve) get the same guarantee.
+	translat.NormalizeToolPairs(u)
 	switch f {
 	case translat.FmtOpenAI:
 		return translat.EncodeOpenAIRequest(u)
