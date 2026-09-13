@@ -1,17 +1,36 @@
-*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, live gateway restart):
+*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 49821):
 the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
 long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
 (1) Live config (gitignored onegw.toml): `buffered_budget_bytes` 100 MiB (104857600, set
-2026-09-09) → 200 MiB (209715200). (2) `applyMemoryTuning` now derives the soft heap limit
-from the budget instead of the hardcoded 90 MiB — 90 MiB floor with the default 48 MiB budget,
-budget + 25% headroom once the budget exceeds it (200 MiB budget → 250 MiB limit), re-tuned on
-every config reload via the SetOnConfigReload hook, operator GOMEMLIMIT still wins. Startup
-banner now prints the effective memlimit. Pinned by TestApplyMemoryTuningFollowsBufferBudget
-(reads back /gc/gomemlimit:bytes — default keeps 90 MiB, 200 MiB budget moves the ceiling,
-zero falls back) and TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives);
-mutation-checked (hardcoded-return mutant fails the 200 MiB row). README/ARCHITECTURE/
-systemd/vps-deploy note the coupling; deployed zero-drop via scripts/deploy.sh --binary from
-git archive of the pushed commit. Earlier:)*
+2026-09-09) → 200 MiB (209715200); verified serving as `onegw_budget_cap_bytes 209715200`
+with ~110 MiB genuinely held (i.e. the old cap was being hit, not merely approached).
+(2) `applyMemoryTuning` now derives the soft heap limit from the budget instead of the
+hardcoded 90 MiB — 90 MiB floor with the default 48 MiB budget, budget + 25% headroom once
+the budget exceeds it (200 MiB budget → 250 MiB), re-tuned on every config reload via the
+SetOnConfigReload hook. Startup banner gained the effective memlimit, and it immediately
+corrected an assumption in this record: the live banner reads `memlimit: 2048 MiB`, NOT 250,
+because ~/.zshrc exports GOMEMLIMIT=2GiB and operator env wins by design — so on THIS box the
+derivation is inert (headroom was never the binding constraint; the byte budget was) and it
+matters for env-less deploys (docker/systemd) where a raised budget used to fight 90 MiB.
+Pinned by TestApplyMemoryTuningFollowsBufferBudget (reads back /gc/gomemlimit:bytes: default
+keeps 90 MiB, 200 MiB budget moves the ceiling, zero falls back) and
+TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives); mutation-checked
+(hardcoded-return mutant fails the 200 MiB row). README/ARCHITECTURE/systemd/vps-deploy
+document the coupling. Deployed zero-drop twice via scripts/deploy.sh --binary from git
+archive of the pushed commit; artifact /tmp/onegw-mem-bin2 — do NOT sweep /tmp/onegw-* (this
+pid maps it).
+**Ref-rewrite incident, recorded for the peers sharing this remote:** the change first landed
+as b59ba41 on the LOCAL chain (ac22c4b), whose "sync/adopt the published stamp chain" commits
+adopted the PRD *text* only — local code lineage was 11 files / 354 lines BEHIND origin
+(provider.go ResponsesOnlyModel + billing-invalidation, config.go, accounts.go, server.go,
+key_invalidated/invalidated/opencode_free/rotation tests, onegw.toml.example, README). Pushing
+that required a force-with-lease, which rewrote published master and — worse — the first
+deploy was built from that regressed tree. Caught by `git diff --stat 69c25ea b59ba41`; origin
+restored to 69c25ea (= a908d8a + this change, cherry-picked on the real tip, trees verified)
+and the binary rebuilt + redeployed from `git archive origin/master`. Rule this incident
+teaches: with a divergent local chain, NEVER force-push the local tip to master — cherry-pick
+onto the remote tip in a scratch worktree and push that, and build only from the pushed sha.
+Earlier:)*
 *Last updated: 2026-09-13 (`responses_models`, 00d5081): xAI serves some ids only on its native
 /v1/responses endpoint — under an OAuth bearer that includes the flagship grok-4.5 (OmniRoute
 registry/xai/index.ts:31-37,66-69; the tagging exists because a chat-shaped body reaching
@@ -1411,7 +1430,8 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
   per-request buffering of streams). The envelope is a function of
   `buffered_budget_bytes`, not a constant: the shipped 48 MiB budget yields the
   90 MiB soft heap limit and the 100 MB target; an operator who raises the
-  budget scales the limit with it (live gateway: 200 MiB budget → 250 MiB).
+  budget scales the limit with it. (Live box runs a 200 MiB budget with the
+  operator's own `GOMEMLIMIT=2GiB` exported, which outranks the tuned default.)
 - **Throughput: 1–2 B tokens/day** (~12–23k tok/s sustained; bursts far higher
   because streaming is I/O-bound passthrough).
 - **Sessions: millions of concurrent** — sessions are pass-through by design;
