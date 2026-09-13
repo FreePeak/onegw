@@ -1,3 +1,35 @@
+*Last updated: 2026-09-13 (strategy "size-aware" + dev rewired to it, e4d02d3; live pid 19292):
+the throughput RCA left one lever the user owns — the paid opencode-go leg answers the SAME ≥150K-token
+traffic in 4.1s pre-first-byte (p90 5.6s, 73.4 delivered tok/s) while b-ai/qwen3.8-flash takes 50.4s
+(p90 109.4s, 12.3 tok/s) — and `strategy = "fastest"` could not carry that leg, because it also re-ranks
+small turns on decode EWMA, which is exactly why it was pulled from the free-first chains on 2026-09-11
+(the quickest leg owns the front and never yields back). New combo strategy `size-aware` is the
+prefill-only half: reorderBySpeed engages from provider.PrefillMattersAt (32K) input tokens up and only
+on measured prefill for that bucket, and RETURNS with the configured chain untouched below the gate or
+with nothing measured — so a fast-but-paid leg shares a free chain and is reached only by a measured
+pre-first-byte advantage on the request's own size class. Everything b2c9dc5 established still holds
+(no-sample legs sort behind every measured leg, configured order among themselves, full chain preserved,
+`speed_order` row only on a real reorder). Two tests pin the gate with SEPARATE configured orders so each
+half fails alone: the small turn keeps a sequence whose decode ranking would have flipped it
+(mutation-checked — neutering the gate reproduces the flip, [slowprefill, fastprefill]), and the large
+turn promotes the measured fast-prefill leg from last place; Resolve is pinned to set PrefillOrder and
+not SpeedOrder, Validate accepts the value and rejects the size_aware/sizeaware typos. README and
+docs/throughput-metrics.md gain the strategy (and lose the line-number citations the edits invalidated).
+Live, after deploying `git archive` of e4d02d3 zero-drop (scripts/deploy.sh --binary, pid 19292,
+artifact /tmp/onegw-sizeaware-bin — do NOT sweep /tmp/onegw-*) and hot-reloading the operator's decision
+(dev: strategy "size-aware", `opencode/deepseek-v4.1-flash` appended as leg 5): 10 `speed_order` rows
+for model `dev` at in~156K-598K, every one `opencode > tokenrouter > b-ai > tokenharbor > glm`; a
+1.36MB-body dev probe served by opencode with attempts=1 at 12.5s TTFT (the first probe paid one rotation
+at 47.6s), while two 6KB dev probes stayed on the free configured head, b-ai/qwen3.8-flash, attempts=1 at
+2.5s and 12.0s. The discovery hole is real and visible in the same run: seeding tokenrouter's large
+bucket needed three unique bodies and two were refused 503 by its provider-wide `rpm = 6` (#94), so the
+steering's upside stays bounded by that lane's rate budget as much as by its speed. One operational note
+for the next session, recorded because onegw.toml is gitignored: a stale-anchor edit of mine dropped
+`free`'s trailing opencode leg mid-session; a `tomllib` parse audit caught it (3 combos / 5-5-3 legs),
+the leg was restored, and the reload was verified through PUT /admin/config/reload + /admin/api/v1/combos
+— PARSE-AUDIT THE CONFIG after any ranged edit, since a damaged file breaks the next restart rather than
+the current process. Residuals unchanged: #93 (prefill EWMA folds the slot queue), #94 (size-aware is
+exploit-only above the gate). Earlier:)*
 *Last updated: 2026-09-13 (throughput RCA: the 60-150s term is pre-first-byte, steering unblocked
 (b2c9dc5), `dev` back on strategy="fastest", header budget 75s→120s; live pid 36886): the report was
 "the provider table says b-ai 63.5 / tokenrouter 54.5 tok/s but omp shows ~3". Two different clocks,
