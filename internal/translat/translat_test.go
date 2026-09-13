@@ -118,14 +118,23 @@ func TestAnthropicRequestToUnifiedToOpenAI(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs := or["messages"].([]any)
-	// system + user(read file) + assistant(tool_calls) + user tool
+	// system + assistant(tool_calls) + tool(toolu_9) + user("read file"). The
+	// reply must sit directly after the turn that asked for it, so the mixed
+	// turn's own text travels BEHIND it — strict upstreams reject it otherwise
+	// ("`messages[N]` tool message must follow an assistant message").
 	want := 4
 	if len(msgs) != want {
 		t.Fatalf("want %d openai messages, got %d: %s", want, len(msgs), out)
 	}
-	toolMsg := msgs[3].(map[string]any)
+	if a := msgs[1].(map[string]any); a["role"] != "assistant" || a["tool_calls"] ***REMOVED*** nil {
+		t.Fatalf("assistant tool_calls turn lost: %v", a)
+	}
+	toolMsg := msgs[2].(map[string]any)
 	if toolMsg["role"] != "tool" || toolMsg["tool_call_id"] != "toolu_9" {
-		t.Fatalf("tool message wrong: %v", toolMsg)
+		t.Fatalf("tool message must directly follow the assistant tool_calls turn: %v", toolMsg)
+	}
+	if um := msgs[3].(map[string]any); um["role"] != "user" || um["content"] != "read file" {
+		t.Fatalf("mixed turn's text must survive behind its tool reply: %v", um)
 	}
 }
 

@@ -176,7 +176,11 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 				msg.Content = append(msg.Content, ccBlock{Type: "text", Text: ""})
 			}
 			req.Params.Messages = append(req.Params.Messages, msg)
-		default: // user (and anything else): text blocks + split-out tool results
+		default: // user (and anything else): split-out tool results + text blocks
+			// Results come first for the same reason as the OpenAI encoder
+			// (see EncodeOpenAIRequest): a tool result must directly follow
+			// the assistant turn that made the call, and a mixed turn's text
+			// must not be translated into a user message in between.
 			var blocks []ccBlock
 			var results []ccMessage
 			for _, p := range m.Content {
@@ -199,11 +203,11 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 					}
 				}
 			}
+			req.Params.Messages = append(req.Params.Messages, results...)
 			if len(blocks) ***REMOVED*** 0 {
 				blocks = append(blocks, ccBlock{Type: "text", Text: ""})
 			}
 			req.Params.Messages = append(req.Params.Messages, ccMessage{Role: "user", Content: blocks})
-			req.Params.Messages = append(req.Params.Messages, results...)
 		}
 	}
 

@@ -544,7 +544,17 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 			req.Messages = append(req.Messages, oaMessage{Role: "system", Content: mustJSON(m.FlattenText())})
 		case types.RoleUser:
 			// OpenAI models a tool result as its own role:"tool" message;
-			// split mixed user turns so tool_result parts become tool msgs.
+			// split mixed user turns so tool_result parts become tool msgs —
+			// and emit the tool msgs FIRST. Strict OpenAI-shape validators
+			// require every tool reply to sit immediately after the assistant
+			// turn that made the calls, so a user message wedged in between
+			// fails the request either way it is read: scanning forward from
+			// the assistant sees too few replies ("insufficient tool messages
+			// following tool_calls message", opencode "Console Go"), scanning
+			// back from the reply sees the wrong predecessor ("`messages[N]`
+			// tool message must follow an assistant message", z.ai). Both live
+			// 2026-09-14 from Claude Code, which appends its
+			// <system-reminder> text AFTER the tool_result blocks of a turn.
 			var toolResults []types.Part
 			var plain []types.Part
 			for _, p := range m.Content {
@@ -554,6 +564,13 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 					plain = append(plain, p)
 				}
 			}
+			for _, tr := range toolResults {
+				req.Messages = append(req.Messages, oaMessage{
+					Role:       "tool",
+					ToolCallID: orDefault(tr.ToolUseID, orDefault(m.ToolCallID, m.Name)),
+					Content:    mustJSON(tr.Text),
+				})
+			}
 			if len(plain) > 0 {
 				oc := oaMessage{Role: "user", Name: m.Name}
 				if content := encodeOAUserContent(plain); content != nil {
@@ -562,13 +579,6 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 					oc.Content = mustJSON("")
 				}
 				req.Messages = append(req.Messages, oc)
-			}
-			for _, tr := range toolResults {
-				req.Messages = append(req.Messages, oaMessage{
-					Role:       "tool",
-					ToolCallID: orDefault(tr.ToolUseID, orDefault(m.ToolCallID, m.Name)),
-					Content:    mustJSON(tr.Text),
-				})
 			}
 			if len(plain) ***REMOVED*** 0 && len(toolResults) ***REMOVED*** 0 {
 				req.Messages = append(req.Messages, oaMessage{Role: "user", Name: m.Name, Content: mustJSON("")})
