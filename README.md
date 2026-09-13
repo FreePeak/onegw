@@ -96,7 +96,13 @@ docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
 ```
 
 Runs the non-root image (~40 MB, healthchecked) with usage data persisted in
-the `onegw-data` volume. Pass provider keys as env, e.g.
+the `onegw-data` volume. `ONEGW_KEYS` is required, not defaulted: the image
+binds `0.0.0.0:8080`, and a non-loopback listener with no auth keys is
+refused at startup (`refusing to serve "0.0.0.0:8080" with no auth keys`)
+instead of being served as an open proxy — put a real secret there. The admin
+password is the one credential that *is* generated: it is printed once as
+`FIRST-RUN ADMIN PASSWORD` in `docker logs` and persisted at
+`/data/admin_password`. Pass provider keys as env, e.g.
 `-e ONEGW_PROVIDER_OPENROUTER_KEY=sk-...`; or mount your own config with
 `-v $PWD/onegw.toml:/etc/onegw/onegw.toml:ro`. For a compose setup with
 resource limits, see [`docker-compose.yml`](docker-compose.yml):
