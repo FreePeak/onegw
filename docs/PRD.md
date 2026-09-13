@@ -33,18 +33,34 @@ TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives); mutation-ch
 document the coupling. Deployed zero-drop twice via scripts/deploy.sh --binary from git
 archive of the pushed commit; artifact /tmp/onegw-mem-bin2 — do NOT sweep /tmp/onegw-* (this
 pid maps it).
-**Ref-rewrite incident, recorded for the peers sharing this remote:** the change first landed
-as b59ba41 on the LOCAL chain (ac22c4b), whose "sync/adopt the published stamp chain" commits
-adopted the PRD *text* only — local code lineage was 11 files / 354 lines BEHIND origin
-(provider.go ResponsesOnlyModel + billing-invalidation, config.go, accounts.go, server.go,
-key_invalidated/invalidated/opencode_free/rotation tests, onegw.toml.example, README). Pushing
-that required a force-with-lease, which rewrote published master and — worse — the first
-deploy was built from that regressed tree. Caught by `git diff --stat 69c25ea b59ba41`; origin
-restored to 69c25ea (= a908d8a + this change, cherry-picked on the real tip, trees verified)
-and the binary rebuilt + redeployed from `git archive origin/master`. Rule this incident
-teaches: with a divergent local chain, NEVER force-push the local tip to master — cherry-pick
-onto the remote tip in a scratch worktree and push that, and build only from the pushed sha.
-Earlier:)*
+**Ref-rewrite incident (direction corrected — the first record of this got it backwards), for
+the peers sharing this remote:** the memory-budget change first landed as b59ba41 on the LOCAL
+chain, and local↔origin had diverged BIDIRECTIONALLY: local was missing origin's c75dc18
+billing-parole recheck (the #80-follow-up self-heal that ends the b-ai park-forever outage
+class, ~354 lines incl. its tests) while carrying ~101 lines origin never had (44bd2b7
+opencode-free per-model Responses routing + the muse-spark-*-contributor-free catalog ids,
+98c7392 README opencode-free section). The local "sync/adopt the published stamp chain"
+commits adopted the shared CODE via cherry-picks but stopped short of c75dc18. Pushing the
+local tip required force-with-lease, which rewrote published master to a tree that was
+simultaneously missing published content and carrying unpublished work — and the first deploy
+(pid 42141) was built from it. Caught by `git diff --stat 69c25ea b59ba41`; origin restored to
+69c25ea (a908d8a + the budget change, cherry-picked on the real tip; tree hashes verified) and
+the binary rebuilt from `git archive` of it (pid 49821, /tmp/onegw-mem-bin2). Live consequence,
+stated exactly: during the 17-minute regressed window the serving binary (pid 42141, built from
+b59ba41) had NO billing-parole recheck (0 `parole` lines vs 24+2+3 on origin) — so a key parked
+terminal by a 402 in that window would NOT have self-healed — while briefly carrying the
+local-only muse-spark-free routing, which is inert because the live config pins opencode-free
+`models` explicitly and excludes those ids. Impact was bounded by process lifecycle: pool fault
+state is per-process, so pid 49821 started from a clean pool and the providers page now shows
+zero invalidated/parked accounts with 824 b-ai 200s served since. Provenance cross-check: the
+pre-session binary (/tmp/onegw-rm-bin, pid 77921) and the restored binary carry the same feature
+set (billing_parole present, muse-spark-free absent), so origin's lineage is what was already
+serving. STILL UNPUBLISHED: 44bd2b7 + 98c7392 + ed12019 live only on the local chain — the
+owning peer should cherry-pick them onto the origin tip rather than republish the local one.
+Rule this incident teaches: with a divergent local chain, NEVER force-push the local tip to
+master (that republished a behind-state and briefly removed published code from the live
+gateway). Cherry-pick onto the remote tip in a scratch worktree, push that, and build/deploy
+only from the pushed sha.*
 *Last updated: 2026-09-13 (`responses_models`, 00d5081): xAI serves some ids only on its native
 /v1/responses endpoint — under an OAuth bearer that includes the flagship grok-4.5 (OmniRoute
 registry/xai/index.ts:31-37,66-69; the tagging exists because a chat-shaped body reaching
