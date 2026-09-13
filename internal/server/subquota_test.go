@@ -325,3 +325,47 @@ func TestSuperGrokBorrowedSessionServesAndTracks(t *testing.T) {
 		t.Fatalf("upstream body is not the forced Responses shape: %s", respBodyCopy)
 	}
 }
+
+// TestSubscriptionQuotaTracksOAuthOnlyAccount pins the two halves of the
+// target rule: an account with no static api_key still gets a quota row when
+// an [[oauth.accounts]] entry owns its credential (the shape a subscription
+// provider takes once the dead fallback key is deleted from TOML), while a
+// credential-less account with no OAuth entry is skipped outright.
+func TestSubscriptionQuotaTracksOAuthOnlyAccount(t *testing.T) {
+	vendor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized) // no bearer stored yet
+	}))
+	defer vendor.Close()
+
+	cfg := &config.Config{}
+	cfg.Server.DataDir = "memory"
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test-gw"}}
+	cfg.Providers = []config.ProviderCfg{
+		{Name: "oa", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1",
+			Accounts: []config.Acct{{Name: "main"}}, // no api_key at all
+			Models:   []string{"oa/m"}, SubscriptionQuota: "zai", SubscriptionURL: vendor.URL},
+		{Name: "kn", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1",
+			Accounts: []config.Acct{{Name: "main"}}, // no api_key, no oauth entry
+			Models:   []string{"kn/m"}, SubscriptionQuota: "zai", SubscriptionURL: vendor.URL},
+	}
+	cfg.OAuth.Accounts = []config.OAuthAccount{{Provider: "oa", Account: "main", Service: "xai"}}
+	cfg.Defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("keyless oauth account rejected: %v", err)
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+
+	waitSubSnapshots(t, srv, 1)
+	subs := srv.subscriptionSnapshots()
+	if len(subs) != 1 || subs[0].Provider != "oa" {
+		t.Fatalf("snapshots = %+v, want the OAuth-managed account only", subs)
+	}
+	// Fail-open, but VISIBLE: an operator must see why the window is unknown.
+	if subs[0].Err ***REMOVED*** "" {
+		t.Fatalf("unprobed account must still report its failure, got %+v", subs[0])
+	}
+}

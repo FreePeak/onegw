@@ -23,9 +23,17 @@ type quotaPageView struct {
 }
 
 // subTargets derives one probe target per account of every provider that
-// opts into subscription quota tracking. Accounts without a credential
-// have nothing to probe with and are skipped.
+// opts into subscription quota tracking. An account needs SOMETHING to
+// probe with: a static key, or an [[oauth.accounts]] entry whose bearer the
+// tracker resolves at probe time (liveSubKey). Without that second half, an
+// OAuth-only account — the normal shape once the dead fallback JWT is
+// deleted from TOML — would silently lose its quota row instead of showing
+// a probe error the operator can act on.
 func subTargets(cfg *config.Config) []subquota.Target {
+	oauthAcct := map[string]bool{}
+	for _, a := range cfg.OAuthAccounts() {
+		oauthAcct[a.Provider+"/"+a.Account] = true
+	}
 	var out []subquota.Target
 	for _, p := range cfg.Providers {
 		if !subquota.ValidDialect(p.SubscriptionQuota) {
@@ -38,8 +46,8 @@ func subTargets(cfg *config.Config) []subquota.Target {
 			accounts = []config.Acct{{Name: "default", APIKey: p.APIKey}}
 		}
 		for _, a := range accounts {
-			if a.APIKey ***REMOVED*** "" {
-				continue
+			if a.APIKey ***REMOVED*** "" && !oauthAcct[p.Name+"/"+a.Name] {
+				continue // no credential of any kind: nothing to probe
 			}
 			out = append(out, subquota.Target{
 				Provider: p.Name,
