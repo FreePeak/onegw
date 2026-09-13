@@ -123,7 +123,24 @@ func (d *Def) UpstreamFormat(model string) translat.Format {
 	if (d.Kind ***REMOVED*** KindOpenCode || d.Kind ***REMOVED*** KindOpenCodeFree) && ResponsesOnlyModel(model) {
 		return translat.FmtResponses
 	}
+	// Providers whose default wire is chat-completions can still hold ids the
+	// upstream serves only on /v1/responses (xAI's OAuth path: grok-4.5).
+	if d.Kind ***REMOVED*** KindOpenAI && d.ResponsesOnly(model) {
+		return translat.FmtOpenAIResponses
+	}
 	return d.Kind.Format()
+}
+
+// ResponsesOnly reports whether the routed model matches one of this
+// provider's responses_models globs (path.Match syntax; "*" does not cross
+// "/"). An empty list keeps every model on the kind's default wire.
+func (d *Def) ResponsesOnly(model string) bool {
+	for _, pat := range d.ResponsesModels {
+		if ok, err := path.Match(pat, model); err ***REMOVED*** nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Format returns the wire format a kind speaks.
@@ -232,6 +249,11 @@ type Def struct {
 	// missing echo (see synthesizeReasoningEcho); see ProviderCfg doc for
 	// the live evidence.
 	EchoReasoning []string `toml:"echo_reasoning"`
+
+	// ResponsesModels lists model globs whose upstream serves the model ONLY
+	// on its native /v1/responses endpoint, for kinds that otherwise speak
+	// chat-completions (xAI/SuperGrok: grok-4.5). Set from ProviderCfg.
+	ResponsesModels []string `toml:"responses_models"`
 
 	// CacheProfile opts the provider into upstream prompt-cache anchoring
 	// (issue #34, set from ProviderCfg.CacheProfile): "claude-anchor"
@@ -1902,6 +1924,9 @@ func (d *Def) Path(op, model string) string {
 	default:
 		if op ***REMOVED*** "models" {
 			return "/v1/models"
+		}
+		if d.Kind ***REMOVED*** KindOpenAI && d.ResponsesOnly(model) {
+			return "/v1/responses" // xAI's native Responses endpoint
 		}
 		return "/v1/chat/completions"
 	}
