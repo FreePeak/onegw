@@ -126,6 +126,89 @@ func TestDoDerivedSessionHeaderOnlyWhenGated(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Grok Build proxy (issue #36 follow-up): 9router's grok-cli executor ALWAYS
+// sends x-grok-session-id == x-grok-conv-id from one resolved id, so the
+// openai-responses kind must derive both, never invent on other kinds, and
+// client-sent ids keep winning.
+// ---------------------------------------------------------------------------
+
+func TestGrokKindAlwaysSendsBothSessionIDs(t *testing.T) {
+	type pair struct{ conv, sess string }
+	var seen []pair
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, pair{r.Header.Get("x-grok-conv-id"), r.Header.Get("x-grok-session-id")})
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	def := &Def{Name: "grokbuild", Kind: KindOpenAIResponses, BaseURL: srv.URL,
+		Accounts: []Account{{Name: "k1", APIKey: "key-a"}, {Name: "k2", APIKey: "key-b"}}}
+	call := func(acct *Account, hdr http.Header) {
+		t.Helper()
+		if _, apiErr := def.Do(t.Context(), acct, "grok-build", hdr, bytes.NewReader([]byte(`{}`)), false); apiErr != nil {
+			t.Fatalf("Do: %+v", apiErr)
+		}
+	}
+	call(&def.Accounts[0], nil) // key-a, no client ids
+	call(&def.Accounts[0], nil) // repeat: must be the same id
+	call(&def.Accounts[1], nil) // key-b
+
+	a, repeat, other := seen[0], seen[1], seen[2]
+	if a.conv == "" || a.sess != a.conv {
+		t.Fatalf("no-client call: conv=%q sess=%q, want both present and equal", a.conv, a.sess)
+	}
+	if !strings.HasPrefix(a.conv, "ses_") || len(a.conv) != len("ses_")+32 {
+		t.Fatalf("derived id %q must be ses_<32 hex>", a.conv)
+	}
+	if repeat != a {
+		t.Fatalf("id not stable per key: %v then %v", a, repeat)
+	}
+	if other.conv == a.conv {
+		t.Fatal("different keys derived the same id")
+	}
+
+	// Client-sent values always win, verbatim, nothing appended.
+	hdr := http.Header{}
+	hdr.Set("x-grok-conv-id", "conv-123")
+	hdr.Set("x-grok-session-id", "conv-123")
+	call(&def.Accounts[0], hdr)
+	if want := (pair{"conv-123", "conv-123"}); seen[3] != want {
+		t.Fatalf("client ids lost: got %v want %v", seen[3], want)
+	}
+}
+
+// staticToken is a fixed-value TokenProvider for OAuth-account tests.
+type staticToken string
+
+func (s staticToken) Token() string { return string(s) }
+
+// DoPassthrough resolves its credential through the OAuth token provider
+// exactly like Do: an OAuth-only xAI account (no static api_key) must not
+// send "Bearer " empty on embeddings/transcription/speech.
+func TestDoPassthroughResolvesOAuthToken(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	def := &Def{Name: "xai", Kind: KindOpenAI, BaseURL: srv.URL,
+		Accounts: []Account{{Name: "oauth-only"}}} // APIKey empty by design
+	def.Accounts[0].SetOAuthToken(staticToken("oauth-jwt"))
+	resp, apiErr := def.DoPassthrough(t.Context(), &def.Accounts[0], "embeddings", "m",
+		"application/json", nil, bytes.NewReader([]byte(`{}`)), -1)
+	if apiErr != nil {
+		t.Fatalf("DoPassthrough: %+v", apiErr)
+	}
+	resp.Body.Close()
+	if auth != "Bearer oauth-jwt" {
+		t.Fatalf("upstream saw Authorization %q, want the OAuth token", auth)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Issue #48: gated 403 benches the account and falls back; other 403s don't.
 // ---------------------------------------------------------------------------
 
