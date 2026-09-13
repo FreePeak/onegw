@@ -122,10 +122,7 @@ func runGateway() {
 	// state without a signal; the hook keeps this outer-mux update
 	// handler's config copy in sync so its credential never goes stale (#63),
 	// and moves the GC soft limit with a reloaded buffered-byte budget.
-	srv.SetOnConfigReload(func(fresh *config.Config) {
-		curCfg.Store(fresh)
-		applyMemoryTuning(fresh)
-	})
+	srv.SetOnConfigReload(newReloadHook(&curCfg))
 	defer upd.Stop()
 
 	// srv.Handler() wraps its mux (recovery), so /admin/update mounts on
@@ -228,6 +225,18 @@ func heapLimitBytes(bufferCap int64) int64 {
 		return need
 	}
 	return 90 << 20
+}
+
+// newReloadHook is the ONE definition of what a config reload does outside
+// server.apply: mirror the live config for the outer-mux /admin/update handler
+// (#63) and re-apply the memory tuning for the reloaded buffered-byte budget.
+// runGateway and the reload regression tests share it, so a test cannot pass
+// on a private copy of the wiring while the shipped closure loses a line.
+func newReloadHook(curCfg *atomic.Pointer[config.Config]) func(*config.Config) {
+	return func(fresh *config.Config) {
+		curCfg.Store(fresh)
+		applyMemoryTuning(fresh)
+	}
 }
 
 func fatal(format string, args ...any) {
