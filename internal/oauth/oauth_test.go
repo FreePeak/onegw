@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -315,6 +316,65 @@ func TestRefreshBeforeExpiry(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("token was not refreshed before expiry")
+}
+
+// TestRefreshTrustsSignedExpNotStoredExpiry pins the live failure: xAI signs
+// ~45 min onto the access token but answers expires_in=21600, so a store
+// written before the cap existed (or by an older CLI, or copied in from
+// another machine) reads as valid for hours after the bearer is dead. The
+// signed claim must win, and a genuinely young token must still be left alone.
+func TestRefreshTrustsSignedExpNotStoredExpiry(t *testing.T) {
+	// JWT with exp = now-60s (already expired), unsigned-shape payload.
+	expired := fakeJWT(t, -60)
+	live := fakeJWT(t, 3600)
+
+	run := func(access string, wantRefresh bool) {
+		t.Helper()
+		var hits int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			if r.Form.Get("grant_type") != "refresh_token" {
+				http.Error(w, `{"error":"unsupported_grant_type"}`, http.StatusBadRequest)
+				return
+			}
+			hits++
+			_, _ = w.Write([]byte(`{"access_token":"` + live + `","refresh_token":"rt-new","expires_in":3600}`))
+		}))
+		defer srv.Close()
+
+		store := NewTokenStore("memory")
+		mgr := NewManager(store)
+		spec := AccountSpec{Key: "xai/main", Provider: Provider{
+			Name: "xai", ClientID: "cid", TokenURL: srv.URL,
+			MaxTokenTTL: 40 * time.Minute,
+		}}
+		// Stored expiry is 10 minutes out: inside neither the lead nor the
+		// cap, so ONLY the signed claim can notice it is already dead.
+		if err := store.Put(spec.Key, Token{AccessToken: access, RefreshToken: "rt-old",
+			ExpiresAt: time.Now().Add(10 * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+		mgr.maybeRefresh(context.Background(), spec, time.Minute)
+		if got := hits > 0; got != wantRefresh {
+			t.Fatalf("refreshed = %v, want %v (hits %d)", got, wantRefresh, hits)
+		}
+		if wantRefresh {
+			if tok, _ := store.Get(spec.Key); tok.RefreshToken != "rt-new" {
+				t.Fatalf("rotated token not persisted: %+v", tok)
+			}
+		}
+	}
+	run(expired, true) // signed exp already past → must refresh now
+	run(live, false)   // both signals say live → leave it alone
+}
+
+// fakeJWT builds a JWT-shaped bearer whose payload carries exp = now+delta.
+func fakeJWT(t *testing.T, deltaSec int) string {
+	t.Helper()
+	head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload := base64.RawURLEncoding.EncodeToString(
+		[]byte(fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Duration(deltaSec)*time.Second).Unix())))
+	return head + "." + payload + ".sig"
 }
 
 func TestRefreshNotDueWhenFarFromExpiry(t *testing.T) {
