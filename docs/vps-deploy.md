@@ -300,12 +300,17 @@ The volume holds everything stateful — `usage.db` (+ WAL), `oauth-tokens.json`
 they live in your shell or compose file and must be copied by hand.
 
 ```bash
-# on the old host — 1. the volume (stop first for a clean copy; a live copy also
-# works, the WAL comes along and SQLite discards an incomplete tail)
+# on the old host — 1. the data volume (stop first for a clean copy; a live copy
+# also works, the WAL comes along and SQLite discards an incomplete tail)
 docker stop onegw
 docker run --rm -v onegw-data:/data -v "$PWD":/backup alpine \
   tar czf /backup/onegw-data-"$(date +%F)".tgz -C /data .
-# 2. the config, if you do not mount it from a git-tracked path
+# 2. the CONFIG — a first-class artifact, not an afterthought: the dashboard's
+#    provider editor writes into it, and unless you mount a volume there it sits
+#    on the container's writable layer, which a `docker rm` throws away.
+docker run --rm -v onegw-config:/etc/onegw -v "$PWD":/backup alpine \
+  tar czf /backup/onegw-config-"$(date +%F)".tgz -C /etc/onegw .
+#    (baked-config installs have no such volume: docker cp it out instead)
 docker cp onegw:/etc/onegw/onegw.toml ./onegw.toml
 # 3. the image, only when you built it yourself (otherwise pull the same tag)
 docker save ghcr.io/freepeak/onegw:latest | gzip > onegw-image.tgz
@@ -316,11 +321,40 @@ docker save ghcr.io/freepeak/onegw:latest | gzip > onegw-image.tgz
 docker volume create onegw-data
 docker run --rm -v onegw-data:/data -v "$PWD":/backup alpine \
   sh -c 'tar xzf /backup/onegw-data-<date>.tgz -C /data'
+# the config, into a writable volume (a FILE mount cannot be atomically
+# replaced, and a bare /etc/onegw is not writable by the non-root gateway)
+docker volume create onegw-config
+docker run --rm -v onegw-config:/etc/onegw -v "$PWD":/backup alpine \
+  sh -c 'tar xzf /backup/onegw-config-<date>.tgz -C /etc/onegw'
 docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
-  -e ONEGW_KEYS=... -v onegw-data:/data \
-  -v "$PWD/onegw.toml:/etc/onegw/onegw.toml:ro" ghcr.io/freepeak/onegw:latest
+  -e ONEGW_KEYS=... -v onegw-data:/data -v onegw-config:/etc/onegw \
+  ghcr.io/freepeak/onegw:latest
 docker exec onegw onegw oauth list          # the session came along
+curl -s -H "X-Admin-Password: $PW" http://127.0.0.1:8080/admin/api/v1/providers | jq .
 ```
+
+**Config mount modes** (all four measured on the shipped image):
+
+| Mount | Dashboard "Save & reload" | Survives `docker rm` + recreate |
+|---|---|---|
+| none (baked config) | 200 — the image chowns `/etc/onegw` to the container user | **no** (writable layer) |
+| `-v onegw-config:/etc/onegw` (named volume) | 200 | **yes** |
+| `-v /host/dir:/etc/onegw` (dir owned by uid 100) | 200 | yes (your backup discipline) |
+| `-v file.toml:/etc/onegw/onegw.toml[:ro]` | 500 `device or resource busy` / read-only | yes, but only hand-editable |
+
+The file-mount row fails for two independent reasons, both worth knowing before
+blaming the gateway: the atomic save needs a writable DIRECTORY for its temp file
+(images before 2026-09-13 stopped exactly there — `temp file: open
+/etc/onegw/.onegw-config-*.toml: permission denied` — which is why the image now
+chowns `/etc/onegw`), and even with a writable directory `rename()` cannot replace
+a bind-mounted file. The directory row is the middle ground: verified with the
+literal recipe below (`chown -R 100:101`), save 200 and the edit visible on the
+host file.
+
+`docker commit` is **not** a migration path: it snapshots the writable layer
+into an unmanaged image, loses volume semantics, and leaves the config inside a
+layer you then have to keep in sync. Export the two volumes and the environment
+instead.
 
 Verified on 2026-09-13 by restoring into a fresh volume on a second container:
 `usage.db` and `oauth-tokens.json` come back **byte-identical** (md5 match),
