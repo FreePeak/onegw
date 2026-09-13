@@ -17,7 +17,7 @@
 <table>
 <thead><tr><th>mode</th><th>models</th><th>directive</th></tr></thead>
 <tbody>
-{{range .Inject}}<tr><td><span class="pill">{{.Mode}}</span></td><td class="mono">{{.Models}}</td><td class="mono whitespace-pre-wrap">{{.Text}}</td></tr>
+{{range .Inject}}<tr><td><span class="pill">{{.Mode}}</span></td><td class="mono">{{.Models}} <button class="btn copy sm" data-copy="{{.Models}}" aria-label="copy rule models">copy</button></td><td class="mono whitespace-pre-wrap">{{.Text}}</td></tr>
 {{else}}<tr><td colspan="3" class="empty">no injection rules — <code class="chip">[saver.inject]</code> adds terse-output directives</td></tr>{{end}}
 </tbody>
 </table>
