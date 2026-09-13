@@ -30,9 +30,7 @@ window b-ai's ≥100K-token successes split 32% cold (<50% cache hit) at 83.9s m
 504s, 9 of them b-ai). Live proof after deploy: 87 speed_order rows, every one
 promoting the measured warm lane over the configured head on ≥150K prompts
 (`tokenrouter/z-ai/glm-5.3-free > b-ai/qwen3.8-flash > tokenharbor > glm`, the last two kept last for
-having no samples), and the client-experienced clocks moved: `dev` delivered 15.10→38.75 tok/s with TTFT
-60.7→14.1s, `free` 11.78→34.62 tok/s with TTFT
-58.5→17.2s, 5xx share 6.1%→3.0%. `free` stays "order" — its chain order is the documented free-first
+having no samples). The client-experienced clocks moved, stated as the ranges they actually showed across windows (one-minute EWMA, α=0.25, on a lane my own probes also loaded): `dev` TTFT 60.7s → 14-23s and delivered 15.1 → 15-39 tok/s, `free` TTFT 58.5s → 15-17s and delivered 11.8 → 18-35 tok/s; header-budget 504s fell from 11 per 213 rows to 5 per 227. The 503s that remain are pool-empty fall-throughs (~0.5ms locally, not client-visible latency), so "5xx share" is NOT a clean before/after and is not claimed.
 COST contract, not a speed claim; dev's steering upside is capped by tokenrouter's provider-wide
 `rpm = 6`, which is why 44-of-136 big requests moved, not all of them. What is left is not routing:
 these chains replay 216K-834K input tokens per step, so the remaining order of magnitude is context
