@@ -2,7 +2,8 @@
 answered "how is tok/s per model calculated" for both layers and wrote it down as
 docs/throughput-metrics.md — onegw's three clocks (decode EWMA headers→relay-end per
 (provider,model)+account; prefill EWMA per (model,size-bucket); delivered EWMA
-whole-wall per CLIENT model string — the only per-model-keyed gauge), omp's own numbers
+whole-wall per CLIENT model string — the only per-model OUTPUT tok/s gauge, since
+prefill is INPUT tok/s per model+bucket), omp's own numbers
 read out of the RUNNING binary omp/18.1.19 (status-line leaf = raw last-assistant-turn
 quotient out*1000/window with a 100ms floor and a same-turn cache replay in the badge;
 vibe SUM across workers; bench = the only per-model aggregate: nearest-rank p50/p95
@@ -10,7 +11,8 @@ over ok runs, tokens/cost are per-run MEANS), shared numerator semantics (upstre
 max-merged, reasoning-inclusive, no-usage→no-row), and the known distortions (lifetime
 `samples`, write-time-only staleness — #87, per-process state). Includes a TESTED
 per-model p50/p95 recipe computed off the request ring (live proof: b-ai/qwen3.8-flash
-decode p50 57.2 / delivered p50 7.8 tok/s over 374 rows), which became issue #90
+16:51 snapshot: decode p50 64.1 / delivered p50 4.9 tok/s over 246 rows — the
+~14× gap being what decode excludes and delivered includes), which became issue #90
 (ring-based per-model distribution, ~30 lines, no new state). Earlier:)*
 *Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 49821):
 the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
