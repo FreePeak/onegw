@@ -149,6 +149,84 @@ not. Verified on the published image (digest 78125d2): keyless boot exits 1 with
 after writing /data/admin_password; keyed boot listens on 0.0.0.0:8080 and gates /v1/models
 (401 bare, 200 with Bearer). Docs and TOML comments only — no code, no live config, no status
 change. Shipped as its own commit, built from the HEAD blob plus these 15 lines, so no peer hunk rides along.*
+*Last updated: 2026-09-13 (strategy "size-aware" + dev rewired to it, e4d02d3; live pid 19292):
+the throughput RCA left one lever the user owns — the paid opencode-go leg answers the SAME ≥150K-token
+traffic in 4.1s pre-first-byte (p90 5.6s, 73.4 delivered tok/s) while b-ai/qwen3.8-flash takes 50.4s
+(p90 109.4s, 12.3 tok/s) — and `strategy = "fastest"` could not carry that leg, because it also re-ranks
+small turns on decode EWMA, which is exactly why it was pulled from the free-first chains on 2026-09-11
+(the quickest leg owns the front and never yields back). New combo strategy `size-aware` is the
+prefill-only half: reorderBySpeed engages from provider.PrefillMattersAt (32K) input tokens up and only
+on measured prefill for that bucket, and RETURNS with the configured chain untouched below the gate or
+with nothing measured — so a fast-but-paid leg shares a free chain and is reached only by a measured
+pre-first-byte advantage on the request's own size class. Everything b2c9dc5 established still holds
+(no-sample legs sort behind every measured leg, configured order among themselves, full chain preserved,
+`speed_order` row only on a real reorder). Two tests pin the gate with SEPARATE configured orders so each
+half fails alone: the small turn keeps a sequence whose decode ranking would have flipped it
+(mutation-checked — neutering the gate reproduces the flip, [slowprefill, fastprefill]), and the large
+turn promotes the measured fast-prefill leg from last place; Resolve is pinned to set PrefillOrder and
+not SpeedOrder, Validate accepts the value and rejects the size_aware/sizeaware typos. README and
+docs/throughput-metrics.md gain the strategy (and lose the line-number citations the edits invalidated).
+Live, after deploying `git archive` of e4d02d3 zero-drop (scripts/deploy.sh --binary, pid 19292,
+artifact /tmp/onegw-sizeaware-bin — do NOT sweep /tmp/onegw-*) and hot-reloading the operator's decision
+(dev: strategy "size-aware", `opencode/deepseek-v4.1-flash` appended as leg 5): 10 `speed_order` rows
+for model `dev` at in~156K-598K, every one `opencode > tokenrouter > b-ai > tokenharbor > glm`; a
+1.36MB-body dev probe served by opencode with attempts=1 at 12.5s TTFT (the first probe paid one rotation
+at 47.6s), while two 6KB dev probes stayed on the free configured head, b-ai/qwen3.8-flash, attempts=1 at
+2.5s and 12.0s. The discovery hole is real and visible in the same run: seeding tokenrouter's large
+bucket needed three unique bodies and two were refused 503 by its provider-wide `rpm = 6` (#94), so the
+steering's upside stays bounded by that lane's rate budget as much as by its speed. One operational note
+for the next session, recorded because onegw.toml is gitignored: a stale-anchor edit of mine dropped
+`free`'s trailing opencode leg mid-session; a `tomllib` parse audit caught it (3 combos / 5-5-3 legs),
+the leg was restored, and the reload was verified through PUT /admin/config/reload + /admin/api/v1/combos
+— PARSE-AUDIT THE CONFIG after any ranged edit, since a damaged file breaks the next restart rather than
+the current process. Residuals unchanged: #93 (prefill EWMA folds the slot queue), #94 (size-aware is
+exploit-only above the gate). Earlier:)*
+*Last updated: 2026-09-13 (throughput RCA: the 60-150s term is pre-first-byte, steering unblocked
+(b2c9dc5), `dev` back on strategy="fastest", header budget 75s→120s; live pid 36886): the report was
+"the provider table says b-ai 63.5 / tokenrouter 54.5 tok/s but omp shows ~3". Two different clocks,
+both honest (docs/throughput-metrics.md): 63.5 is DECODE (headers→relay-end); what the client divides
+by is the whole wall, and on these chains that wall is dominated BEFORE the headers. Ring evidence on
+the user's own shape (`in 216624 · out 2152 · 29761ms`): a 72 tok/s decode window inside a 119-165s e2e
+wall — 200-400K-token contexts re-sent every step of an agent chain; 32% of b-ai's large successes
+(≥100K tokens) prefilled COLD. Four probes settled the mechanism and killed the two obvious fixes:
+(1) NOT key-scoped, so NOT a sticky problem — an 80K body cached on key clone3 answered
+`cached_tokens=79872` (99%) on a DIFFERENT key clone1 and stayed warm ≥40s; account rotation cannot
+bust b-ai's prefix cache, so `sticky =` buys nothing here. (2) The vendor lane is the floor, not the
+gateway: 6 concurrent 80K-token prefills on ONE key answered 9.6/11.1/12.0/13.0/15.1/41.5s (~1-2
+effective per key). (3) A/B on
+`max_concurrency` 7→14 with 10 concurrent 80K prompts: median TTFT 26.9→20.9s but max 37.3→70.5s and
+burst 37→71s — a higher cap moves the queue from our semaphore into the vendor, where it accrues
+against the header budget and converts into 504s; REVERTED to 7 with the numbers in the config comment
+so nobody re-raises it blind. (4) The controllable amplifier was our own abort: 75s killed the cold
+prefill tail, and each abort made the combo re-prefill the same 200-400K prompt on the next leg (seq 187:
+148s of pre-first-byte span on a leg that then decoded in 4s at 97% warmth) → `response_header_timeout`
+120s, which its own config comment had always said covered the tail. The steering that exists for
+exactly this was inert twice over: `dev` ran strategy="order",
+and reorderBySpeed's size-aware regime scored legs WITHOUT bucket samples at 0 against the measured
+legs' NEGATIVE predicted seconds, so an unsampled leg always sorted to the FRONT — the promotion behind
+the 2026-09-12 00:30 revert and the reason the speed_order row carries "weigh it, don't trust the head
+leg". b2c9dc5 gives no-data legs -Inf (mirroring the decode regime's 0-tok/s contract) and
+TestReorderBySpeedNoDataLegSortsBehindMeasured pins the mixed case that was untested; mutation-checked
+(restoring the 0 default reproduces the promotion and fails). Warmth is worth the trip: on the same
+window b-ai's ≥100K-token successes split 32% cold (<50% cache hit) at 83.9s median pre-first-byte vs
+14.6s warm, and that cold band is what blew the 75s budget (11 of the window's 13 5xx were header-budget
+504s, 9 of them b-ai). Live proof after deploy: 87 speed_order rows, every one
+promoting the measured warm lane over the configured head on ≥150K prompts
+(`tokenrouter/z-ai/glm-5.3-free > b-ai/qwen3.8-flash > tokenharbor > glm`, the last two kept last for
+having no samples). The client-experienced clocks moved, stated as the ranges they actually showed across windows (one-minute EWMA, α=0.25, on a lane my own probes also loaded): `dev` TTFT 60.7s → 14-23s and delivered 15.1 → 15-39 tok/s, `free` TTFT 58.5s → 15-17s and delivered 11.8 → 18-35 tok/s; header-budget 504s fell from 11 per 213 rows to 5 per 227. The 503s that remain are pool-empty fall-throughs (~0.5ms locally, not client-visible latency), so "5xx share" is NOT a clean before/after and is not claimed.
+COST contract, not a speed claim; dev's steering upside is capped by tokenrouter's provider-wide
+`rpm = 6`, which is why 44-of-136 big requests moved, not all of them. What is left is not routing:
+these chains replay 216K-834K input tokens per step, so the remaining order of magnitude is context
+size on the client, and pre-first-byte will keep tracking it. Two residuals filed — #93: `Prefill` is
+from Do()'s entry, so the gateway slot-queue is folded into the prefill EWMA (a 26,076-token request
+measured 142.2s) — a correct wall predictor, a mislabeled vendor rate. #94: with no-data legs sinking, an
+unmeasured leg can now only earn bucket samples via head-leg failure — the s=0 promotion was accidental
+forced exploration, so `strategy = "fastest"` is exploit-only until an explore knob exists (parent #70).
+Deployed zero-drop from
+`git archive` of b2c9dc5 (never the shared dirty tree) via scripts/deploy.sh --binary; artifact
+/tmp/onegw-steer-bin — do NOT sweep /tmp/onegw-* (this pid maps it). Predecessor /tmp/onegw-exp-bin
+(pid 23427, build b7b55e2) drained on a verified single listener; the config levers (gitignored
+onegw.toml) went in through PUT /admin/config/reload and need no restart. Earlier:)*
 *Last updated: 2026-09-13 (README: moving an OAuth session between machines): the
 OAuth section now documents that a login's whole credential state is one file —
 `<data_dir>/oauth-tokens.json`, 0600, no Keychain item and no machine binding (the
@@ -178,6 +256,95 @@ zero falls back) and TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel s
 mutation-checked (hardcoded-return mutant fails the 200 MiB row). README/ARCHITECTURE/
 systemd/vps-deploy note the coupling; deployed zero-drop via scripts/deploy.sh --binary from
 git archive of the pushed commit. Earlier:)*
+*Last updated: 2026-09-13 (throughput-metrics reference doc + #90, no code change):
+answered "how is tok/s per model calculated" for both layers and wrote it down as
+docs/throughput-metrics.md — onegw's three clocks (decode EWMA headers→relay-end per
+(provider,model)+account; prefill EWMA per (model,size-bucket); delivered EWMA
+whole-wall per CLIENT model string — the only per-model OUTPUT tok/s gauge, since
+prefill is INPUT tok/s per model+bucket), omp's own numbers
+read out of the RUNNING binary omp/18.1.19 (status-line leaf = raw last-assistant-turn
+quotient out*1000/window with a 100ms floor and a same-turn cache replay in the badge;
+vibe SUM across workers; bench = the only per-model aggregate: nearest-rank p50/p95
+over ok runs, tokens/cost are per-run MEANS), shared numerator semantics (upstream-reported,
+max-merged, reasoning-inclusive, no-usage→no-row), and the known distortions (lifetime
+`samples`, write-time-only staleness — #87, per-process state). Includes a TESTED
+per-model p50/p95 recipe computed off the request ring (live proof: b-ai/qwen3.8-flash
+16:51 snapshot: decode p50 64.1 / delivered p50 4.9 tok/s over 246 rows — the
+~14× gap being what decode excludes and delivered includes), which became issue #90
+(ring-based per-model distribution, ~30 lines, no new state). Earlier:)*
+*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 23427):
+the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
+long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
+(1) Live config (gitignored onegw.toml): `buffered_budget_bytes` 100 MiB (104857600, set
+2026-09-09) → 200 MiB (209715200); verified serving as `onegw_budget_cap_bytes 209715200`
+with ~110 MiB genuinely held (i.e. the old cap was being hit, not merely approached).
+(2) `applyMemoryTuning` now derives the soft heap limit from the budget instead of the
+hardcoded 90 MiB — 90 MiB floor with the default 48 MiB budget, budget + 25% headroom once
+the budget exceeds it (200 MiB budget → 250 MiB), re-tuned on every config reload via the
+SetOnConfigReload hook. Startup banner gained the effective memlimit, and it immediately
+corrected an assumption in this record: the live banner reads `memlimit: 2048 MiB`, NOT 250,
+because ~/.zshrc exports GOMEMLIMIT=2GiB and operator env wins by design — so on THIS box the
+derivation is inert (headroom was never the binding constraint; the byte budget was) and it
+matters for env-less deploys (docker/systemd) where a raised budget used to fight 90 MiB.
+Pinned by TestApplyMemoryTuningFollowsBufferBudget (reads back /gc/gomemlimit:bytes: default
+keeps 90 MiB, 200 MiB budget moves the ceiling, zero falls back) and
+TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives); mutation-checked
+(hardcoded-return mutant fails the 200 MiB row). The RELOAD half was initially untested —
+the #63 harness hand-copied the closure, so dropping the re-tune kept CI green; 01e48b0
+extracts newReloadHook as the one definition both runGateway and the test register, with a
+160 MiB reload fixture + 77 MiB sentinel making the assertion ordering-independent
+(drop-the-call mutant goes red). README/ARCHITECTURE/systemd/vps-deploy
+document the coupling. Deployed zero-drop via scripts/deploy.sh --binary from git archive of
+the pushed commit (my build `/tmp/onegw-mem-bin2`, pid 49821). SUPERSEDED at 17:26 by a peer
+deploy: live is pid 23427 on `/tmp/onegw-exp-bin`, forensics-verified to carry BOTH the budget
+fix (`heapLimitBytes` present) and origin's billing-parole recheck (`billing_parole=3`) —
+banner `budget: 200 MiB, memlimit: 2048 MiB`, `onegw_budget_cap_bytes 209715200`. It predates
+the 01e48b0 refactor (`newReloadHook=0`, consistent with a 17:26 build against an 18:2x push),
+which is behavior-preserving/test-only: read that as "the binary predates the pin", NOT "live
+is missing it" — no redeploy is owed on that basis.
+**Three `/tmp/onegw-*` artifacts, none sweepable:** `onegw-exp-bin` is mapped by the live pid,
+so unlinking it leaves a health-check-passing gateway running an unlinked inode until a
+crash/OOM/reboot tries to exec a missing file; `onegw-mem-bin2` is this session's build and the
+deploy-provenance reference; `onegw-rm-bin` is the pre-session binary, the only surviving
+evidence of what was serving before this session and the artifact that settled the parity
+question. Check the mapping before touching any of them:
+`lsof -p $(lsof -t -iTCP:8080 -sTCP:LISTEN) | awk '$4***REMOVED***"txt"'`. Park-state at audit:
+`"invalidated":true` absent while `"has_key"` is present (the load-bearing pairing — `omitempty`
+hides false), i.e. zero terminal parks. Earlier:)*
+**Ref-rewrite incident (direction corrected — the first record of this got it backwards), for
+the peers sharing this remote:** the memory-budget change first landed as b59ba41 on the LOCAL
+chain, and local↔origin had diverged BIDIRECTIONALLY: local was missing origin's c75dc18
+billing-parole recheck (the #80-follow-up self-heal that ends the b-ai park-forever outage
+class, about 354 lines incl. its tests) while carrying about 101 lines origin never had
+(44bd2b7 opencode-free per-model Responses routing + the `muse-spark-*-contributor-free`
+catalog ids, 98c7392 README opencode-free section; note 06f06cc's responses_models variant is
+NOT patch-equivalent to origin's 00d5081). The local "sync/adopt the published stamp chain"
+commits adopted the shared CODE via cherry-picks but stopped short of c75dc18. Pushing the
+local tip required force-with-lease, which rewrote published master to a tree that was
+simultaneously missing published content and carrying unpublished work — and the first deploy
+(pid 42141) was built from it. Caught by `git diff --stat 69c25ea b59ba41`; origin restored to
+69c25ea (a908d8a + the budget change, cherry-picked on the real tip; tree hashes verified) and
+the binary rebuilt from `git archive` of it (pid 49821, /tmp/onegw-mem-bin2). Live consequence,
+stated exactly: during the 17-minute regressed window the serving binary (pid 42141, built from
+b59ba41) had NO billing-parole recheck (0 `parole` lines vs 24+2+3 on origin) — so a key newly
+parked terminal by a 402 in that window would not have self-healed before the drain. The SIGTERM
+reset every park regardless (the pool's `invalidated` state is per-process) — that is the
+clearing mechanism, not the parole recheck; the residual exposure is user-visible b-ai free-lane
+503s DURING those 17 minutes, not lasting damage. Current state, measured from the providers
+page's edit payload: 12 providers, ZERO accounts carrying the invalidated flag; 824 b-ai 200s
+served in the first hour on the restored binary. Provenance cross-check: the pre-session binary
+(/tmp/onegw-rm-bin, pid 77921) and the restored binary carry the same feature set (billing_parole
+present, `muse-spark-*-free` routing absent) — origin's lineage is what was already serving, and
+`/tmp/onegw-rm-bin` stays on disk as the pre-session artifact (do not sweep). STILL UNPUBLISHED:
+44bd2b7 + 98c7392 + ed12019 live only on the local chain — the owning peer should cherry-pick
+them onto the origin tip rather than republish the local one; until 44bd2b7's merged
+`case KindOpenCode, KindOpenCodeFree:` lands there is NO config-only route for
+`muse-spark-*-free` ids (origin's `Path` returns chat-completions unconditionally for the free
+kind, and `responses_models` is consulted only for `KindOpenAI`), so wiring them live requires
+that commit — the live config already excludes them, so nothing is broken today. Rule this
+incident teaches: with a divergent local chain, NEVER force-push the local tip to master (that
+republished a behind-state and briefly removed published code from the live gateway). Cherry-pick
+onto the remote tip in a scratch worktree, push that, and build/deploy only from the pushed sha.
 *Last updated: 2026-09-13 (`responses_models`, 00d5081): xAI serves some ids only on its native
 /v1/responses endpoint — under an OAuth bearer that includes the flagship grok-4.5 (OmniRoute
 registry/xai/index.ts:31-37,66-69; the tagging exists because a chat-shaped body reaching
@@ -1578,6 +1745,8 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
   `buffered_budget_bytes`, not a constant: the shipped 48 MiB budget yields the
   90 MiB soft heap limit and the 100 MB target; an operator who raises the
   budget scales the limit with it (live gateway: 200 MiB budget → 250 MiB).
+  budget scales the limit with it. (Live box runs a 200 MiB budget with the
+  operator's own `GOMEMLIMIT=2GiB` exported, which outranks the tuned default.)
 - **Throughput: 1–2 B tokens/day** (~12–23k tok/s sustained; bursts far higher
   because streaming is I/O-bound passthrough).
 - **Sessions: millions of concurrent** — sessions are pass-through by design;
@@ -2407,6 +2576,13 @@ the issue):
   (2026-09-11): vendor's published position (none numeric), what the free tier really is
   (0-Credit promo models), every enforced wall verbatim with its scope, measured per-key
   ceilings, and the reseller lane-variance mechanism behind b-ai throughput collapse.
+- `docs/throughput-metrics.md` — every tok/s number on the box and its exact formula
+  (2026-09-13): onegw's three clocks (decode/prefill/delivered EWMAs, their keys, noise
+  gates, steering consumers) alongside omp's own status-line leaf and bench p50/p95;
+  shared numerator semantics; known distortions (lifetime-`samples`, write-time-only
+  staleness #87, per-process state); tested per-model p50/p95 recipe from the request
+  ring (live: b-ai decode p50 57.2 vs delivered 7.8 tok/s); files #90 (ring-based
+  per-model distribution).
 
 Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
   pages to the UnoRouter design language (user-selected reference,

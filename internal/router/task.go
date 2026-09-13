@@ -15,6 +15,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -346,8 +347,16 @@ func (r *Router) applyTaskRouting(ctx context.Context, res *Resolution) {
 //     the best decode number still answers last: b-ai ring evidence
 //     2026-09-11 — 232,621 input tokens, 0.96s decode, 73.7s end to end.
 //
-// Legs with no data report 0 and keep the configured order among themselves;
-// the full chain is preserved — only the order changes.
+// A leg with no data for this request's size sorts behind every measured leg
+// and keeps its configured order among the other no-data legs — in BOTH
+// regimes (decode: a 0 tok/s score; size-aware: -Inf). The full chain is
+// preserved — only the order changes.
+//
+// Until 2026-09-13 the size-aware branch left no-data legs at 0, which
+// outranks every measured leg's negative predicted seconds and promoted an
+// unsampled leg to the FRONT of the chain — the promotion behind the
+// 2026-09-12 00:30 `dev` strategy revert and the speed_order row's
+// "weigh it, don't trust the head leg blindly" warning.
 func (r *Router) reorderBySpeed(ctx context.Context, res *Resolution) {
 	type scored struct {
 		t Target
@@ -364,9 +373,26 @@ func (r *Router) reorderBySpeed(ctx context.Context, res *Resolution) {
 			}
 		}
 	}
+	if res.PrefillOrder && !byPrefill {
+		// strategy = "size-aware" is the prefill regime ONLY: a request too
+		// small for prefill to matter, or a bucket nothing has been measured
+		// in yet, keeps the CONFIGURED chain order. Without this gate the
+		// same call would re-rank on decode EWMA and a fast-but-paid leg
+		// could take every cheap turn — the starvation that took "fastest"
+		// out of the free-first combos on 2026-09-11.
+		return
+	}
 	order := make([]scored, len(res.Targets))
 	for i, t := range res.Targets {
+		// No data = last in both regimes: 0 tok/s loses to every measured
+		// decode, and -Inf loses to every measured prediction (a leg that has
+		// never served this size bucket must not outrank one whose prefill
+		// was measured). Equal sentinels keep the configured order via the
+		// stable sort.
 		s := 0.0
+		if byPrefill {
+			s = math.Inf(-1)
+		}
 		if def, ok := r.pool.Get(t.Provider); ok {
 			if byPrefill {
 				if secs := def.PredictSeconds(t.Model, inTokens); secs > 0 {

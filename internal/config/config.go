@@ -280,6 +280,15 @@ type RotationCfg struct {
 	FlapThreshold int    `toml:"flap_threshold"`  // edge faults before the pool parks (default 4)
 	FlapOpen      string `toml:"flap_open"`       // whole-pool park (default 15s)
 	ModelBenchTTL string `toml:"model_bench_ttl"` // model-scoped refusal bench (default 5m)
+	// BillingParole: how long a terminal billing refusal (#80) parks an
+	// account before the pool re-offers it as ONE probe (default 30m).
+	// Vendors change billing state on their own — top-ups land, monthly
+	// grants reset, pricing events get reverted (live 2026-09-12 b-ai: a
+	// pricing event parked all 8 free keys, and every key answered 200
+	// again ~2.5h later, with the pool still parked until a manual reset) —
+	// so the probe self-heals the pool without operator action. A refusal
+	// re-parks for a full window; a success clears the mark entirely.
+	BillingParole string `toml:"billing_parole"`
 }
 
 // Acct is one provider account.
@@ -318,8 +327,15 @@ type ComboCfg struct {
 	// order is a deliberate cost/quality contract); "fastest" stable-sorts
 	// the targets by each leg's recent decode speed (tokens/sec EWMA,
 	// speed.go) so traffic prefers the quickest healthy provider while
-	// every leg stays in the chain as fallback. Legs with no speed data
-	// keep the configured order.
+	// every leg stays in the chain as fallback. "size-aware" is the
+	// size-gated half of the same steering: the targets are re-sorted ONLY
+	// from provider.PrefillMattersAt input tokens up, and only on measured
+	// prefill (predicted wall time for that size bucket) — below that size,
+	// or with nothing measured yet, the configured sequence stands untouched.
+	// That gating is what makes it safe to put a fast-but-paid leg in a
+	// chain whose small turns must keep riding the free legs: decode speed
+	// alone never promotes it, only a measured pre-first-byte advantage on
+	// the request's own size class does.
 	Strategy string `toml:"strategy"`
 	// RoundRobinLimit (strategy = "round-robin", #82): consecutive
 	// successes that keep one combo leg at the front before rotation moves
@@ -659,8 +675,10 @@ func (c *Config) Validate() error {
 		if comboNames[strings.ToLower(cb.Name)] {
 			return fmt.Errorf("duplicate combo %s", cb.Name)
 		}
-		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" && cb.Strategy != "round-robin" {
-			return fmt.Errorf("combo %s strategy %q must be \"order\", \"fastest\" or \"round-robin\"", cb.Name, cb.Strategy)
+		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" &&
+			cb.Strategy != "size-aware" && cb.Strategy != "round-robin" {
+			return fmt.Errorf("combo %s strategy %q must be \"order\", \"fastest\", \"size-aware\" or \"round-robin\"",
+				cb.Name, cb.Strategy)
 		}
 		if cb.RoundRobinLimit < 0 || cb.RoundRobinLimit > 1000 {
 			return fmt.Errorf("combo %s round_robin_limit %d out of range (0 = default 3, max 1000)", cb.Name, cb.RoundRobinLimit)
@@ -813,6 +831,9 @@ func validateRotation(r RotationCfg, where string) error {
 		return err
 	}
 	if _, err := dur("model_bench_ttl", r.ModelBenchTTL); err != nil {
+		return err
+	}
+	if _, err := dur("billing_parole", r.BillingParole); err != nil {
 		return err
 	}
 	if r.FlapThreshold < 0 {
