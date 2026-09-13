@@ -1,6 +1,11 @@
 # onegw default config baked into the container image.
 # Everything secret comes from env at runtime — no keys in the image:
-#   ONEGW_KEYS="key1,key2"                     gateway client keys
+#   ONEGW_KEYS="key1,key2"                     gateway client keys — REQUIRED
+#                                                here: this config binds
+#                                                0.0.0.0:8080 below and onegw
+#                                                refuses to start a non-loopback
+#                                                listener with no auth keys (only
+#                                                a loopback bind may run keyless)
 #   ONEGW_PROVIDER_<NAME>_KEY[2..9]            upstream provider keys
 #   ONEGW_ADMIN_PASSWORD                       dashboard/admin API (unset: a random
 #                                                password is generated on first boot,
