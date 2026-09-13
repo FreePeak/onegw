@@ -1,3 +1,16 @@
+*Last updated: 2026-09-13 (`responses_models`, 00d5081): xAI serves some ids only on its native
+/v1/responses endpoint — under an OAuth bearer that includes the flagship grok-4.5 (OmniRoute
+registry/xai/index.ts:31-37,66-69; the tagging exists because a chat-shaped body reaching
+/v1/responses 422s "missing input", upstream #10165). The `xai` provider is kind=openai on
+api.x.ai, so a Responses-only id had no route: #89's step 3 would have needed new code the moment
+a token arrived. Now an opt-in glob list (`responses_models = ["grok-4.5*"]`) selects
+FmtOpenAIResponses + /v1/responses per model on the openai kind, reusing the per-model wire
+selection the opencode kinds already had; empty default is byte-identical to previous behaviour,
+and the raw same-format passthrough keys off UpstreamFormat (stream_relay.go:108) so an opted-in
+request cannot bypass translation. Two tests pin both halves (opted id → /v1/responses with
+`input`, SSE translated back to a chat completion; sibling id → chat wire with `messages`),
+mutation-checked by deleting the routing branch. Whole `internal/...` suite green. README gained
+the knob under § Grok subscriptions. Earlier:)*
 *Last updated: 2026-09-13 (quota tracking no longer depends on a dead key in TOML, 08a9716,
 live pid 60600): `subTargets` skipped any account whose `api_key` was empty, so a subscription
 provider kept its quota row only while a static key sat in the config — and the README calls that
