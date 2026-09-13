@@ -1,3 +1,16 @@
+*Last updated: 2026-09-13 (SuperGrok chain proven end-to-end at the gateway, 9f02b51): the
+pieces had unit coverage but nothing showed the whole path, so `internal/server` now seeds one
+xAI device session into the data dir BEFORE boot (the tracker polls on `New()`, so an in-test
+login would race the first probe) and asserts what the operator actually gets: the borrowed
+`[[oauth.accounts]]` entry that declares no service validates AND reaches upstream with the
+owner's `Bearer at-live-1` rather than the static fallback; the Grok Build provider answers over
+the Responses wire (forced stream aggregated back into a normal completion) carrying
+`X-XAI-Token-Auth` + `x-grok-cli-version` beside that bearer; and the vendor weekly pool
+surfaces as one `Weekly` window at the floored 42 % while the account KEEPS serving — the
+partial-pool must-not-park half, paired with `TestProbeGrokCliEndToEnd`'s 100 % → park. Test-only
+commit: no production code changed, no redeploy needed (live pid 28905 already carries every
+landed change). Verified beyond a single run: `-race` clean, 30 repeats at `-cpu=1`, whole-repo
+sweep green (`TestCursorKindEndToEnd` still skipped as the pre-existing network hang). Earlier:)*
 *Last updated: 2026-09-13 (cursor `auto` lane fixed, 38cf5b6, deployed pid 28905): the provider
 advertised `auto`, which Cursor has never had as a model id — the encoder put the client string on
 the wire verbatim, so every `cursor/auto` request ended the AgentService turn with zero content
