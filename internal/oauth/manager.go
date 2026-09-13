@@ -218,12 +218,24 @@ func (m *Manager) refreshLoop(ctx context.Context, spec AccountSpec) {
 // maybeRefresh refreshes spec's token if a refresh token exists and expiry
 // is within lead. Single-flight per account: a concurrent refresh (another
 // tick racing RefreshNow) skips.
+//
+// The trusted expiry is the EARLIEST signal available: the stored value, or
+// the access token's own signed `exp` claim. The stored field alone is not
+// trustworthy — it can be a vendor lie (xAI answers 6 h for device tokens it
+// revokes in ~45 min), a file written by an older CLI build before the cap
+// existed, or a store copied in from another machine. Trusting it left the
+// gateway serving a dead bearer for hours, 403ing on every request while the
+// refresher slept.
 func (m *Manager) maybeRefresh(ctx context.Context, spec AccountSpec, lead time.Duration) {
 	tok, ok := m.store.Get(spec.Key)
 	if !ok || tok.RefreshToken == "" || tok.AccessToken == "" {
 		return // nothing to refresh (e.g. Kilo: no refresh token)
 	}
-	if !tok.ExpiresAt.IsZero() && time.Until(tok.ExpiresAt) > lead {
+	exp := tok.ExpiresAt
+	if je, ok := accessExpiry(tok.AccessToken); ok && (exp.IsZero() || je.Before(exp)) {
+		exp = je
+	}
+	if !exp.IsZero() && time.Until(exp) > lead {
 		return
 	}
 	m.mu.Lock()
