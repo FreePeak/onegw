@@ -1,3 +1,17 @@
+*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, live gateway restart):
+the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
+long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
+(1) Live config (gitignored onegw.toml): `buffered_budget_bytes` 100 MiB (104857600, set
+2026-09-09) → 200 MiB (209715200). (2) `applyMemoryTuning` now derives the soft heap limit
+from the budget instead of the hardcoded 90 MiB — 90 MiB floor with the default 48 MiB budget,
+budget + 25% headroom once the budget exceeds it (200 MiB budget → 250 MiB limit), re-tuned on
+every config reload via the SetOnConfigReload hook, operator GOMEMLIMIT still wins. Startup
+banner now prints the effective memlimit. Pinned by TestApplyMemoryTuningFollowsBufferBudget
+(reads back /gc/gomemlimit:bytes — default keeps 90 MiB, 200 MiB budget moves the ceiling,
+zero falls back) and TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives);
+mutation-checked (hardcoded-return mutant fails the 200 MiB row). README/ARCHITECTURE/
+systemd/vps-deploy note the coupling; deployed zero-drop via scripts/deploy.sh --binary from
+git archive of the pushed commit. Earlier:)*
 *Last updated: 2026-09-13 (`responses_models`, 00d5081): xAI serves some ids only on its native
 /v1/responses endpoint — under an OAuth bearer that includes the flagship grok-4.5 (OmniRoute
 registry/xai/index.ts:31-37,66-69; the tagging exists because a chat-shaped body reaching
@@ -1394,7 +1408,10 @@ HTTP surfaces; routes by `provider/model`, applies fallback chains
 ("combos"), round-robins accounts, and tracks usage/quota. Hard targets:
 
 - **RAM: ≤ 100 MB resident** under sustained load (default Go GC tuning; no
-  per-request buffering of streams).
+  per-request buffering of streams). The envelope is a function of
+  `buffered_budget_bytes`, not a constant: the shipped 48 MiB budget yields the
+  90 MiB soft heap limit and the 100 MB target; an operator who raises the
+  budget scales the limit with it (live gateway: 200 MiB budget → 250 MiB).
 - **Throughput: 1–2 B tokens/day** (~12–23k tok/s sustained; bursts far higher
   because streaming is I/O-bound passthrough).
 - **Sessions: millions of concurrent** — sessions are pass-through by design;
@@ -1487,9 +1504,12 @@ same-format passthrough). Packages:
   and rollups key on day/hour/provider/model/api_key. Header affinity landed (#36, 242f303:
   x-grok-conv-id/x-grok-session-id/x-session-id/session_id forwarded verbatim, per-provider opt-in derived
   id); cache-affinity breakpoint/key-forwarding remains open work (#34).
-- `GOGC=60` (set at startup if `GOGC` env unset); soft memory limit
-  `GOMEMLIMIT=90MiB` set at startup if unset. Allocation-heavy JSON reuse in
-  hot loops.
+- `GOGC=60` (set at startup if `GOGC` env unset); the soft memory limit follows
+  the configured `buffered_budget_bytes` — 90 MiB with the shipped 48 MiB
+  default, budget + 25% headroom once raised — and is re-tuned on every config
+  reload, so a raised budget never fights a stale ceiling. An explicit
+  `GOMEMLIMIT` env always wins (tuning is a default, not an override).
+  Allocation-heavy JSON reuse in hot loops.
 - **`sys` is a lifetime ratchet, not a leak (RCA 2026-09-08).** The dashboard's
   `sys` = Go `memstats.Sys`: cumulative arena reservations. Under repeated
   agent-class load (22 concurrent × 1.5 MB streaming bodies) a test instance
@@ -1675,8 +1695,9 @@ see [Open work](#open-work).
   (~71 K tok/s, ~3× the 23 k tok/s needed for 2 B/day). Mock reports a
   synthetic 200 tokens/request, so the honest load proof is ~2 100 reqs ×
   800 KB ≈ 140 MB/s relayed at 67 MiB RSS.
-- `GOMEMLIMIT=90 MiB` soft limit set at startup; `GODEBUG=madvdontneed=1`
-  used in benchmarks because macOS MADV_FREE overstates RSS.
+- `GOMEMLIMIT=90 MiB` soft limit at the default 48 MiB budget (raised budgets
+  scale it: budget + 25%); `GODEBUG=madvdontneed=1` used in benchmarks because
+  macOS MADV_FREE overstates RSS.
 - Byte-budget gate: buffered path (body read + saver + translation) holds a
   4× body-size reservation against a 48 MiB global budget; saturation
   returns 503 + Retry-After.

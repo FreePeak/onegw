@@ -321,7 +321,7 @@ env overrides:
 | `ONEGW_PROVIDER_<NAME>_KEY` | API key for provider `<NAME>` |
 | `ONEGW_KEYS` | Comma-separated client keys accepted by the gateway |
 | `ONEGW_ADMIN_PASSWORD` | Admin/dashboard password |
-| `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup (90 MiB soft limit, GOGC 60, ≤ 4 procs) |
+| `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup and on every config reload — the soft heap limit follows the buffered budget (90 MiB with the default 48 MiB, budget + 25% headroom above that; GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
 providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "searxng" | "openai-responses"`, optional
