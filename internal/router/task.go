@@ -373,6 +373,15 @@ func (r *Router) reorderBySpeed(ctx context.Context, res *Resolution) {
 			}
 		}
 	}
+	if res.PrefillOrder && !byPrefill {
+		// strategy = "size-aware" is the prefill regime ONLY: a request too
+		// small for prefill to matter, or a bucket nothing has been measured
+		// in yet, keeps the CONFIGURED chain order. Without this gate the
+		// same call would re-rank on decode EWMA and a fast-but-paid leg
+		// could take every cheap turn — the starvation that took "fastest"
+		// out of the free-first combos on 2026-09-11.
+		return
+	}
 	order := make([]scored, len(res.Targets))
 	for i, t := range res.Targets {
 		// No data = last in both regimes: 0 tok/s loses to every measured
