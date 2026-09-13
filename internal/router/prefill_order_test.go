@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,61 @@ func TestReorderBySpeedWithoutPrefillDataUnaffected(t *testing.T) {
 	r.reorderBySpeed(WithInputSize(context.Background(), 200_000), res)
 	if got := res.Targets[0].Provider; got != "b" {
 		t.Fatalf("no prefill data must fall back to decode ordering, got %q", got)
+	}
+}
+
+// TestReorderBySpeedNoDataLegSortsBehindMeasured pins the mixed-data contract
+// the 2026-09-12 00:30 `dev` revert was really about: once ANY leg has prefill
+// samples for the size bucket, measured legs rank by predicted wall time and
+// the legs WITHOUT samples go behind them, keeping their configured order.
+// Before 2026-09-13 a no-data leg scored 0 against the measured legs' negative
+// predicted seconds, so it was promoted to the front of the chain — on the
+// live gateway that handed a 200K-token request to an unmeasured leg.
+//
+// Mutation check: restore the size-aware regime's default score to 0 and the
+// no-data leg leads again, failing the order assertion.
+func TestReorderBySpeedNoDataLegSortsBehindMeasured(t *testing.T) {
+	p := provider.NewPool()
+	measured := &provider.Def{Name: "measured", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "m", APIKey: "km"}}}
+	cold1 := &provider.Def{Name: "cold1", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "c1", APIKey: "k1"}}}
+	cold2 := &provider.Def{Name: "cold2", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "c2", APIKey: "k2"}}}
+	bucket := provider.PrefillBucket(200_000)
+	for range provider.MinPrefillSamplesForOrdering {
+		measured.ObservePrefill("m", bucket, 200_000, 63*time.Second) // ≈3k tok/s
+	}
+	// The no-data legs are the decode favourites (200/180 tok/s vs 54), so
+	// only the size-aware regime can sink them.
+	measured.ObserveSpeed(nil, "m", 540, 10*time.Second)
+	cold1.ObserveSpeed(nil, "m", 2000, 10*time.Second)
+	cold2.ObserveSpeed(nil, "m", 1800, 10*time.Second)
+	p.Set(measured)
+	p.Set(cold1)
+	p.Set(cold2)
+	r := New(p)
+
+	// Configured order brackets the measured leg with the two cold ones.
+	targets := func() *Resolution {
+		return &Resolution{IsCombo: true, SpeedOrder: true, Model: "stack", Targets: []Target{
+			{Provider: "cold1", Model: "m"},
+			{Provider: "measured", Model: "m"},
+			{Provider: "cold2", Model: "m"},
+		}}
+	}
+	res := targets()
+	r.reorderBySpeed(WithInputSize(context.Background(), 200_000), res)
+	want := []string{"measured/m", "cold1/m", "cold2/m"}
+	if got := targetNames(res); !slices.Equal(got, want) {
+		t.Fatalf("size-aware order = %v, want %v (measured legs first, no-data legs behind in configured order)", got, want)
+	}
+
+	// Below PrefillMattersAt the decode EWMA still picks, so the cold legs lead.
+	res2 := targets()
+	r.reorderBySpeed(WithInputSize(context.Background(), 5_000), res2)
+	if got := targetNames(res2); !slices.Equal(got, []string{"cold1/m", "cold2/m", "measured/m"}) {
+		t.Fatalf("decode-ranked order = %v, want cold1, cold2, measured", got)
 	}
 }
 
