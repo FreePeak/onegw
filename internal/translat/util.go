@@ -120,3 +120,173 @@ func NormalizeInStreamError(e *types.APIError) *types.APIError {
 	}
 	return e
 }
+
+// ---------------------------------------------------------------------------
+// Tool-call / tool-result pairing
+// ---------------------------------------------------------------------------
+
+// toolResultMissing answers an assistant tool call whose result never arrived:
+// the client interrupted the tool, or its own history rewrite kept the
+// tool_result turn and dropped the tool_use turn. Strict tool-calling upstreams
+// reject an unanswered tool_calls turn outright, and because the offending turn
+// already sits in the client's history every retry 400s too — so the gap has to
+// be closed here rather than surfaced.
+const toolResultMissing = "[no tool result recorded]"
+
+// NormalizeToolPairs rewrites the unified message list into the shape every
+// tool-calling wire demands: one contiguous run of tool results immediately
+// after the assistant turn that made the calls, that turn's other content after
+// the run, and exactly one result per call id.
+//
+// Client histories do not arrive in that shape. Anthropic lets a user turn mix
+// tool_result blocks with free text — Claude Code appends its
+// <system-reminder> text after the results — and after a mid-turn interjection
+// it answers the calls of a single assistant turn across SEPARATE user turns,
+// text in between. Translated verbatim the body reads
+// assistant(tool_calls) -> user(text) -> tool(result), which every strict
+// validator rejects, from both directions: scanning forward from the assistant
+// finds too few replies ("insufficient tool messages following tool_calls
+// message", opencode "Console Go") and scanning back from the reply finds the
+// wrong predecessor ("`messages[N]` tool message must follow an assistant
+// message", z.ai). Both live 2026-09-14 from one Claude Code session, whose
+// history kept failing at index 47 and index 161.
+//
+// The repair only moves whole turns: results keep arrival order, deferred turns
+// keep theirs, and parts keep their cache breakpoints, so a history already in
+// shape comes back byte-identical (needsPairRepair makes that a no-op with no
+// reallocation — a rewritten prefix would cost the provider's prompt cache).
+// Nothing is dropped or reworded; a result without an id (Gemini names its
+// responses instead, legacy OpenAI "function" role names its caller) is matched
+// to the oldest open call positionally.
+func NormalizeToolPairs(u *types.ChatRequest) {
+	if !needsPairRepair(u.Messages) {
+		return
+	}
+	out := make([]types.Message, 0, len(u.Messages)+2)
+	var (
+		open    bool            // an assistant turn awaits its results
+		pending []string        // its unanswered call ids, in call order
+		results []types.Part    // the run being assembled, in arrival order
+		hold    []types.Message // turns deferred behind the run
+		name    string
+	)
+	flush := func() {
+		if !open {
+			return
+		}
+		for _, id := range pending {
+			results = append(results, types.Part{Type: types.PartToolResult, ToolUseID: id, Text: toolResultMissing})
+		}
+		if len(results) > 0 {
+			out = append(out, types.Message{Role: types.RoleUser, Name: name, Content: results})
+		}
+		out = append(out, hold...)
+		open, pending, results, hold, name = false, nil, nil, nil, ""
+	}
+	for _, m := range u.Messages {
+		if m.Role == types.RoleAssistant {
+			flush()
+			out = append(out, m)
+			for _, p := range m.Content {
+				// Only a real id is trackable: an id-less tool_use block
+				// (a malformed client) takes each wire's own fallback at
+				// encode time, and answering it here would mean inventing an
+				// id the call never had.
+				if p.Type == types.PartToolUse && p.ID != "" {
+					pending = append(pending, p.ID)
+				}
+			}
+			open = len(pending) > 0
+			continue
+		}
+		if !open {
+			// Nothing awaits this turn: leave it as the client wrote it (the
+			// encoders still order a mixed turn's own parts correctly).
+			out = append(out, m)
+			continue
+		}
+		res, rest := splitToolResults(m)
+		for _, p := range res {
+			if name == "" {
+				name = m.Name
+			}
+			results = append(results, pairResultID(p, &pending))
+		}
+		if rest != nil {
+			hold = append(hold, *rest)
+		}
+	}
+	flush()
+	u.Messages = out
+}
+
+// needsPairRepair reports whether any turn carries tool traffic at all. Plain
+// chat (the overwhelming majority of requests) skips the rewrite entirely.
+func needsPairRepair(msgs []types.Message) bool {
+	for i := range msgs {
+		m := &msgs[i]
+		if m.Role == types.RoleTool {
+			return true
+		}
+		for _, p := range m.Content {
+			if p.Type == types.PartToolUse || p.Type == types.PartToolResult {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// splitToolResults lifts the tool results out of a turn. results carries every
+// tool_result part with its message-level id fallback resolved (so what reaches
+// the wire is explicit), and rest is the same turn without them — nil when
+// nothing but the results was there, which is the ordinary case. A unified
+// tool-role message (hand-built requests, not decoder output) flattens to one
+// result part and no rest.
+func splitToolResults(m types.Message) (results []types.Part, rest *types.Message) {
+	if m.Role == types.RoleTool {
+		return []types.Part{{
+			Type:      types.PartToolResult,
+			Name:      orDefault(m.Name, m.ToolCallID),
+			ToolUseID: orDefault(m.ToolCallID, m.Name),
+			Text:      m.FlattenText(),
+		}}, nil
+	}
+	keep := make([]types.Part, 0, len(m.Content))
+	for _, p := range m.Content {
+		if p.Type != types.PartToolResult {
+			keep = append(keep, p)
+			continue
+		}
+		if p.ToolUseID == "" {
+			p.ToolUseID = orDefault(m.ToolCallID, m.Name)
+		}
+		results = append(results, p)
+	}
+	if len(results) == 0 {
+		return nil, &m
+	}
+	if len(keep) == 0 {
+		return results, nil
+	}
+	m.Content = keep
+	return results, &m
+}
+
+// pairResultID attaches a result to a call the assistant really made: an id
+// still awaiting its answer wins, otherwise the oldest open call takes it
+// positionally. A surplus result (every call already answered, extra block in
+// the same turn) keeps its own id and still travels with the run.
+func pairResultID(p types.Part, pending *[]string) types.Part {
+	for i, id := range *pending {
+		if p.ToolUseID != "" && p.ToolUseID != id {
+			continue
+		}
+		if p.ToolUseID == "" {
+			p.ToolUseID = id
+		}
+		*pending = append((*pending)[:i], (*pending)[i+1:]...)
+		return p
+	}
+	return p
+}
