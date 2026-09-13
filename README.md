@@ -806,7 +806,7 @@ service  = "xai"   # oauth profile: xai | kilocode (defaults to provider)
 ```
 
 ```bash
-onegw oauth login -provider xai -account main   # prints URL + code, polls, stores
+onegw oauth login -provider xai -account main   # prints URL + code, opens browser, polls, stores
 onegw oauth list                                # stored accounts + expiry state
 ```
 
