@@ -187,6 +187,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			NoThinking:       p.NoThinking,
 			DefaultEffort:    p.DefaultEffort,
 			EchoReasoning:    p.EchoReasoning,
+			ResponsesModels:  p.ResponsesModels,
 			CacheProfile:     p.CacheProfile,
 			Passthrough:      p.Passthrough,
 			SearchMaxResults: p.MaxResults,
