@@ -1,3 +1,32 @@
+*Last updated: 2026-09-13 (container/CLI parity for the OAuth login path; the docker image now ships both binaries):
+`docker exec -it onegw onegw-oauth login …` failed with "executable file not found in $PATH" because the
+image built and copied only `cmd/onegw` — and the natural repair, `onegw oauth login …`, was worse: the
+binary's dispatch had no such subcommand, so an unknown bare word fell through to runGateway and started a
+SECOND gateway process, which SO_REUSEPORT happily binds on the live port (observed live in the container:
+a login attempt whose output was "onegw listening on 0.0.0.0:8080"). Three fixes: (1) the OAuth CLI moved to
+internal/oauthcmd with `onegw oauth <login|list|refresh>` as the primary form and cmd/onegw-oauth a thin
+wrapper over the same code, so the two entry points cannot drift; (2) the Dockerfile builds and ships both
+binaries; (3) dispatch now classifies argv[1] (flag -> gateway, known subcommand -> run, anything else ->
+usage + exit 2), which also turns the PRD-referenced-but-nonexistent `onegw connect` from a silent gateway
+start into a clear error. The CLI also resolves its data dir the way the gateway does (config ->
+$ONEGW_DATA_DIR -> ~/.onegw, so the container needs no paths) and now applies the matching [[oauth.accounts]]
+entry's device_url/token_url/client_id/scope exactly like the dashboard's sign-in — before, a mounted config
+that redirected the flow was silently ignored and the CLI hit the real vendor, which is how two throwaway
+probe runs reached accounts.x.ai. The login banner now names the device endpoint before the operator
+approves, the one thing that distinguishes a stub from production. Verified: image rebuilt and inspected
+(both binaries present; `onegw version` reports container), container CLI == binary CLI on the same wiring
+(in-container `onegw oauth login` -> token in /data -> chat carries `Bearer at-cli-token`; dashboard API and
+providers page 200 in-container), A/B of the host binary vs the container on twin configs identical (models,
+oauth state, chat bearer, health), closed-port configs prove the endpoint resolution without contacting the
+vendor, and unit tests pin the resolution order and the dispatch table. The live xAI session was checked
+read-only after each stray probe (the `grok-cli` billing probe answered "Grok · SuperGrok", weekly 1 % — no
+login was ever completed, so no session rotation; recorded here because recovering from one would need a
+browser approval). Backup/restore of a container install is documented in docs/vps-deploy.md § Container
+installs and was verified end-to-end: volume tar -> fresh volume on a second container -> `usage.db` and
+`oauth-tokens.json` byte-identical (md5), node_id/owner.json preserved, the gateway serves with the restored
+bearer without a re-login, and a generated admin password survives (the restored instance logs NO "FIRST-RUN
+ADMIN PASSWORD" and the old password still signs in). Operational caveat recorded there: never run two
+instances against one subscription account — single-active device sessions rotate each other out.*
 *Last updated: 2026-09-13 (dashboard provider-save hardening 4765076 + docker-compose default credentials; registry detail under § Dashboard):
 three defects on the roster path the provider modal drives were fixed before this slice could be trusted with
 subscription accounts. (1) A save DELETED the account fields the editor does not model — per-account
