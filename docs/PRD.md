@@ -1,3 +1,16 @@
+*Last updated: 2026-09-13 (quota tracking no longer depends on a dead key in TOML, 08a9716,
+live pid 60600): `subTargets` skipped any account whose `api_key` was empty, so a subscription
+provider kept its quota row only while a static key sat in the config — and the README calls that
+key "the fallback until a token is stored", i.e. deletable. Deleting it (the obvious cleanup after
+`onegw-oauth login`, and the state every OAuth-managed provider should reach) would have made the
+account's window, park signal and steering vanish with no error at all. An `[[oauth.accounts]]`
+entry now counts as a credential, since the tracker already resolves the live bearer per probe via
+`liveSubKey`; with no token stored the row shows the actionable error instead of disappearing.
+`TestSubscriptionQuotaTracksOAuthOnlyAccount` pins both halves — the OAuth-managed keyless account
+surfaces with its error, a credential-less one is still skipped — and is mutation-checked (reverting
+the condition makes the wait time out). Verified live after deploy: GOAT weekly parked at 100 %
+with credits 85 %, Go 61 %, glm/opencode rows intact, `xai` failing open with "Grok session token
+rejected — re-run: onegw-oauth login -provider xai", `cursor/auto` → "PONG". Earlier:)*
 *Last updated: 2026-09-13 (SuperGrok chain proven end-to-end at the gateway, 9f02b51): the
 pieces had unit coverage but nothing showed the whole path, so `internal/server` now seeds one
 xAI device session into the data dir BEFORE boot (the tracker polls on `New()`, so an in-test
