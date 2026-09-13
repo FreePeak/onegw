@@ -327,8 +327,15 @@ type ComboCfg struct {
 	// order is a deliberate cost/quality contract); "fastest" stable-sorts
 	// the targets by each leg's recent decode speed (tokens/sec EWMA,
 	// speed.go) so traffic prefers the quickest healthy provider while
-	// every leg stays in the chain as fallback. Legs with no speed data
-	// keep the configured order.
+	// every leg stays in the chain as fallback. "size-aware" is the
+	// size-gated half of the same steering: the targets are re-sorted ONLY
+	// from provider.PrefillMattersAt input tokens up, and only on measured
+	// prefill (predicted wall time for that size bucket) — below that size,
+	// or with nothing measured yet, the configured sequence stands untouched.
+	// That gating is what makes it safe to put a fast-but-paid leg in a
+	// chain whose small turns must keep riding the free legs: decode speed
+	// alone never promotes it, only a measured pre-first-byte advantage on
+	// the request's own size class does.
 	Strategy string `toml:"strategy"`
 	// RoundRobinLimit (strategy = "round-robin", #82): consecutive
 	// successes that keep one combo leg at the front before rotation moves
@@ -668,8 +675,10 @@ func (c *Config) Validate() error {
 		if comboNames[strings.ToLower(cb.Name)] {
 			return fmt.Errorf("duplicate combo %s", cb.Name)
 		}
-		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" && cb.Strategy != "round-robin" {
-			return fmt.Errorf("combo %s strategy %q must be \"order\", \"fastest\" or \"round-robin\"", cb.Name, cb.Strategy)
+		if cb.Strategy != "" && cb.Strategy != "order" && cb.Strategy != "fastest" &&
+			cb.Strategy != "size-aware" && cb.Strategy != "round-robin" {
+			return fmt.Errorf("combo %s strategy %q must be \"order\", \"fastest\", \"size-aware\" or \"round-robin\"",
+				cb.Name, cb.Strategy)
 		}
 		if cb.RoundRobinLimit < 0 || cb.RoundRobinLimit > 1000 {
 			return fmt.Errorf("combo %s round_robin_limit %d out of range (0 = default 3, max 1000)", cb.Name, cb.RoundRobinLimit)

@@ -182,6 +182,70 @@ func TestReorderBySpeedNoDataLegSortsBehindMeasured(t *testing.T) {
 	}
 }
 
+// TestStrategySizeAwareReordersOnlyLargeRequests pins the whole point of
+// strategy = "size-aware": the chain is re-sorted on measured prefill at
+// PrefillMattersAt tokens and above, and left in its CONFIGURED order below
+// that — even when a paid leg has the better decode number. That gating is
+// what lets a fast-but-paid leg share a chain with free legs without taking
+// over the cheap turns, the starvation that took "fastest" out of the
+// free-first combos on 2026-09-11.
+func TestStrategySizeAwareReordersOnlyLargeRequests(t *testing.T) {
+	r := New(sizeAwarePool(t, provider.MinPrefillSamplesForOrdering))
+	var speed []string
+	r.SpeedLog = func(model, detail string) { speed = append(speed, detail) }
+
+	// Two configured orders, one per regime, so each half fails on its own:
+	// the SMALL turn must keep whatever sequence the operator wrote (here the
+	// fast-prefill leg leads on purpose), while the LARGE turn is decided by
+	// measured prefill (the same leg must win from last place). Without the
+	// gate the small turn re-ranks on decode EWMA — slowprefill scores 92
+	// tok/s against fastprefill's 54 — failing the first half; never
+	// reordering fails the second.
+	small := &Resolution{IsCombo: true, PrefillOrder: true, Model: "stack", Targets: []Target{
+		{Provider: "fastprefill", Model: "m"},
+		{Provider: "slowprefill", Model: "m"},
+	}}
+	r.reorderBySpeed(WithInputSize(context.Background(), 5_000), small)
+	if got := targetNames(small); !slices.Equal(got, []string{"fastprefill/m", "slowprefill/m"}) {
+		t.Fatalf("small request must keep the configured chain, got %v", got)
+	}
+	if len(speed) != 0 {
+		t.Fatalf("a gated no-op must not log a decision: %v", speed)
+	}
+
+	large := &Resolution{IsCombo: true, PrefillOrder: true, Model: "stack", Targets: []Target{
+		{Provider: "slowprefill", Model: "m"},
+		{Provider: "fastprefill", Model: "m"},
+	}}
+	r.reorderBySpeed(WithInputSize(context.Background(), 200_000), large)
+	if got := targetNames(large); !slices.Equal(got, []string{"fastprefill/m", "slowprefill/m"}) {
+		t.Fatalf("large request must lead with the measured fast-prefill leg, got %v", got)
+	}
+	if len(speed) != 1 {
+		t.Fatalf("the large reorder must log exactly one decision, got %v", speed)
+	}
+}
+
+// TestResolveSizeAwareStrategyMarksResolution pins the config→router wire: the
+// strategy name reaches Execute as PrefillOrder (not SpeedOrder), so the two
+// modes cannot silently trade places.
+func TestResolveSizeAwareStrategyMarksResolution(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{Name: "a", Kind: provider.KindOpenAI, Accounts: []provider.Account{{Name: "x", APIKey: "k"}}})
+	p.Set(&provider.Def{Name: "b", Kind: provider.KindOpenAI, Accounts: []provider.Account{{Name: "y", APIKey: "k"}}})
+	r := New(p)
+	r.SetCombos([]*Combo{{Name: "sa", Strategy: "size-aware", Targets: []Target{
+		{Provider: "a", Model: "m"}, {Provider: "b", Model: "m"},
+	}}})
+	res, err := r.Resolve("sa")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !res.PrefillOrder || res.SpeedOrder {
+		t.Fatalf("size-aware must set PrefillOrder only, got PrefillOrder=%v SpeedOrder=%v", res.PrefillOrder, res.SpeedOrder)
+	}
+}
+
 // TestSizeAwareReorderLogsSpeedDecision pins the observability contract this
 // feature's live verification depends on: when prefill ordering changes a
 // combo's chain, exactly one SpeedLog row is emitted and the task-routing
