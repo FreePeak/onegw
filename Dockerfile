@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# Multi-stage: build a static onegw binary, ship it in a minimal runtime image.
-# Final image is non-root, listens on 0.0.0.0:8080, persists usage data in /data,
-# and takes all credentials through env (ONEGW_KEYS, ONEGW_PROVIDER_*_KEY,
-# ONEGW_ADMIN_PASSWORD) — no secrets baked into the image.
+# Multi-stage: build the static gateway binary and its OAuth CLI, ship both in a
+# minimal runtime image. The final image is non-root, listens on 0.0.0.0:8080,
+# persists usage data in /data, and takes all credentials through env
+# (ONEGW_KEYS, ONEGW_PROVIDER_*_KEY, ONEGW_ADMIN_PASSWORD) — no secrets baked
+# into the image.
 
 # golang:1.25-alpine has no .git → buildvcs skips stamping, same as the release
 # workflow's binary; VERSION is injected by the release workflow so the
@@ -21,7 +22,9 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 RUN CGO_ENABLED=0 go build -p "${GO_BUILD_JOBS}" -trimpath \
     -ldflags "-s -w -X onegw/internal/update.version=${VERSION}" \
-    -o /out/onegw ./cmd/onegw
+    -o /out/onegw ./cmd/onegw \
+ && CGO_ENABLED=0 go build -p "${GO_BUILD_JOBS}" -trimpath \
+    -o /out/onegw-oauth ./cmd/onegw-oauth
 
 # --- Runtime stage -----------------------------------------------------------
 FROM alpine:3.20
@@ -31,6 +34,11 @@ RUN apk add --no-cache ca-certificates tzdata curl \
     && addgroup -S onegw && adduser -S -G onegw -h /data -s /sbin/nologin onegw \
     && mkdir -p /data && chown onegw:onegw /data
 COPY --from=build /out/onegw /usr/local/bin/onegw
+# The standalone OAuth CLI used to be missing from the image, so the documented
+# `docker exec -it onegw onegw-oauth login …` failed with "executable file not
+# found in $PATH". Both entry points ship now; they run the same code
+# (internal/oauthcmd), so either form works inside the container.
+COPY --from=build /out/onegw-oauth /usr/local/bin/onegw-oauth
 COPY docker/onegw.default.toml /etc/onegw/onegw.toml
 
 # Runtime config; /data holds usage.db (bind-mount or named volume it).
