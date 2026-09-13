@@ -71,7 +71,7 @@ func runGateway() {
 	}
 	logAdminPassword(cfg)
 
-	applyMemoryTuning()
+	applyMemoryTuning(cfg)
 
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -120,8 +120,12 @@ func runGateway() {
 	srv.SetUpdater(upd) // dashboard Settings card reads GET/POST /admin/api/v1/update (#61)
 	// Dashboard-driven reloads (PUT /admin/config/reload) swap the server
 	// state without a signal; the hook keeps this outer-mux update
-	// handler's config copy in sync so its credential never goes stale (#63).
-	srv.SetOnConfigReload(curCfg.Store)
+	// handler's config copy in sync so its credential never goes stale (#63),
+	// and moves the GC soft limit with a reloaded buffered-byte budget.
+	srv.SetOnConfigReload(func(fresh *config.Config) {
+		curCfg.Store(fresh)
+		applyMemoryTuning(fresh)
+	})
 	defer upd.Stop()
 
 	// srv.Handler() wraps its mux (recovery), so /admin/update mounts on
@@ -143,8 +147,8 @@ func runGateway() {
 		IdleTimeout: 30 * time.Minute,
 	}
 
-	log.Printf("onegw listening on %s (data: %s, budget: %d MiB)",
-		cfg.Server.Listen, cfg.Server.DataDir, cfg.Server.BufferCap>>20)
+	log.Printf("onegw listening on %s (data: %s, budget: %d MiB, memlimit: %d MiB)",
+		cfg.Server.Listen, cfg.Server.DataDir, cfg.Server.BufferCap>>20, debug.SetMemoryLimit(-1)>>20)
 
 	// Signal loop: SIGTERM/SIGINT drain in-flight requests and exit;
 	// SIGHUP hot-reloads the config — providers, combos, auth keys, saver
@@ -195,12 +199,14 @@ func logAdminPassword(cfg *config.Config) {
 		cfg.Server.DataDir, config.AdminPasswordFile)
 }
 
-// applyMemoryTuning sets a soft heap limit when the operator has not. The
-// hard target is 100 MB RSS; GOMEMLIMIT at 90 MiB keeps the Go GC working
-// before the process approaches the ceiling.
-func applyMemoryTuning() {
+// applyMemoryTuning sets a soft heap limit when the operator has not. The limit
+// MUST clear the configured buffered-byte budget: bytes the budget permits but
+// the GC fights are throughput bought with nothing, and a reservation is held
+// for the whole upstream round-trip. The default 48 MiB budget keeps the
+// historic 90 MiB ceiling (100 MB RSS envelope).
+func applyMemoryTuning(cfg *config.Config) {
 	if os.Getenv("GOMEMLIMIT") ***REMOVED*** "" {
-		debug.SetMemoryLimit(90 << 20)
+		debug.SetMemoryLimit(heapLimitBytes(cfg.Server.BufferCap))
 	}
 	if os.Getenv("GOGC") ***REMOVED*** "" {
 		// Slightly more aggressive GC than the default 100 keeps the heap
@@ -213,6 +219,15 @@ func applyMemoryTuning() {
 			runtime.GOMAXPROCS(4)
 		}
 	}
+}
+
+// heapLimitBytes is the tuned soft heap limit for a buffered-byte budget: the
+// budget plus a quarter for the handler work around it, never below the 90 MiB
+func heapLimitBytes(bufferCap int64) int64 {
+	if need := bufferCap + bufferCap/4; need > 90<<20 {
+		return need
+	}
+	return 90 << 20
 }
 
 func fatal(format string, args ...any) {
