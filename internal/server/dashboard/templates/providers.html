@@ -24,6 +24,14 @@
     {{if .Quota}}<span class="k">quota window</span><span>{{.Quota}}{{if .QuotaLimit}} · limit {{.QuotaLimit}}{{end}}</span>{{end}}
     {{if .Sticky}}<span class="k">sticky</span><span>{{.Sticky}}</span>{{end}}
   </div>
+  {{if .OAuth}}<div class="kv mb-2"><span class="k">sign-in</span><span>
+    {{range .OAuth}}<span class="pill{{if ne .State "signed-in"}} warn{{end}}"
+      title="{{.Key}} · {{.Service}} · {{.State}}{{if .ExpiresAt}} · expires {{.ExpiresAt}}{{end}}{{if .Cooling}} · cooling{{end}}{{if .Invalidated}} · terminal billing{{end}}{{if .Error}} · {{.Error}}{{end}}">{{.Account}} · {{.Service}} · {{.State}}</span>
+    {{if .Owner}}<span class="text-mut/60 text-[12px]">borrows {{.Owner}}</span>
+    {{else if eq .State "signed-in"}}<button class="btn sm" data-signout="{{.Key}}" type="button">Sign out</button>
+    {{else}}<button class="btn sm primary" data-signin="{{.Key}}" type="button">{{if eq .State "pending"}}Show code{{else}}Sign in{{end}}</button>{{end}}
+    {{end}}
+  </span></div>{{end}}
   {{if .Models}}<details><summary>{{len .Models}} advertised models</summary>
   <div class="mono mt-2 leading-8">{{range .Models}}<code class="chip">{{.}}</code> {{end}}</div></details>{{end}}
 </div>
@@ -105,8 +113,29 @@
         <input id="pf-qr" name="quota_limit_requests" type="number" min="0" inputmode="numeric">
       </div>
     </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div class="field">
+        <label for="pf-rmodels">responses models <span class="text-mut/60">(ids forced onto /v1/responses)</span></label>
+        <textarea id="pf-rmodels" name="responses_models" rows="2" spellcheck="false"
+                  placeholder="grok-4.5*"></textarea>
+      </div>
+      <div class="field">
+        <label for="pf-sq">subscription quota <span class="text-mut/60">(upstream-reported)</span></label>
+        <input id="pf-sq" name="subscription_quota" list="pf-sq-opts" type="text"
+               autocomplete="off" placeholder="off | grok-cli | opencode-go | zai | commandcode">
+        <datalist id="pf-sq-opts">
+          <option value=""></option>
+          <option value="grok-cli"></option>
+          <option value="opencode-go"></option>
+          <option value="zai"></option>
+          <option value="zai-cn"></option>
+          <option value="commandcode"></option>
+        </datalist>
+      </div>
+    </div>
     <div class="field">
-      <label>accounts <span class="text-mut/60">(editing: blank key keeps the existing one)</span>
+      <label>accounts <span class="text-mut/60">(editing: blank key keeps the existing one · pick a
+        service for a subscription login — no API key needed)</span>
         <button type="button" class="btn sm ml-2" id="pf-addacct">+ account</button></label>
       <div id="pf-accts"></div>
     </div>
@@ -116,11 +145,30 @@
     </div>
   </form>
 </dialog>
+
+<dialog class="modal" id="oauthdlg" aria-labelledby="oauthdlg-title">
+  <h2 id="oauthdlg-title">Sign in</h2>
+  <p class="msub" id="oauth-sub">Open the link, enter the code, and approve. This window follows the login by itself.</p>
+  <div class="merr" id="oauth-err" role="alert" hidden></div>
+  <div class="field">
+    <label>code</label>
+    <div class="mono text-[20px] tracking-[0.15em]" id="oauth-code">…</div>
+  </div>
+  <div class="field">
+    <label>link</label>
+    <a id="oauth-link" class="mono url" href="#" target="_blank" rel="noreferrer">…</a>
+  </div>
+  <p class="msub" id="oauth-state"></p>
+  <div class="mfoot">
+    <button type="button" class="btn" id="oauth-close">Close</button>
+  </div>
+</dialog>
 {{end}}
 {{define "scripts"}}
 {{template "content-modal" .}}
 <script>
-const PREFILL = {{.Edit}};
+const PREFILL = {{.Edit}}||[];
+const SERVICES = {{.Services}}||[];
 (function(){
   const dlg = document.getElementById('pmodal'),
         form = document.getElementById('pform'),
@@ -132,15 +180,27 @@ const PREFILL = {{.Edit}};
 
   function acctRow(a){
     const d = document.createElement('div');
-    d.className = 'grid grid-cols-[1fr_1fr_6rem_auto] items-end gap-2 mb-2';
+    d.className = 'grid grid-cols-[1fr_1fr_5rem_9rem_auto] items-end gap-2 mb-2';
     d.innerHTML = `<div><label class="sr-only">account name</label>
         <input class="a-name" type="text" placeholder="account name" autocomplete="off" spellcheck="false"></div>
       <div><label class="sr-only">account key</label>
         <input class="a-key" type="password" placeholder="${a && a.has_key ? 'keep existing key' : 'api key (optional)'}" autocomplete="off"></div>
       <div><label class="sr-only">rpm (0 = uncapped)</label>
-        <input class="a-rpm" type="number" min="0" inputmode="numeric" placeholder="rpm"></div>`;
+        <input class="a-rpm" type="number" min="0" inputmode="numeric" placeholder="rpm"></div>
+      <div><label class="sr-only">oauth service</label>
+        <select class="a-oauth" title="subscription login (no API key): writes a matching [[oauth.accounts]] entry">
+          <option value="">static key</option>
+          ${SERVICES.map(sv => `<option value="${sv}">${sv}</option>`).join('')}
+        </select></div>`;
     d.querySelector('.a-name').value = a ? a.name : '';
     if (a && a.rpm) d.querySelector('.a-rpm').value = a.rpm;
+    if (a && a.oauth) d.querySelector('.a-oauth').value = a.oauth;
+    if (a && a.owner) {
+      // Borrower: the login lives on another entry's account.
+      const sel = d.querySelector('.a-oauth');
+      sel.disabled = true;
+      sel.title = 'borrows ' + a.owner + ' — managed on that entry';
+    }
     if (a && a.base_url) { /* base_url preserved server-side; not surfaced */ }
     const rm = document.createElement('button');
     rm.type = 'button'; rm.className = 'rowact'; rm.title = 'remove account';
@@ -168,6 +228,8 @@ const PREFILL = {{.Edit}};
     document.getElementById('pf-kind').value = p.kind;
     document.getElementById('pf-url').value = p.base_url || '';
     document.getElementById('pf-models').value = (p.models || []).join('\n');
+    document.getElementById('pf-rmodels').value = (p.responses_models || []).join('\n');
+    document.getElementById('pf-sq').value = p.subscription_quota || '';
     document.getElementById('pf-conc').value = p.max_concurrency || '';
     document.getElementById('pf-sticky').value = p.sticky || '';
     document.getElementById('pf-qw').value = p.quota_window || '';
@@ -225,10 +287,12 @@ const PREFILL = {{.Edit}};
       base_url: document.getElementById('pf-url').value.trim(),
       api_key: document.getElementById('pf-key').value,
       models: document.getElementById('pf-models').value.split('\n').map(s => s.trim()).filter(Boolean),
+      responses_models: document.getElementById('pf-rmodels').value.split('\n').map(s => s.trim()).filter(Boolean),
+      subscription_quota: document.getElementById('pf-sq').value.trim(),
       max_concurrency: parseInt(document.getElementById('pf-conc').value, 10) || 0,
       sticky: document.getElementById('pf-sticky').value.trim(),
       quota_window: document.getElementById('pf-qw').value,
-      accounts: [...accts.children].map(r => ({ name: r.querySelector('.a-name').value.trim(), api_key: r.querySelector('.a-key').value, rpm: parseInt(r.querySelector('.a-rpm').value, 10) || 0 })),
+      accounts: [...accts.children].map(r => ({ name: r.querySelector('.a-name').value.trim(), api_key: r.querySelector('.a-key').value, rpm: parseInt(r.querySelector('.a-rpm').value, 10) || 0, oauth: r.querySelector('.a-oauth').value })),
       quota_limit_tokens: parseInt(document.getElementById('pf-qt').value, 10) || 0,
       quota_limit_requests: parseInt(document.getElementById('pf-qr').value, 10) || 0,
     };
@@ -253,11 +317,89 @@ const PREFILL = {{.Edit}};
     }
   };
 
+  // --- Subscription (OAuth) sign-in ---------------------------------------
+  // The device flow runs server-side; this dialog shows the code and follows
+  // the account's state until it flips to signed-in.
+  const odlg = document.getElementById('oauthdlg'),
+        ocode = document.getElementById('oauth-code'),
+        olink = document.getElementById('oauth-link'),
+        ost = document.getElementById('oauth-state'),
+        oerr = document.getElementById('oauth-err');
+  let watching = null, timer = null;
+
+  function stopPolling(){ if (timer) { clearInterval(timer); timer = null; } watching = null; }
+  function showPrompt(key, p){
+    ocode.textContent = (p && p.user_code) || '…';
+    const u = p && (p.verification_uri_complete || p.verification_uri);
+    if (u) { olink.href = u; olink.textContent = u; }
+    else { olink.removeAttribute('href'); olink.textContent = 'waiting for the provider…'; }
+    ost.textContent = key + (p && p.expires_at ? ' · code expires ' + new Date(p.expires_at).toLocaleTimeString() : '');
+  }
+  async function pollState(){
+    if (!watching) return;
+    try {
+      const r = await fetch('/admin/config/oauth/accounts');
+      if (!r.ok) return;
+      const j = await r.json();
+      const a = (j.accounts || []).find(x => x.key === watching);
+      if (!a) return;
+      if (a.prompt) showPrompt(watching, a.prompt);
+      if (a.state === 'signed-in') {
+        const key = watching;
+        stopPolling();
+        odlg.close();
+        ogwToast(key + ' signed in (token stored, no config change)', true);
+        setTimeout(() => location.reload(), 400);
+        return;
+      }
+      if (a.state === 'failed') {
+        oerr.textContent = a.error || 'login failed';
+        oerr.hidden = false;
+      }
+      ost.textContent = watching + ' · ' + a.state + (a.cooling ? ' (cooling)' : '');
+    } catch (e) { /* transient network hiccup: keep polling */ }
+  }
+  document.querySelectorAll('[data-signin]').forEach(b => b.onclick = async () => {
+    const key = b.dataset.signin;
+    b.disabled = true;
+    try {
+      const r = await fetch('/admin/config/oauth/login?key=' + encodeURIComponent(key), { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { ogwToast(j.error || ('sign-in failed (' + r.status + ')'), false); return; }
+      oerr.hidden = true;
+      watching = key;
+      showPrompt(key, j.prompt);
+      if (!odlg.open) odlg.showModal();
+      if (!timer) timer = setInterval(pollState, 2000);
+    } catch (e) {
+      ogwToast('sign-in failed: ' + e.message, false);
+    } finally {
+      b.disabled = false;
+    }
+  });
+  document.querySelectorAll('[data-signout]').forEach(b => b.onclick = async () => {
+    const key = b.dataset.signout;
+    b.disabled = true;
+    try {
+      const r = await fetch('/admin/config/oauth/logout?key=' + encodeURIComponent(key), { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { ogwToast(j.error || ('sign-out failed (' + r.status + ')'), false); return; }
+      ogwToast('token for ' + key + ' deleted — the account uses its static key until re-login', true);
+      setTimeout(() => location.reload(), 400);
+    } catch (e) {
+      ogwToast('sign-out failed: ' + e.message, false);
+    } finally {
+      b.disabled = false;
+    }
+  });
+  document.getElementById('oauth-close').onclick = () => { stopPolling(); odlg.close(); };
+  odlg.addEventListener('close', stopPolling);
+
   // Live config events: a save (anywhere, any tab) refreshes this view.
   const es = new EventSource('/admin/events?topics=config');
   let pending = false;
   es.addEventListener('config', () => {
-    if (dlg.open || pending) return; // never wipe an open editor
+    if (dlg.open || odlg.open || pending) return; // never wipe an open editor or a live sign-in
     pending = true;
     setTimeout(() => location.reload(), 300);
   });
