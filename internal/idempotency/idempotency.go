@@ -9,7 +9,8 @@
 // result), replays the recorded non-streaming response, or — for a
 // stream-shaped original — answers 409 so the client can retry with a
 // fresh key. Streaming bodies are never recorded: that would violate the
-// gateway's RAM budget (GOMEMLIMIT=90MiB).
+// gateway's RAM budget (the tuned soft heap limit, 90 MiB at the default
+// buffered budget).
 //
 // The cache is a bounded LRU with a hard entry cap and a global body-byte
 // budget. Expired entries are pruned lazily on lookup and eviction; there
@@ -39,7 +40,8 @@ const (
 
 	// TotalBodyBudget bounds the sum of all buffered bodies across the
 	// cache: worst case 4 MiB of bodies plus per-entry overhead, well
-	// inside the 90 MiB GOMEMLIMIT even at the 1024-entry clamp.
+	// inside the tuned soft heap limit (90 MiB at the default 48 MiB
+	// buffered budget) even at the 1024-entry clamp.
 	TotalBodyBudget = 4 << 20
 )
 
