@@ -41,6 +41,10 @@
 </div>
 <pre id="pw-res" class="mono mt-2.5 text-mut"></pre></div>
 
+<div class="card mb-3"><h3>Gateway keys</h3>
+<p class="sub mb-2">The bearer keys clients send as <code class="chip">Authorization: Bearer …</code>. Fetched on demand from <code class="chip">GET /admin/config/keys</code> — they are never server-rendered into this page.</p>
+<div id="keys-list" class="kv"></div></div>
+
 <div class="card mb-3"><h3>Maintenance</h3>
 <div class="flex items-center gap-2.5">
   <button class="btn" hx-put="/admin/config/reload" hx-target="#reload-res" hx-swap="innerHTML">Reload config (SIGHUP)</button>
@@ -98,8 +102,50 @@
     btn.className = 'btn primary mt-2.5';
     btn.textContent = 'Go to sign-in';
     btn.onclick = function(){ location.href = '/admin'; };
-    res.after(btn);
+    var anchor = res;
+    if (j.generated) {
+      // The one plaintext secret this page prints: make it copyable.
+      var cp = document.createElement('button');
+      cp.className = 'btn copy sm';
+      cp.type = 'button';
+      cp.dataset.copy = j.password;
+      cp.setAttribute('aria-label', 'copy generated admin password');
+      cp.textContent = 'copy';
+      res.after(cp);
+      anchor = cp;
+    }
+    anchor.after(btn);
   };
+})();
+// Gateway keys: fetched (never server-rendered — GET /admin/config's masking
+// posture stays intact), one copy button per key with the full key as
+// payload. Labels fall back to the key itself for unnamed flat entries.
+(function(){
+  var list = document.getElementById('keys-list');
+  if (!list) return;
+  fetch('/admin/config/keys').then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(j){
+    var keys = (j && j.keys) || [];
+    if (!keys.length) { list.textContent = 'none — [auth] keys is empty'; return; }
+    keys.forEach(function(k){
+      var label = document.createElement('span');
+      label.className = 'k mono';
+      label.style.overflowWrap = 'anywhere'; // 170px label column, long keys wrap
+      label.textContent = k.name || k.key;
+      var b = document.createElement('button');
+      b.className = 'btn copy sm';
+      b.type = 'button';
+      b.dataset.copy = k.key;
+      b.setAttribute('aria-label', 'copy gateway key ' + (k.name || k.key));
+      b.textContent = 'copy';
+      var cell = document.createElement('span');
+      cell.appendChild(b);
+      list.appendChild(label);
+      list.appendChild(cell);
+    });
+  }).catch(function(e){ list.textContent = 'keys unavailable: ' + e.message; });
 })();
 </script>
 <script>

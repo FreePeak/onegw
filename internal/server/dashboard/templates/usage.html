@@ -24,7 +24,7 @@
 <table>
 <thead><tr><th>provider</th><th>model</th><th class="num">reqs</th><th class="num">in</th><th class="num">out</th><th class="num">cache read</th><th class="num">cache write</th><th class="num">saved</th></tr></thead>
 <tbody>
-{{range .Rows}}<tr><td>{{.Provider}}</td><td class="mono">{{.Model}}</td>
+{{range .Rows}}<tr><td>{{.Provider}}</td><td class="mono">{{.Model}} <button class="btn copy sm" data-copy="{{.Provider}}/{{.Model}}" aria-label="copy model id">copy</button></td>
   <td class="num">{{compact .Req}}</td><td class="num">{{compact .In}}</td><td class="num">{{compact .Out}}</td>
   <td class="num">{{compact .CacheRead}}</td><td class="num">{{compact .CacheWrite}}</td><td class="num text-ok">{{compact .Saved}}</td></tr>
 {{else}}<tr><td colspan="8" class="empty">no usage in this window</td></tr>{{end}}

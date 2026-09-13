@@ -106,6 +106,31 @@
     box.appendChild(el);
     setTimeout(function(){ el.remove(); },4000);
   };
+  // Delegated copy buttons (tools.html idiom hoisted here so late-built rows
+  // like logs.html get it for free): payload is data-copy, or the textContent
+  // of the element data-t names. Capture phase + stopPropagation so a copy
+  // click inside a logs row never trips the row's expand handler. Clipboard
+  // writes need a secure context, and the docker dashboard runs on plain
+  // http — hence the textarea/execCommand fallback (9router useCopy pattern).
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('.copy');
+    if (!b) return;
+    e.stopPropagation();
+    var txt = b.dataset.copy != null ? b.dataset.copy : ((document.getElementById(b.dataset.t) || {}).textContent || '');
+    function ok(){ var t = b.textContent; b.textContent = 'copied ✓'; setTimeout(function(){ b.textContent = t; }, 1200); }
+    function fail(){ ogwToast('copy failed', false); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(ok, fail);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var done = false;
+      try { done = document.execCommand('copy'); } catch (err) {}
+      document.body.removeChild(ta);
+      done ? ok() : fail();
+    }
+  }, true);
   // Rail clock (M.O.N.K.Y widget analogue): 1s local-time ticker.
   (function(){
     var time=document.getElementById('clk-time'); if(!time) return;

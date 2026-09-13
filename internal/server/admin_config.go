@@ -9,6 +9,10 @@
 //
 //	the [auth] table on disk.
 //
+// GET   /admin/config/keys     — the gateway's own bearer keys in full
+//
+//	(admin-gated; the Settings page fetches this to build copy buttons).
+//
 // PATCH /admin/config/aliases  — set/delete alias entries ([aliases] table).
 //
 // Non-goals: no DB-backed config, no general TOML editor. The file stays
@@ -256,6 +260,28 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 	log.Printf("admin: auth keys changed: +%d -%d (total %d)", added, removed, len(keys))
 	writeJSON(w, map[string]any{"added": added, "removed": removed, "total": len(keys)})
 	_ = fresh
+}
+
+// handleAdminKeysGet reveals the gateway's own auth.keys in full to an
+// already-admin-authenticated caller — the deliberate mirror of 9router's
+// /api/keys, so the dashboard can offer copy-the-key buttons. The masking
+// posture of GET /admin/config (and every third-party credential: provider
+// api_keys and account keys) is unchanged; only auth.keys lives here.
+func (s *Server) handleAdminKeysGet(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOK(r) {
+		adminUnauthorized(w)
+		return
+	}
+	type keyView struct {
+		Key  string `json:"key"`
+		Name string `json:"name"`
+	}
+	list := s.cur().cfg.Auth.KeyList
+	keys := make([]keyView, 0, len(list))
+	for _, k := range list {
+		keys = append(keys, keyView{Key: k.Key, Name: k.Name})
+	}
+	writeJSON(w, map[string]any{"keys": keys})
 }
 
 func (s *Server) handleAdminAliases(w http.ResponseWriter, r *http.Request) {

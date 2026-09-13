@@ -282,8 +282,8 @@ func TestDashboardPagesRender(t *testing.T) {
 	pages := map[string]string{
 		"/admin":              "Requests · today",
 		"/admin/ui/usage":     "All time",
-		"/admin/ui/providers": "p1",
-		"/admin/ui/combos":    "c1",
+		"/admin/ui/providers": `data-copy="p1/m1"`, // copy chip carries the usable id
+		"/admin/ui/combos":    `data-copy="c1"`,
 		"/admin/ui/quota":     "no quota windows",
 		"/admin/ui/saver":     "Input saver",
 		"/admin/ui/logs":      "logstat",
@@ -330,6 +330,34 @@ func TestProvidersPageRendersAccountBulkEditor(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page missing %q in:\n%s", want, page)
 		}
+	}
+}
+
+// TestGatewayKeys pins the copy-button key surface: GET /admin/config/keys
+// reveals auth.keys to admins only (the settings page's copy buttons fetch
+// it via JS), and no server-rendered HTML carries key material — gateway
+// keys arrive exclusively through that endpoint, and provider API keys
+// never reach the DOM at all (the HTML-side twin of the JSON-API leak guard
+// in TestAPIEndpointsShape).
+func TestGatewayKeys(t *testing.T) {
+	_, h := newAdminSrv(t, "")
+	w := do(t, h, httptest.NewRequest(http.MethodGet, "/admin/config/keys", nil))
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth keys: %d %s", w.Code, w.Body.String())
+	}
+	w = do(t, h, adminReq(t, "/admin/config/keys"))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "sk-test-gw") {
+		t.Fatalf("keys: %d %s", w.Code, w.Body.String())
+	}
+	for _, path := range []string{"/admin/ui/settings", "/admin/ui/tools"} {
+		w = do(t, h, adminReq(t, path))
+		if strings.Contains(w.Body.String(), "sk-test-gw") {
+			t.Fatalf("%s server-rendered a gateway key", path)
+		}
+	}
+	w = do(t, h, adminReq(t, "/admin/ui/providers"))
+	if strings.Contains(w.Body.String(), "sk-test-upstream-secret") {
+		t.Fatal("providers HTML leaked a provider api key")
 	}
 }
 
@@ -616,7 +644,7 @@ func TestUsageTodaySpansUTCDayBoundary(t *testing.T) {
 	now := time.Now()
 	localMidnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 	localEnd := localMidnight.AddDate(0, 0, 1)
-	dA, hA := bucketKey(localMidnight)             // first hour of the local day
+	dA, hA := bucketKey(localMidnight)            // first hour of the local day
 	dB, hB := bucketKey(localEnd.Add(-time.Hour)) // last hour of the local day
 	rows := []usage.Bucket{
 		{Key: usage.Key{Day: dA, Hour: hA, Provider: "p1", Model: "edge-start", APIKey: "k"}, Requests: 1, InputTokens: 1_234_567},
