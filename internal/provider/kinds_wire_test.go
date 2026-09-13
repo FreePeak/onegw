@@ -38,6 +38,11 @@ func TestNewKindsFormatAndDefaults(t *testing.T) {
 			t.Errorf("%s: ForcedStream()=%v want %v", c.kind, got, c.forced)
 		}
 	}
+	// The Grok Build proxy ships a static fallback catalog (9router's
+	// registry) so a bare provider still advertises on /v1/models.
+	if got := DefaultModels(KindOpenAIResponses); len(got) != 2 || got[0] != "grok-build" || got[1] != "grok-4.5" {
+		t.Errorf("DefaultModels(openai-responses) = %v, want [grok-build grok-4.5]", got)
+	}
 }
 
 // joinURL must produce the exact upstream endpoints for both base_url
@@ -104,9 +109,10 @@ func TestGrokCliFingerprintHeaders(t *testing.T) {
 
 	want := map[string]string{
 		"X-Xai-Token-Auth":         "xai-grok-cli",
-		"X-Grok-Client-Identifier": "xai-grok-cli",
+		"X-Grok-Client-Identifier": "grok-shell",
 		"X-Grok-Client-Version":    "0.2.99",
 		"X-Grok-Cli-Version":       "0.2.97",
+		"User-Agent":               "grok-shell/0.2.99 (linux; x86_64)",
 		"Authorization":            "Bearer jwt-bearer-token",
 	}
 	if len(seen) != 2 {
@@ -124,5 +130,18 @@ func TestGrokCliFingerprintHeaders(t *testing.T) {
 				t.Fatalf("call %d header %s = %q, want %q", i, k, got, v)
 			}
 		}
+	}
+	// Chat-turn extras (9router executors/grok-cli.js buildHeaders): the
+	// model the CLI routed to, and a per-attempt request UUID (random, so
+	// presence + shape only).
+	if got := seen[0].hdr.Get("X-Grok-Model-Override"); got != "grok-build" {
+		t.Fatalf("chat x-grok-model-override = %q, want grok-build", got)
+	}
+	if rid := seen[0].hdr.Get("X-Grok-Req-Id"); len(rid) != 36 || rid[14] != '4' {
+		t.Fatalf("chat x-grok-req-id = %q, want a v4 UUID", rid)
+	}
+	// The models GET is not a chat turn: the CLI sends neither id there.
+	if got := seen[1].hdr.Get("X-Grok-Req-Id") + seen[1].hdr.Get("X-Grok-Model-Override"); got != "" {
+		t.Fatalf("discovery call carries chat-turn ids %q", got)
 	}
 }
