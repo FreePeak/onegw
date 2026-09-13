@@ -93,6 +93,10 @@ type Server struct {
 	reqlog   *requestLog
 	// retainStop closes the daily rollup-prune loop on Close.
 	retainStop chan struct{}
+	// oa holds the dashboard's in-flight OAuth device-flow logins. It sits
+	// on the Server (not the reloadable state) so a config swap mid-login
+	// cannot orphan the goroutine holding the polling credential.
+	oa *oauthAdmin
 	// cfgMu serializes admin config mutations so concurrent PATCH/reload
 	// read-modify-write cycles on the TOML file stay atomic.
 	cfgMu sync.Mutex
@@ -115,7 +119,8 @@ func New(cfg *config.Config) (*Server, error) {
 		}
 	}
 	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), dataDir: dataDir,
-		sessions: newAdminSessions(), logins: newLoginGuard(), events: newSSEHub(), reqlog: newRequestLog()}
+		sessions: newAdminSessions(), logins: newLoginGuard(), events: newSSEHub(), reqlog: newRequestLog(),
+		oa: newOauthAdmin()}
 	s.m = newGatewayMetrics()
 	s.m.srv = s
 	s.reqlog.next = s.events
@@ -437,6 +442,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /admin/config/providers", s.handleAdminProviderEdit)
 	mux.HandleFunc("PATCH /admin/config/providers/{name}/disabled", s.handleAdminProviderDisabled)
 	mux.HandleFunc("POST /admin/api/v1/providers/{name}/accounts/{acct}/reset", s.handleAdminAccountReset)
+	mux.HandleFunc("GET /admin/config/oauth/accounts", s.handleAdminOAuthAccounts)
+	mux.HandleFunc("POST /admin/config/oauth/login", s.handleAdminOAuthLogin)
+	mux.HandleFunc("POST /admin/config/oauth/logout", s.handleAdminOAuthLogout)
 	mux.HandleFunc("PUT /admin/config/combos", s.handleAdminComboEdit)
 	mux.HandleFunc("POST /v1/chat/completions", s.withIdempotency(translat.FmtOpenAI, s.handleOpenAI))
 	mux.HandleFunc("POST /v1/completions", s.withIdempotency(translat.FmtOpenAI, s.handleOpenAI))

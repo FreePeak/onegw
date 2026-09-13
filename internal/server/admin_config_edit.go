@@ -21,6 +21,15 @@ package server
 // keyless (env ONEGW_PROVIDER_<NAME>_KEY or nothing) — config.Load's
 // validation still refuses credential-less providers except the keyless
 // kinds (searxng, opencode-free).
+//
+// An account row may also name an OAuth service profile (`oauth: "xai"`),
+// which is the dashboard's way of writing the matching [[oauth.accounts]]
+// entry: the credential then comes from a device-flow login (see
+// admin_oauth.go) instead of a pasted key. That is what a Grok / SuperGrok
+// subscription account needs — no API key exists for it. Clearing the row's
+// service drops the entry again; entries belonging to other providers, and
+// every borrower entry (`owner` set, which the UI cannot express), are never
+// touched.
 
 import (
 	"encoding/json"
@@ -39,27 +48,40 @@ import (
 // ---------------------------------------------------------------------------
 
 // acctEdit is one [[providers.accounts]] entry. APIKey "" on update keeps
-// the existing key for that account name.
+// the existing key for that account name. OAuth names the device-flow
+// service profile ("xai", "kilocode") that supplies this account's bearer
+// credential: non-empty writes/keeps the matching [[oauth.accounts]] entry,
+// empty on update removes that entry and leaves the static key in charge.
 type acctEdit struct {
 	Name    string `json:"name"`
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url"`
 	Weight  int    `json:"weight"`
 	RPM     int    `json:"rpm"`
+	OAuth   string `json:"oauth"`
 }
 
 type providerEditReq struct {
-	Name             string     `json:"name"`
-	Kind             string     `json:"kind"`
-	BaseURL          string     `json:"base_url"`
-	APIKey           string     `json:"api_key"` // "" on update = keep existing
-	Models           []string   `json:"models"`
-	MaxConc          int        `json:"max_concurrency"`
-	Sticky           string     `json:"sticky"`
-	QuotaWindow      string     `json:"quota_window"`
-	QuotaLimitTokens int64      `json:"quota_limit_tokens"`
-	QuotaLimitReqs   int64      `json:"quota_limit_requests"`
-	Accounts         []acctEdit `json:"accounts"`
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind"`
+	BaseURL string   `json:"base_url"`
+	APIKey  string   `json:"api_key"` // "" on update = keep existing
+	Models  []string `json:"models"`
+	// ResponsesModels is the provider's `responses_models` opt-in list: the
+	// model ids to route off the chat-completions wire onto /v1/responses.
+	// grok-4.5 (and friends) answer there ONLY under an xAI OAuth bearer, so
+	// a SuperGrok account configured from the UI needs this field to work.
+	ResponsesModels []string `json:"responses_models"`
+	// SubscriptionQuota selects the upstream-reported quota profile
+	// ("grok-cli" for a SuperGrok pool, "opencode-go", "zai", "zai-cn",
+	// "commandcode"); "" = local counters only.
+	SubscriptionQuota string     `json:"subscription_quota"`
+	MaxConc           int        `json:"max_concurrency"`
+	Sticky            string     `json:"sticky"`
+	QuotaWindow       string     `json:"quota_window"`
+	QuotaLimitTokens  int64      `json:"quota_limit_tokens"`
+	QuotaLimitReqs    int64      `json:"quota_limit_requests"`
+	Accounts          []acctEdit `json:"accounts"`
 }
 
 type comboEditReq struct {
@@ -299,11 +321,17 @@ func blockName(lines []string, b tomlBlock) (string, bool) {
 
 // spliceProvider adds or updates one [[providers]] block in place.
 // Update rewrites only the editor-managed keys (name, kind, base_url,
-// api_key, models, max_concurrency, sticky, quota_*) and the
-// [[providers.accounts]] sub-tables; every other line of the block —
-// extra_headers, always_thinking, session_header, passthrough, comments —
-// is preserved byte-for-byte. Empty api_key fields carry over the
-// existing key for the same account name.
+// api_key, models, responses_models, subscription_quota, max_concurrency,
+// sticky, quota_*) and the [[providers.accounts]] sub-tables; every other
+// line of the block — extra_headers, always_thinking, session_header,
+// passthrough, comments — is preserved byte-for-byte. Empty api_key fields
+// carry over the existing key for the same account name.
+//
+// When the request carries an account roster, the provider's
+// [[oauth.accounts]] entries are reconciled with it in the SAME write
+// (spliceOAuthAccounts), so the candidate is validated exactly once — a
+// newly added provider and its OAuth entry must pass validateOAuth together,
+// and a rejection must leave the file untouched rather than half-applied.
 func spliceProvider(lines []string, req providerEditReq) ([]string, string, error) {
 	for _, b := range scanBlocks(lines, "[[providers]]") {
 		name, ok := blockName(lines, b)
@@ -313,22 +341,28 @@ func spliceProvider(lines []string, req providerEditReq) ([]string, string, erro
 		old := parseAccounts(lines[b.start:b.end])
 		edited := editProviderBlock(cloneLines(lines[b.start:b.end]), req, old)
 		candidate := append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...)
+		if req.Accounts != nil {
+			candidate = spliceOAuthAccounts(candidate, req.Name, req.Accounts)
+		}
 		if err := validateLines(candidate); err != nil {
 			return nil, "", err
 		}
-		out := append(cloneLines(lines[:b.start]), edited...)
-		return append(out, lines[b.end:]...), "updated", nil
+		return candidate, "updated", nil
 	}
 	// add — append a fresh block at EOF
-	if err := validateLines(append(cloneLines(lines), renderProviderBlock(req)...)); err != nil {
-		return nil, "", err
-	}
 	out := cloneLines(lines)
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
 		out = out[:len(out)-1]
 	}
 	out = append(out, "")
-	return append(out, renderProviderBlock(req)...), "added", nil
+	out = append(out, renderProviderBlock(req)...)
+	if req.Accounts != nil {
+		out = spliceOAuthAccounts(out, req.Name, req.Accounts)
+	}
+	if err := validateLines(out); err != nil {
+		return nil, "", err
+	}
+	return out, "added", nil
 }
 
 func cloneLines(in []string) []string {
@@ -454,6 +488,16 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 		block = upsertScalar(block, "models", "models = "+renderStringArray(req.Models))
 	} else {
 		block = removeScalar(block, "models")
+	}
+	if len(req.ResponsesModels) > 0 {
+		block = upsertScalar(block, "responses_models", "responses_models = "+renderStringArray(req.ResponsesModels))
+	} else {
+		block = removeScalar(block, "responses_models")
+	}
+	if req.SubscriptionQuota != "" {
+		block = upsertScalar(block, "subscription_quota", tsv("subscription_quota", req.SubscriptionQuota))
+	} else {
+		block = removeScalar(block, "subscription_quota")
 	}
 	if req.MaxConc > 0 {
 		block = upsertScalar(block, "max_concurrency", "max_concurrency = "+strconv.Itoa(req.MaxConc))
@@ -688,6 +732,12 @@ func renderProviderBlock(req providerEditReq) []string {
 	if len(req.Models) > 0 {
 		block = append(block, "models = "+renderStringArray(req.Models))
 	}
+	if len(req.ResponsesModels) > 0 {
+		block = append(block, "responses_models = "+renderStringArray(req.ResponsesModels))
+	}
+	if req.SubscriptionQuota != "" {
+		block = append(block, tsv("subscription_quota", req.SubscriptionQuota))
+	}
 	if req.MaxConc > 0 {
 		block = append(block, "max_concurrency = "+strconv.Itoa(req.MaxConc))
 	}
@@ -770,4 +820,143 @@ func spliceCombo(lines []string, req comboEditReq) ([]string, string, error) {
 	}
 	out = append(out, "")
 	return append(out, rendered...), "added", nil
+}
+
+// ---------------------------------------------------------------------------
+// OAuth roster splice ([[oauth.accounts]])
+// ---------------------------------------------------------------------------
+
+// oauthEntry is one parsed [[oauth.accounts]] block: the identity fields the
+// reconciliation needs, plus every original line so hand-set endpoint
+// overrides (device_url/token_url/client_id/scope) and comments survive an
+// unrelated edit of the same provider.
+type oauthEntry struct {
+	provider, account, service, owner string
+	lines                             []string
+}
+
+// spliceOAuthAccounts reconciles one provider's [[oauth.accounts]] entries
+// with the editor's account roster: a row naming an OAuth service gains the
+// entry (or keeps it, with `service` rewritten), and an entry whose row no
+// longer names one is dropped. Other providers' entries and every borrower
+// (`owner` set — the dashboard cannot express a borrowed session, so it never
+// manages one) are copied through byte-for-byte. New entries land after the
+// provider's last existing entry, or at EOF when it has none.
+func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) []string {
+	want := map[string]string{}
+	for _, a := range accts {
+		svc, name := strings.TrimSpace(a.OAuth), strings.TrimSpace(a.Name)
+		if svc ***REMOVED*** "" || name ***REMOVED*** "" {
+			continue
+		}
+		want[name] = svc
+	}
+	blocks := scanBlocks(lines, "[[oauth.accounts]]")
+	if len(blocks) ***REMOVED*** 0 && len(want) ***REMOVED*** 0 {
+		return lines
+	}
+	var (
+		out      []string
+		insertAt = -1 // line index just past this provider's last kept entry
+		kept     = map[string]bool{}
+	)
+	last := 0
+	for _, b := range blocks {
+		out = append(out, lines[last:b.start]...) // gap text (comments, blanks)
+		last = b.end
+		e := parseOAuthBlock(cloneLines(lines[b.start:b.end]))
+		if e.owner != "" || e.provider != provName {
+			out = append(out, e.lines...)
+			continue
+		}
+		svc := want[e.account]
+		if svc ***REMOVED*** "" {
+			if insertAt < 0 {
+				insertAt = len(out) // the drop point is a good place to add
+			}
+			continue // un-marked: entry removed with the row's OAuth service
+		}
+		if e.service != svc {
+			e.lines = upsertScalar(e.lines, "service", tsv("service", svc))
+		}
+		out = append(out, e.lines...)
+		kept[e.account] = true
+		insertAt = len(out)
+	}
+	out = append(out, lines[last:]...)
+
+	var add []string
+	for _, a := range accts {
+		svc, name := strings.TrimSpace(a.OAuth), strings.TrimSpace(a.Name)
+		if svc ***REMOVED*** "" || name ***REMOVED*** "" || kept[name] {
+			continue
+		}
+		kept[name] = true // a duplicated row must not write a second entry
+		add = append(add, renderOAuthEntry(provName, name, svc)...)
+	}
+	if len(add) ***REMOVED*** 0 {
+		return out
+	}
+	add = append([]string{""}, add...)
+	if insertAt >= 0 {
+		res := make([]string, 0, len(out)+len(add))
+		res = append(res, out[:insertAt]...)
+		res = append(res, add...)
+		res = append(res, out[insertAt:]...)
+		return res
+	}
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
+		out = out[:len(out)-1]
+	}
+	return append(out, add...)
+}
+
+// parseOAuthBlock reads the identity fields of one [[oauth.accounts]] block.
+// `account` and `service` are defaulted exactly as config.OAuthAccounts()
+// does at load ("default" / the provider name), so a row matches an entry
+// written without those keys and the splice never rewrites a value that is
+// already in effect.
+func parseOAuthBlock(block []string) oauthEntry {
+	e := oauthEntry{lines: block}
+	for _, ln := range block {
+		t := strings.TrimSpace(ln)
+		if t ***REMOVED*** "" || strings.HasPrefix(t, "[") || strings.HasPrefix(t, "#") {
+			continue
+		}
+		eq := strings.Index(t, "=")
+		if eq <= 0 {
+			continue
+		}
+		val, _ := parseTOMLString(t[eq+1:])
+		switch strings.TrimSpace(t[:eq]) {
+		case "provider":
+			e.provider = val
+		case "account":
+			e.account = val
+		case "service":
+			e.service = val
+		case "owner":
+			e.owner = val
+		}
+	}
+	if e.account ***REMOVED*** "" {
+		e.account = "default"
+	}
+	if e.service ***REMOVED*** "" && e.owner ***REMOVED*** "" {
+		e.service = e.provider
+	}
+	return e
+}
+
+// renderOAuthEntry renders a minimal [[oauth.accounts]] block. The service is
+// written explicitly rather than left to default from the provider name, so
+// the entry states which device-flow profile it signs in against — the form
+// README § Grok subscriptions documents.
+func renderOAuthEntry(provName, account, service string) []string {
+	return []string{
+		"[[oauth.accounts]]",
+		tsv("provider", provName),
+		tsv("account", account),
+		tsv("service", service),
+	}
 }

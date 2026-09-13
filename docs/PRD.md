@@ -1,3 +1,34 @@
+*Last updated: 2026-09-13 (dashboard sign-in for [[oauth.accounts]] — adding a Grok / xAI provider account from the UI):
+the console can now ADD and AUTHENTICATE a subscription account; before this it was TOML editing plus
+`onegw-oauth login` in a shell. (1) Provider editor: an account row's new `oauth` select writes the
+matching `[[oauth.accounts]]` entry (spliceOAuthAccounts) — other providers' entries and every borrower
+(`owner` set) are copied byte-for-byte, a cleared row drops only its own entry, new entries land after the
+provider's last one — and `responses_models` + `subscription_quota` became managed provider keys, i.e. the
+two fields a working grok provider needs (grok ids are served on /v1/responses only). (2) Endpoints, all
+admin-gated and secret-free: `GET /admin/config/oauth/accounts` (per-account state incl. cooling, terminal
+billing, last error), `POST /admin/config/oauth/login?key=provider/account` (device flow in a background
+goroutine; the prompt — user code + pre-filled activation link — comes back with the response, and a second
+click re-offers the SAME prompt because xAI keeps one active session per account and two logins would knock
+each other out; the key is a query param because account names are logins, e.g. an email), `POST
+/admin/config/oauth/logout?key=` (deletes the stored token; the config entry, and therefore the wiring,
+stays). A successful login also clears the account's terminal billing verdict (Def.RevalidateByName), so a
+re-login routes immediately instead of waiting for an operator to press Reset. (3) Grid/UI: per-account
+badges (`you@example.com · xai · signed-in · <expiry>`) with Sign in / Sign out and a device-code dialog
+that polls the accounts endpoint until the state flips; a borrower row shows `borrows <key>` and gets no
+button (the endpoints 404 it too). Pending prompts are process-local: a reload or restart drops the prompt,
+never a stored token. (4) Tests: 9 new in admin_oauth_test.go, incl. the end-to-end path (device start →
+stored token → the bearer the upstream actually receives), pending-prompt re-offer pinned at one device
+start, logout leaving its file byte-identical, unknown-service 400 with a byte-identical file, roster-less
+updates leaving the oauth section alone, and a providers-PAGE render test — which caught a real 500 the
+JSON-only tests could not (`<.Key>` missing from providerOAuthView: dashboard.Render fails on a missing view
+field). Full suite green (`go test -skip TestCursorKindEndToEnd ./internal/...`, 17 packages ok; that test
+hangs identically in a clean worktree at HEAD, i.e. pre-existing and unrelated — reported, not touched).
+Live: scratch gateway on 127.0.0.1:18095 against a local stub IdP (real xAI sessions are single-active, so
+the live account was never exercised): page HTTP 200 carrying the sign-in button, the dialog, the
+`responses models` / `subscription quota` fields and the editor's service select; pending → signed-in;
+upstream recorded `Bearer at-ui-token`; logout → signed-out with no stale bearer; inline JS parses
+(`node --check`). Docs: README § Providers/Combos + a dashboard recipe in § Grok subscriptions with the curl
+equivalents. Also in this session: docker-compose credential comments (b6adbcd).*
 *Last updated: 2026-09-13 (README + image config: ONEGW_KEYS is never auto-generated, 8cb4b1d):
 the Docker quick start passes `-e ONEGW_KEYS=change-me` without saying it is mandatory, and
 the comment header of the config baked into the image documented only the admin password's
