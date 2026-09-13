@@ -222,7 +222,9 @@ type ProviderCfg struct {
 	// headers (x-grok-conv-id, x-grok-session-id, x-session-id,
 	// session_id), the gateway sends a stable per-key opaque id in this
 	// header — only for upstreams documented to use it (xai:
-	// "x-grok-conv-id"). "" (default) never invents a header.
+	// "x-grok-conv-id"). "" (default) never invents a header. Not needed
+	// for kind = "openai-responses" (the Grok Build proxy always gets both
+	// x-grok ids derived automatically).
 	SessionHeader string `toml:"session_header"`
 
 	// Quota tracking (issue #7): Window "" = off, a calendar kind
