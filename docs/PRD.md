@@ -1,3 +1,48 @@
+*Last updated: 2026-09-13 (throughput RCA: the 60-150s term is pre-first-byte, steering unblocked
+(b2c9dc5), `dev` back on strategy="fastest", header budget 75s→120s; live pid 36886): the report was
+"the provider table says b-ai 63.5 / tokenrouter 54.5 tok/s but omp shows ~3". Two different clocks,
+both honest (docs/throughput-metrics.md): 63.5 is DECODE (headers→relay-end); what the client divides
+by is the whole wall, and on these chains that wall is dominated BEFORE the headers. Ring evidence on
+the user's own shape (`in 216624 · out 2152 · 29761ms`): a 72 tok/s decode window inside a 119-165s e2e
+wall — 200-400K-token contexts re-sent every step of an agent chain; 32% of b-ai's large successes
+(≥100K tokens) prefilled COLD. Four probes settled the mechanism and killed the two obvious fixes:
+(1) NOT key-scoped, so NOT a sticky problem — an 80K body cached on key clone3 answered
+`cached_tokens=79872` (99%) on a DIFFERENT key clone1 and stayed warm ≥40s; account rotation cannot
+bust b-ai's prefix cache, so `sticky =` buys nothing here. (2) The vendor lane is the floor, not the
+gateway: 6 concurrent 80K-token prefills on ONE key answered 9.6/11.1/12.0/13.0/15.1/41.5s (~1-2
+effective per key). (3) A/B on
+`max_concurrency` 7→14 with 10 concurrent 80K prompts: median TTFT 26.9→20.9s but max 37.3→70.5s and
+burst 37→71s — a higher cap moves the queue from our semaphore into the vendor, where it accrues
+against the header budget and converts into 504s; REVERTED to 7 with the numbers in the config comment
+so nobody re-raises it blind. (4) The controllable amplifier was our own abort: 75s killed the cold
+prefill tail, and each abort made the combo re-prefill the same 200-400K prompt on the next leg (seq 187:
+148s of pre-first-byte span on a leg that then decoded in 4s at 97% warmth) → `response_header_timeout`
+120s, which its own config comment had always said covered the tail. The steering that exists for
+exactly this was inert twice over: `dev` ran strategy="order",
+and reorderBySpeed's size-aware regime scored legs WITHOUT bucket samples at 0 against the measured
+legs' NEGATIVE predicted seconds, so an unsampled leg always sorted to the FRONT — the promotion behind
+the 2026-09-12 00:30 revert and the reason the speed_order row carries "weigh it, don't trust the head
+leg". b2c9dc5 gives no-data legs -Inf (mirroring the decode regime's 0-tok/s contract) and
+TestReorderBySpeedNoDataLegSortsBehindMeasured pins the mixed case that was untested; mutation-checked
+(restoring the 0 default reproduces the promotion and fails). Warmth is worth the trip: on the same
+window b-ai's ≥100K-token successes split 32% cold (<50% cache hit) at 83.9s median pre-first-byte vs
+14.6s warm, and that cold band is what blew the 75s budget (11 of the window's 13 5xx were header-budget
+504s, 9 of them b-ai). Live proof after deploy: 87 speed_order rows, every one
+promoting the measured warm lane over the configured head on ≥150K prompts
+(`tokenrouter/z-ai/glm-5.3-free > b-ai/qwen3.8-flash > tokenharbor > glm`, the last two kept last for
+having no samples), and the client-experienced clocks moved: `dev` delivered 15.10→38.75 tok/s with TTFT
+60.7→14.1s, `free` 11.78→34.62 tok/s with TTFT
+58.5→17.2s, 5xx share 6.1%→3.0%. `free` stays "order" — its chain order is the documented free-first
+COST contract, not a speed claim; dev's steering upside is capped by tokenrouter's provider-wide
+`rpm = 6`, which is why 44-of-136 big requests moved, not all of them. What is left is not routing:
+these chains replay 216K-834K input tokens per step, so the remaining order of magnitude is context
+size on the client, and pre-first-byte will keep tracking it. Residual filed #93: `Prefill` is stamped
+from Do()'s entry, so the gateway slot-queue is folded into the prefill EWMA (a 26,076-token request
+measured 142.2s) — a correct wall predictor, a mislabeled vendor rate. Deployed zero-drop from
+`git archive` of b2c9dc5 (never the shared dirty tree) via scripts/deploy.sh --binary; artifact
+/tmp/onegw-steer-bin — do NOT sweep /tmp/onegw-* (this pid maps it). Predecessor /tmp/onegw-exp-bin
+(pid 23427, build b7b55e2) drained on a verified single listener; the config levers (gitignored
+onegw.toml) went in through PUT /admin/config/reload and need no restart. Earlier:)*
 *Last updated: 2026-09-13 (README: moving an OAuth session between machines): the
 OAuth section now documents that a login's whole credential state is one file —
 `<data_dir>/oauth-tokens.json`, 0600, no Keychain item and no machine binding (the
