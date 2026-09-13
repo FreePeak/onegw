@@ -169,6 +169,18 @@ type ProviderCfg struct {
 	// Off by default: bodies are byte-identical unless the provider opts in.
 	EchoReasoning []string `toml:"echo_reasoning"`
 
+	// ResponsesModels lists model globs (path.Match; "*" does not cross "/")
+	// that the upstream serves ONLY on its native /v1/responses endpoint, for
+	// kinds whose default wire is chat-completions. xAI is the reason it
+	// exists: its OAuth/SuperGrok path serves grok-4.5 (and grok-4.6,
+	// grok-4.20-multi-agent-0309) there and rejects a chat-shaped body
+	// (OmniRoute registry/xai/index.ts:31-37,66-69; 9router#2439; upstream
+	// #10165 documents the mirror mistake — a chat body reaching /v1/responses
+	// 422s "missing input"). Matching models are encoded as Responses and
+	// decoded back, so OpenAI-speaking clients keep working.
+	// Empty (default) changes nothing: bodies stay byte-identical to today.
+	ResponsesModels []string `toml:"responses_models"`
+
 	// DefaultEffort caps the reasoning effort for always-thinking models when
 	// the client sent NO reasoning knob at all ("" = disabled). Measured on
 	// b-ai/glm-5.3-flash 2026-09-11 (same prompt, n=2): unset → vendor default
