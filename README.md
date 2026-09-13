@@ -116,6 +116,20 @@ That file pins no credentials on purpose: it **refuses to start** without
 makes one mandatory), and leaves the admin password unset so first boot mints
 one.
 
+Signing a subscription account in from inside the container needs no paths —
+the image ships both entry points and sets `ONEGW_DATA_DIR=/data`:
+
+```bash
+docker exec -it onegw onegw oauth list                      # stored accounts
+docker exec -it onegw onegw oauth login \
+  -provider xai -account you@example.com                    # prints URL + code
+```
+
+The account name must match the `[[providers.accounts]]` name in your config
+(the dashboard's provider editor writes both halves for you). To back up or move
+a container install — volume, config, image, and what survives — see
+[docs/vps-deploy.md § Container installs](docs/vps-deploy.md#container-installs-what-to-back-up-and-how-to-move-it).
+
 ### Build from source
 
 ```bash
@@ -244,8 +258,9 @@ Use a combo name as the model to get an ordered fallback chain
   compression (prefix sniffing, idempotent, same-format surgical JSON walk)
   cuts prompt tokens before they reach the upstream. Output side: system-prompt
   injection of terse-output directives and an external compress hook (below).
-- **OAuth device flows for subscription providers (#2).** `onegw-oauth
-  login -provider xai` runs the RFC 8628 device flow (Kilo Code's bespoke
+- **OAuth device flows for subscription providers (#2).** `onegw oauth
+  login -provider xai` (the standalone `onegw-oauth` binary runs the same
+  code) runs the RFC 8628 device flow (Kilo Code's bespoke
   dialect also built in), stores the token in
   `<data_dir>/oauth-tokens.json` (0600, atomic writes), and the gateway
   injects it as the upstream bearer credential at request time — with a
@@ -737,13 +752,17 @@ service  = "xai"   # oauth profile: xai | kilocode (defaults to provider)
 ```
 
 ```bash
-onegw-oauth login -provider xai -account main   # prints URL + code, polls, stores
-onegw-oauth list                                # stored accounts + expiry state
+onegw oauth login -provider xai -account main   # prints URL + code, polls, stores
+onegw oauth list                                # stored accounts + expiry state
 ```
 
-Pass `-data-dir` when your config sets `data_dir` somewhere other than
-`~/.onegw` — the CLI prints the store path it resolved, so a mismatch is
-visible before you approve rather than after a request still 403s.
+Inside the container the same commands run through the gateway binary
+(`docker exec -it onegw onegw oauth …`). `-data-dir` is only needed when the
+config's `data_dir` sits somewhere the CLI cannot infer: it defaults to what the
+gateway itself resolves (the config's `data_dir` → `$ONEGW_DATA_DIR` →
+`~/.onegw`), and the resolved store path is printed before the approval prompt,
+so a mismatch is visible before you approve rather than after a request still
+403s.
 
 Tokens never live in TOML; the account's static `api_key` is the fallback
 until a token is stored. Endpoints are overridable per account
@@ -812,8 +831,18 @@ can front either:
 | Grok Build proxy | `https://cli-chat-proxy.grok.com` | `kind = "openai-responses"` | OAuth JWT only (never an `xai-…` key with the plain client id), Responses wire, fingerprint headers `X-XAI-Token-Auth` + `x-grok-cli-version` + `x-grok-client-*` |
 
 ```bash
-onegw-oauth login -provider xai -account you@example.com -data-dir ~/.onegw/data
+onegw oauth login -provider xai -account you@example.com        # gateway binary
+onegw-oauth login -provider xai -account you@example.com        # same code, standalone
+docker exec -it onegw onegw oauth login -provider xai -account you@example.com
 ```
+
+All three do the same thing; the docker form works because the image ships both
+binaries and sets `ONEGW_DATA_DIR=/data`. `-data-dir` is only needed when the
+config's `data_dir` is somewhere the CLI cannot infer — it defaults to what the
+gateway itself resolves (config → `$ONEGW_DATA_DIR` → `~/.onegw`), and the store
+path is printed before the approval prompt so a mismatch is visible up front.
+The **account name is the join key**: it must equal the `[[providers.accounts]]`
+name, or the gateway has nothing to attach the token to.
 
 The gateway stores the session in `oauth-tokens.json` and refreshes it ahead of
 expiry — but xAI claims `expires_in = 21600` (6 h) for device tokens it then
@@ -872,7 +901,8 @@ One login per account: clicking **Sign in** again while a flow is pending
 re-offers the same code instead of starting a second device login, because xAI
 keeps a single active session per account and two live logins would invalidate
 each other. A pending prompt is process-local — a restart or reload drops the
-prompt (never a stored token), so finish that one with `onegw-oauth login`.
+prompt (never a stored token), so finish that one with `onegw oauth login`
+(`docker exec -it onegw onegw oauth login -provider xai -account <you>`).
 
 Because xAI serves some ids only on its native Responses endpoint (under an
 OAuth bearer that includes the flagship `grok-4.5`; a chat-shaped body reaching

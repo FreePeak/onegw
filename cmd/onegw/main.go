@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -21,23 +23,75 @@ import (
 	"golang.org/x/sys/unix"
 
 	"onegw/internal/config"
+	"onegw/internal/oauthcmd"
 	"onegw/internal/server"
 	"onegw/internal/update"
 )
 
 func main() {
 	if len(os.Args) > 1 {
-		switch os.Args[1] {
+		switch arg := os.Args[1]; arg {
 		case "version":
 			os.Exit(runVersion(os.Args[2:]))
 		case "update":
 			os.Exit(runUpdate(os.Args[2:]))
+		case "oauth":
+			os.Exit(oauthcmd.Run(os.Args[2:]))
 		case "-h", "--help", "help":
-			fmt.Fprintf(os.Stderr, "usage: onegw [-config onegw.toml] | onegw version | onegw update [--check] [--force] [--yes]\n")
+			usage(os.Stdout)
 			os.Exit(0)
+		default:
+			if classifyArg(arg) ***REMOVED*** argUnknown {
+				// An unknown bare word used to fall through to runGateway: a
+				// typo — or the `onegw oauth login …` form before this
+				// subcommand existed — started a SECOND gateway process, which
+				// SO_REUSEPORT happily binds on the same port as the live one
+				// (observed in the container, 2026-09-13). Fail loudly instead.
+				fmt.Fprintf(os.Stderr, "onegw: unknown command %q\n\n", arg)
+				usage(os.Stderr)
+				os.Exit(2)
+			}
 		}
 	}
 	runGateway()
+}
+
+// argKind classifies os.Args[1] so the dispatcher can tell "start the gateway"
+// (flags) from a subcommand from a typo.
+type argKind int
+
+const (
+	argFlag    argKind = iota // starts with '-': the gateway's own flags
+	argCommand                // a known subcommand
+	argUnknown                // a bare word that is not a subcommand
+)
+
+func classifyArg(arg string) argKind {
+	switch arg {
+	case "version", "update", "oauth", "help", "-h", "--help":
+		return argCommand
+	}
+	if strings.HasPrefix(arg, "-") {
+		return argFlag
+	}
+	return argUnknown
+}
+
+// usage is the one place the command surface is described.
+func usage(w io.Writer) {
+	fmt.Fprint(w, `onegw — LLM gateway (OpenAI / Anthropic / Gemini surfaces)
+
+Usage:
+  onegw [-config FILE]                 run the gateway (default 127.0.0.1:8080)
+  onegw version                        print the build stamp
+  onegw update [--check] [--force] [--yes]
+                                       check for, or apply, a release
+  onegw oauth <login|list|refresh> …   subscription (device-flow) accounts
+  onegw help                           this text
+
+Flags are read from the environment too: ONEGW_CONFIG, ONEGW_LISTEN,
+ONEGW_KEYS, ONEGW_ADMIN_PASSWORD, ONEGW_PROVIDER_<NAME>_KEY, ONEGW_DATA_DIR.
+`)
 }
 
 func runGateway() {
@@ -122,10 +176,7 @@ func runGateway() {
 	// state without a signal; the hook keeps this outer-mux update
 	// handler's config copy in sync so its credential never goes stale (#63),
 	// and moves the GC soft limit with a reloaded buffered-byte budget.
-	srv.SetOnConfigReload(func(fresh *config.Config) {
-		curCfg.Store(fresh)
-		applyMemoryTuning(fresh)
-	})
+	srv.SetOnConfigReload(newReloadHook(&curCfg))
 	defer upd.Stop()
 
 	// srv.Handler() wraps its mux (recovery), so /admin/update mounts on
@@ -228,6 +279,18 @@ func heapLimitBytes(bufferCap int64) int64 {
 		return need
 	}
 	return 90 << 20
+}
+
+// newReloadHook is the ONE definition of what a config reload does outside
+// server.apply: mirror the live config for the outer-mux /admin/update handler
+// (#63) and re-apply the memory tuning for the reloaded buffered-byte budget.
+// runGateway and the reload regression tests share it, so a test cannot pass
+// on a private copy of the wiring while the shipped closure loses a line.
+func newReloadHook(curCfg *atomic.Pointer[config.Config]) func(*config.Config) {
+	return func(fresh *config.Config) {
+		curCfg.Store(fresh)
+		applyMemoryTuning(fresh)
+	}
 }
 
 func fatal(format string, args ...any) {

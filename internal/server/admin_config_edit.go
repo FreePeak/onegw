@@ -17,10 +17,13 @@ package server
 //
 // Secrets never appear in responses: an empty api_key on UPDATE means
 // "keep the existing key" (the UI never displays key material, so it
-// cannot echo one back). New accounts with empty keys are written
-// keyless (env ONEGW_PROVIDER_<NAME>_KEY or nothing) — config.Load's
-// validation still refuses credential-less providers except the keyless
-// kinds (searxng, opencode-free).
+// cannot echo one back). A row may not end up with nothing to authenticate
+// with, though: config.Load only requires that a provider hold SOME
+// credential surface, and the account pool is built from
+// [[providers.accounts]] once any entry exists — so a keyless, OAuth-less row
+// is dead weight that also orphans a provider-level or env key. Such a save is
+// refused (refuseStrandedAccounts), with the keyless kinds (searxng,
+// opencode-free) keeping the same carve-out config.Load gives them.
 //
 // An account row may also name an OAuth service profile (`oauth: "xai"`),
 // which is the dashboard's way of writing the matching [[oauth.accounts]]
