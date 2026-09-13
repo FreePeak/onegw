@@ -839,12 +839,19 @@ does — no TOML editing, no shell:
    itself, flipping the badge to `signed-in · <expiry>` — no restart, and the
    token lives in `<data_dir>/oauth-tokens.json` (0600), never in the config.
    **Sign out** deletes that token and leaves the config (and the wiring) in
-   place.
+   place: until the next sign-in the account serves with its static `api_key` if
+   it has one, and is benched by the upstream `401`/`403` if it does not.
 
 Rows and entries stay in step: clearing a row's service removes its
-`[[oauth.accounts]]` entry again, and a borrower row (`owner` set) shows
-`borrows <key>` instead of a button — its session belongs to the entry that owns
-the login, which is also why a login is only ever started against the owner.
+`[[oauth.accounts]]` entry again — give the row a static key in the same save to
+downgrade a subscription account, because a row left with neither a key nor a
+service is refused (it would authenticate as nothing while the pool kept dialing
+it). A borrower row (`owner` set) shows `borrows <key>` instead of a button — its
+session belongs to the entry that owns the login, which is also why a login is
+only ever started against the owner, and why unticking the owner is refused
+until the borrower is removed. Fields the editor does not surface (per-account
+`base_url`, `weight`) are carried over from the file on save, so a routine edit
+cannot quietly re-point or re-weight an account.
 The buttons are thin wrappers over the admin API, so scripts can drive them
 directly:
 
