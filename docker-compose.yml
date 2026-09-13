@@ -1,4 +1,6 @@
 # onegw on a VPS: `docker compose up -d`
+# (or let scripts/docker_deploy.sh do the whole setup: key generation, the
+#  config volume's ownership, ONEGW_* forwarding, and a health check)
 services:
   onegw:
     image: ghcr.io/freepeak/onegw:latest
