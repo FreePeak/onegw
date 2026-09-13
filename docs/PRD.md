@@ -1,3 +1,18 @@
+*Last updated: 2026-09-13 (README: moving an OAuth session between machines): the
+OAuth section now documents that a login's whole credential state is one file —
+`<data_dir>/oauth-tokens.json`, 0600, no Keychain item and no machine binding (the
+refresh grant carries only the public client id) — so copying it to another machine
+skips the re-login. Includes the tested adoption recipe: same-dir temp under
+`umask 077` + `chmod 600` before the rename (a bare `mv` of a jq output lands 644),
+a jq merge instead of a whole-file overwrite when the target already has a store
+(the one file holds EVERY provider's tokens — an overwrite drops the target's
+other keys), and a per-key `updated_at` bump so the store's newer-stamp-wins merge
+adopts the copy (verified under both jq 1.7.1 and jaq 2.3.0; the `jq -s '.[0]….[1]…'`
+two-file idiom is jaq-sensitive because jaq slurps per file, so the docs use the
+`--argjson` form). The gateway re-stats the file at most once per second — no
+restart needed. Caveat recorded: refresh rotates the refresh token and a session
+is single-active, so a copied session is a move, not a clone. Docs only, no code
+change.*
 *Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, live gateway restart):
 the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
 long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
