@@ -250,6 +250,14 @@ type Resolution struct {
 	// Execute stable-sorts the targets by recent decode speed before the
 	// first attempt (unknown speeds keep the configured order).
 	SpeedOrder bool
+
+	// PrefillOrder marks a combo whose config declares strategy =
+	// "size-aware": the chain is re-sorted ONLY in the prefill regime — from
+	// PrefillMattersAt input tokens up, and only on measured prefill samples
+	// for that bucket (predicted wall time). Below that size, or with nothing
+	// measured, the configured sequence stands untouched, so a fast-but-paid
+	// leg can never be promoted by decode speed alone.
+	PrefillOrder bool
 }
 
 // Resolve maps a client model string to an ordered target list.
@@ -288,6 +296,8 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		switch c.Strategy {
 		case "fastest":
 			res.SpeedOrder = true
+		case "size-aware":
+			res.PrefillOrder = true
 		case "round-robin":
 			res.RoundRobin = true
 		}
@@ -373,7 +383,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 	// the ranking uses measured prefill (provider/prefill.go) — decode speed
 	// alone cannot predict a 200K-token request, where ring evidence shows
 	// the pre-first-byte phase carrying ~97% of the wall time.
-	if res.IsCombo && res.SpeedOrder {
+	if res.IsCombo && (res.SpeedOrder || res.PrefillOrder) {
 		r.reorderBySpeed(ctx, res)
 	}
 	// Sticky round-robin (combo strategy = "round-robin", #82): rotate the

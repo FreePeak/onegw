@@ -233,6 +233,16 @@ Use a combo name as the model to get an ordered fallback chain
   consecutive successes, then rotates to the next — so leg #1 stops
   absorbing every request (and every failure) until it is exhausted, while
   each leg still enjoys a run of warm prefix caches.
+- **Size-gated throughput steering.** `strategy = "size-aware"` is the
+  prefill-only half of `"fastest"`: the chain is re-sorted on measured
+  prefill (predicted wall time for the request's own size bucket) from
+  32K input tokens up, and the configured sequence stands untouched below
+  that. It exists for chains whose cheap turns must keep riding the free
+  legs while their 200K-token turns want the lane that answers fastest —
+  decode speed alone can never promote the paid leg, a measured
+  pre-first-byte advantage can. Legs with no sample for the bucket keep
+  their configured place behind the measured ones; the full chain always
+  survives as fallback, and each reorder writes a `speed_order` row.
 - **Sticky accounts & session affinity.** A per-provider `sticky` window
   pins one key to a request identity to keep upstream prompt caches warm,
   and an opt-in `session_header` derives a stable per-key session id when
