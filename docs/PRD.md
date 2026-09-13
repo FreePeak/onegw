@@ -180,7 +180,14 @@ for the next session, recorded because onegw.toml is gitignored: a stale-anchor 
 the leg was restored, and the reload was verified through PUT /admin/config/reload + /admin/api/v1/combos
 — PARSE-AUDIT THE CONFIG after any ranged edit, since a damaged file breaks the next restart rather than
 the current process. Residuals unchanged: #93 (prefill EWMA folds the slot queue), #94 (size-aware is
-exploit-only above the gate). Earlier:)*
+exploit-only above the gate). One limitation a later cold-body A/B exposed, so the next reader does not
+trust a steered choice blindly: three ~350K-token probes with UNIQUE salts (nothing at the vendor had ever
+seen the prefix) put `dev` at 131.5s pre-first-byte on tokenrouter — the leg whose large-bucket EWMA had
+been seeded by a single warm-scale sample — while `fast` answered the same cold size in 26.9s and two of
+the dev probes were refused 429 outright. PredictSeconds cannot tell a warm sample from a cold one, so on
+genuinely cold prefixes the ranking is only as good as the samples that happen to be in the bucket; treat
+a large turn's chosen leg as a bet, not a guarantee, and read the `speed_order` detail next to the served
+row. Earlier:)*
 *Last updated: 2026-09-13 (throughput RCA: the 60-150s term is pre-first-byte, steering unblocked
 (b2c9dc5), `dev` back on strategy="fastest", header budget 75s→120s; live pid 36886): the report was
 "the provider table says b-ai 63.5 / tokenrouter 54.5 tok/s but omp shows ~3". Two different clocks,
@@ -214,7 +221,8 @@ window b-ai's ≥100K-token successes split 32% cold (<50% cache hit) at 83.9s m
 promoting the measured warm lane over the configured head on ≥150K prompts
 (`tokenrouter/z-ai/glm-5.3-free > b-ai/qwen3.8-flash > tokenharbor > glm`, the last two kept last for
 having no samples). The client-experienced clocks moved, stated as the ranges they actually showed across windows (one-minute EWMA, α=0.25, on a lane my own probes also loaded): `dev` TTFT 60.7s → 14-23s and delivered 15.1 → 15-39 tok/s, `free` TTFT 58.5s → 15-17s and delivered 11.8 → 18-35 tok/s; header-budget 504s fell from 11 per 213 rows to 5 per 227. The 503s that remain are pool-empty fall-throughs (~0.5ms locally, not client-visible latency), so "5xx share" is NOT a clean before/after and is not claimed.
-COST contract, not a speed claim; dev's steering upside is capped by tokenrouter's provider-wide
+`free` stays strategy="order" — its chain order is the documented free-first COST contract, not a speed
+claim; dev's steering upside is capped by tokenrouter's provider-wide
 `rpm = 6`, which is why 44-of-136 big requests moved, not all of them. What is left is not routing:
 these chains replay 216K-834K input tokens per step, so the remaining order of magnitude is context
 size on the client, and pre-first-byte will keep tracking it. Two residuals filed — #93: `Prefill` is
