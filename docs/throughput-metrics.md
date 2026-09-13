@@ -55,7 +55,7 @@ Surfaces (`/metrics` value ÷100 — the registry is int64, gauges carry `_x100`
 ```
 onegw_provider_tokens_per_second_x100{provider}                  # A, provider-wide
 onegw_provider_prefill_tokens_per_second_x100{provider,model,bucket}   # C
-onegw_client_delivered_tokens_per_second_x100{model}             # B — the ONLY per-model-keyed tok/s series
+onegw_client_delivered_tokens_per_second_x100{model}             # B — the only per-model series in OUTPUT tok/s (C is INPUT tok/s)
 onegw_client_tokens_to_first_byte_ms{model}                      # B's TTFT sibling
 ```
 
@@ -148,15 +148,22 @@ output starts the clock on reasoning models.
    for hours keeps advertising yesterday's EWMA into `reorderBySpeed` and
    `pickSlot`, outranking a fresh no-data leg that correctly reports 0. The
    "yesterday's speed must not steer today" contract holds only once traffic returns.
-3. **State is per-process.** Any restart wipes the EWMAs and the ring seq; a config
-   **reload** rebuilds the pool (fresh Defs → fresh EWMAs) but keeps the request
-   ring and delivered tracker (built once in `New()`). After either, the steering
-   needs re-warming (3 prefill samples at ≥32 K before size-aware ordering engages).
-4. **Decode vs delivered can legitimately differ by an order of magnitude** —
-   that is the design, not a bug. Live 2026-09-13: b-ai decodes 47.7 tok/s (gauge),
-   ring p50 decode 57.2, while delivered p50 on `b-ai/qwen3.8-flash` is **7.8 tok/s**
-   — the gap is queue + prefill + rotation, which decode is defined to exclude and
-   delivered is defined to include.
+3. **A reload is a partial reset; a restart is a total one.** `apply()` rebuilds the
+   provider pool on every config reload (`server.go:164,172`), so a SIGHUP or a
+   dashboard Save wipes the per-model, per-account and provider-wide decode EWMAs, the
+   prefill EWMAs, the model benches and the learned always/no-thinking sets — all of it
+   lives on the rebuilt `Def`/`accountPool` ("a SIGHUP reload rebuilds the pool with
+   fresh Defs", `provider.go:339-341`). What SURVIVES a reload: the delivered tracker
+   and the request ring, both built once in `New()` (`server.go:118-119`). A restart
+   clears everything including those. After either, the steering re-warms from zero
+   (≥3 prefill samples at ≥32 K before size-aware ordering engages) — which is why a
+   `speed_order` row can vanish right after a routine, otherwise uneventful reload.
+4. **Decode vs delivered can legitimately differ by an order of magnitude** — that is
+   the design, not a bug. Same lane, live 2026-09-13: gauge decode EWMA 47.7 tok/s,
+   ring p50 decode 61.4, ring p50 **delivered 4.7** (client-delivered gauge for the
+   `dev` combo alias: 5.7 — different key, see §5). The gap is queue + prefill +
+   rotation + failed attempts, which decode is defined to exclude and delivered is
+   defined to include.
 
 ## 5. How to calculate it yourself (tested recipes)
 
@@ -167,39 +174,84 @@ curl -s :8080/metrics | grep tokens_per_second
 # onegw_client_delivered_tokens_per_second_x100{model="dev"} 571  → 5.71 tok/s delivered
 ```
 
-**Per-model p50/p95 RIGHT NOW, no code** — from the #19 request ring (last 512
-requests, 7-day window), using omp bench's own nearest-rank formula so script and
-bench agree to the digit:
+**Per-LEG p50/p95 RIGHT NOW, no code** — off the #19 request ring, using omp bench's own
+nearest-rank formula so script and bench agree to the digit. Two facts bound the window,
+and both are hard limits rather than knobs: `logRingCap` = 512 requests, and `latest()`
+walks newest→oldest and **stops at the first row older than `logMaxAge` (7 days)** — so an
+idle gateway's window is short, not week-long (`admin_pages.go:257,282-307`).
+
+Two filter rules the numbers depend on:
+
+- Keep `code == 200` rows **without** a decision `kind`: `speed_order`, `task_routing` and
+  `key_invalidated` rows carry no usage at all.
+- An **absent** `tps`/`dtps` means *not observed* (sub-floor window, buffered reply,
+  synthetic/passthrough result), never 0 — the fields are `omitempty`. Folding them as
+  zero would report `p50 = 0` on a busy gateway, which is the exact failure this recipe
+  must not have.
+
+And the honesty rule: **p95 only at n ≥ 20.** Below that a p95 is one sample wearing a
+distribution's clothes (the steering path has the same instinct —
+`MinPrefillSamplesForOrdering = 3`, `prefill.go:218`). With a 512-row ring shared across
+every leg, a low-traffic lane can never honestly produce a p95; read its row as an
+anecdote.
 
 ```bash
-PW=$(sed -n 's/^admin_password *= *"\(.*\)"/\1/p' onegw.toml | head -1)
+PW=$(awk -F'"' '/^admin_password/{print $2; exit}' onegw.toml)
 curl -s -H "X-Admin-Password: $PW" \
   "http://127.0.0.1:8080/admin/api/v1/logs?limit=512" -o /tmp/ring.json
 python3 - <<'EOF'
 import json, math
 from collections import defaultdict
+MIN_P95 = 20            # below this a p95 is one sample wearing a distribution's clothes
 d = json.load(open("/tmp/ring.json"))["entries"]
 groups = defaultdict(lambda: {"tps": [], "dtps": []})
 for e in d:
-    if e.get("code") != 200: continue
+    # 200 AND no decision-kind row: tps/dtps are omitempty (absent = NOT observed,
+    # never 0), and speed_order/task_routing/key_invalidated rows carry no usage.
+    if e.get("code") != 200 or e.get("kind"): continue
     g = groups[(e.get("provider") or "?", e.get("model") or "?")]
     if e.get("tps"):  g["tps"].append(e["tps"])
     if e.get("dtps"): g["dtps"].append(e["dtps"])
 def q(v, p):                       # omp bench s9e: nearest-rank percentile
     t = sorted(v)
     return t[max(0, min(len(t)-1, math.ceil(p*len(t))-1))]
+def fmt(v):
+    if not v: return "no samples"
+    s = f"n={len(v)} p50={q(v,.5):.1f}"
+    if len(v) >= MIN_P95: s += f" p95={q(v,.95):.1f}"
+    return s
+# Grouped by the UPSTREAM (provider, model) leg — not the client alias the
+# delivered gauge's {model} label carries.
+print(f"ring: {len(d)} rows in window")
 for (p, m), g in sorted(groups.items(), key=lambda kv: -len(kv[1]["tps"])):
-    print(f"{p}/{m}: n={len(g['tps'])} decode p50={q(g['tps'],.5):.1f} p95={q(g['tps'],.95):.1f}"
-          f" | delivered p50={q(g['dtps'],.5):.1f} p95={q(g['dtps'],.95):.1f}")
+    print(f"{p}/{m}: decode[{fmt(g['tps'])}] | delivered[{fmt(g['dtps'])}]")
 EOF
 ```
 
-Output on the serving gateway, 2026-09-13 (375 of 395 ring rows were 200s):
+Output on the serving gateway, 2026-09-13, verbatim:
 
 ```
-b-ai/qwen3.8-flash:            n=374 decode p50=57.2 p95=90.4 | delivered p50=7.8 p95=33.7
-tokenrouter/z-ai/glm-5.3-free: n=1   decode p50=64.7            | delivered p50=7.1
+ring: 512 rows in window
+b-ai/qwen3.8-flash: decode[n=306 p50=61.4 p95=91.2] | delivered[n=306 p50=4.7 p95=26.8]
+tokenrouter/z-ai/glm-5.3-free: decode[n=103 p50=66.4 p95=246.6] | delivered[n=127 p50=8.4 p95=35.4]
 ```
+
+The two `n`s disagree on the second row (103 decode vs 127 delivered) for the reason in
+§1: the decode fold carries the 200 ms `speedFloor`, the delivered fold deliberately
+carries no time floor — so short replies have a delivered rate and no decode rate.
+
+**This grouping is per LEG.** `logEntry` has no client-model field: on a success row
+`Model` is the resolved *upstream* model threaded through `Execute` → `attempt(…, m, …)`
+→ `relayResponse` (`server.go:639-640,834`), while the client's own string lives only in
+`delivery.model` (`boundedModel`, `server.go:605`). So this table is **not** the same
+quantity as `onegw_client_delivered_tokens_per_second_x100{model="dev"}` (5.7 tok/s) or
+`{model="free"}` (7.0) — same order of magnitude as the per-leg 4.7/8.4 above, different
+key: one answers "how does this lane serve whoever asks", the other "what did the client
+named X actually get". A client-alias distribution therefore cannot come from the ring;
+its cheap home is a bounded sample slice inside `deliveredSample`
+(`client_speed.go:60-64`, which today keeps only `tps/ttftMs/n/last`) — 64 float64s ×
+≤128 keys ≈ 64 KB, under the existing `maxDeliveredKeys` bound, inheriting the existing
+≥4-token gate. The durable-window ceiling and the histogram upgrade path live in #90.
 
 **Probe a lane directly** (per-leg ground truth, when the ring is cold): fire
 simultaneous bounded streaming probes at each combo leg and divide
@@ -220,13 +272,18 @@ so an omp read sits slightly above onegw's handler-entry→relay-end wall by the
 network + client parse time. Neither layer has a per-model **distribution** in the
 gateway — that is #90.
 
-## 7. Open work this doc files
+## 7. Open work this doc files (both tracked as issues; no shadow backlog here)
 
-- **#90** — per-model p50/p95 from the request ring (~30 lines over
-  `reqlog.latest`, no new state): the metric omp bench ranks on, computed from
-  state onegw already keeps. Tested recipe in §5 is its prototype.
+- **#90** — per-model throughput distributions, two halves sharing one honesty rule
+  (p95 only at n≥20): (a) per-LEG p50/p95 from the request ring (~30 lines over
+  `reqlog.latest`, no new state) — the metric omp bench ranks on, computed from state
+  onegw already keeps; the §5 script is its prototype, and `usage_rollup`'s
+  counter-only schema (`store.go:45-63`) is why anything durable needs a bucketed
+  histogram column rather than per-request rows; (b) per-CLIENT-ALIAS p50/p95 from a
+  bounded sample slice inside `deliveredSample` — the omp-comparable key, which the
+  ring cannot answer because `logEntry` has no client-model field.
 - **#87** — read-time staleness in `speed.go` getters (the two-line fix: return 0
-  when `time.Since(s.last) > staleAfter`).
+  when `time.Since(s.last) > staleAfter`). Already open since 2026-09-11; not re-filed.
 
 ## Docs
 
