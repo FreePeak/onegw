@@ -52,14 +52,22 @@ extracts newReloadHook as the one definition both runGateway and the test regist
 160 MiB reload fixture + 77 MiB sentinel making the assertion ordering-independent
 (drop-the-call mutant goes red). README/ARCHITECTURE/systemd/vps-deploy
 document the coupling. Deployed zero-drop via scripts/deploy.sh --binary from git archive of
-the pushed commit (my artifact /tmp/onegw-mem-bin2, pid 49821 — kept on disk, do NOT sweep
-/tmp/onegw-*). SUPERSEDED at 17:26 by a peer deploy: live is pid 23427, `/tmp/onegw-exp-bin`,
-forensics-verified to carry BOTH the budget fix (`heapLimitBytes` present) and origin's
-billing-parole recheck (`billing_parole=3`) — banner `budget: 200 MiB, memlimit: 2048 MiB`,
-`onegw_budget_cap_bytes 209715200`; it predates the 01e48b0 refactor (`newReloadHook=0`),
-which is behavior-preserving/test-only, so no redeploy is owed. Park-state at audit:
-`"invalidated":true` absent with `"has_key"` present (the load-bearing pairing — `omitempty`
-omits false), i.e. zero terminal parks. Earlier:)*
+the pushed commit (my build `/tmp/onegw-mem-bin2`, pid 49821). SUPERSEDED at 17:26 by a peer
+deploy: live is pid 23427 on `/tmp/onegw-exp-bin`, forensics-verified to carry BOTH the budget
+fix (`heapLimitBytes` present) and origin's billing-parole recheck (`billing_parole=3`) —
+banner `budget: 200 MiB, memlimit: 2048 MiB`, `onegw_budget_cap_bytes 209715200`. It predates
+the 01e48b0 refactor (`newReloadHook=0`, consistent with a 17:26 build against an 18:2x push),
+which is behavior-preserving/test-only: read that as "the binary predates the pin", NOT "live
+is missing it" — no redeploy is owed on that basis.
+**Three `/tmp/onegw-*` artifacts, none sweepable:** `onegw-exp-bin` is mapped by the live pid,
+so unlinking it leaves a health-check-passing gateway running an unlinked inode until a
+crash/OOM/reboot tries to exec a missing file; `onegw-mem-bin2` is this session's build and the
+deploy-provenance reference; `onegw-rm-bin` is the pre-session binary, the only surviving
+evidence of what was serving before this session and the artifact that settled the parity
+question. Check the mapping before touching any of them:
+`lsof -p $(lsof -t -iTCP:8080 -sTCP:LISTEN) | awk '$4=="txt"'`. Park-state at audit:
+`"invalidated":true` absent while `"has_key"` is present (the load-bearing pairing — `omitempty`
+hides false), i.e. zero terminal parks. Earlier:)*
 **Ref-rewrite incident (direction corrected — the first record of this got it backwards), for
 the peers sharing this remote:** the memory-budget change first landed as b59ba41 on the LOCAL
 chain, and local↔origin had diverged BIDIRECTIONALLY: local was missing origin's c75dc18
