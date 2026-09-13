@@ -719,6 +719,32 @@ until a token is stored. Endpoints are overridable per account
 (`device_url` / `token_url` / `client_id` / `scope`) for self-hosted IdPs.
 Kilo Code tokens carry no refresh token — re-run `login` when they expire.
 
+**Moving the session to another machine.** A login's whole credential state is
+one file — `<data_dir>/oauth-tokens.json` (0600, atomic writes). There is no
+Keychain item and no machine binding (the refresh grant carries only the public
+client id), so a copy skips the re-login:
+
+```bash
+scp -p old-mac:'~/.onegw/data/oauth-tokens.json' /tmp/oauth-tokens.json
+# target with NO store yet: the plain copy is enough
+cp -p /tmp/oauth-tokens.json ~/.onegw/data/oauth-tokens.json
+
+# target that ALREADY has a store: merge, never overwrite — the one file holds
+# every provider's tokens, and the per-key `updated_at` bump is what makes the
+# store's newer-stamp-wins merge adopt the copy
+(umask 077; jq --argjson s "$(jq -c '.tokens // {}' /tmp/oauth-tokens.json)" \
+   '. as $d | {tokens: ((($d.tokens) // {}) * $s | with_entries(.value.updated_at = (now|todate)))}' \
+   ~/.onegw/data/oauth-tokens.json > ~/.onegw/data/oauth-tokens.json.tmp) \
+  && chmod 600 ~/.onegw/data/oauth-tokens.json.tmp \
+  && mv ~/.onegw/data/oauth-tokens.json.tmp ~/.onegw/data/oauth-tokens.json
+```
+
+The gateway re-stats the file at most once per second, so an external copy is
+adopted without a restart — but only when the copied entry's stamp is newer.
+One caveat: a session is single-active and refresh **rotates** the refresh
+token, so a copied session is a *move*, not a clone — if two machines refresh
+the same token, whichever wins leaves the other needing `onegw-oauth login`.
+
 **One session, several surfaces.** A vendor often exposes the same
 subscription on more than one wire (xAI: `api.x.ai` chat-completions and the
 Grok Build Responses proxy). xAI rotates device sessions, so logging in twice
