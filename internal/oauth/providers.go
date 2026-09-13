@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -203,6 +204,27 @@ func tokenExpiry(now time.Time, expiresIn int, maxTTL time.Duration) time.Time {
 		return time.Time{}
 	}
 	return now.Add(ttl)
+}
+
+// accessExpiry reads the `exp` claim from a JWT access token — the expiry the
+// vendor actually signed, so it outranks whatever the store was told. Opaque
+// bearer tokens, or a JWT without exp, report false and change nothing.
+func accessExpiry(jwt string) (time.Time, bool) {
+	parts := strings.Split(jwt, ".")
+	if len(parts) < 2 {
+		return time.Time{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var cl struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(raw, &cl) != nil || cl.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(cl.Exp, 0).UTC(), true
 }
 
 // ---------------------------------------------------------------------------
