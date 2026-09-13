@@ -400,7 +400,7 @@ func (c *Config) Defaults() {
 	}
 	for i := range c.Providers {
 		p := &c.Providers[i]
-		envName := "ONEGW_PROVIDER_" + strings.ToUpper(strings.ReplaceAll(p.Name, "-", "_"))
+		envName := ProviderEnvPrefix(p.Name)
 		if key := os.Getenv(envName + "_KEY"); key != "" {
 			p.APIKey = key
 		}

@@ -2,9 +2,21 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
+
+// ProviderEnvPrefix is the environment prefix that supplies credentials for a
+// provider: ONEGW_PROVIDER_<NAME> with dashes folded to underscores. <PREFIX>_KEY
+// is the API key and <PREFIX>_KEY2.._KEY9 add subscription accounts. Exported
+// because the config-edit guard has to name the variable it would orphan.
+func ProviderEnvPrefix(name string) string {
+	return "ONEGW_PROVIDER_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+}
+
+// ProviderKeyEnv is ProviderEnvPrefix(name) + "_KEY".
+func ProviderKeyEnv(name string) string { return ProviderEnvPrefix(name) + "_KEY" }
 
 // AuthKey is one client key with its optional policy. rpm/tpm of 0 mean
 // unlimited; an empty models list allows every model.

@@ -342,7 +342,14 @@ func spliceProvider(lines []string, req providerEditReq) ([]string, string, erro
 		edited := editProviderBlock(cloneLines(lines[b.start:b.end]), req, old)
 		candidate := append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...)
 		if req.Accounts != nil {
-			candidate = spliceOAuthAccounts(candidate, req.Name, req.Accounts)
+			withOAuth, err := spliceOAuthAccounts(candidate, req.Name, req.Accounts)
+			if err != nil {
+				return nil, "", err
+			}
+			candidate = withOAuth
+		}
+		if err := refuseStrandedAccounts(req, old); err != nil {
+			return nil, "", err
 		}
 		if err := validateLines(candidate); err != nil {
 			return nil, "", err
@@ -350,6 +357,9 @@ func spliceProvider(lines []string, req providerEditReq) ([]string, string, erro
 		return candidate, "updated", nil
 	}
 	// add — append a fresh block at EOF
+	if err := refuseStrandedAccounts(req, map[string]config.Acct{}); err != nil {
+		return nil, "", err
+	}
 	out := cloneLines(lines)
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
 		out = out[:len(out)-1]
@@ -357,7 +367,10 @@ func spliceProvider(lines []string, req providerEditReq) ([]string, string, erro
 	out = append(out, "")
 	out = append(out, renderProviderBlock(req)...)
 	if req.Accounts != nil {
-		out = spliceOAuthAccounts(out, req.Name, req.Accounts)
+		var err error
+		if out, err = spliceOAuthAccounts(out, req.Name, req.Accounts); err != nil {
+			return nil, "", err
+		}
 	}
 	if err := validateLines(out); err != nil {
 		return nil, "", err
@@ -405,6 +418,10 @@ func parseAccounts(block []string) map[string]config.Acct {
 			cur.APIKey = val
 		case "base_url":
 			cur.BaseURL = val
+		case "weight":
+			// Bare TOML integer — parseTOMLString only understands quoted
+			// strings, so read the raw value (it returns "" here).
+			cur.Weight, _ = strconv.Atoi(strings.TrimSpace(t[eq+1:]))
 		}
 	}
 	flush()
@@ -533,14 +550,28 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 	if req.Accounts != nil {
 		used := map[string]bool{}
 		for _, a := range req.Accounts {
+			o, known := old[a.Name]
 			key := a.APIKey
 			if key ***REMOVED*** "" {
-				if o, ok := old[a.Name]; ok && o.APIKey != "" {
+				if known && o.APIKey != "" {
 					key = o.APIKey
 					used[a.Name] = true
 				}
-			} else if _, known := old[a.Name]; known {
+			} else if known {
 				used[a.Name] = true // explicit key supersedes the old line
+			}
+			// Fields the editor cannot express (it models name/key/rpm) keep
+			// their on-disk value, exactly like the key above: the roster is
+			// re-rendered from the request, so anything not carried over is
+			// DELETED from the file. Per-account base_url and weight are live
+			// (server.go copies both into provider.Account).
+			if known {
+				if a.BaseURL ***REMOVED*** "" {
+					a.BaseURL = o.BaseURL
+				}
+				if a.Weight ***REMOVED*** 0 {
+					a.Weight = o.Weight
+				}
 			}
 			block = append(block, renderAccountTable(a, key)...)
 		}
@@ -552,6 +583,38 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 		block = dropSupersededKeysArray(block, used)
 	}
 	return block
+}
+
+// refuseStrandedAccounts rejects a roster that would leave an account with no
+// credential at all — no key (new or carried over from disk) and no OAuth
+// service. Such a row is dead weight the validator cannot see: config.Load
+// only requires that a provider hold SOME credential surface, and the account
+// pool is built from [[providers.accounts]] alone once any entry exists
+// (server.go), so a provider-level or environment key stops being used the
+// moment a keyless row is written. The keyless-by-design kinds keep their
+// carve-out, matching config.Load.
+func refuseStrandedAccounts(req providerEditReq, old map[string]config.Acct) error {
+	if req.Accounts ***REMOVED*** nil {
+		return nil
+	}
+	switch req.Kind {
+	case "searxng", "opencode-free":
+		return nil
+	}
+	for _, a := range req.Accounts {
+		if strings.TrimSpace(a.OAuth) != "" {
+			continue // a subscription login is the credential
+		}
+		if strings.TrimSpace(a.APIKey) != "" || strings.TrimSpace(old[a.Name].APIKey) != "" {
+			continue // a key, given now or kept from disk
+		}
+		hint := ""
+		if env := config.ProviderKeyEnv(req.Name); os.Getenv(env) != "" {
+			hint = fmt.Sprintf(" (%s supplies this provider's key, but the account pool stops using it once [[providers.accounts]] exist — paste the key into the row, or pick an OAuth service)", env)
+		}
+		return fmt.Errorf("account %q would be written with no api_key and no OAuth service, and would authenticate as nothing%s", a.Name, hint)
+	}
+	return nil
 }
 
 // dropSupersededKeysArray removes a legacy top-level `keys = [...]` line
@@ -842,7 +905,7 @@ type oauthEntry struct {
 // (`owner` set — the dashboard cannot express a borrowed session, so it never
 // manages one) are copied through byte-for-byte. New entries land after the
 // provider's last existing entry, or at EOF when it has none.
-func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) []string {
+func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]string, error) {
 	want := map[string]string{}
 	for _, a := range accts {
 		svc, name := strings.TrimSpace(a.OAuth), strings.TrimSpace(a.Name)
@@ -853,7 +916,18 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) []st
 	}
 	blocks := scanBlocks(lines, "[[oauth.accounts]]")
 	if len(blocks) ***REMOVED*** 0 && len(want) ***REMOVED*** 0 {
-		return lines
+		return lines, nil
+	}
+	// Borrower references among the entries this save does NOT manage: dropping
+	// an owner they point at would fail validateOAuth with a message about the
+	// borrower, a provider the operator never touched. Name the dependency
+	// here instead.
+	borrowedBy := map[string][]string{}
+	for _, b := range blocks {
+		e := parseOAuthBlock(cloneLines(lines[b.start:b.end]))
+		if e.owner != "" {
+			borrowedBy[e.owner] = append(borrowedBy[e.owner], e.provider+"/"+e.account)
+		}
 	}
 	var (
 		out      []string
@@ -871,6 +945,10 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) []st
 		}
 		svc := want[e.account]
 		if svc ***REMOVED*** "" {
+			if deps := borrowedBy[e.provider+"/"+e.account]; len(deps) > 0 {
+				return nil, fmt.Errorf("cannot drop the OAuth account %s: %s borrows its session (owner = %q) — remove that borrower first",
+					e.provider+"/"+e.account, strings.Join(deps, ", "), e.provider+"/"+e.account)
+			}
 			if insertAt < 0 {
 				insertAt = len(out) // the drop point is a good place to add
 			}
@@ -895,7 +973,7 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) []st
 		add = append(add, renderOAuthEntry(provName, name, svc)...)
 	}
 	if len(add) ***REMOVED*** 0 {
-		return out
+		return out, nil
 	}
 	add = append([]string{""}, add...)
 	if insertAt >= 0 {
@@ -903,12 +981,12 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) []st
 		res = append(res, out[:insertAt]...)
 		res = append(res, add...)
 		res = append(res, out[insertAt:]...)
-		return res
+		return res, nil
 	}
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
 		out = out[:len(out)-1]
 	}
-	return append(out, add...)
+	return append(out, add...), nil
 }
 
 // parseOAuthBlock reads the identity fields of one [[oauth.accounts]] block.
