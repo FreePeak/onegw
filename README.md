@@ -124,8 +124,11 @@ an hour:
   image, but the copy arrives **root-owned**, so the dashboard's provider editor —
   which saves with an atomic temp-file + rename in that directory — answers 500
   `temp file: open /etc/onegw/.onegw-config-*.toml: permission denied` on every
-  in-page save. The stack heals it with a one-shot `config-init` container;
-  `docker run` installs get the same chown pass.
+  in-page save. The stack heals it with a one-shot `config-init` container — and
+  Compose re-runs that service on every `docker compose up -d` (verified: break the
+  ownership by hand, run a no-op `up -d`, the volume is `100:101` again), so a
+  volume that goes back to root fixes itself on the next deploy. `docker run`
+  installs get the same chown pass from the script.
 - **names both volumes `onegw-data` / `onegw-config`** instead of project-prefixing
   them, so usage history, `oauth-tokens.json`, the minted admin password and every
   in-page edit survive recreate, `--build`, `--replace` — and moving between
@@ -163,7 +166,8 @@ Misbehaviour worth recognising: `Restarting` in `docker compose ps` is the missi
 another process owns (`--port`); a `docker pull` that dies part-way through a blob
 (GHCR has done exactly this) is not fatal — `--build` produces the same image from
 this tree; and a 500 from the Providers page means the config volume went back to
-root ownership — `docker compose up -d --force-recreate config-init`.
+root ownership — any `docker compose up -d` (or the script) re-runs the chown and
+the deploy prints `/etc/onegw is writable by the gateway user` when it is fixed.
 
 ### `docker run`, without Compose
 
