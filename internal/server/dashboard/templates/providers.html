@@ -3,8 +3,12 @@
 {{define "content"}}
 <div class="pgrid">
 {{range .Views}}
-<div class="card pcard{{if .Disabled}} off{{end}}">
-  <div class="ptop">
+{{/* Collapsed by default: a configured provider is a status line, not a form.
+     A card with something still missing (no credential, a subscription that has
+     never signed in) opens itself, and every choice the operator makes overrides
+     the default and survives a reload (data-acc, see base.html). */}}
+<details class="card pcard{{if .Disabled}} off{{end}}" data-acc="prov:{{.Name}}"{{if .Attention}} open{{end}}>
+  <summary class="ptop">
     <label class="switch" title="{{if .Disabled}}enable{{else}}disable{{end}} provider {{.Name}}">
       <input type="checkbox" data-toggle="{{.Name}}" aria-label="toggle provider {{.Name}}"{{if not .Disabled}} checked{{end}}>
       <span class="track"></span>
@@ -14,27 +18,29 @@
     {{if .Disabled}}<span class="pill warn">off</span>{{end}}
     <span class="pill ml-auto">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
     {{if .TPS}}<span class="pill" title="decode-speed EWMA · {{range .Speeds}}{{.Account}} {{printf "%.0f" .TPS}} · {{end}}">{{printf "%.1f" .TPS}} tok/s</span>{{end}}
+    {{if .Attention}}<span class="pill warn">{{.Attention}}</span>{{end}}
     <button class="rowact" data-edit="{{.Name}}" type="button" title="edit provider {{.Name}}" aria-label="edit provider {{.Name}}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round"/></svg>
     </button>
-  </div>
+  </summary>
   <div class="kv mb-2">
     <span class="k">base URL</span><span class="mono url">{{.BaseURL}}</span>
     <span class="k">accounts</span><span>{{.Accounts}} · {{.Concurrency}}</span>
     {{if .Quota}}<span class="k">quota window</span><span>{{.Quota}}{{if .QuotaLimit}} · limit {{.QuotaLimit}}{{end}}</span>{{end}}
     {{if .Sticky}}<span class="k">sticky</span><span>{{.Sticky}}</span>{{end}}
   </div>
-  {{if .OAuth}}<div class="kv mb-2"><span class="k">sign-in</span><span>
+  {{if .OAuth}}<div class="kv mb-2"><span class="k">subscription</span><span>
     {{range .OAuth}}<span class="pill{{if ne .State "signed-in"}} warn{{end}}"
       title="{{.Key}} · {{.Service}} · {{.State}}{{if .ExpiresAt}} · expires {{.ExpiresAt}}{{end}}{{if .Cooling}} · cooling{{end}}{{if .Invalidated}} · terminal billing{{end}}{{if .Error}} · {{.Error}}{{end}}">{{.Account}} · {{.Service}} · {{.State}}</span>
     {{if .Owner}}<span class="text-mut/60 text-[12px]">borrows {{.Owner}}</span>
     {{else if eq .State "signed-in"}}<button class="btn sm" data-signout="{{.Key}}" type="button">Sign out</button>
-    {{else}}<button class="btn sm primary" data-signin="{{.Key}}" type="button">{{if eq .State "pending"}}Show code{{else}}Sign in{{end}}</button>{{end}}
+    {{else}}<button class="btn sm primary" data-signin="{{.Key}}" type="button">{{if eq .State "pending"}}Continue sign-in{{else}}Sign in{{end}}</button>{{end}}
     {{end}}
   </span></div>{{end}}
-  {{if .Models}}<details><summary>{{len .Models}} advertised models</summary>
-  <div class="mono mt-2 leading-8">{{$n := .Name}}{{range .Models}}<code class="chip">{{.}}</code><button class="btn copy sm" data-copy="{{$n}}/{{.}}" title="copy model id {{$n}}/{{.}}" aria-label="copy model id {{$n}}/{{.}}">copy</button> {{end}}</div></details>{{end}}
-</div>
+  {{if .Models}}<details class="acc" data-acc="models:{{.Name}}"><summary>{{len .Models}} advertised models · copy an id</summary>
+  <div class="mono mt-2 leading-8">{{$n := .Name}}{{range .Models}}<button class="chip copy" data-copy="{{$n}}/{{.}}" type="button" title="copy model id {{$n}}/{{.}}" aria-label="copy model id {{$n}}/{{.}}">{{$n}}/{{.}}</button> {{end}}</div></details>
+  {{else}}<div class="kv mb-2"><span class="k">models</span><span><a href="/admin/ui/models">fetch from upstream →</a></span></div>{{end}}
+</details>
 {{else}}
 <div class="tblwrap"><div class="empty">no providers configured — add one with the button above</div></div>
 {{end}}
@@ -81,7 +87,9 @@
       <label for="pf-models">models <span class="text-mut/60">(one per line)</span></label>
       <textarea id="pf-models" name="models" rows="3" spellcheck="false" placeholder="provider/model-id"></textarea>
     </div>
-    <div class="grid grid-cols-3 gap-3">
+    <details class="acc mt-2" data-acc="edit:limits">
+    <summary>routing limits <span class="text-mut/60">· concurrency, sticky, quota window</span></summary>
+    <div class="grid grid-cols-3 gap-3 mt-2">
       <div class="field">
         <label for="pf-conc">max concurrency</label>
         <input id="pf-conc" name="max_concurrency" type="number" min="0" inputmode="numeric">
@@ -107,7 +115,7 @@
         </datalist>
       </div>
     </div>
-    <div class="grid grid-cols-2 gap-3">
+    <div class="grid grid-cols-2 gap-3 mt-3">
       <div class="field">
         <label for="pf-qt">quota limit · tokens</label>
         <input id="pf-qt" name="quota_limit_tokens" type="number" min="0" inputmode="numeric">
@@ -117,7 +125,10 @@
         <input id="pf-qr" name="quota_limit_requests" type="number" min="0" inputmode="numeric">
       </div>
     </div>
-    <div class="grid grid-cols-2 gap-3">
+    </details>
+    <details class="acc mt-2" data-acc="edit:dialect">
+    <summary>wire dialect <span class="text-mut/60">· responses-only models, upstream quota profile</span></summary>
+    <div class="grid grid-cols-2 gap-3 mt-2">
       <div class="field">
         <label for="pf-rmodels">responses models <span class="text-mut/60">(ids forced onto /v1/responses)</span></label>
         <textarea id="pf-rmodels" name="responses_models" rows="2" spellcheck="false"
@@ -138,7 +149,8 @@
         </datalist>
       </div>
     </div>
-    <div class="field">
+    </details>
+    <div class="field mt-2">
       <label>accounts <span class="text-mut/60">(newest first · editing: blank key keeps the existing
         one · pick a service for a subscription login — no API key needed)</span>
         <button type="button" class="btn sm ml-2" id="pf-addacct">+ account</button>
@@ -158,19 +170,70 @@
 
 <dialog class="modal" id="oauthdlg" aria-labelledby="oauthdlg-title">
   <h2 id="oauthdlg-title">Sign in</h2>
-  <p class="msub" id="oauth-sub">A provider sign-in tab opens by itself — confirm the code and approve there. This window follows the login by itself.</p>
+  <p class="msub" id="oauth-sub">Opens the vendor's own sign-in page. onegw listens on a loopback
+    port for the redirect and stores the token itself — nothing to read out or type. This window
+    follows the login by itself.</p>
   <div class="merr" id="oauth-err" role="alert" hidden></div>
-  <div class="field">
+  <div class="field" id="oauth-linkbox">
+    <label>sign-in link</label>
+    <div class="flex items-center gap-2">
+      <a id="oauth-link" class="mono url grow" href="#" target="_blank" rel="noreferrer">…</a>
+      <button type="button" class="btn copy sm" id="oauth-linkcopy" data-copy="">copy</button>
+    </div>
+    <p class="msub mt-2" id="oauth-wait"></p>
+  </div>
+  {{/* Device dialect: the vendor shows a code to type at a URL that need not reach
+       this host. Rendered only when the prompt carries one. */}}
+  <div class="field" id="oauth-codebox" hidden>
     <label>code</label>
     <div class="mono text-[20px] tracking-[0.15em]" id="oauth-code">…</div>
+    <label class="mt-2">link</label>
+    <a id="oauth-devlink" class="mono url" href="#" target="_blank" rel="noreferrer">…</a>
   </div>
-  <div class="field">
-    <label>link</label>
-    <a id="oauth-link" class="mono url" href="#" target="_blank" rel="noreferrer">…</a>
-  </div>
-  <p class="msub" id="oauth-state"></p>
+  {{/* The browser-on-another-box exit: xAI bounces the browser to a loopback
+       address, so an operator whose browser is not this host copies the address
+       bar (or just the code) back here. Same session, same verifier. */}}
+  <details class="acc mt-2" id="oauth-pastebox" hidden>
+    <summary>Browsers can't reach this host? Paste the code back</summary>
+    <div class="field mt-2">
+      <label for="oauth-paste">authorization code, or the whole <code class="chip">127.0.0.1/callback?code=…</code> URL</label>
+      <input id="oauth-paste" type="text" autocomplete="off" spellcheck="false">
+    </div>
+    <button type="button" class="btn sm primary" id="oauth-finish">Finish sign-in</button>
+  </details>
+  <p class="msub mt-2" id="oauth-state"></p>
   <div class="mfoot">
+    <button type="button" class="btn sm" id="oauth-device" hidden>Use a device code instead</button>
     <button type="button" class="btn" id="oauth-close">Close</button>
+  </div>
+</dialog>
+
+<dialog class="modal" id="bulkdlg" aria-labelledby="bulkdlg-title">
+  <h2 id="bulkdlg-title">Add accounts in bulk</h2>
+  <p class="msub">One account per line: <code>name, api key</code>, <code>name api_key</code>, or a bare
+    <code>api key</code> (the row is then named key-1, key-2, &hellip;). Choose a sign-in service instead of
+    keys and each line becomes a subscription account named by that line. Blank lines, repeated names, and
+    rows with nothing to authenticate with are skipped; new rows land at the top of the list, above the
+    accounts already saved.</p>
+  <div class="merr" id="bulk-err" role="alert" hidden></div>
+  <div class="field">
+    <label for="bulk-rows">accounts <span class="text-mut/60">(paste as many lines as you have)</span></label>
+    <textarea id="bulk-rows" rows="10" spellcheck="false" autocomplete="off"
+              placeholder="acct-a, sk-or-v1-&#8230;&#10;acct-b, sk-or-v1-&#8230;"></textarea>
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div class="field">
+      <label for="bulk-rpm">rpm limit <span class="text-mut/60">(0 = uncapped)</span></label>
+      <input id="bulk-rpm" type="number" min="0" inputmode="numeric" placeholder="0">
+    </div>
+    <div class="field">
+      <label for="bulk-oauth">sign-in service <span class="text-mut/60">(subscription: no keys)</span></label>
+      <select id="bulk-oauth"></select>
+    </div>
+  </div>
+  <div class="mfoot">
+    <button type="button" class="btn" id="bulk-cancel">Cancel</button>
+    <button type="button" class="btn primary" id="bulk-add">Add to list</button>
   </div>
 </dialog>
 
@@ -346,6 +409,12 @@ const PRESETS = {{.Presets}}||[];
       body: JSON.stringify({ name: body.name, doc }),
     }).catch(() => {});
   }
+  // A control in a card's summary row must not also toggle the card: the
+  // click's default action IS the toggle, so cancel it for the switch and the
+  // editor button (the checkbox still fires change).
+  document.querySelectorAll('.pcard summary .switch, .pcard summary .rowact').forEach(n => {
+    n.addEventListener('click', e => e.preventDefault());
+  });
 
   document.getElementById('addprov').onclick = openAdd;
   document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openEdit(b.dataset.edit));
@@ -488,31 +557,107 @@ const PRESETS = {{.Presets}}||[];
   };
 
   // --- Subscription (OAuth) sign-in ---------------------------------------
-  // The device flow runs server-side; this dialog shows the code and follows
-  // the account's state until it flips to signed-in.
+  // Two dialects, and the prompt says which one it is. "browser" is xAI's own
+  // login: the dialog opens the vendor page, the loopback callback does the
+  // exchange, and there is nothing for the operator to type. "device" shows the
+  // code + URL pair. Both then follow the account's state until it flips.
   const odlg = document.getElementById('oauthdlg'),
         ocode = document.getElementById('oauth-code'),
         olink = document.getElementById('oauth-link'),
         ost = document.getElementById('oauth-state'),
         oerr = document.getElementById('oauth-err');
-  let watching = null, timer = null, authOpened = null;
+  let watching = null, timer = null, popup = null, authOpened = null;
+  const obox = document.getElementById('oauth-codebox'),
+        lbox = document.getElementById('oauth-linkbox'),
+        devlink = document.getElementById('oauth-devlink'),
+        opaste = document.getElementById('oauth-paste'),
+        pasteBox = document.getElementById('oauth-pastebox'),
+        owait = document.getElementById('oauth-wait'),
+        odevBtn = document.getElementById('oauth-device');
 
-  function stopPolling(){ if (timer) { clearInterval(timer); timer = null; } watching = null; }
+  function stopPolling(){
+    if (timer) { clearInterval(timer); timer = null; }
+    watching = null;
+    if (popup && !popup.closed) popup.close();
+    popup = null;
+  }
   function showPrompt(key, p){
-    ocode.textContent = (p && p.user_code) || '…';
+    const browser = !p || p.mode !== 'device';
     const u = p && (p.verification_uri_complete || p.verification_uri);
-    if (u) { olink.href = u; olink.textContent = u; }
-    else { olink.removeAttribute('href'); olink.textContent = 'waiting for the provider…'; }
-    // 9router-style: the sign-in page comes to you. One tab per flow —
-    // pollState re-shows the prompt every 2 s, so this is keyed by account
-    // and reset per Sign-in click. If the pop-up blocker says no (win is
-    // null), the link right below is the fallback.
-    ost.textContent = key + (p && p.expires_at ? ' · code expires ' + new Date(p.expires_at).toLocaleTimeString() : '');
+    if (browser) {
+      obox.hidden = true; lbox.hidden = false;
+      pasteBox.hidden = false; odevBtn.hidden = false;
+      document.getElementById('oauth-sub').textContent =
+        'Opens the vendor sign-in page; onegw catches the redirect on a loopback port and stores the token itself.';
+      owait.textContent = u ? 'Waiting for you to finish in the browser…' : 'Preparing the sign-in link…';
+    } else {
+      obox.hidden = false; lbox.hidden = true;
+      pasteBox.hidden = true; odevBtn.hidden = true;
+      ocode.textContent = (p && p.user_code) || '…';
+      document.getElementById('oauth-sub').textContent = 'Open the link, enter the code, and approve.';
+      if (u) { devlink.href = u; devlink.textContent = u; }
+      else { devlink.removeAttribute('href'); devlink.textContent = 'waiting for the provider…'; }
+    }
+    if (u) {
+      olink.href = u; olink.textContent = u;
+      document.getElementById('oauth-linkcopy').dataset.copy = u;
+    } else if (browser) {
+      olink.removeAttribute('href'); olink.textContent = 'waiting for the provider…';
+    }
+    ost.textContent = key + (p && p.expires_at ? ' · ' + (browser ? 'link expires ' : 'code expires ') + new Date(p.expires_at).toLocaleTimeString() : '');
+    // 9router-style: the sign-in page comes to you, in either dialect. One tab
+    // per flow — pollState re-shows the prompt every 2 s, so this is keyed by
+    // account and reset per Sign-in click. A blocked pop-up leaves the link.
     if (u && authOpened !== key) {
       authOpened = key;
-      if (!window.open(u, '_blank', 'noopener')) ost.textContent = key + ' — pop-up blocked; click the link below';
+      const win = browser ? openAuth(u) : window.open(u, '_blank', 'noopener');
+      if (!win) ost.textContent = key + ' — pop-up blocked; click the link below';
     }
   }
+  // The browser dialect gets a sized auth window rather than a new tab, because
+  // its whole point is that the redirect lands back here.
+  function openAuth(u){
+    popup = window.open(u, 'onegw_oauth', 'width=640,height=760,noopener');
+    if (!popup || popup.closed) popup = window.open(u, '_blank', 'noopener');
+    return popup && !popup.closed ? popup : null;
+  }
+  document.getElementById('oauth-link').addEventListener('click', function(){
+    // The anchor already opens it; clear the "waiting" line either way.
+    owait.textContent = 'Finish the sign-in in the tab you just opened.';
+  });
+  odevBtn.onclick = async function(){
+    const key = watching;
+    if (!key) return;
+    odevBtn.disabled = true;
+    try {
+      const r = await fetch('/admin/config/oauth/login?key=' + encodeURIComponent(key) + '&flow=device', { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { ogwToast(j.error || ('device flow failed (' + r.status + ')'), false); return; }
+      showPrompt(key, j.prompt);
+      oerr.hidden = true;
+    } catch (e) {
+      ogwToast('device flow failed: ' + e.message, false);
+    } finally {
+      odevBtn.disabled = false;
+    }
+  };
+  document.getElementById('oauth-finish').onclick = async function(){
+    const key = watching, code = (opaste.value || '').trim();
+    if (!key || !code) { ogwToast('paste the code from your browser address bar first', false); return; }
+    try {
+      const r = await fetch('/admin/config/oauth/exchange?key=' + encodeURIComponent(key), {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code: code})
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { oerr.textContent = j.error || ('exchange failed (' + r.status + ')'); oerr.hidden = false; return; }
+      stopPolling(); odlg.close();
+      ogwToast(key + ' signed in (token stored, no config change)', true);
+      setTimeout(() => location.reload(), 400);
+    } catch (e) {
+      oerr.textContent = 'exchange failed: ' + e.message; oerr.hidden = false;
+    }
+  };
   async function pollState(){
     if (!watching) return;
     try {
@@ -533,6 +678,9 @@ const PRESETS = {{.Presets}}||[];
       if (a.state === 'failed') {
         oerr.textContent = a.error || 'login failed';
         oerr.hidden = false;
+        owait.textContent = '';
+      } else if (a.state === 'pending' && a.prompt && a.prompt.mode !== 'device') {
+        owait.textContent = 'Waiting for you to finish in the browser…';
       }
       ost.textContent = watching + ' · ' + a.state + (a.cooling ? ' (cooling)' : '');
     } catch (e) { /* transient network hiccup: keep polling */ }
@@ -547,7 +695,7 @@ const PRESETS = {{.Presets}}||[];
       oerr.hidden = true;
       watching = key;
       authOpened = null; // a fresh click gets a fresh attempt at opening the tab
-      showPrompt(key, j.prompt);
+      showPrompt(key, j.prompt);   // opens the tab itself, once per flow
       if (!odlg.open) odlg.showModal();
       if (!timer) timer = setInterval(pollState, 2000);
     } catch (e) {

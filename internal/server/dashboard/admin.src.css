@@ -448,6 +448,18 @@ html[data-theme="light"] { color-scheme: light; }
     font-family: var(--font-mono);
     @apply rounded-md border border-line bg-soft px-1.5 py-0.5 text-[11.5px] text-fg;
   }
+  /* A chip that IS the copy action: one click, one thing on screen to press,
+   * and the id itself is the label (9router's ModelRow does the same — the
+   * string you can paste is the string you click). */
+  button.chip.copy {
+    font-family: var(--font-mono);
+    @apply cursor-pointer rounded-md border border-line bg-soft px-1.5 py-0.5 text-[11.5px]
+           text-fg transition-colors duration-(--ogw-dur) hover:border-acc hover:bg-acc/10;
+  }
+  button.chip.copy::after {
+    content: " ⧉";
+    @apply text-mut;
+  }
 
   .codeblock {
     font-family: var(--font-mono);
@@ -533,6 +545,62 @@ html[data-theme="light"] { color-scheme: light; }
   }
 
   details > summary { @apply cursor-pointer text-[12.5px] text-mut hover:text-fg; }
+
+  /* ── Collapsible config ────────────────────────────────────────────────
+   * Long forms start collapsed (the grid is a status board, not a wall of
+   * inputs); a section that still needs the operator opens itself, and the
+   * browser remembers any choice they override it with. One disclosure glyph
+   * for the whole family, so a summary reads the same in a card, a modal
+   * group, or a settings panel. */
+  details.acc > summary { @apply list-none; }
+  details.acc > summary::-webkit-details-marker { display: none; }
+  details.acc > summary::before {
+    content: "▸";
+    @apply inline-block w-3.5 flex-shrink-0 text-[11px] text-mut;
+    transition: transform var(--ogw-dur) var(--ogw-ease);
+  }
+  details.acc[open] > summary::before { @apply rotate-90; }
+  details.acc > summary:hover { @apply text-fg; }
+
+  /* A whole provider card as a disclosure: the summary row keeps the switch,
+   * the name, and the status pills; everything below it is the detail. */
+  details.pcard > summary.ptop { @apply list-none; }
+  details.pcard > summary.ptop::-webkit-details-marker { display: none; }
+  details.pcard > summary.ptop::after {
+    content: "▸";
+    @apply ml-auto flex-shrink-0 self-center text-[12px] text-mut;
+    transition: transform var(--ogw-dur) var(--ogw-ease);
+  }
+  details.pcard[open] > summary.ptop::after { @apply rotate-90; }
+  details.pcard > summary.ptop { @apply mb-0; }
+  details.pcard[open] > summary.ptop { @apply mb-2; }
+  /* .ml-auto is what centered the pills before; the chevron takes the margin
+   * now, so the first pill keeps pushing the group right. */
+  details.pcard > summary.ptop .pill.ml-auto { @apply ml-auto; }
+
+  /* Key cells hold the masked string and its copy button; a gap beats the
+   * whitespace spans they would otherwise need. */
+  td .chip + .btn, td .btn + .btn { @apply ml-1.5; }
+  /* The action column is a column: same right edge on every row, whatever
+   * length the masked key above it happened to be. */
+  th.act, td.act { @apply w-px text-right whitespace-nowrap; }
+  td.act .btn + .btn { @apply ml-1.5; }
+
+  /* A card that IS a section (Settings): the title becomes the summary. The
+   * provider grid is excluded — its summary row (.ptop) already carries the
+   * card title with its own bullet, and adding this one there painted a second
+   * square beside the name. */
+  details.card > summary:not(.ptop) { @apply mb-2.5 flex flex-wrap items-center gap-2.5
+    text-[13px] font-medium leading-none normal-case tracking-normal text-fg; }
+  details.card > summary:not(.ptop)::before {
+    content: "";
+    display: inline-block;
+    @apply size-[0.625rem] flex-shrink-0 rounded-[1.5px] bg-acc;
+  }
+  details.card > summary:not(.ptop):hover { @apply text-fg; }
+  @media (prefers-reduced-motion: reduce) {
+    details.acc > summary::before, details.pcard > summary.ptop::after { transition: none; }
+  }
 }
 
 /* Skip link (keyboard users) — visually hidden until focused. */

@@ -1,0 +1,240 @@
+{{define "hdr"}}<span>every credential onegw holds · admin-only endpoint</span>
+<button class="btn primary sm" id="addkey" type="button">+ New client key</button>{{end}}
+{{define "content"}}
+<p class="sub mb-3">Two directions: <b>client keys</b> are what your CLI sends to onegw;
+<b>provider keys</b> are what onegw sends upstream. Both live in
+<code class="chip">onegw.toml</code> and hot-reload on save. Fetched from
+<code class="chip">GET /admin/config/keys</code> — plaintext is never baked into this page's HTML.</p>
+
+<div class="card mb-3">
+  <h3>Client keys <span class="pill" id="ck-count"></span></h3>
+  <p class="sub mb-2">The bearer string a CLI sends as <code class="chip">Authorization: Bearer &lt;key&gt;</code>.
+    Added to <code class="chip">[auth] keys</code>, the flat form onegw.toml already uses — labels, rpm and tpm
+    live in <code class="chip">[[auth.keys]]</code> tables, which are edited in the file.</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th>label</th><th>key</th><th>limits</th><th class="act">action</th></tr></thead>
+    <tbody id="ck-rows"><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+  </table>
+  </div>
+  <div class="flex items-end gap-2 mt-2.5" id="ck-add" hidden>
+    <div class="field grow"><label for="nk-val">key</label>
+      <input id="nk-val" type="text" autocomplete="off" spellcheck="false" placeholder="sk-… (or generate →)"></div>
+    <button class="btn primary" id="nk-save" type="button">Add</button>
+    <button class="btn" id="nk-gen" type="button">Generate</button>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Provider keys <span class="pill" id="pk-count"></span></h3>
+  <p class="sub mb-2">One row per provider account. Replacing a key takes effect on the next
+    request; a subscription row signs in instead (<a href="/admin/ui/providers">Providers</a>).</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th>provider</th><th>account</th><th>key</th><th class="act">action</th></tr></thead>
+    <tbody id="pk-rows"><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+  </table>
+  </div>
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+// Both tables come from one fetch, both writes go to one PATCH. Row text is
+// built with textContent/createElement (never innerHTML with vendor data) —
+// a provider name is operator input like any other.
+(function(){
+  var ckBody = document.getElementById('ck-rows'),
+      pkBody = document.getElementById('pk-rows'),
+      ckCount = document.getElementById('ck-count'),
+      pkCount = document.getElementById('pk-count'),
+      addBox = document.getElementById('ck-add'),
+      nkVal = document.getElementById('nk-val');
+
+  function el(tag, cls, text){
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function copyBtn(payload, label){
+    var b = el('button', 'btn copy sm', 'copy');
+    b.type = 'button'; b.dataset.copy = payload;
+    b.setAttribute('aria-label', 'copy ' + label);
+    return b;
+  }
+  function mask(k){
+    if (!k) return '';
+    if (k.length <= 12) return '••••';
+    return k.slice(0, 6) + '•'.repeat(Math.min(12, k.length - 10)) + k.slice(-4);
+  }
+  function patch(body, then){
+    fetch('/admin/config/keys', {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json().then(function(j){ return {ok: r.ok, j: j}; }); })
+      .then(function(res){
+        if (!res.ok) { ogwToast((res.j && res.j.error) || 'save failed (' + res.status + ')', false); return; }
+        ogwToast('saved — config reloaded');
+        if (then) then(res.j);
+      })
+      .catch(function(e){ ogwToast('save failed: ' + e.message, false); });
+  }
+
+  function renderClient(keys){
+    ckBody.innerHTML = ''; ckCount.textContent = String(keys.length);
+    if (!keys.length) { ckBody.appendChild(el('tr')); ckBody.lastChild.appendChild(el('td', 'empty', 'none — [auth] keys is empty')); ckBody.lastChild.lastChild.colSpan = 4; return; }
+    keys.forEach(function(k){
+      var tr = el('tr');
+      var tdL = el('td', k.name ? 'mono' : 'mono sub', k.name || 'unnamed');
+      var tdK = el('td');
+      var code = el('code', 'chip'); code.textContent = mask(k.key);
+      tdK.appendChild(code);
+      tdK.appendChild(copyBtn(k.key, 'client key ' + (k.name || k.key)));
+      var lim = [];
+      if (k.rpm) lim.push(k.rpm + ' rpm');
+      if (k.tpm) lim.push(k.tpm + ' tpm');
+      if (k.models && k.models.length) lim.push(k.models.length + ' models');
+      var tdR = el('td', 'sub', lim.join(' · ') || 'unlimited');
+      var tdA = el('td');
+      if (k.shadow) tdA.appendChild(el('span', 'pill warn', 'ONEGW_KEYS wins'));
+      else {
+        var del = el('button', 'btn danger sm', 'remove'); del.type = 'button';
+        del.onclick = function(){ if (confirm('Remove client key "' + (k.name || mask(k.key)) + '"? Clients using it stop authenticating.')) patch({remove: [k.key]}, load); };
+        tdA.appendChild(del);
+      }
+      tr.appendChild(tdL); tr.appendChild(tdK); tr.appendChild(tdR); tr.appendChild(tdA);
+      ckBody.appendChild(tr);
+    });
+  }
+
+  function renderProvider(rows){
+    pkBody.innerHTML = ''; pkCount.textContent = String(rows.length);
+    if (!rows.length) { pkBody.appendChild(el('tr')); pkBody.lastChild.appendChild(el('td', 'empty', 'no providers configured')); pkBody.lastChild.lastChild.colSpan = 4; return; }
+    rows.forEach(function(r){
+      var tr = el('tr');
+      if (r.disabled) tr.className = 'off';
+      var tdP = el('td', 'mono', r.provider);
+      if (r.disabled) tdP.appendChild(el('span', ' ', ' '));
+      if (r.disabled) tdP.appendChild(el('span', 'pill warn', 'off'));
+      var tdA = el('td', 'mono', r.account);
+      var tdK = el('td');
+      var act = el('td');
+
+      if (r.oauth) {
+        tdK.appendChild(el('span', 'pill', 'oauth · ' + r.oauth));
+        var go = el('button', 'btn sm', 'sign in'); go.type = 'button';
+        go.onclick = function(){ location.href = '/admin/ui/providers'; };
+        act.appendChild(go);
+      } else if (r.env_var) {
+        tdK.appendChild(el('span', 'pill', 'env · ' + r.env_var));
+        var sw = el('button', 'btn sm', 'Move into config'); sw.type = 'button';
+        sw.title = 'Write this account\u2019s key into onegw.toml instead of the environment';
+        sw.onclick = function(){ editRow(r, true); };
+        act.appendChild(sw);
+      } else if (!r.key) {
+        tdK.appendChild(el('span', 'sub', 'no key set'));
+        var add = el('button', 'btn sm primary', 'add key'); add.type = 'button';
+        add.onclick = function(){ editRow(r, true); };
+        act.appendChild(add);
+      } else {
+        var code = el('code', 'chip'); code.textContent = mask(r.key);
+        tdK.appendChild(code);
+        tdK.appendChild(copyBtn(r.key, r.provider + ' ' + r.account + ' key'));
+        var ed = el('button', 'btn sm', 'replace'); ed.type = 'button';
+        ed.onclick = function(){ editRow(r, false); };
+        var rm = el('button', 'btn danger sm', 'remove'); rm.type = 'button';
+        rm.onclick = function(){
+          if (confirm('Remove the key on ' + r.provider + '/' + r.account + '? Requests routed there will fail until a new one is set.'))
+            patch({provider_clear: [{provider: r.provider, account: r.account}]}, load);
+        };
+        act.appendChild(ed); act.appendChild(rm);
+      }
+      tr.appendChild(tdP); tr.appendChild(tdA); tr.appendChild(tdK); tr.appendChild(act);
+      pkBody.appendChild(tr);
+    });
+  }
+
+  // editRow swaps the cell for an inline input: one row's key, one PATCH, no
+  // modal and no trip through the full provider editor.
+  function editRow(r, reveal){
+    var td = pkBody.querySelectorAll('tr');
+    for (var i = 0; i < td.length; i++) {
+      var cells = td[i].children;
+      if (!cells || cells[0].textContent.indexOf(r.provider) !== 0) continue;
+      if (cells[1].textContent !== r.account) continue;
+      var keyCell = cells[2], actCell = cells[3];
+      keyCell.innerHTML = '';
+      var inp = el('input');
+      inp.type = 'password'; inp.className = 'grow'; inp.autocomplete = 'off'; inp.spellcheck = false;
+      inp.placeholder = reveal ? 'paste the key from your shell history' : 'new api key';
+      inp.setAttribute('aria-label', 'api key for ' + r.provider + ' ' + r.account);
+      keyCell.appendChild(inp);
+      actCell.innerHTML = '';
+      var ok = el('button', 'btn primary sm', 'Save'); ok.type = 'button';
+      var cancel = el('button', 'btn sm', 'Cancel'); cancel.type = 'button';
+      ok.onclick = function(){
+        var v = inp.value.trim();
+        if (!v) { ogwToast('an empty value would leave the account with no key — use remove', false); return; }
+        ok.disabled = true;
+        patch({provider_set: [{provider: r.provider, account: r.account, key: v}]}, load);
+      };
+      cancel.onclick = load;
+      actCell.appendChild(ok); actCell.appendChild(cancel);
+      inp.focus();
+      return;
+    }
+  }
+
+  function load(){
+    fetch('/admin/config/keys').then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function(j){
+      renderClient((j && j.keys) || []);
+      renderProvider((j && j.providers) || []);
+    }).catch(function(e){
+      ckBody.innerHTML = ''; pkBody.innerHTML = '';
+      var tr = el('tr'), td = el('td', 'empty', 'keys unavailable: ' + e.message);
+      td.colSpan = 4; tr.appendChild(td); ckBody.appendChild(tr);
+      var tr2 = el('tr'), td2 = el('td', 'empty', ''); tr2.appendChild(td2); pkBody.appendChild(tr2);
+    });
+  }
+
+  document.getElementById('addkey').onclick = function(){
+    addBox.hidden = !addBox.hidden;
+    if (!addBox.hidden) nkVal.focus();
+  };
+  nkVal.onkeydown = function(e){
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('nk-save').click(); }
+    else if (e.key === 'Escape') addBox.hidden = true;
+  };
+  document.getElementById('nk-gen').onclick = function(){
+    // 32 random bytes, base64url: the shape a shell-generated key already has,
+    // so nothing in the log or the file distinguishes where one came from.
+    var b = new Uint8Array(32); crypto.getRandomValues(b);
+    var s = ''; for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    nkVal.value = 'sk-' + btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  };
+  document.getElementById('nk-save').onclick = function(){
+    var v = nkVal.value.trim();
+    if (!v) { ogwToast('a key is required', false); return; }
+    fetch('/admin/config/keys', {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({add: [v]})
+    }).then(function(r){ return r.json().then(function(j){ return {ok: r.ok, j: j}; }); })
+      .then(function(res){
+        if (!res.ok) { ogwToast((res.j && res.j.error) || 'add failed', false); return; }
+        ogwToast('key added — copy it from the list');
+        addBox.hidden = true; nkVal.value = '';
+        load();
+      })
+      .catch(function(e){ ogwToast('add failed: ' + e.message, false); });
+  };
+
+  load();
+  // A save anywhere (this page, the provider editor, a SIGHUP) refreshes it.
+  var es = new EventSource('/admin/events?topics=config');
+  es.addEventListener('config', function(){ load(); });
+})();
+</script>
+{{end}}
