@@ -6,12 +6,14 @@ package server
 // pool skips it.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -367,5 +369,100 @@ func TestSubscriptionQuotaTracksOAuthOnlyAccount(t *testing.T) {
 	// Fail-open, but VISIBLE: an operator must see why the window is unknown.
 	if subs[0].Err ***REMOVED*** "" {
 		t.Fatalf("unprobed account must still report its failure, got %+v", subs[0])
+	}
+}
+
+// TestSubscriptionQuotaCursorDialect is the cursor dialect's page-level proof
+// (2026-09-14): the probe authenticates with the account's OWN session JWT as
+// a browser cookie, one spent account parks while its sibling keeps serving,
+// and /admin/ui/quota renders both rows. The page render is the load-bearing
+// half — a template asking for a field the view does not carry 500s with
+// nothing in the gateway log, which the JSON-twin assertions would sail
+// straight through.
+func TestSubscriptionQuotaCursorDialect(t *testing.T) {
+	jwt := func(sub string) string {
+		head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
+		return head + "." + payload + ".sig"
+	}
+	usage := func(used, cap int) string {
+		return `{"gpt-4":{"numRequests":` + strconv.Itoa(used) + `,"maxRequestUsage":` + strconv.Itoa(cap) +
+			`},"startOfMonth":"2026-09-01T00:00:00.000Z"}`
+	}
+	cs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("user") {
+		case "user_01SPENT":
+			_, _ = w.Write([]byte(usage(1000, 1000))) // pool fully consumed
+		default:
+			_, _ = w.Write([]byte(usage(10, 1000)))
+		}
+	}))
+	defer cs.Close()
+
+	cfg := &config.Config{}
+	cfg.Server.DataDir = "memory"
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test-gw"}}
+	cfg.Providers = []config.ProviderCfg{{
+		Name: "cursor", Kind: "cursor", Models: []string{"cursor/auto"},
+		SubscriptionQuota: "cursor", SubscriptionURL: cs.URL,
+		Accounts: []config.Acct{
+			{Name: "spent", APIKey: jwt("auth0|user_01SPENT")},
+			{Name: "open", APIKey: jwt("grok|user_01OPEN")},
+		},
+	}}
+	cfg.Defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config invalid (cursor must be an accepted dialect): %v", err)
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+
+	waitSubSnapshots(t, srv, 2)
+
+	w := do(t, srv.Handler(), adminReq(t, "/admin/api/v1/subscription"))
+	if body := w.Body.String(); !strings.Contains(body, `"plan":"1000 req/mo"`) || !strings.Contains(body, `"used":100`) {
+		t.Fatalf("subscription API missing the cursor pool: %d %s", w.Code, body)
+	}
+
+	// The parked marker belongs to the spent account only.
+	page := do(t, srv.Handler(), adminReq(t, "/admin/ui/quota"))
+	if page.Code != http.StatusOK {
+		t.Fatalf("quota page: %d %s", page.Code, page.Body.String())
+	}
+	html := page.Body.String()
+	if !strings.Contains(html, ">cursor<") {
+		t.Fatalf("quota page lost the cursor row: %s", html)
+	}
+	if n := strings.Count(html, ">parked<"); n != 1 {
+		t.Fatalf("parked marker count = %d, want exactly the spent account: %s", n, html)
+	}
+	if !strings.Contains(html, "exhausted") {
+		t.Fatal("exhausted pill missing for the spent window")
+	}
+
+	// Pool effect: the spent slot is cooled, so every pick lands on the
+	// account that still has headroom.
+	def, ok := srv.cur().pool.Get("cursor")
+	if !ok {
+		t.Fatal("cursor missing from pool")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		served := map[string]int{}
+		for range 6 {
+			if a, _ := def.NextAccount(""); a != nil {
+				served[a.Name]++
+			}
+		}
+		if served["open"] ***REMOVED*** 6 && served["spent"] ***REMOVED*** 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("spent account never parked from the pool: %v", served)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
