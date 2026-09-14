@@ -1,3 +1,34 @@
+*Last updated: 2026-09-14 (one-command Docker Compose setup: `docker_deploy.sh --compose`, configurable after setup):
+tested `docker compose` on a machine whose :8080 belongs to another process and fixed every failure that test produced.
+(1) Interpolation: `ONEGW_KEYS: "${ONEGW_KEYS:?…}"` made EVERY compose subcommand — `ps`, `logs`, `down` included — die with
+"required variable ONEGW_KEYS is missing", so the secret had to be re-typed just to tear the stack down. docker-compose.yml has
+no `:?` guard now: settings live in the project's `.env` (Compose auto-loads it for interpolation and mounts it into the container
+through `env_file`), and the mandatory key is enforced by the gateway itself — with no keys it exits at startup
+(`refusing to serve "0.0.0.0:8080" with no auth keys`) and `docker compose ps` shows `Restarting`.
+(2) Port: the published port was hardcoded `8080:8080`; it is now `${ONEGW_HOST_BIND:-0.0.0.0}:${ONEGW_HOST_PORT:-8080}:8080`.
+The failure is SILENT — on Colima the container reports `healthy` while the host's own onegw keeps answering on 127.0.0.1:8080,
+which reads as a wrong dashboard password (measured: host 401 against the container's own 200 on the same credential). So
+`--compose` probes the host port, moves to a free one and records it in `.env`, and its health check cross-checks inside the
+container so a stolen port is reported as that (observed on this box: first run moved 8080 -> 18080).
+(3) Configurability: a compose install could not be configured at all. Docker seeds a fresh named volume from the image but
+copies it root:root — the Dockerfile's `chown` covers only the container filesystem — so every in-page provider save answered
+500 `temp file: open /etc/onegw/.onegw-config-*.toml: permission denied`. Fixed by the one-shot `config-init` service (root,
+`chown -R onegw:onegw`, `service_completed_successfully`); measured PUT /admin/config/providers 500 -> 200, broken again with a
+manual `chown -R root:root`, 200 again after `docker compose up -d --force-recreate config-init`. README and
+docs/vps-deploy.md § Container installs no longer claim a named volume is seeded "with the correct ownership".
+(4) `container_name: onegw` makes the documented `docker exec -it onegw onegw oauth …` work for compose installs, and both
+volumes are pinned to `onegw-data` / `onegw-config` so the backup commands in docs/vps-deploy.md match the `docker run` path and
+the two installs share state. (5) Probed against the published tags: images through v0.30.0 ship neither `onegw oauth` nor
+`onegw-oauth` and treat an unknown word as "start the gateway" — `SO_REUSEPORT` let the rogue second listener bind beside the
+live one; v0.31.0 ships both entry points and rejects unknown subcommands. `docker pull ghcr.io/freepeak/onegw:latest` can also
+die mid-blob (`failed to copy: httpReadSeeker`, reproduced twice here), so the script falls back to the local copy and offers
+`--build` — verified building this tree's image in 31 s. Also fixed: from inside the compose network a searxng provider's
+base_url is `http://searxng:8080` (alias `searx` resolves too; the published 127.0.0.1:8888 is host-only) — verified with a live
+`search/query` round trip — and `docker compose --profile '*' down` is the only teardown that stops profile services, which a
+plain `down` silently leaves running against the project network. Clean-room proof: volumes and `.env` deleted, one
+`./scripts/docker_deploy.sh --compose --port 18140` reached a healthy gateway in 1.3 s; provider + combo saves 200, `/v1/models`
+lists the combo, a routed request reaches the upstream, `--force-recreate` keeps config and usage data, a re-run neither rotates
+the key nor moves the port, and `docker run` mode (no `--compose`) still deploys and verifies unchanged.*
 *Last updated: 2026-09-13 (one-command Docker deploy: scripts/docker_deploy.sh):
 the container setup had accumulated steps that each fail in a new way — a gateway key that a re-run must not rotate, a
 config volume the dashboard cannot save into until it is chowned, ONEGW_* credentials that must reach the container, a
