@@ -1,3 +1,46 @@
+*Last updated: 2026-09-14 (b-ai pool: a PROVIDER-wide cap of 7 was throttling ten accounts, and the prefill EWMA measured across that queue - pool retuned live, `fix(provider): measure prefill from admission`, PR #97):
+RCA of the `free` alias running 15-60 tok/s on omp's meter. Two independent self-inflicts, both b-ai-specific.
+(1) ADMISSION: `max_concurrency` sizes a semaphore on the *Def*, not on an account, so ten b-ai keys shared
+seven slots - while the default account pick ranks open slots by decode EWMA with no exploration, so a key
+with no sample scored last and never got one. Ring, 204x200 over 520s of real agentic load: 19-23 requests
+sat in the prefill phase against those 7 slots; wait-to-first-byte p50 48.5s, and **42.1s on the subset whose
+prompt was >50% cache-warm** (median uncached 2.3K tokens, about 1s of vendor prefill); 6 of 10 accounts
+served at all - clone3, wallet1, wallet2 had ZERO samples across 2497 requests, though all three keys answer
+200 when probed directly. Same warm prompt measured back to back: 1.7-7.5s direct to api.b.ai vs 6.1-28.4s
+through the gateway. (2) MEASUREMENT: `Def.Do` stamped the pre-first-byte sample at func entry - i.e.
+*including* its own wait for a slot - and that number is what `strategy = "size-aware"` re-ranks legs on, so
+an undersized pool was reported to the router as a slow lane: queue -> looks slow -> steered away -> samples
+starve. Fix, live config (gitignored): `max_concurrency` 7 -> 20 (10 accounts x 2; `pickSlot`'s min-live gate
+spreads 1-per-key before stacking anything; 30 was measured and rejected - no gain, and it moves queueing from
+the gateway, which is outside `response_header_timeout`, to the vendor, which is inside it) +
+`selection = "p2c"` (#81: an unknown key pays a middle penalty, not last place, so every account gets
+sampled and steered on real numbers), and `free` collapsed to its single `b-ai/qwen3.8-flash` leg (ladder v5,
+operator decision: capacity from the ten-account pool, not from vendor hopping; accepted cost - when the pool
+cools or the storm bench fires there is no fall-through, so the client gets the pool-empty 429/503 with
+Retry-After instead of a slower answer from another vendor; kilocode and opencode-free stay reachable as
+explicit routes and through dev/fast). Measured after on 259x200 over 666s of the same live traffic, with
+*larger* prompts (in_p50 174K vs 116K): wait p50 48.5 -> 10.4s, warm wait p50 42.1 -> 9.3s, delivered p50
+6.1 -> 24.8 tok/s (p90 20.1 -> 48.9), the `free` client EWMA 7.0 -> 30.8 tok/s with TTFT 74.1s -> 10.8s, and
+accounts serving 6/10 skewed 54:12 -> 10/10 skewed 30:17. Error mix unchanged in kind: zero 429s, 4x504 and
+2x499 (1.5% vs 0.7% before - admitting more requests shifts queueing upstream, where the header budget ticks,
+and single-leg `free` now surfaces those to the client instead of absorbing them in a fallback).
+Code: prefill now starts at the admission stamp (`sentAt`); `reqStart` still governs the pool's bench-recency
+rule and the client-facing e2e/dtps still measure from handler entry, so the queue stays visible where it is
+honest. `TestPrefillExcludesAdmissionQueue` fails pre-fix naming the leak (752ms of "prefill" for a 400ms
+upstream behind a 1-slot semaphore). What the vendor actually gives, measured today - this is the ceiling, and
+it is why neither more accounts nor a bigger cap reaches 100 t/s on this alias: qwen3.8-flash decodes 44-87
+tok/s **per stream, independent of concurrency** (corr(concurrency, decode) = 0.04 over 12 to 31 live
+concurrent streams) and accepted 8 requests in 8s on ONE account; its cold prefill lane is ~4.5-5K tok/s and
+**shared across accounts** (10 keys in parallel = 4.9K tok/s aggregate vs 4.2K for one key alone) and so is
+the prefix cache (a prompt warmed on wallet1 reads cached=71552 on wallet2), with a ~13s pre-first-byte floor
+on a 129K-token body even when warm. b-ai/hy3 decodes 96-137 but allows ~1 request per 5s per account (429001
+"exceeds the current model RPM limit"), so it is a spread-pool or explicit route, not this alias's lead; every
+faster id in the 47-model catalog is paid (403 "Access restricted. Deposit required") or unroutable on a
+0-credit key (404). omp's status-line number is `usage.output * 1000 / message.duration`
+(`packages/coding-agent/src/utils/token-rate.ts`, read out of the running binary), i.e. delivered tokens over
+the WHOLE turn including queue and prefill - so it is capped by the lane's decode rate, and ~100 needs
+out >= ~2000 tokens AND wait <= ~2s AND a >=120 tok/s lane. Follow-up #98: the admission wait itself still has
+no metric or ring column, which is why this took a manual direct-vs-gateway A/B to see.*
 *Last updated: 2026-09-14 (dashboard account editor: newest account first + a bulk-add popup):
 adding an account used to append it to the bottom of the provider's row list — out of sight for a big pool, and last in
 the order written to `onegw.toml` (so last in the account pool). `+ account` now prepends its row and focuses it, and a
