@@ -893,9 +893,9 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		// during aggregation still get a real status (nothing was written).
 		// OpenCode's responses kind is NOT here: its non-stream reply is a
 		// plain JSON body handled by the buffered cross-format path below.
-		var src io.Reader = res.Resp.Body
+		var src io.Reader = newIdleBreak(res.Resp.Body, res.Resp.Body)
 		if len(head) > 0 {
-			src = io.MultiReader(bytes.NewReader(head), res.Resp.Body)
+			src = io.MultiReader(bytes.NewReader(head), src)
 		}
 		resp, aerr := translat.AggregateStream(src, upstreamFmt, model)
 		if aerr != nil {
@@ -942,10 +942,14 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 		if err := st.budget.Acquire(ctx, reserve); err != nil {
 			st.budget.Saturated()
-			return errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly")
+			sat := errAPI(503, "gateway_saturated", "onegw at buffered-memory capacity; retry shortly")
+			sat.RetryAfter = "2" // same hint rejectSaturated gives the outer gates
+			return sat
 		}
 		defer st.budget.Release(reserve)
-		raw, rerr := io.ReadAll(io.LimitReader(res.Resp.Body, maxResp+1))
+		// Same half-open hazard as the streaming paths: a stalled body
+		// here would pin the account slot and the request budget forever.
+		raw, rerr := io.ReadAll(io.LimitReader(newIdleBreak(res.Resp.Body, res.Resp.Body), maxResp+1))
 		if rerr != nil {
 			herr := errAPI(502, "upstream_read_failed", rerr.Error())
 			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
@@ -989,15 +993,31 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 		flush()
 
-		var src io.Reader = res.Resp.Body
+		var src io.Reader = newIdleBreak(res.Resp.Body, res.Resp.Body)
 		if len(head) > 0 {
 			// Re-attach the inspected head so no events are lost.
-			src = io.MultiReader(bytes.NewReader(head), res.Resp.Body)
+			src = io.MultiReader(bytes.NewReader(head), src)
 		}
 		if upstreamFmt == clientFmt {
 			sn := usage.NewSniffer(src, 0)
-			_, _ = io.Copy(w, sn)
+			_, cerr := io.Copy(flushWriter{w, flush}, sn)
 			flush()
+			if cerr != nil && ctx.Err() == nil {
+				// Upstream died (or the idle breaker killed a half-open
+				// post-suspend socket) mid-relay: headers are committed,
+				// so end the stream with an honest terminal error frame —
+				// a client watchdog cannot tell a silent truncation from
+				// a hang and burns its retry budget guessing. A client
+				// disconnect (ctx canceled) is not an upstream failure:
+				// nothing to tell, nothing to retry.
+				if stream {
+					writeStreamTerminalError(w, flush, clientFmt, "upstream stream interrupted")
+				}
+				herr := errAPI(502, "upstream_stream_interrupted", cerr.Error())
+				herr.StreamCommitted = true
+				s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
+				return herr
+			}
 			in, out, cr, cw, rs, seen := sn.Usage()
 			if seen {
 				rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs}
@@ -1018,6 +1038,17 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				}
 				if herr.RegionLocked() && res.Acct != nil {
 					def.Cool(res.Acct, 5*time.Minute)
+				}
+				// Headers (and likely translated events) are already on
+				// the wire: no retry may follow this attempt.
+				herr.StreamCommitted = true
+				if stream && ctx.Err() == nil {
+					// Same honesty as the passthrough branch: a translated
+					// stream cut by upstream death (or the idle breaker)
+					// gets a named terminal frame, not just a close.
+					// Formats without an SSE error shape no-op; a client
+					// disconnect has no one left to tell.
+					writeStreamTerminalError(w, flush, clientFmt, "upstream stream interrupted")
 				}
 				s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
 				return herr

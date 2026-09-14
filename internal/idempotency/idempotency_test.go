@@ -215,3 +215,23 @@ func TestNewDisablesOnNonPositiveTTL(t *testing.T) {
 		t.Fatal("capacity past the hard max must clamp")
 	}
 }
+
+// A 499 is the ORIGIN's client hanging up — replaying that outcome to a
+// waiter (a watchdog retry that is here precisely to NOT be a hangup)
+// answers the fresh request with the dead one's abort. The entry must be
+// dropped so waiters wake Gone and the key re-executes.
+func TestFinishClientAbortNotReplayed(t *testing.T) {
+	c, _ := newTestCache(t, 8, time.Minute)
+	hash := BodyHash([]byte("body"))
+	if d, _, _ := c.Claim("s", "k", hash); d != Miss {
+		t.Fatal("first claim: want Miss")
+	}
+	_, _, w := c.Claim("s", "k", hash)
+	c.Finish("s", "k", hash, &Result{Status: 499, ContentType: "application/json", Body: []byte("{}")})
+	if got := w.Wait(context.Background()); got == nil || !got.Gone {
+		t.Fatalf("waiter got %+v, want Gone (not a replayed 499)", got)
+	}
+	if d, _, _ := c.Claim("s", "k", hash); d != Miss {
+		t.Fatalf("aborted origin must leave the key free: got %v, want Miss", d)
+	}
+}

@@ -35,8 +35,22 @@ func NewByteBudget(capBytes int64) *ByteBudget {
 	return &ByteBudget{capacity: capBytes}
 }
 
-// Acquire takes n bytes atomically, waiting (polling) until available or ctx
-// is done. Requests larger than the whole capacity fail immediately.
+// budgetWaitLimit caps how long a request may QUEUE for budget. Unbounded
+// waits are how a post-suspend retry inherits the pre-sleep world: a
+// half-open upstream stream holds its reservation for minutes (OS
+// retransmit budget), so a retry parked behind it burns the client's
+// retry budget guessing. A fast 503 + Retry-After:2 lets the client's
+// next attempt land on a freed budget.
+//
+// ponytail: fixed at 15s — generous for healthy contention (release is
+// immediate once bytes free), still far under any client retry envelope.
+// Upgrade path: expose as [server] config if a workload ever legitimately
+// queues longer.
+var budgetWaitLimit = 15 * time.Second
+
+// Acquire takes n bytes atomically, waiting (polling) until available,
+// budgetWaitLimit elapses, or ctx is done. Requests larger than the whole
+// capacity are clamped to capacity rather than rejected.
 func (b *ByteBudget) Acquire(ctx context.Context, n int64) error {
 	if n > b.capacity {
 		// Clamp oversized requests to the full capacity instead of failing:
@@ -54,6 +68,9 @@ func (b *ByteBudget) Acquire(ctx context.Context, n int64) error {
 		return nil
 	}
 	b.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, budgetWaitLimit)
+	defer cancel()
 
 	tick := time.NewTicker(budgetPollInterval)
 	defer tick.Stop()
