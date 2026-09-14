@@ -1,3 +1,29 @@
+*Last updated: 2026-09-14 (PR #97 merged as 533affe; `free` is b-ai-only by STANDING ORDER, ladder v7):
+Operator instruction, recorded so no later session re-litigates it from the
+measurement below: "remove the kilo free from my combo, do not add them again."
+`free` = ["b-ai/qwen3.8-flash"], one leg, capacity from the ten-account pool;
+`dev` reads the same after the console's own save. Accepted cost, measured and
+now knowingly carried: with no second leg, a header-timeout 504 or a cooled
+pool surfaces to the client (429/503 + Retry-After, or the 504 itself) instead
+of being absorbed - the v5 single-leg window logged 16x504 + 8x499 in 75 min
+and the >192K prompt bucket went from wait 24.7s / 13.6 delivered tok/s to
+9.4s / 28.9 tok/s when kilocode was temporarily back as leg 2. That is NOT
+grounds to re-add it: the remedy for a stalled b-ai pool is the pool (see the
+provider block's max_concurrency/selection notes), not another vendor. What the
+fallback leg could never have served anyway is the majority of this box's
+traffic - kilocode/kilo-auto/free caps at 262,144 input tokens while `free`
+runs in_p50 ~385K.
+Merged work (533affe, released as a patch by CI): (1) prefill is measured from
+the admission stamp, so the gateway's own max_concurrency queue no longer
+fakes a slow lane in the EWMA that `strategy = "size-aware"` ranks on
+(TestPrefillExcludesAdmissionQueue fails pre-fix at 752ms of "prefill" for a
+400ms upstream behind a 1-slot semaphore); (2) b-ai's two context-overflow 400
+dialects ("Input tokens exceed the configured limit of 192000 tokens" from
+hy3/Hunyuan, "Input token exceed the limit" from qwen) are classified as
+overflow so a combo falls through instead of handing the client a terminal 400,
+with negatives pinning max_tokens caps and a 400-status rate wall out of that
+class. Open: #98 - the admission wait itself still has no metric or ring
+column, which is why finding it took a manual direct-vs-gateway A/B.*
 *Last updated: 2026-09-14 (b-ai pool follow-up: ladder v5's single leg REVERTED to v6, hy3 measured and disqualified, and the delivered-tok/s ceiling written down):
 The v5 collapse of `free` onto one b-ai leg was wrong and is reverted -
 `targets = ["b-ai/qwen3.8-flash", "kilocode/kilo-auto/free"]`. Measured cost of one leg: in the
