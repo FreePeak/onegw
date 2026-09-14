@@ -400,7 +400,6 @@ if [ "$MODE" = compose ]; then
     # The admin password is minted on first boot INSIDE the container and lives on
     # the data volume, so it has to be read from there before health can be
     # checked — /admin/health is password-gated like every other admin endpoint.
-    PW=""
     for _ in $(seq 1 20); do
       PW=$(docker exec "$CID" cat /data/admin_password 2>/dev/null || true)
       if [ -n "$PW" ]; then break; fi
@@ -420,7 +419,20 @@ if [ "$MODE" = compose ]; then
       fi
       sleep 1
     done
-    if [ "$OK" = 1 ]; then return 0; fi
+    if [ "$OK" = 1 ]; then
+      # The other failure that hides behind a healthy container: a config volume
+      # seeded root-owned makes every dashboard save answer
+      # 500 "temp file: … permission denied". Reported in the same breath as the
+      # health check, so it never surfaces as an unexplained UI bug.
+      if docker exec "$CID" test -w /etc/onegw; then
+        say "  /etc/onegw is writable by the gateway user — dashboard saves will land"
+      else
+        say "WARNING: /etc/onegw is NOT writable by the gateway user, so the dashboard's"
+        say "        provider editor will answer 500 \"temp file: permission denied\"."
+        say "        Re-run the ownership pass: docker compose up -d --force-recreate config-init"
+      fi
+      return 0
+    fi
     inside=$(docker exec "$CID" curl -s -o /dev/null -w '%{http_code}' \
              -H "X-Admin-Password: $PW" http://127.0.0.1:8080/admin/health 2>/dev/null || true)
     if [ "$inside" = "200" ]; then return 4; fi
