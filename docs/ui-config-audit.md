@@ -45,3 +45,26 @@ the OAuth pills).
 Done: combo strategy (+pill), presets catalog (+auto-mirror of saved
 providers), sign-in auto-open of the OAuth URL — all on
 `feat/dashboard-config-coverage`.
+
+## Slice A status: DONE
+`GET/PUT /admin/config/sections` + Settings-page cards now expose [server],
+[rotation], [usage], [saver] (incl. [saver.external]) and [update] with
+effective-default display and default-removes-the-key write-back.
+
+## 9router comparison (9router@this machine: src/app/(dashboard)/dashboard/**)
+Next.js; a `shared/components` primitive set (Card/Badge/Input/Select/Toggle/
+Drawer) and a `/dashboard/providers/new` wizard whose FIRST field is the
+provider, chosen from a built-in `AI_PROVIDERS` catalog (`shared/constants/
+config`) that supplies kind + base URL — so "add provider" is mostly a pick.
+Per-row CapacityBadges / ModelAvailabilityBadge show live state.
+
+onegw's #41 dashboard already speaks this language (card grid, pills, modal
+editors, dark/light). The 9router ideas that were genuinely missing — preset
+catalog, subscription sign-in that opens the auth URL, file configs surfaced
+as editable UI — are now built. What remains is polish, not capability:
+
+## Remaining (slice B/C + optional polish)
+- B: provider/account/oauth advanced scalars as an "advanced" disclosure.
+- C: [auth] keys + [aliases] cards over the existing PATCH endpoints.
+- Polish (only if wanted): move provider "Add" to a full-page wizard with the
+  preset as the first field; a per-provider capacity badge like 9router's.
