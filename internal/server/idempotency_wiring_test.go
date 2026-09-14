@@ -97,8 +97,11 @@ func TestIdempotencyKeyDedupsUpstreamCall(t *testing.T) {
 	}
 }
 
-// A stream-shaped original is never replayed: the retry gets 409.
-func TestIdempotencyStreamReplayConflicts(t *testing.T) {
+// Streams take no part in dedup: they can never be replayed anyway, and
+// coalescing a post-wake client retry onto the "in flight" streaming
+// origin would park it behind a socket that may have died in the suspend.
+// Every streaming request executes; the 409 class cannot happen.
+func TestIdempotencyStreamRequestsSkipDedup(t *testing.T) {
 	up, calls := idempotencyUpstream(t, true)
 	_, h := newTestServer2(t, idempotencyCfg(t, up))
 	body := `{"model":"p1/m1","messages":[{"role":"user","content":"ping"}],"stream":true}`
@@ -108,14 +111,14 @@ func TestIdempotencyStreamReplayConflicts(t *testing.T) {
 		t.Fatalf("first stream request: %d ct=%s", w1.Code, w1.Header().Get("Content-Type"))
 	}
 	w2 := do(t, h, idemChatReq(t, "sse-1", body))
-	if w2.Code != http.StatusConflict {
-		t.Fatalf("stream replay: %d %s, want 409", w2.Code, w2.Body.String())
+	if w2.Code != http.StatusOK || !strings.Contains(w2.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("second same-key stream request must execute, not 409: %d %s", w2.Code, w2.Body.String())
 	}
-	if !strings.Contains(w2.Body.String(), "idempotency_conflict") {
-		t.Fatalf("409 body must name the conflict: %s", w2.Body.String())
+	if strings.Contains(w2.Body.String(), "idempotency_conflict") {
+		t.Fatalf("409 conflict class must be gone for streams: %s", w2.Body.String())
 	}
-	if n := calls.Load(); n != 1 {
-		t.Fatalf("upstream hit %d times, want exactly 1", n)
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("upstream hit %d times, want 2 (streams skip dedup)", n)
 	}
 }
 
