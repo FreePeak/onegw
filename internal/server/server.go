@@ -728,6 +728,12 @@ func requestIdentity(h http.Header, ak *config.AuthKey) string {
 	return ""
 }
 
+// grok402Cooldown parks a Grok Build account after the proxy's 402 (weekly
+// credit-pool exhaustion, see attempt()): long enough that a burst of
+// requests stops re-hitting upstream, short enough that the same key is
+// offered again the moment the pool refills — never terminal.
+const grok402Cooldown = 2 * time.Minute
+
 // attempt performs one upstream call and returns the response to the
 // client. Streaming replies are piped/translated event-by-event; a
 // non-streaming cross-format reply takes the documented buffered path
@@ -783,13 +789,20 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
 		if apiErr.PaymentRequired() {
-			// Terminal for this credential (#80): the vendor refused it for
-			// billing reasons, which no amount of waiting fixes. Marking it
-			// out of rotation is the difference between one doomed upstream
-			// attempt per request forever and one per account; the combo
-			// falls through to the next target exactly like the #48 gated
-			// family, but WITHOUT the ladder that would keep re-offering it.
-			if def.Invalidate(acct) {
+			if def.Kind == provider.KindOpenAIResponses {
+				// The Grok Build proxy's 402 is its WEEKLY credit pool
+				// running dry — self-recovering, not a billing death — so
+				// cool the account briefly and keep it in rotation (9router's
+				// grok-cli treats 402 the same way). Terminal #80 invalidation
+				// would strand a healthy subscription until manual re-enable.
+				def.Cool(acct, grok402Cooldown)
+			} else if def.Invalidate(acct) {
+				// Terminal for this credential (#80): the vendor refused it for
+				// billing reasons, which no amount of waiting fixes. Marking it
+				// out of rotation is the difference between one doomed upstream
+				// attempt per request forever and one per account; the combo
+				// falls through to the next target exactly like the #48 gated
+				// family, but WITHOUT the ladder that would keep re-offering it.
 				log.Printf("server: invalidated %s/%s after upstream billing refusal (%s); re-enable from the dashboard or rotate the key",
 					def.Name, acctName(acct), apiErr.Message)
 				s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
