@@ -232,6 +232,64 @@ func TestComboEditAddUpdateReload(t *testing.T) {
 	}
 }
 
+// The strategy/limit must round-trip the way the file itself spells them:
+// set writes ONE strategy line, changing replaces it in place, clearing
+// ("" = the default) removes the line so the block reads as if it were
+// never edited, and an invalid combination is refused with the file
+// untouched. A silent strategy loss on save is the splice-corruption family
+// this pins against: the editor prefills strategy, but the splice is the
+// contract.
+func TestComboEditStrategyRoundTrip(t *testing.T) {
+	_, h, path := newTestServerFromFile(t, editTestToml)
+
+	put := func(body string) *httptest.ResponseRecorder {
+		return adminCall(t, h, http.MethodPut, "/admin/config/combos", body, true)
+	}
+	if w := put(`{"name":"c1","targets":["p1/m1"],"strategy":"size-aware"}`); w.Code != http.StatusOK {
+		t.Fatalf("set strategy: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if got := strings.Count(file, `strategy = "size-aware"`); got != 1 {
+		t.Fatalf("strategy line count = %d, want 1:\n%s", got, file)
+	}
+
+	// change strategy + add the rr limit — still one line each, old value gone
+	if w := put(`{"name":"c1","targets":["p1/m1"],"strategy":"round-robin","round_robin_limit":3}`); w.Code != http.StatusOK {
+		t.Fatalf("round-robin: %d %s", w.Code, w.Body.String())
+	}
+	file = mustReadFile(t, path)
+	if strings.Contains(file, `strategy = "size-aware"`) || strings.Count(file, "strategy = ") != 1 ||
+		!strings.Contains(file, "round_robin_limit = 3") {
+		t.Fatalf("strategy/limit not replaced in place:\n%s", file)
+	}
+
+	// invalid pairs: a limit without round-robin, and an unknown strategy
+	before := file
+	for _, body := range []string{
+		`{"name":"c1","targets":["p1/m1"],"strategy":"order","round_robin_limit":5}`,
+		`{"name":"c1","targets":["p1/m1"],"strategy":"size_aware"}`,
+	} {
+		if w := put(body); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: want 400, got %d %s", body, w.Code, w.Body.String())
+		}
+		if got := mustReadFile(t, path); got != before {
+			t.Fatalf("rejected edit mutated the file:\n%s", diffLines(before, got))
+		}
+	}
+
+	// clear: omitting strategy removes both lines, reload stays valid
+	if w := put(`{"name":"c1","targets":["p1/m1"]}`); w.Code != http.StatusOK {
+		t.Fatalf("clear strategy: %d %s", w.Code, w.Body.String())
+	}
+	file = mustReadFile(t, path)
+	if strings.Contains(file, "strategy = ") || strings.Contains(file, "round_robin_limit") {
+		t.Fatalf("cleared strategy left lines behind:\n%s", file)
+	}
+	if w := adminCall(t, h, http.MethodGet, "/admin/api/v1/combos", "", true); w.Code != http.StatusOK {
+		t.Fatalf("combos after clear: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestComboEditValidationRejectsAndLeavesFileUntouched(t *testing.T) {
 	_, h, path := newTestServerFromFile(t, editTestToml)
 	before := mustReadFile(t, path)
