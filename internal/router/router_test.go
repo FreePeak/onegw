@@ -568,3 +568,31 @@ func TestExecuteSkipsModelBenchedTarget(t *testing.T) {
 		t.Fatalf("p1 upstream hits=%d after direct benched route, want still 3", hits)
 	}
 }
+
+// An error the relay stamps StreamCommitted happened AFTER the response
+// headers went to the client: neither a same-target retry nor a combo
+// fall-through may follow, or the client gets a second response appended
+// onto the stream. Execute must stop immediately.
+func TestExecuteStopsAfterStreamCommit(t *testing.T) {
+	r := New(newTestPool())
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+	calls := 0
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls++
+		return nil, &types.APIError{Status: 502, Type: "upstream_stream_interrupted", Message: "boom", StreamCommitted: true}
+	}
+	err := r.Execute(context.Background(), res, caller, func(a any) {})
+	if err == nil || err.Status != 502 {
+		t.Fatalf("expected 502 passthrough: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("committed stream must not be retried or fallen through, calls=%d", calls)
+	}
+}
