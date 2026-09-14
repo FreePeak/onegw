@@ -1,6 +1,9 @@
 package provider
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -166,5 +169,57 @@ func TestPrefillBucketComesFromTheEstimate(t *testing.T) {
 	// 27,814 actual / 8s ≈ 3.5k tok/s, so a 40K estimate predicts ~11.5s.
 	if secs < 8 || secs > 15 {
 		t.Fatalf("predicted %vs, want ≈11.5s from the accurate rate x the estimate", secs)
+	}
+}
+
+// TestPrefillExcludesAdmissionQueue pins the separation between the gateway's
+// own slot wait and the lane's measured speed. Live 2026-09-14: b-ai ran a
+// provider-wide cap of 7 in front of ten accounts, so a prompt that prefills
+// at api.b.ai in 1.7-3.2s took 6.1-28.4s through the gateway — and that queue
+// folded into the per-model prefill EWMA size-aware combo ordering steers on.
+// The undersized pool read as a slow vendor, so the router moved traffic off
+// the very provider whose pool needed raising. The client still sees the queue
+// (e2e/dtps measure from handler entry); it must not masquerade as the
+// upstream's prefill rate.
+func TestPrefillExcludesAdmissionQueue(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer up.Close()
+
+	def := &Def{Name: "b-ai", Kind: KindOpenAI, BaseURL: up.URL, MaxConc: 1,
+		Accounts: []Account{{Name: "a", APIKey: "k1"}, {Name: "b", APIKey: "k2"}}}
+	NewPool().Set(def) // Set sizes the max_concurrency semaphore
+
+	// Hold the one available slot, then queue a second attempt behind it.
+	held := make(chan struct{})
+	go func() {
+		defer close(held)
+		res, apiErr := def.Do(t.Context(), &def.Accounts[0], "m", nil, strings.NewReader(`{}`), false)
+		if apiErr == nil {
+			res.Resp.Body.Close()
+		}
+	}()
+	time.Sleep(50 * time.Millisecond) // let the holder take the slot
+
+	t0 := time.Now()
+	res, apiErr := def.Do(t.Context(), &def.Accounts[1], "m", nil, strings.NewReader(`{}`), false)
+	if apiErr != nil {
+		t.Fatalf("Do: %v", apiErr)
+	}
+	res.Resp.Body.Close()
+	<-held
+	wall := time.Since(t0)
+
+	if res.Prefill > 600*time.Millisecond {
+		t.Fatalf("admission queue leaked into the prefill sample: %v (wall %v)", res.Prefill, wall)
+	}
+	if res.Prefill < 300*time.Millisecond {
+		t.Fatalf("prefill must still measure the upstream's own wait, got %v", res.Prefill)
+	}
+	if wall-res.Prefill < 100*time.Millisecond {
+		t.Fatalf("setup failed: nothing queued behind the held slot (wall=%v prefill=%v)", wall, res.Prefill)
 	}
 }
