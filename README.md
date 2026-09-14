@@ -144,9 +144,9 @@ Flags: `--port`, `--loopback`, `--build`, `--with-search`, `--image`, `--name`,
 `--env-file`, `--no-pull`, `--no-verify`, `--help`.
 
 Plain `docker compose up -d` is fine once `.env` exists: copy
-[`.env.example`](.env.example), set `ONEGW_KEYS=$(openssl rand -hex 24)`. Without
-it the gateway exits with the open-proxy refusal above and
-`docker compose ps` shows `Restarting` — the reason is in
+[`.env.example`](.env.example) and set `ONEGW_KEYS` to the output of
+`openssl rand -hex 24`. Without it the gateway exits with the open-proxy refusal
+above and `docker compose ps` shows `Restarting` — the reason is in
 `docker compose logs onegw`.
 
 ### Configured after setup, not rebuilt
