@@ -433,7 +433,11 @@ Eight more pages complete the console:
   subscription login instead of a key, and the card then carries the
   **Sign in** / **Sign out** buttons (see
   [Grok subscriptions](#grok-subscriptions-supergrok--grok-build)). Keys and
-  tokens are always masked.
+  tokens are always masked. A new account goes on TOP of the pool:
+  `+ account` prepends its row, and `+ bulk` opens a paste-many popup (one
+  `name, key` per line; a bare line is the key, and choosing a sign-in service
+  makes it the account name), so a freshly added account is immediately
+  visible and is first in the order written to `onegw.toml`.
 - **Quota / Token Saver** — read-only: local quota windows with reset
   countdowns, upstream-reported subscription windows (OpenCode Go,
   z.ai GLM Coding Plan — see below), and token-saver stats.

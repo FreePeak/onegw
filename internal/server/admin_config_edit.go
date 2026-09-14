@@ -940,8 +940,9 @@ type oauthEntry struct {
 // entry (or keeps it, with `service` rewritten), and an entry whose row no
 // longer names one is dropped. Other providers' entries and every borrower
 // (`owner` set — the dashboard cannot express a borrowed session, so it never
-// manages one) are copied through byte-for-byte. New entries land after the
-// provider's last existing entry, or at EOF when it has none.
+// manages one) are copied through byte-for-byte. New entries land on top of
+// the provider's existing entries (newest first, matching the dashboard's
+// account list), or at EOF when it has none.
 func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]string, error) {
 	want := map[string]string{}
 	for _, a := range accts {
@@ -968,15 +969,22 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 	}
 	var (
 		out      []string
-		insertAt = -1 // line index just past this provider's last kept entry
+		insertAt = -1 // line index at the head of this provider's entry group
 		kept     = map[string]bool{}
 	)
 	last := 0
 	for _, b := range blocks {
+		e := parseOAuthBlock(cloneLines(lines[b.start:b.end]))
+		managed := e.owner == "" && e.provider == provName
+		if managed && insertAt < 0 {
+			// Newest first, so the grid's sign-in pills agree with the order
+			// the editor lists accounts in. Taken before the entry's leading
+			// gap, so a comment written above an existing entry stays with it.
+			insertAt = len(out)
+		}
 		out = append(out, lines[last:b.start]...) // gap text (comments, blanks)
 		last = b.end
-		e := parseOAuthBlock(cloneLines(lines[b.start:b.end]))
-		if e.owner != "" || e.provider != provName {
+		if !managed {
 			out = append(out, e.lines...)
 			continue
 		}
@@ -986,9 +994,6 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 				return nil, fmt.Errorf("cannot drop the OAuth account %s: %s borrows its session (owner = %q) — remove that borrower first",
 					e.provider+"/"+e.account, strings.Join(deps, ", "), e.provider+"/"+e.account)
 			}
-			if insertAt < 0 {
-				insertAt = len(out) // the drop point is a good place to add
-			}
 			continue // un-marked: entry removed with the row's OAuth service
 		}
 		if e.service != svc {
@@ -996,7 +1001,6 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 		}
 		out = append(out, e.lines...)
 		kept[e.account] = true
-		insertAt = len(out)
 	}
 	out = append(out, lines[last:]...)
 
