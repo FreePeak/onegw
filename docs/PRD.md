@@ -1,3 +1,38 @@
+*Last updated: 2026-09-14 (b-ai pool follow-up: ladder v5's single leg REVERTED to v6, hy3 measured and disqualified, and the delivered-tok/s ceiling written down):
+The v5 collapse of `free` onto one b-ai leg was wrong and is reverted -
+`targets = ["b-ai/qwen3.8-flash", "kilocode/kilo-auto/free"]`. Measured cost of one leg: in the
+75 min after it landed, 16x504 + 8x499 each surfaced to the client as a dead ~120s turn that then
+had to be retried, and the `free` delivered EWMA slid to 13-28 tok/s while the same model on an
+explicit route kept its speed. A leg that serves only on failure costs nothing on the happy path
+and deletes that cliff. (A 17:11 dashboard combo save re-spliced `targets` back to one leg after
+the restore - reloaded and re-verified; the console's combo editor is the thing to watch if
+`free` reads one leg again.)
+Why hy3 does NOT become this alias's fast lane, measured after it was requested as a "spread
+pool": (1) its rate wall is a SHARED model lane, not a per-account allowance - one request on
+each of the ten accounts took 7/10 429s on keys that had never sent a hy3 request, three rounds
+later 10/10; sustained ~60 req/min for the whole pool vs ~150 req/min measured the same way on
+qwen3.8-flash, so ten accounts buy hy3 no headroom; (2) its window is 192,000 input tokens
+(400 "Input tokens exceed the configured limit of 192000 tokens") and 54% of live `free` turns
+are above it (ring 190x200 bucketed by prompt size: <32K = 25 rows, 3.4s wait, 17.7 tok/s
+delivered; 32-128K = 62 rows, 8.0s, 28.5; >192K = 103 rows at in_p50 385K, 24.7s, 13.6). Leading
+with it would 400-and-fall-through on the majority. kilocode/kilo-auto/free caps at 262,144
+tokens (400 "This endpoint's maximum context length is 262144"), so above 262K the only serving
+lane on this box is b-ai/qwen3.8-flash, which took a 399,078-token request at 200. Both overflow
+dialects were being classified as terminal 400s and shown to the client - fixed in this PR.
+The arithmetic the "100 t/s / at least 60 t/s" target runs into, stated once so it stops being
+chased: omp's meter is usage.output * 1000 / message.duration, so delivered = out / (W + out/D)
+where W = pre-first-byte wall and D = the lane's per-stream decode rate, and delivered can never
+exceed D. Live p50 today: out 388 tokens, W 24.7s, D 65, so 13.6 tok/s. Even at b-ai's best
+measured warm W for a 400K-token body (12.0-14.8s, probed directly) and D at hy3's 137, 388
+output tokens give at most 24 tok/s; 60 tok/s on a 385K-token prompt needs out >= ~3500 tokens.
+Cutting the prompt into the <32K bucket (W 3.4s) puts 60 tok/s within reach of a 400-token turn
+on a 96+ tok/s lane. Two candidate causes of W were measured and ruled out: it is not upload
+bandwidth (the same 2.08 MB body sent as gzip at 1/286th the size produced the same 12-15s to
+first byte; gzip is accepted by api.b.ai, deflate is rejected - useful fact, useless win), and it
+is not compute over new tokens (those turns are 99.7% cache-warm: 2.5K uncached of a 399K prompt
+is ~1s at the ~4.5-5K tok/s cold lane). W is what api.b.ai charges to attach a 400K-token
+context, and no gateway setting shrinks it. The lever is context size at the client: compact
+earlier, and push wide work into subagents whose prompts stay small.*
 *Last updated: 2026-09-14 (b-ai pool: a PROVIDER-wide cap of 7 was throttling ten accounts, and the prefill EWMA measured across that queue - pool retuned live, `fix(provider): measure prefill from admission`, PR #97):
 RCA of the `free` alias running 15-60 tok/s on omp's meter. Two independent self-inflicts, both b-ai-specific.
 (1) ADMISSION: `max_concurrency` sizes a semaphore on the *Def*, not on an account, so ten b-ai keys shared
