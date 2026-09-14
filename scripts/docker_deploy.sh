@@ -57,6 +57,7 @@ PUBLISH_SET=${ONEGW_PUBLISH:+1}   # --publish or $ONEGW_PUBLISH: --port then ref
 HOST_PORT_WANTED=                 # --port; empty = the .env value, else 8080
 HOST_BIND=0.0.0.0                 # --loopback sets 127.0.0.1; .env can pin either
 PORT_SET=; LOOPBACK_SET=; NAME_SET=
+BIND_SET=                              # HOST_BIND came from a flag or $ONEGW_PUBLISH
 ENV_FILE_SET=${ONEGW_ENV_FILE:+1}
 DATA_VOL=${ONEGW_DATA_VOLUME:-onegw-data}
 CONFIG_VOL=${ONEGW_CONFIG_VOLUME:-onegw-config}
@@ -113,7 +114,7 @@ while [ $# -gt 0 ]; do
     --name)            NAME=${2:?}; NAME_SET=1; shift 2 ;;
     --image)           IMAGE=${2:?}; IMAGE_EXPLICIT=1; shift 2 ;;
     --publish)         PUBLISH=${2:?}; PUBLISH_SET=1; shift 2 ;;
-    --loopback)        HOST_BIND=127.0.0.1; LOOPBACK_SET=1; shift ;;
+    --loopback)        HOST_BIND=127.0.0.1; LOOPBACK_SET=1; BIND_SET=1; shift ;;
     --data-volume)     DATA_VOL=${2:?}; shift 2 ;;
     --config-volume)   CONFIG_VOL=${2:?}; shift 2 ;;
     --env-file)        ENV_FILE=${2:?}; ENV_FILE_SET=1; shift 2 ;;
@@ -201,6 +202,20 @@ if [ "$MODE" = compose ]; then
   [ -f "$ENV_FILE" ] || (umask 077; : >"$ENV_FILE")
   chmod 600 "$ENV_FILE" 2>/dev/null || true
 
+  # `--publish SPEC` is the raw spelling of the same two settings; decompose it
+  # here so the precedence below (and the health check) see a real host port and
+  # bind instead of the 8080 default — otherwise `--publish 18111:8080` would
+  # publish 18111 while the verification knocked on 8080.
+  if [ -n "$PUBLISH_SET" ]; then
+    IFS=':' read -r -a _pp <<< "$PUBLISH"
+    case ${#_pp[@]} in
+      3) HOST_BIND=${_pp[0]}; HOST_PORT_WANTED=${_pp[1]}; BIND_SET=1 ;;
+      2) HOST_PORT_WANTED=${_pp[0]} ;;
+      1) HOST_PORT_WANTED=${_pp[0]} ;;
+    esac
+    PORT_SET=1        # an operator-chosen port is never silently relocated
+  fi
+
   # Precedence for the published port, the bind, the image and the container
   # name: an explicit flag beats what .env already says, which beats the
   # 8080 / 0.0.0.0 / ghcr / `onegw` default. So a re-run without --port keeps an
@@ -208,7 +223,7 @@ if [ "$MODE" = compose ]; then
   env_get() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1; }
   want_port=${HOST_PORT_WANTED:-$(env_get ONEGW_HOST_PORT)}
   want_port=${want_port:-8080}
-  if [ -z "$LOOPBACK_SET" ]; then
+  if [ -z "$LOOPBACK_SET" ] && [ -z "$BIND_SET" ]; then
     HOST_BIND=$(env_get ONEGW_HOST_BIND)
     HOST_BIND=${HOST_BIND:-0.0.0.0}
   fi
