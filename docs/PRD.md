@@ -1,4 +1,4 @@
-*Last updated: 2026-09-14 (free-capacity ladder v4 — measured, live config hot-reloaded 200):
+*Last updated: 2026-09-14 (free-capacity ladder v4 + the tail decision — measured, live config hot-reloaded 200):
 objective was maximum FREE throughput, and the screen says the v3 chains were already hollow: legs 2/3/4 of
 both `free` and `dev` served ZERO 200s across 1h53m of ring history (tokenrouter/z-ai/glm-5.3-free 4×502 then a
 75s header timeout; tokenharbor/*:free 429 `free_tier_limit_reached` on a rolling 7-day window; glm/glm-5.3-flash
@@ -10,13 +10,15 @@ leg 1), kilocode/kilo-auto/free (8/8 200s, decode 134-175 tok/s, TTFT 6.7-8.7s),
 the vendor's SHARED relayed-lane wall — 429 code 429001 "model Concurrency limit 1200" — so it is a fall-through,
 never a lead), opencode-free/big-pickle (3/3 then 0/3 429 two runs apart: keyless and IP-scoped, surplus not
 capacity), xai/grok-4.20-0309-non-reasoning (4/4 200s, TTFT 0.97s, 95.7 delivered tok/s, SuperGrok weekly pool at
-1% — the new subscription tail). CUT as dead: the three original legs plus commandcode (weekly 100% until 09-16),
+1% — the fastest lane measured, but NOT a free/dev leg (tail decision below). CUT as dead: the three original legs plus commandcode (weekly 100% until 09-16),
 orcarouter `*-free` (429 `free_rate_limited`) and orcarouter/free (402), opencode-free ling-3.0-flash-fin (503) and
 both nemotron ids (45-85s to first byte), b-ai/mimo-v2.5 (504). Strategies keep the documented contract (free =
 `order` = the free-first cost promise, dev = `size-aware`, fast = `fastest`); `fast` gained the two measured fast
-lanes and lost opencode/mimo-v2.5 (22 tok/s — a slow slot, nothing more). Spend policy changed on purpose:
-opencode-go is no longer a free/dev leg (key-1's month reads 77% used) because xai's untouched pool fills the same
-tail role at $0 marginal; `fast` and explicit routes still reach it. Verified on the serving process (single
+lanes and lost opencode/mimo-v2.5 (22 tok/s — a slow slot, nothing more). TAIL DECISION (operator, 2026-09-14): the free aliases END at the keyless
+leg. Neither opencode-go (key-1's month reads 77% used) nor xai's untouched SuperGrok pool is a free/dev leg — an
+already-paid subscription is not free capacity here — and both stay reachable through `fast` and explicit routes.
+Accepted cost, recorded so nobody re-litigates it by accident: a >=32K-token turn has no fast-prefill fallback
+inside free/dev, where b-ai's cold prefill measured 32-47s against xai's 0.97s; `fast` is the answer for that. Verified on the serving process (single
 listener, pid 421, reading this TOML): `PUT /admin/config/reload` = 200 `{combos:3}`, `GET /admin/api/v1/combos`
 returns the new chains, and free/dev/fast each returned 200. Cold-start caveat worth knowing: the decode/prefill
 EWMA is per-process, so a deploy wipes the ranking and `fast` reverts to whatever leg is sampled until the others
@@ -32,8 +34,9 @@ draining process — the ladder is durable only because it lives in the file eve
 process. PEER COLLISION, recorded because this file has no ownership model (#42): at 12:20 local a concurrent writer
 rewrote the free+dev `targets` lines and dropped the xai tail (both aliases are now the 4-leg b-ai → kilocode →
 b-ai/hy3 → big-pickle list; `fast` kept all 6 legs), and the v4 comments survived, so only the target lists moved.
-Unresolved on purpose — routing the free aliases onto the SuperGrok pool is an operator call, and the live process
-serves whichever list the file holds at boot/reload. Earlier:)*
+RESOLVED the same day: the operator confirmed
+leave-it-out, so the peer's 4-leg free/dev list IS the intended config, and the onegw.toml combo comments now say so
+too — this note exists so a later session does not "restore" the tail. Earlier:)*
 *Last updated: 2026-09-14 (one-command Docker Compose setup: `docker_deploy.sh --compose`, configurable after setup):
 tested `docker compose` on a machine whose :8080 belongs to another process and fixed every failure that test produced.
 (1) Interpolation: `ONEGW_KEYS: "${ONEGW_KEYS:?…}"` made EVERY compose subcommand — `ps`, `logs`, `down` included — die with
