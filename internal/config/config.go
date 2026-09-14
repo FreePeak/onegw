@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"onegw/internal/subquota"
 )
 
 // Server holds process-level settings.
@@ -241,13 +243,16 @@ type ProviderCfg struct {
 	// SubscriptionQuota opts the provider into UPSTREAM-reported
 	// subscription quota tracking (issue #79, ported from 9router's
 	// usage services and OmniRoute's quota preflight): "" (off) |
-	// "opencode-go" | "zai" | "zai-cn" | "commandcode". The gateway
-	// probes the vendor's own usage endpoint per account and parks
-	// accounts whose windows the vendor reports exhausted. For
-	// commandcode, SubscriptionURL overrides the API BASE
-	// (https://api.commandcode.ai) — the probe appends /alpha paths.
-	// Other dialects: SubscriptionURL overrides the full endpoint
-	// (self-hosted mirrors, tests).
+	// "opencode-go" | "zai" | "zai-cn" | "commandcode" | "grok-cli" |
+	// "cursor". The gateway probes the vendor's own usage endpoint per
+	// account and parks accounts whose windows the vendor reports
+	// exhausted. cursor reads the browser dashboard's session-cookie API
+	// (cursor.com/api/usage) with the account's own session JWT, so it
+	// needs no extra credential; an account on an uncapped lane reports no
+	// cap and is tracked only, never parked. For commandcode,
+	// SubscriptionURL overrides the API BASE (https://api.commandcode.ai)
+	// — the probe appends /alpha paths. Other dialects: SubscriptionURL
+	// overrides the full endpoint (self-hosted mirrors, tests).
 	SubscriptionQuota string `toml:"subscription_quota"`
 	SubscriptionURL   string `toml:"subscription_url"`
 	// Rotation overrides the global [rotation] policy for this provider
@@ -600,10 +605,9 @@ func (c *Config) Validate() error {
 		if p.QuotaWindow == "" && (p.QuotaLimitTokens != 0 || p.QuotaLimitRequests != 0) {
 			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
 		}
-		switch p.SubscriptionQuota {
-		case "", "opencode-go", "zai", "zai-cn", "commandcode", "grok-cli":
-		default:
-			return fmt.Errorf("provider %s unknown subscription_quota %q (want opencode-go, zai, zai-cn, commandcode or grok-cli)", p.Name, p.SubscriptionQuota)
+		if p.SubscriptionQuota != "" && !subquota.ValidDialect(p.SubscriptionQuota) {
+			return fmt.Errorf("provider %s unknown subscription_quota %q (want %s)",
+				p.Name, p.SubscriptionQuota, strings.Join(subquota.Dialects(), ", "))
 		}
 		if err := validateRotation(p.Rotation, "provider "+p.Name+" rotation"); err != nil {
 			return err

@@ -759,3 +759,146 @@ func TestTrackerResolvesLiveKey(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Cursor (cursor.com session-cookie dashboard API)
+// ---------------------------------------------------------------------------
+
+func cursorTestJWT(sub string) string {
+	head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `","exp":1794538483}`))
+	return head + "." + payload + ".sig"
+}
+
+func TestCursorUserIDStripsConnectionPrefix(t *testing.T) {
+	// Live 2026-09-14: Cursor issues the same session shape under more than
+	// one connection prefix, and the usage API wants the bare user id.
+	for sub, want := range map[string]string{
+		"auth0|user_01K7BWSY6BKPK3ARXFPDCQGHS5": "user_01K7BWSY6BKPK3ARXFPDCQGHS5",
+		"grok|user_01M1JP8S4MAND9CQZCATCWRBX0":  "user_01M1JP8S4MAND9CQZCATCWRBX0",
+		"user_01NOPREFIX":                       "user_01NOPREFIX",
+	} {
+		uid, msg := cursorUserID(cursorTestJWT(sub))
+		if msg != "" || uid != want {
+			t.Fatalf("sub %q: uid=%q msg=%q, want %q", sub, uid, msg, want)
+		}
+	}
+	if _, msg := cursorUserID("sk-not-a-jwt"); msg == "" {
+		t.Fatal("a non-JWT credential must report a probe error, not probe cursor.com")
+	}
+}
+
+func TestParseCursorMeteredBucket(t *testing.T) {
+	// Live 2026-09-14 body for the work account: 246 of a 1000-request pool.
+	body := []byte(`{"gpt-4":{"numRequests":246,"numRequestsTotal":246,"maxRequestUsage":1000,` +
+		`"numTokens":0,"maxTokenUsage":null},"startOfMonth":"2026-09-01T00:00:00.000Z"}`)
+	windows, plan, err := parseCursor(body, 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if len(windows) != 1 || windows[0].Name != "gpt-4 (monthly)" {
+		t.Fatalf("windows = %+v", windows)
+	}
+	if windows[0].Used != 25 {
+		t.Fatalf("used = %d, want 25 (246/1000)", windows[0].Used)
+	}
+	if windows[0].exhausted() {
+		t.Fatal("25% must not read as exhausted")
+	}
+	if plan != "1000 req/mo" {
+		t.Fatalf("plan = %q", plan)
+	}
+	want := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	if r := windows[0].Resets; r == nil || !r.Equal(want) {
+		t.Fatalf("reset = %v, want %v", r, want)
+	}
+}
+
+func TestParseCursorUncappedLaneNeverParks(t *testing.T) {
+	// Live 2026-09-14 personal account: a null maxRequestUsage is an UNLIMITED
+	// lane, not a spent one. It still gets a visible 0% window (the Quota
+	// table renders one row per window) and must never park the account.
+	body := []byte(`{"gpt-4":{"numRequests":0,"numRequestsTotal":0,"maxRequestUsage":null,` +
+		`"numTokens":0,"maxTokenUsage":null},"startOfMonth":"2026-09-03T03:51:46.559Z"}`)
+	windows, plan, err := parseCursor(body, 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if len(windows) != 1 || windows[0].Used != 0 || plan != "uncapped" {
+		t.Fatalf("windows = %+v, plan = %q", windows, plan)
+	}
+	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
+		t.Fatal("an uncapped lane must never look exhausted")
+	}
+	want := time.Date(2026, 10, 3, 3, 51, 46, 559000000, time.UTC)
+	if r := windows[0].Resets; r == nil || !r.Equal(want) {
+		t.Fatalf("reset = %v, want %v", r, want)
+	}
+}
+
+func TestParseCursorErrors(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		body   string
+		status int
+		want   string
+	}{
+		{"expired session", `{}`, 401, "invalid or expired"},
+		{"forbidden session", `{}`, 403, "invalid or expired"},
+		{"vendor 5xx", `{}`, 503, "Cursor usage API error (503)"},
+		{"html interstitial", `<html>login</html>`, 200, "not valid JSON"},
+		{"no buckets", `{"startOfMonth":"2026-09-01T00:00:00.000Z"}`, 200, "no meter buckets"},
+	} {
+		windows, plan, err := parseCursor([]byte(c.body), c.status)
+		if !strings.Contains(err, c.want) {
+			t.Fatalf("%s: err = %q, want it to contain %q", c.name, err, c.want)
+		}
+		if windows != nil || plan != "" {
+			t.Fatalf("%s: an error probe must carry no data, got %+v / %q", c.name, windows, plan)
+		}
+	}
+}
+
+func TestProbeCursorEndToEnd(t *testing.T) {
+	// The probe authenticates the way the browser dashboard does — a session
+	// cookie plus the uid query — and a spent pool parks the account.
+	var cookie, user string
+	cs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/usage" {
+			http.NotFound(w, r)
+			return
+		}
+		cookie = r.Header.Get("Cookie")
+		user = r.URL.Query().Get("user")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"gpt-4":        map[string]any{"numRequests": 1000, "maxRequestUsage": 1000},
+			"startOfMonth": "2026-09-01T00:00:00.000Z",
+		})
+	}))
+	defer cs.Close()
+
+	jwt := cursorTestJWT("auth0|user_01TEST")
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "cursor", AcctName: "work", AcctKey: jwt, Dialect: Cursor,
+		URL: cs.URL + "/api/usage"}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a spent cursor pool never parked the account")
+	}
+	if user != "user_01TEST" {
+		t.Fatalf("?user = %q, want the sub minus its prefix", user)
+	}
+	if want := "WorkosCursorSessionToken=user_01TEST%3A%3A" + jwt; cookie != want {
+		t.Fatalf("cookie = %q, want %q", cookie, want)
+	}
+	snaps := tr.All()
+	if len(snaps) != 1 || snaps[0].Err != "" {
+		t.Fatalf("probe failed: %+v", snaps)
+	}
+	if snaps[0].Plan != "1000 req/mo" || len(snaps[0].Windows) != 1 || snaps[0].Windows[0].Used != 100 {
+		t.Fatalf("snapshot = %+v", snaps[0])
+	}
+}
