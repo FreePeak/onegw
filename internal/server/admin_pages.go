@@ -336,13 +336,19 @@ func (s *Server) observeLog(provider, model, acct string, code int, kind string,
 	})
 }
 
-// navItems — the sidebar IA (#41). Icon is the glyph's inner SVG markup:
-// 24x24 viewBox, stroke=currentColor paths drawn by base.html inside a
+// navItems — the sidebar IA (#41), three groups: watch it (Monitor), change
+// it (Configure), run the box (Administer). Icon is the glyph's inner SVG
+// markup: 24x24 viewBox, stroke=currentColor paths drawn by base.html inside a
 // <svg class="nicon"> wrapper. Geometry follows the Lucide icon language
 // (MIT): gauge (overview), bar chart (usage), list (logs), server rack
-// (providers), route (combos failover), pie (quota), banknote (saver),
-// terminal (tools), sliders (settings). Collapsed to the icon rail these
-// glyphs are the only navigation, so each must read at 17px.
+// (providers), layers (models), key (credentials), route (combos failover),
+// pie (quota), banknote (saver), terminal (tools), sliders (settings).
+// Collapsed to the icon rail these glyphs are the only navigation, so each
+// must read at 17px.
+//
+// Models and API Keys sit beside Providers because that is where their
+// questions come from: which ids does this upstream actually serve, and what
+// credential does it serve them with.
 var navItems = []dashboard.NavItem{
 	{ID: "overview", Href: "/admin", Label: "Overview", Group: "Monitor",
 		Icon: `<path d="m19 15-4-4"/><path d="M21.64 15a9 9 0 1 0-19.28 0"/>`},
@@ -350,17 +356,21 @@ var navItems = []dashboard.NavItem{
 		Icon: `<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>`},
 	{ID: "logs", Href: "/admin/ui/logs", Label: "Console Log", Group: "Monitor",
 		Icon: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/>`},
-	{ID: "providers", Href: "/admin/ui/providers", Label: "Providers", Group: "Routing",
+	{ID: "providers", Href: "/admin/ui/providers", Label: "Providers", Group: "Configure",
 		Icon: `<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>`},
-	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos", Group: "Routing",
+	{ID: "models", Href: "/admin/ui/models", Label: "Models", Group: "Configure",
+		Icon: `<path d="M12 2 3 6.5v11L12 22l9-4.5v-11L12 2Z"/><path d="m3.3 6.7 8.7 4.4 8.7-4.4"/><path d="M12 22V11.1"/>`},
+	{ID: "keys", Href: "/admin/ui/keys", Label: "API Keys", Group: "Configure",
+		Icon: `<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="m16.5 6.5 2.5 2.5"/><path d="m19 4 2 2"/>`},
+	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos", Group: "Configure",
 		Icon: `<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>`},
-	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota", Group: "Routing",
+	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota", Group: "Administer",
 		Icon: `<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>`},
-	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver", Group: "Routing",
+	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver", Group: "Administer",
 		Icon: `<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01"/><path d="M18 12h.01"/>`},
-	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools", Group: "Gateway",
+	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools", Group: "Administer",
 		Icon: `<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>`},
-	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings", Group: "Gateway",
+	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings", Group: "Administer",
 		Icon: `<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>`},
 }
 
@@ -597,6 +607,10 @@ func (s *Server) handleAdminUI(w http.ResponseWriter, r *http.Request) {
 		s.usagePage(w, r)
 	case "providers":
 		s.providersPage(w, r)
+	case "keys":
+		s.keysPage(w, r)
+	case "models":
+		s.modelsPage(w, r)
 	case "combos":
 		s.combosPage(w, r)
 	case "quota":
@@ -927,6 +941,11 @@ type providerView struct {
 	// until the provider has served streaming replies.
 	TPS    float64             `json:"tps,omitempty"`
 	Speeds []provider.SpeedRow `json:"speeds,omitempty"`
+	// Attention names the one thing still missing before this provider can
+	// serve — "" when it is fully configured. It is what decides whether the
+	// grid renders the card open: a preconfigured provider collapses to a
+	// status line, an unfinished one is the only thing that needs room.
+	Attention string `json:"attention,omitempty"`
 }
 
 func providerViews(st *state) []providerView {
@@ -966,6 +985,32 @@ func providerViews(st *state) []providerView {
 	return out
 }
 
+// providerAttention decides the card's default open/closed state: a provider
+// with no credential at all, or a subscription that has never signed in, still
+// needs the operator, so its section opens. Anything else is a finished
+// configuration — including one advertising zero models, which is pass-through
+// by design — and collapses to a status line. The string doubles as the pill on
+// the summary row, which is what makes collapsing safe: a closed card still
+// says what it wants.
+//
+// Runs over the attached view, because the sign-in states are attached after
+// providerViews returns.
+func providerAttention(v *providerView) {
+	if v.Disabled {
+		return // switched off on purpose: nothing to fix, nothing to nag about
+	}
+	if v.Accounts == 0 {
+		v.Attention = "no credential"
+		return
+	}
+	for _, o := range v.OAuth {
+		if o.Owner == "" && o.State != oauthSignedIn {
+			v.Attention = "sign " + o.Account + " in"
+			return
+		}
+	}
+}
+
 // providerOAuthView is one account's OAuth wiring: the service profile its
 // credential comes from, and how that credential stands. No secret material.
 type providerOAuthView struct {
@@ -997,6 +1042,7 @@ func (s *Server) attachOAuth(views []providerView) []providerView {
 				Owner: st.Owner, Error: st.Error,
 			})
 		}
+		providerAttention(&views[i])
 	}
 	return views
 }
@@ -1117,6 +1163,29 @@ func (s *Server) handleAPIProviders(w http.ResponseWriter, r *http.Request) {
 		views = s.attachOAuth(providerViews(st))
 	}
 	writeJSON(w, views)
+}
+
+// keysPage is the one page for every credential onegw holds: gateway client
+// keys to hand to a CLI, and the upstream key each provider account sends.
+// The rows themselves are fetched by the page from GET /admin/config/keys —
+// plaintext secrets are never baked into a document that a browser caches,
+// a proxy sees, or an operator screenshots (the posture settings.html already
+// documented for the same endpoint).
+func (s *Server) keysPage(w http.ResponseWriter, r *http.Request) {
+	s.authedPage(w, r, "keys", "API Keys", false, nil)
+}
+
+// modelsPage lists what each provider advertises against what it actually
+// serves upstream, with the copy button on every id. Rows render server-side
+// from the cache (first paint shows what is already known); the page then asks
+// for whatever is missing.
+func (s *Server) modelsPage(w http.ResponseWriter, r *http.Request) {
+	v := struct{ Rows []modelRowView }{}
+	if st := s.cur(); st != nil {
+		s.autoDiscoverModels(st, false)
+		v.Rows = s.modelRows(st)
+	}
+	s.authedPage(w, r, "models", "Models", false, v)
 }
 
 type combosPageView struct {

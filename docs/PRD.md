@@ -1,3 +1,48 @@
+*Last updated: 2026-09-14 (dashboard UI revamp: collapsing-by-default grid, one API-keys page, model discovery, xAI browser sign-in):
+the console grew into a wall of always-open forms, so the config surface was rebuilt around three rules.
+(1) **Collapse by default, open when it still needs you.** Every provider card is now a `<details>` whose
+summary row carries the switch, kind, decode-speed and status pills; the body (base URL, accounts, quota,
+subscription, advertised ids) is hidden until asked. A card whose provider is unfinished opens *itself* —
+`providerAttention()` sets it for a provider with no credential or a subscription that has never signed in,
+and puts the reason on the summary as a warning pill ("sign main in"), so nothing is hidden behind a fold
+that needed a click to discover. A deliberately disabled provider stays quiet (nothing to nag about). The same
+treatment went into the provider editor (routing limits + wire dialect groups) and Settings (Version / Admin
+password / Admin API). Every `<details data-acc="id">` remembers an operator's choice in `localStorage`, which
+then outranks the server's default, same as the theme and the rails. (2) **Two new pages under a regrouped
+sidebar** — Monitor / Configure / Administer: *API Keys* (`/admin/ui/keys`) is the one place to CRUD and copy
+both directions of credential (gateway client keys and per-account upstream keys) with masked rows, a reveal-free
+copy button, an inline replace, and a clear that refuses to strand a provider; *Models* (`/admin/ui/models`)
+shows advertised vs upstream ids per provider, where **the id chip is the copy button** (`provider/model`, the
+exact string a CLI pastes). (3) **Model discovery**: `POST /admin/config/providers/{name}/models/fetch` asks the
+upstream itself (all accounts tried in turn, `Def.FetchModels`, OpenAI `data[].id` / Gemini `models[].name` /
+bare `models[]` parsed), caching per provider on the Server (`modelCache`, 6 h TTL, 5 min back-off on failure,
+3-way concurrency) and `GET /admin/api/v1/models` serving the rows; opening the Models page kicks a background
+pass for whatever has no answer yet, ↻ Fetch re-asks one provider, ↻ Fetch all re-asks every one. Writing the
+list into `models` is a separate, explicit **Pin**, because an advertised list *restricts* routing (empty means
+pass-through) and must never be a side effect of looking. (4) **xAI signs in the way 9router does**: the device
+flow is replaced by the default browser flow — authorization-code + PKCE (S256, 96-byte verifier) against
+`https://auth.x.ai/oauth2/authorize` with the public Grok client, `plan=generic`/`referrer=cli-proxy-api`/nonce,
+and a loopback listener this process owns on the registered `127.0.0.1:56121/callback` (falling back to an
+ephemeral port with a log line when it is busy; `oauth.callback_port` overrides). The listener opens with the
+first pending login and closes when the last settles, the callback exchanges the code once (single-use random
+`state` is the only authorization) and writes the token to the data-dir store, and the dashboard notices through
+the accounts poll it already had. Escape hatches stay: `?flow=device` on the login call for a browser on
+another box, plus `POST /admin/config/oauth/exchange` which finishes the same session from a pasted code or
+callback URL. `oauthPrompt` gained `mode` so the dialog knows whether to show a code, a link, or both.
+Endpoints: `GET /admin/config/keys` now returns `providers` alongside `keys` and `PATCH` takes
+`provider_set`/`provider_clear` next to `add`/`remove` (plaintext stays admin-gated and is never server-rendered
+into a page). Tests: `internal/server` + `internal/oauth` green, incl. 5 browser-flow tests (real loopback
+listener, refused unknown state, pasted code, port released, S256/param contract), 4 model-discovery tests,
+4 credential tests and one guard that fails if a `data-copy` payload ever ships without the `.copy` class the
+delegated handler matches (it caught exactly that break in this change). Verified live against a scratch
+instance on :18099 driven in headless Chrome over CDP: chips clicked → clipboard received
+`alpha/chat-large` and the button answered "copied ✓"; sign-in dialog opened in browser mode with
+`redirect_uri=http://127.0.0.1:56121/callback` and auto-popupped to auth.x.ai; the callback round trip reached
+the vendor and reported `invalid_grant` for a deliberately fake code; Pin wrote `models = [...]` into the TOML
+with the accounts intact; a one-account key replace left its sibling key and every other field alone.
+Pre-existing, unrelated: `TestCursorKindEndToEnd` still hangs (real network dial) on a pristine HEAD checkout.
+Also dropped: the Settings "Gateway keys" list (now the keys page) and its dead fetch script.*
+
 *Last updated: 2026-09-14 (PR #97 merged as 533affe; `free` is b-ai-only by STANDING ORDER, ladder v7):
 Operator instruction, recorded so no later session re-litigates it from the
 measurement below: "remove the kilo free from my combo, do not add them again."
