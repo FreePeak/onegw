@@ -1,3 +1,19 @@
+*Last updated: 2026-09-14 (dashboard account editor: newest account first + a bulk-add popup):
+adding an account used to append it to the bottom of the provider's row list — out of sight for a big pool, and last in
+the order written to `onegw.toml` (so last in the account pool). `+ account` now prepends its row and focuses it, and a
+new `+ bulk` dialog turns a pasted list into rows in one go: one account per line, `name, key` / `name key`, or a bare
+key (named key-1, key-2, …); choosing a sign-in service instead makes each bare line a subscription account name. Lines
+are skipped — not saved — when their name already exists or they carry neither a key nor a service, because
+`config.Validate` rejects a duplicate account name and `refuseStrandedAccounts` rejects a row that authenticates as
+nothing. The list also scrolls (`max-height:45vh`) so a 100-key pool stays usable. `spliceOAuthAccounts` now lands a new
+`[[oauth.accounts]]` entry at the HEAD of its provider's group instead of after its last entry, so the grid's sign-in
+pills agree with the roster order; the insert point is taken before the entry's leading gap, which keeps a hand-written
+comment attached to the entry it describes. Tests: 1 page-level (the Providers page 500s silently on a template/data
+mismatch) + 1 splice order test; `internal/server` green on top of bc4e730 except the pre-existing
+`TestCursorKindEndToEnd` hang (reproduced on the tip without this change). Verified end-to-end against a scratch
+instance (:18099, this tree) driven in headless Chrome over CDP: single add lands on top and takes focus; a bulk paste
+of mixed line shapes plus a sign-in-service batch → rows in pasted order above the existing ones, duplicate name
+skipped, blank keys of untouched rows carried over; after Save + auto-reload the roster reads back newest-first.*
 *Last updated: 2026-09-14 (free-capacity ladder v4 + the tail decision — measured, live config hot-reloaded 200):
 objective was maximum FREE throughput, and the screen says the v3 chains were already hollow: legs 2/3/4 of
 both `free` and `dev` served ZERO 200s across 1h53m of ring history (tokenrouter/z-ai/glm-5.3-free 4×502 then a

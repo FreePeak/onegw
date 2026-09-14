@@ -138,10 +138,15 @@
       </div>
     </div>
     <div class="field">
-      <label>accounts <span class="text-mut/60">(editing: blank key keeps the existing one · pick a
-        service for a subscription login — no API key needed)</span>
-        <button type="button" class="btn sm ml-2" id="pf-addacct">+ account</button></label>
-      <div id="pf-accts"></div>
+      <label>accounts <span class="text-mut/60">(newest first · editing: blank key keeps the existing
+        one · pick a service for a subscription login — no API key needed)</span>
+        <button type="button" class="btn sm ml-2" id="pf-addacct">+ account</button>
+        <button type="button" class="btn sm ml-2" id="pf-bulkacct" title="add many accounts at once">+ bulk</button></label>
+      <!-- Newest-first: a fresh row lands ABOVE the roster and is written to
+           onegw.toml ahead of it, so it is reachable without scrolling. The
+           scroll box is an inline style on purpose: a Tailwind utility here
+           would only work after scripts/dashboard-css.sh is re-run. -->
+      <div id="pf-accts" style="max-height:45vh;overflow-y:auto"></div>
     </div>
     <div class="mfoot">
       <button type="button" class="btn" id="pcancel">Cancel</button>
@@ -165,6 +170,35 @@
   <p class="msub" id="oauth-state"></p>
   <div class="mfoot">
     <button type="button" class="btn" id="oauth-close">Close</button>
+  </div>
+</dialog>
+
+<dialog class="modal" id="bulkdlg" aria-labelledby="bulkdlg-title">
+  <h2 id="bulkdlg-title">Add accounts in bulk</h2>
+  <p class="msub">One account per line: <code>name, api key</code>, <code>name api_key</code>, or a bare
+    <code>api key</code> (the row is then named key-1, key-2, &hellip;). Choose a sign-in service instead of
+    keys and each line becomes a subscription account named by that line. Blank lines, repeated names, and
+    rows with nothing to authenticate with are skipped; new rows land at the top of the list, above the
+    accounts already saved.</p>
+  <div class="merr" id="bulk-err" role="alert" hidden></div>
+  <div class="field">
+    <label for="bulk-rows">accounts <span class="text-mut/60">(paste as many lines as you have)</span></label>
+    <textarea id="bulk-rows" rows="10" spellcheck="false" autocomplete="off"
+              placeholder="acct-a, sk-or-v1-&#8230;&#10;acct-b, sk-or-v1-&#8230;"></textarea>
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div class="field">
+      <label for="bulk-rpm">rpm limit <span class="text-mut/60">(0 = uncapped)</span></label>
+      <input id="bulk-rpm" type="number" min="0" inputmode="numeric" placeholder="0">
+    </div>
+    <div class="field">
+      <label for="bulk-oauth">sign-in service <span class="text-mut/60">(subscription: no keys)</span></label>
+      <select id="bulk-oauth"></select>
+    </div>
+  </div>
+  <div class="mfoot">
+    <button type="button" class="btn" id="bulk-cancel">Cancel</button>
+    <button type="button" class="btn primary" id="bulk-add">Add to list</button>
   </div>
 </dialog>
 {{end}}
@@ -198,6 +232,7 @@ const PRESETS = {{.Presets}}||[];
           ${SERVICES.map(sv => `<option value="${sv}">${sv}</option>`).join('')}
         </select></div>`;
     d.querySelector('.a-name').value = a ? a.name : '';
+    if (a && a.api_key) d.querySelector('.a-key').value = a.api_key;
     if (a && a.rpm) d.querySelector('.a-rpm').value = a.rpm;
     if (a && a.oauth) d.querySelector('.a-oauth').value = a.oauth;
     if (a && a.owner) {
@@ -214,6 +249,16 @@ const PRESETS = {{.Presets}}||[];
     rm.onclick = () => d.remove();
     d.appendChild(rm);
     return d;
+  }
+  // Newest first: every new row (single or bulk) is prepended, so it sits
+  // above the roster in the list AND in the saved `accounts` array — which is
+  // the order written into onegw.toml, so a fresh account is live and visible
+  // without scrolling past (or hunting for) the accounts already configured.
+  function addAcctRow(a){
+    const row = acctRow(a);
+    accts.prepend(row);
+    accts.scrollTop = 0;
+    return row;
   }
   function openAdd(){
     editing = null;
@@ -304,7 +349,70 @@ const PRESETS = {{.Presets}}||[];
   document.getElementById('addprov').onclick = openAdd;
   document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openEdit(b.dataset.edit));
   document.getElementById('pcancel').onclick = () => dlg.close();
-  addBtn.onclick = () => accts.appendChild(acctRow(null));
+  addBtn.onclick = () => addAcctRow(null).querySelector('.a-name').focus();
+
+  // --- Bulk account add ---------------------------------------------------
+  // Paste a list, get rows. Line shape: `name, key` / `name key`, or a bare
+  // token — a key when the service select is "static key" (row named key-N),
+  // an account name when a sign-in service is chosen (subscription accounts
+  // have no key). Duplicate names are skipped because config.Load rejects a
+  // provider with two accounts of one name: offering one would only turn Save
+  // into a 400. Rows with neither a key nor a service are refused for the
+  // same reason the endpoint refuses them (refuseStrandedAccounts).
+  const bdlg = document.getElementById('bulkdlg'),
+        btitle = document.getElementById('bulkdlg-title'),
+        brows = document.getElementById('bulk-rows'),
+        berr = document.getElementById('bulk-err'),
+        brpm = document.getElementById('bulk-rpm'),
+        boauth = document.getElementById('bulk-oauth');
+  boauth.innerHTML = '<option value="">static key</option>' +
+    SERVICES.map(sv => `<option value="${sv}">${sv}</option>`).join('');
+  function bulkErr(m){ berr.textContent = m; berr.hidden = false; }
+
+  function nextFreeName(taken){
+    for (let i = 1; ; i++) if (!taken.has('key-' + i)) return 'key-' + i;
+  }
+
+  document.getElementById('pf-bulkacct').onclick = () => {
+    berr.hidden = true;
+    btitle.textContent = 'Add accounts in bulk · ' +
+      (editing ? editing : 'new provider');
+    bdlg.showModal();
+    brows.focus();
+  };
+  document.getElementById('bulk-cancel').onclick = () => bdlg.close();
+  document.getElementById('bulk-add').onclick = () => {
+    const service = boauth.value,
+          rpm = parseInt(brpm.value, 10) || 0,
+          taken = new Set([...accts.children].map(r => r.querySelector('.a-name').value.trim())),
+          rows = [], stranded = [];
+    let dupes = 0;
+    for (const line of brows.value.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      const m = t.match(/^([^,\s]+)[,\s]+(.+)$/);
+      let name = m ? m[1] : t;
+      let key = m ? m[2].trim() : '';
+      if (!m && !service) { key = t; name = nextFreeName(taken); }
+      if (!key && !service) { stranded.push(name); continue; }
+      if (taken.has(name)) { dupes++; continue; }
+      taken.add(name);
+      rows.push(acctRow({ name, api_key: key, rpm, oauth: service }));
+    }
+    if (stranded.length) {
+      bulkErr(`${stranded.length} line(s) have no key and no sign-in service: ` +
+        stranded.slice(0, 5).join(', ') + (stranded.length > 5 ? ', …' : ''));
+    }
+    if (!rows.length) { if (!stranded.length) bulkErr('nothing to add — paste at least one line'); return; }
+    accts.prepend(...rows);
+    accts.scrollTop = 0;
+    bdlg.close();
+    brows.value = '';
+    const notes = [rows.length + (rows.length ***REMOVED***= 1 ? ' account added' : ' accounts added')];
+    if (dupes) notes.push(dupes + ' duplicate name skipped');
+    if (stranded.length) notes.push(stranded.length + ' line skipped (no key)');
+    ogwToast(notes.join(' · '), !stranded.length);
+  };
 
   // Grid on/off toggle: PATCH only the `disabled` key of the named
   // provider block (never the whole record — a toggle must not be able
@@ -469,7 +577,7 @@ const PRESETS = {{.Presets}}||[];
   const es = new EventSource('/admin/events?topics=config');
   let pending = false;
   es.addEventListener('config', () => {
-    if (dlg.open || odlg.open || pending) return; // never wipe an open editor or a live sign-in
+    if (dlg.open || odlg.open || bdlg.open || pending) return; // never wipe an open editor or a live sign-in
     pending = true;
     setTimeout(() => location.reload(), 300);
   });

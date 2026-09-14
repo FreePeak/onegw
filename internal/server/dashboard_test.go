@@ -308,6 +308,31 @@ func TestDashboardPagesRender(t *testing.T) {
 	_ = srv
 }
 
+// TestProvidersPageRendersAccountBulkEditor pins the account editor's surface:
+// the bulk-paste dialog and the newest-first row list. The providers page
+// renders through dashboard.Render, which fails HARD (500, template error in
+// the body) on a template/data mismatch and logs nothing — so the JSON twins
+// staying green proves nothing about this page.
+func TestProvidersPageRendersAccountBulkEditor(t *testing.T) {
+	_, h := newAdminSrv(t, "")
+	w := do(t, h, adminReq(t, "/admin/ui/providers"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("providers page: %d %s", w.Code, w.Body.String())
+	}
+	page := w.Body.String()
+	for _, want := range []string{
+		`id="pf-bulkacct"`,       // the bulk entry point beside "+ account"
+		`id="bulkdlg"`,           // the paste-many dialog
+		`id="bulk-rows"`,         // its textarea
+		`accts.prepend(...rows)`, // pasted rows land on top of the roster
+		`accts.scrollTop = 0`,    // and the list scrolls to show them
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("page missing %q in:\n%s", want, page)
+		}
+	}
+}
+
 func TestAPIEndpointsShape(t *testing.T) {
 	_, h := newAdminSrv(t, "")
 	w := do(t, h, adminReq(t, "/admin/api/v1/providers"))

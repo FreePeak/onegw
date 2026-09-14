@@ -428,6 +428,33 @@ func TestProviderEditorWritesAndClearsOAuthEntry(t *testing.T) {
 	}
 }
 
+// TestProviderEditorPutsNewOAuthAccountOnTop: the dashboard lists a provider's
+// newest account first and writes the roster in that order, so the
+// [[oauth.accounts]] entries it reconciles must agree — the grid's sign-in
+// pills render in entry order. The comment above an existing entry has to stay
+// with that entry; an insert on top of the group must not steal it.
+func TestProviderEditorPutsNewOAuthAccountOnTop(t *testing.T) {
+	idp := &oauthIdP{}
+	idpURL, upstreamURL := idp.start(t)
+	_, h, path := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+
+	body := `{"name":"xai","kind":"openai","accounts":[{"name":"fresh","oauth":"xai"},{"name":"main","oauth":"xai"}]}`
+	if w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true); w.Code != http.StatusOK {
+		t.Fatalf("add oauth account: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	fresh := strings.Index(file, `account = "fresh"`)
+	comment := strings.Index(file, "# The login: owns + refreshes the session.")
+	main := strings.Index(file, `account  = "main"`)
+	if fresh < 0 || main < 0 {
+		t.Fatalf("both entries must exist:\n%s", file)
+	}
+	if !(fresh < comment && comment < main) {
+		t.Fatalf("new entry must sit above xai/main and keep its comment attached: fresh=%d comment=%d main=%d:\n%s",
+			fresh, comment, main, file)
+	}
+}
+
 // providerBlock returns the text of one [[providers]] block. The account and
 // oauth tables that follow it belong to it: the block runs until the next
 // [[providers]] header.
