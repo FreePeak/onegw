@@ -657,10 +657,32 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
 	attempts := 0
-	execErr := st.router.Execute(execCtx, res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	call := func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		attempts++
 		return s.attempt(ctx, def, acct, m, clientFmt, body, stream, w, savedTokens, r.Header, ak, attempts)
-	}, func(v any) {})
+	}
+	execErr := st.router.Execute(execCtx, res, call, func(v any) {})
+	// Context-window overflow recovery: the whole chain refused THIS body as
+	// too long for every leg's window (router fell through each 400 — the
+	// only honest answer it can give without rewriting the conversation).
+	// Prune the oldest complete turns to fit the window the refusal reported
+	// and replay the chain once, so an agent session on a small-window free
+	// combo degrades to recent context instead of dying. Safe to rewrite
+	// body here: the Execute Caller closure reads it per attempt, and
+	// Content-Type is still empty, so nothing has reached the client.
+	if execErr != nil && execErr.ContextWindowExceeded() && w.Header().Get("Content-Type") == "" {
+		window, measured, ok := execErr.ContextWindowOverflow()
+		if !ok {
+			window = overflowFallbackWindow
+		}
+		if pruned := pruneToFit(body, clientFmt, window, measured); pruned != nil {
+			log.Printf("server: context overflow (%d tokens > %d window): pruned body %d→%d bytes, retrying route %s",
+				measured, window, len(body), len(pruned), model)
+			body = pruned
+			execCtx = router.WithInputSize(execCtx, int64(len(body))/4)
+			execErr = st.router.Execute(execCtx, res, call, func(v any) {})
+		}
+	}
 	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
 	}
