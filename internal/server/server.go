@@ -446,6 +446,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/config/oauth/login", s.handleAdminOAuthLogin)
 	mux.HandleFunc("POST /admin/config/oauth/logout", s.handleAdminOAuthLogout)
 	mux.HandleFunc("PUT /admin/config/combos", s.handleAdminComboEdit)
+	mux.HandleFunc("GET /admin/config/sections", s.handleAdminSectionsGet)
+	mux.HandleFunc("PUT /admin/config/sections", s.handleAdminSectionsPut)
 	mux.HandleFunc("GET /admin/config/presets", s.handleAdminPresetList)
 	mux.HandleFunc("PUT /admin/config/presets", s.handleAdminPresetPut)
 	mux.HandleFunc("DELETE /admin/config/presets", s.handleAdminPresetDelete)
