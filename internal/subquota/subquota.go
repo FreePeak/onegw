@@ -42,13 +42,22 @@ const (
 	ZaiCN       = "zai-cn"      // GLM Coding Plan (China, bigmodel.cn)
 	CommandCode = "commandcode" // CommandCode /alpha billing (GOAT/Go/Pro plans)
 	GrokCli     = "grok-cli"    // SuperGrok shared weekly pool (cli-chat-proxy)
+	Cursor      = "cursor"      // Cursor subscription (cursor.com session API)
 )
+
+// Dialects lists the accepted providers.subscription_quota values. It is the
+// single source of that list: config.Validate matches against it and quotes
+// it in its error, so a new dialect is registered in exactly one place.
+func Dialects() []string {
+	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor}
+}
 
 // ValidDialect reports whether name is a subscription quota dialect.
 func ValidDialect(name string) bool {
-	switch name {
-	case OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli:
-		return true
+	for _, d := range Dialects() {
+		if d == name {
+			return true
+		}
 	}
 	return false
 }
@@ -73,6 +82,9 @@ func DefaultURL(dialect string) string {
 		// OmniRoute's grokQuotaFetcher: the SuperGrok shared weekly pool.
 		// Same base the Grok Build CLI uses for everything else.
 		return "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+	case Cursor:
+		// Browser-dashboard usage API; the probe appends its own ?user=<uid>.
+		return "https://cursor.com/api/usage"
 	}
 	return ""
 }
@@ -322,6 +334,13 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 		// subscriptions + summary); URL is a BASE, not one endpoint.
 		return t.probeCommandCode(ctx, tgt)
 	}
+
+	if tgt.Dialect == Cursor {
+		// No other dialect authenticates by cookie or derives a query
+		// parameter from the credential, so it cannot ride the bearer probe.
+		return t.probeCursor(ctx, tgt)
+	}
+
 	url := tgt.URL
 	if url == "" {
 		url = DefaultURL(tgt.Dialect)
@@ -885,6 +904,159 @@ func grokReset(v any) *time.Time {
 		return asReset(x["seconds"])
 	}
 	return asReset(v)
+}
+
+// ---------------------------------------------------------------------------
+// Cursor (cursor.com session-cookie dashboard API)
+// ---------------------------------------------------------------------------
+
+// probeCursor fetches one Cursor account's meter state. The endpoint is the
+// browser dashboard's own API, so auth is a session cookie rather than a
+// bearer: WorkosCursorSessionToken=<uid>%3A%3A<jwt>, with <uid> the session
+// JWT's sub claim minus its identity-provider prefix, repeated as ?user=.
+// Contract ported from cursor-usage-extension/extension.js
+// (extractUserIdFromToken/buildCookie/fetchUsage) and live-verified against
+// both configured Cursor accounts on 2026-09-14.
+func (t *Tracker) probeCursor(ctx context.Context, tgt Target) Snapshot {
+	base := tgt.URL
+	if base == "" {
+		base = DefaultURL(Cursor)
+	}
+	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: Cursor, URL: base, FetchedAt: t.now()}
+	uid, errMsg := cursorUserID(tgt.AcctKey)
+	if errMsg != "" {
+		snap.Err = errMsg
+		return snap
+	}
+	full := base + "?user=" + url.QueryEscape(uid)
+	snap.URL = full
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", "WorkosCursorSessionToken="+uid+"%3A%3A"+tgt.AcctKey)
+	resp, err := t.client.Do(req)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		snap.Err = "read cursor usage response: " + err.Error()
+		return snap
+	}
+	snap.Windows, snap.Plan, snap.Err = parseCursor(body, resp.StatusCode)
+	return snap
+}
+
+// cursorUserID reads the sub claim of a Cursor session JWT and strips its
+// provider prefix: "auth0|user_01K7…" and "grok|user_01M1…" both resolve to
+// the bare user id (live 2026-09-14 — Cursor issues the same session shape
+// under more than one connection prefix). Failures come back as probe-error
+// text, matching what every other parser in this file returns.
+func cursorUserID(jwt string) (string, string) {
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		return "", "cursor: account credential is not a session JWT"
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return "", "cursor: session JWT payload does not decode"
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return "", "cursor: session JWT claims are not valid JSON"
+	}
+	uid := strings.TrimSpace(claims.Sub)
+	if uid == "" {
+		return "", "cursor: session JWT carries no sub claim"
+	}
+	if _, after, found := strings.Cut(uid, "|"); found {
+		uid = after
+	}
+	return uid, ""
+}
+
+// parseCursor decodes cursor.com/api/usage (live shape 2026-09-14):
+//
+//	{"gpt-4":{"numRequests":246,"maxRequestUsage":1000,"numRequestsTotal":246,
+//	 "numTokens":0,"maxTokenUsage":null},"startOfMonth":"2026-09-01T00:00:00.000Z"}
+//
+// Every top-level object is one meter bucket; Cursor names the aggregate
+// premium-request bucket "gpt-4" whatever model was billed, so the bucket key
+// is carried through as the window name rather than translated. The percent is
+// numRequests/maxRequestUsage, and the reset is startOfMonth advanced by one
+// calendar month.
+//
+// A null maxRequestUsage is an UNCAPPED lane, not a spent one (live 2026-09-14:
+// the personal account reported 0 requests with a null cap while its
+// auto/composer traffic flowed freely). Uncapped buckets still emit a 0%
+// window, because the Quota table renders one row per window and an account
+// with none would silently vanish from it; 0% can never park anything.
+func parseCursor(body []byte, status int) ([]Window, string, string) {
+	switch status {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, "", "Cursor session token invalid or expired — re-export it (IDE state.vscdb key cursorAuth/accessToken, or the CLI keychain item cursor-access-token)."
+	default:
+		return nil, "", "Cursor usage API error (" + strconv.Itoa(status) + ")."
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		return nil, "", "Cursor usage response is not valid JSON."
+	}
+	var resets *time.Time
+	if raw, ok := top["startOfMonth"]; ok {
+		var s string
+		// ponytail: AddDate normalizes a 29-31 day anchor (Jan 31 → Mar 3), so
+		// a signup-anchored account can read up to 3 days off. Cursor anchors
+		// the calendar-month cohort on the 1st, which never normalizes.
+		if json.Unmarshal(raw, &s) == nil {
+			if anchor, err := time.Parse(time.RFC3339, s); err == nil {
+				next := anchor.AddDate(0, 1, 0)
+				resets = &next
+			}
+		}
+	}
+	buckets := make([]string, 0, len(top))
+	for k := range top {
+		if k != "startOfMonth" {
+			buckets = append(buckets, k)
+		}
+	}
+	sort.Strings(buckets) // stable rows for the dashboard and for tests
+	windows := make([]Window, 0, len(buckets))
+	maxCap := 0
+	for _, k := range buckets {
+		var b struct {
+			NumRequests     *int `json:"numRequests"`
+			MaxRequestUsage *int `json:"maxRequestUsage"`
+		}
+		if err := json.Unmarshal(top[k], &b); err != nil || b.NumRequests == nil {
+			continue // not a meter bucket
+		}
+		used := 0
+		if b.MaxRequestUsage != nil && *b.MaxRequestUsage > 0 {
+			used, _ = asPercent(float64(*b.NumRequests) * 100 / float64(*b.MaxRequestUsage))
+			if *b.MaxRequestUsage > maxCap {
+				maxCap = *b.MaxRequestUsage
+			}
+		}
+		windows = append(windows, Window{Name: k + " (monthly)", Used: used, Resets: resets})
+	}
+	if len(windows) == 0 {
+		return nil, "", "Cursor usage response carried no meter buckets."
+	}
+	plan := "uncapped"
+	if maxCap > 0 {
+		plan = strconv.Itoa(maxCap) + " req/mo"
+	}
+	return windows, plan, ""
 }
 
 // asPercent clamps a vendor percentage (number or numeric string) to 0-100.
