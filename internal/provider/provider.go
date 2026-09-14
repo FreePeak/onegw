@@ -1968,11 +1968,16 @@ type CallResult struct {
 	// measures decode speed (tokens/sec) from here to relay end — the
 	// streaming phase proper, prefill excluded.
 	FirstByte time.Time
-	// Prefill is the measured pre-first-byte phase of THIS attempt: dial and
-	// upload of the request body plus the upstream's queue and prefill,
-	// ending when the response headers arrived. It is the term that dominates
-	// large-context requests, and the one decode speed cannot see
-	// (provider/prefill.go).
+	// Prefill is the measured pre-first-byte phase of THIS attempt from the
+	// moment the gateway admitted it: dial and upload of the request body
+	// plus the upstream's queue and prefill, ending when the response headers
+	// arrived. It is the term that dominates large-context requests, and the
+	// one decode speed cannot see (provider/prefill.go). The wait for one of
+	// the provider's max_concurrency slots is deliberately EXCLUDED: it is
+	// this gateway's own admission queue, not the lane's speed, and folding it
+	// in makes a saturated cap look like a slow provider to the combo
+	// ordering — which then moves traffic off the provider it should instead
+	// be sizing the pool for (see the queue stamp in Do).
 	Prefill time.Duration
 }
 
@@ -2057,6 +2062,18 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			return nil, &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
 		}
 	}
+	// The prefill measurement starts HERE, not at func entry: everything
+	// before this line is the wait for one of the provider's
+	// max_concurrency slots, which is this gateway's own admission queue.
+	// Measuring across it made a saturated cap indistinguishable from a slow
+	// lane — live 2026-09-14, b-ai under a provider-wide cap of 7 with ten
+	// accounts behind it: a prompt whose vendor-side prefill measured 1.7-3.2s
+	// direct took 6.1-28.4s through the gateway, and that queue landed in the
+	// per-model prefill EWMA that size-aware combo ordering steers on. The
+	// client still pays for the queue (e2e/dtps and the decode window keep
+	// measuring from func entry); it just no longer masquerades as the
+	// provider's speed.
+	sentAt := time.Now()
 	if d.pool != nil && d.pool.begin(acct) > 0 {
 		// Occupancy for the pick loop (see accountState.live): the slot
 		// reads as busy for as long as this attempt waits on the upstream,
@@ -2335,7 +2352,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 	d.pool.ok(acct, reqStart) // success resets the 429 ladder (fresh verdicts only)
 	d.pool.flapHeal()         // and closes the flap breaker: the edge is serving
 	return &CallResult{Resp: resp, Format: d.UpstreamFormat(model), Acct: acct,
-		FirstByte: time.Now(), Prefill: time.Since(reqStart)}, nil
+		FirstByte: time.Now(), Prefill: time.Since(sentAt)}, nil
 }
 
 // DoPassthrough performs one upstream call for a passthrough surface
