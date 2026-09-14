@@ -543,8 +543,8 @@ if [ "$MODE" = compose ]; then
     say "  web search                                   a searxng provider's base_url is http://searxng:8080 inside the network"
     say "  stop the search box too                      docker compose --profile search down   (a plain down skips profile services)"
   fi
-  say "  update                                       $0 --compose   (pulls, recreates; both volumes keep their content)"
-  say "  logs / stop                                  docker compose logs -f onegw / docker compose down"
+  say "  update                                         $0 --compose   (pulls, recreates; both volumes keep their content)"
+  say "  logs / stop                                    docker compose logs -f onegw / docker compose down"
   exit 0
 fi
 
