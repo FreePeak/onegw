@@ -246,9 +246,10 @@ type ProviderCfg struct {
 	// "opencode-go" | "zai" | "zai-cn" | "commandcode" | "grok-cli" |
 	// "cursor". The gateway probes the vendor's own usage endpoint per
 	// account and parks accounts whose windows the vendor reports
-	// exhausted. cursor reads the browser dashboard's session-cookie API
-	// (cursor.com/api/usage) with the account's own session JWT, so it
-	// needs no extra credential; an account on an uncapped lane reports no
+	// exhausted. cursor reads the browser dashboard's session-cookie summary
+	// API (cursor.com/api/usage-summary) with the account's own BROWSER
+	// session JWT, so it needs no extra credential (a CLI/agent token 401s
+	// on this endpoint); an account on an uncapped lane reports no
 	// cap and is tracked only, never parked. For commandcode,
 	// SubscriptionURL overrides the API BASE (https://api.commandcode.ai)
 	// — the probe appends /alpha paths. Other dialects: SubscriptionURL
