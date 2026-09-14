@@ -1085,10 +1085,16 @@ type providersPageView struct {
 	// device-flow profiles for the editor's per-account select.
 	OAuthStates []oauthState
 	Services    []string
+	// Presets is the provider-recipe catalog (built-ins overlaid with the
+	// sqlite store) for the Add provider dialog's pre-fill select.
+	Presets template.JS
 }
 
 func (s *Server) providersPage(w http.ResponseWriter, r *http.Request) {
 	v := providersPageView{}
+	// Presets never touch live state (built-ins + store), so they render
+	// even before the first config load — the editor JS expects an array.
+	v.Presets = template.JS(s.presetsJSON())
 	if st := s.cur(); st != nil {
 		v.Views = s.attachOAuth(providerViews(st))
 		v.OAuthStates = s.oauthStates()
@@ -1114,26 +1120,32 @@ func (s *Server) handleAPIProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 type combosPageView struct {
-	Rows []struct{ Name, Targets string }
+	Rows []struct{ Name, Targets, Strategy string }
 	Edit template.JS
 }
 
 func (s *Server) combosPage(w http.ResponseWriter, r *http.Request) {
-	var out []struct{ Name, Targets string }
+	var out []struct{ Name, Targets, Strategy string }
 	if st := s.cur(); st != nil {
 		for _, c := range st.cfg.Combos {
-			out = append(out, struct{ Name, Targets string }{c.Name, strings.Join(c.Targets, "  →  ")})
+			strategy := c.Strategy
+			if strategy ***REMOVED*** "" {
+				strategy = "fastest" // the documented default when unset
+			}
+			out = append(out, struct{ Name, Targets, Strategy string }{c.Name, strings.Join(c.Targets, "  →  "), strategy})
 		}
 	}
 	v := combosPageView{Rows: out}
 	if st := s.cur(); st != nil {
 		type ce struct {
-			Name    string   `json:"name"`
-			Targets []string `json:"targets"`
+			Name            string   `json:"name"`
+			Targets         []string `json:"targets"`
+			Strategy        string   `json:"strategy"`
+			RoundRobinLimit int      `json:"round_robin_limit"`
 		}
 		edits := []ce{}
 		for _, c := range st.cfg.Combos {
-			edits = append(edits, ce{Name: c.Name, Targets: c.Targets})
+			edits = append(edits, ce{Name: c.Name, Targets: c.Targets, Strategy: c.Strategy, RoundRobinLimit: c.RoundRobinLimit})
 		}
 		if b, err := json.Marshal(edits); err ***REMOVED*** nil {
 			v.Edit = template.JS(b)

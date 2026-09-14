@@ -90,6 +90,13 @@ type providerEditReq struct {
 type comboEditReq struct {
 	Name    string   `json:"name"`
 	Targets []string `json:"targets"`
+	// Strategy is the combo's routing policy ("" = default/fastest, "order",
+	// "fastest", "round-robin", "size-aware"); config.Validate rejects any
+	// other value before the splice reaches disk. RoundRobinLimit is the
+	// per-client cap that only "round-robin" may carry (same contract as
+	// [[combo]].round_robin_limit in the file).
+	Strategy        string `json:"strategy"`
+	RoundRobinLimit int    `json:"round_robin_limit"`
 }
 
 // ---------------------------------------------------------------------------
@@ -856,8 +863,23 @@ func spliceProviderDisabled(lines []string, name string, disabled bool) ([]strin
 // Combo splice
 // ---------------------------------------------------------------------------
 
-// spliceCombo adds or updates one [[combo]] block. Update rewrites only
-// the targets line; comments and other lines are preserved.
+// comboScalars returns the strategy/limit lines the editor owns, rendered
+// for upsertScalar ("" = the key must be removed: absent means the default).
+func comboScalars(req comboEditReq) []struct{ key, rendered string } {
+	out := []struct{ key, rendered string }{
+		{"strategy", ""}, {"round_robin_limit", ""},
+	}
+	if req.Strategy != "" {
+		out[0].rendered = tsv("strategy", req.Strategy)
+	}
+	if req.RoundRobinLimit > 0 {
+		out[1].rendered = "round_robin_limit = " + strconv.Itoa(req.RoundRobinLimit)
+	}
+	return out
+}
+
+// spliceCombo adds or updates one [[combo]] block. Update rewrites the
+// targets and strategy lines; comments and other lines are preserved.
 func spliceCombo(lines []string, req comboEditReq) ([]string, string, error) {
 	for _, b := range scanBlocks(lines, "[[combo]]") {
 		name, ok := blockName(lines, b)
@@ -865,6 +887,13 @@ func spliceCombo(lines []string, req comboEditReq) ([]string, string, error) {
 			continue
 		}
 		edited := upsertScalar(cloneLines(lines[b.start:b.end]), "targets", "targets = "+renderStringArray(req.Targets))
+		for _, sc := range comboScalars(req) {
+			if sc.rendered != "" {
+				edited = upsertScalar(edited, sc.key, sc.rendered)
+			} else {
+				edited = removeScalar(edited, sc.key)
+			}
+		}
 		candidate := append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...)
 		if err := validateLines(candidate); err != nil {
 			return nil, "", err
@@ -876,6 +905,11 @@ func spliceCombo(lines []string, req comboEditReq) ([]string, string, error) {
 		"[[combo]]",
 		tsv("name", req.Name),
 		"targets = " + renderStringArray(req.Targets),
+	}
+	for _, sc := range comboScalars(req) {
+		if sc.rendered != "" {
+			rendered = append(rendered, sc.rendered)
+		}
 	}
 	if err := validateLines(append(cloneLines(lines), rendered...)); err != nil {
 		return nil, "", err

@@ -46,6 +46,10 @@
     <h2 id="pmodal-title">Edit provider</h2>
     <p class="msub">Saved straight into onegw.toml, validated, and hot-reloaded into the running gateway.</p>
     <div class="merr" id="perr" role="alert" hidden></div>
+    <div class="field">
+      <label for="pf-preset">preset <span class="text-mut/60">(preconfigured recipe: kind, URL, models — nothing to type)</span></label>
+      <select id="pf-preset"><option value="">custom (no preset)</option></select>
+    </div>
     <div class="grid grid-cols-2 gap-3">
       <div class="field">
         <label for="pf-name">name <b>*</b></label>
@@ -148,7 +152,7 @@
 
 <dialog class="modal" id="oauthdlg" aria-labelledby="oauthdlg-title">
   <h2 id="oauthdlg-title">Sign in</h2>
-  <p class="msub" id="oauth-sub">Open the link, enter the code, and approve. This window follows the login by itself.</p>
+  <p class="msub" id="oauth-sub">A provider sign-in tab opens by itself — confirm the code and approve there. This window follows the login by itself.</p>
   <div class="merr" id="oauth-err" role="alert" hidden></div>
   <div class="field">
     <label>code</label>
@@ -169,6 +173,7 @@
 <script>
 const PREFILL = {{.Edit}}||[];
 const SERVICES = {{.Services}}||[];
+const PRESETS = {{.Presets}}||[];
 (function(){
   const dlg = document.getElementById('pmodal'),
         form = document.getElementById('pform'),
@@ -213,6 +218,7 @@ const SERVICES = {{.Services}}||[];
   function openAdd(){
     editing = null;
     form.reset(); accts.innerHTML = ''; hideErr();
+    presetSel.value = ''; presetSel.closest('.field').hidden = false;
     document.getElementById('pmodal-title').textContent = 'Add provider';
     document.getElementById('pf-name').disabled = false;
     dlg.showModal();
@@ -222,6 +228,7 @@ const SERVICES = {{.Services}}||[];
     if (!p) return;
     editing = name;
     form.reset(); accts.innerHTML = ''; hideErr();
+    presetSel.value = ''; presetSel.closest('.field').hidden = true; // identity exists; no re-preset
     document.getElementById('pmodal-title').textContent = 'Edit provider · ' + name;
     document.getElementById('pf-name').value = p.name;
     document.getElementById('pf-name').disabled = true; // name is the on-disk identity
@@ -240,6 +247,59 @@ const SERVICES = {{.Services}}||[];
   }
   function showErr(m){ errBox.textContent = m; errBox.hidden = false; }
   function hideErr(){ errBox.hidden = true; }
+
+  // --- Presets: pick a recipe, everything pre-fills ------------------------
+  // The catalog arrives rendered with the page (built-ins overlaid on the
+  // sqlite store). Choosing one fills the form; the account row gets the
+  // subscription service when the recipe names one, so the Sign-in button
+  // appears after Save with zero extra typing. Saving a provider also
+  // mirrors its (key-free) shape back into the catalog under its name —
+  // the live config is the source of the next re-fill.
+  const presetSel = document.getElementById('pf-preset');
+  PRESETS.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.name;
+    o.textContent = p.name + (p.source ***REMOVED***= 'built-in' ? '' : ' · saved');
+    presetSel.appendChild(o);
+  });
+  function setSel(sel, v) {
+    if (v && ![...sel.options].some(o => o.value ***REMOVED***= v)) {
+      const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o);
+    }
+    sel.value = v || '';
+  }
+  function applyPreset(name) {
+    const p = PRESETS.find(x => x.name ***REMOVED***= name);
+    if (!p) return;
+    const d = p.doc || {};
+    document.getElementById('pf-kind').value = d.kind || 'openai';
+    document.getElementById('pf-url').value = d.base_url || '';
+    document.getElementById('pf-models').value = (d.models || []).join('\n');
+    document.getElementById('pf-rmodels').value = (d.responses_models || []).join('\n');
+    setSel(document.getElementById('pf-sq'), d.subscription_quota || '');
+    accts.innerHTML = '';
+    const row = acctRow(null);
+    if (d.oauth_service) setSel(row.querySelector('.a-oauth'), d.oauth_service);
+    accts.appendChild(row);
+    if (d.note) ogwToast(d.note, true);
+  }
+  presetSel.onchange = () => { if (presetSel.value) applyPreset(presetSel.value); };
+  async function mirrorPreset(body) {
+    // Fire-and-keepalive: the dialog closes and reloads; the mirror must
+    // still land. A failure here is cosmetic (catalog staleness), never
+    // blocks the save that already succeeded.
+    const doc = {
+      kind: body.kind, base_url: body.base_url, models: body.models,
+      responses_models: body.responses_models, subscription_quota: body.subscription_quota,
+    };
+    const oauthRow = (body.accounts || []).find(a => a.oauth);
+    if (oauthRow) doc.oauth_service = oauthRow.oauth;
+    fetch('/admin/config/presets', {
+      method: 'PUT', keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: body.name, doc }),
+    }).catch(() => {});
+  }
 
   document.getElementById('addprov').onclick = openAdd;
   document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openEdit(b.dataset.edit));
@@ -307,6 +367,7 @@ const SERVICES = {{.Services}}||[];
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { showErr(j.error || ('save failed (' + res.status + ')')); return; }
+      mirrorPreset(body); // live shape → catalog, keyed by provider name
       dlg.close();
       ogwToast('provider ' + j.name + ' ' + j.action + ' — config reloaded');
       setTimeout(() => location.reload(), 400);
@@ -325,7 +386,7 @@ const SERVICES = {{.Services}}||[];
         olink = document.getElementById('oauth-link'),
         ost = document.getElementById('oauth-state'),
         oerr = document.getElementById('oauth-err');
-  let watching = null, timer = null;
+  let watching = null, timer = null, authOpened = null;
 
   function stopPolling(){ if (timer) { clearInterval(timer); timer = null; } watching = null; }
   function showPrompt(key, p){
@@ -333,7 +394,15 @@ const SERVICES = {{.Services}}||[];
     const u = p && (p.verification_uri_complete || p.verification_uri);
     if (u) { olink.href = u; olink.textContent = u; }
     else { olink.removeAttribute('href'); olink.textContent = 'waiting for the provider…'; }
+    // 9router-style: the sign-in page comes to you. One tab per flow —
+    // pollState re-shows the prompt every 2 s, so this is keyed by account
+    // and reset per Sign-in click. If the pop-up blocker says no (win is
+    // null), the link right below is the fallback.
     ost.textContent = key + (p && p.expires_at ? ' · code expires ' + new Date(p.expires_at).toLocaleTimeString() : '');
+    if (u && authOpened !***REMOVED*** key) {
+      authOpened = key;
+      if (!window.open(u, '_blank', 'noopener')) ost.textContent = key + ' — pop-up blocked; click the link below';
+    }
   }
   async function pollState(){
     if (!watching) return;
@@ -368,6 +437,7 @@ const SERVICES = {{.Services}}||[];
       if (!r.ok) { ogwToast(j.error || ('sign-in failed (' + r.status + ')'), false); return; }
       oerr.hidden = true;
       watching = key;
+      authOpened = null; // a fresh click gets a fresh attempt at opening the tab
       showPrompt(key, j.prompt);
       if (!odlg.open) odlg.showModal();
       if (!timer) timer = setInterval(pollState, 2000);
