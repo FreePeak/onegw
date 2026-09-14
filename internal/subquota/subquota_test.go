@@ -788,51 +788,72 @@ func TestCursorUserIDStripsConnectionPrefix(t *testing.T) {
 	}
 }
 
-func TestParseCursorMeteredBucket(t *testing.T) {
-	// Live 2026-09-14 body for the work account: 246 of a 1000-request pool.
-	body := []byte(`{"gpt-4":{"numRequests":246,"numRequestsTotal":246,"maxRequestUsage":1000,` +
-		`"numTokens":0,"maxTokenUsage":null},"startOfMonth":"2026-09-01T00:00:00.000Z"}`)
+func TestParseCursorSummaryMeters(t *testing.T) {
+	// Live 2026-09-14 usage-summary body for the personal (grok) account:
+	// totalPercentUsed 4.5 is the dashboard's "You've used 5% of your
+	// included total usage", apiPercentUsed 0 is "0% of your included API
+	// usage", and the reset is the vendor's own billingCycleEnd instant —
+	// no startOfMonth + AddDate month-anchor guess anymore.
+	body := []byte(`{"billingCycleStart":"2026-09-03T03:51:46.559Z","billingCycleEnd":"2026-10-03T03:51:46.559Z","membershipType":"free","limitType":"user","isUnlimited":false,"autoModelSelectedDisplayMessage":"You've used 5% of your included total usage","namedModelSelectedDisplayMessage":"You've used 0% of your included API usage","individualUsage":{"plan":{"enabled":true,"autoPercentUsed":9,"apiPercentUsed":0,"totalPercentUsed":4.5},"onDemand":{"enabled":false}},"teamUsage":{}}`)
 	windows, plan, err := parseCursor(body, 200)
 	if err != "" {
 		t.Fatalf("unexpected error: %s", err)
 	}
-	if len(windows) != 1 || windows[0].Name != "gpt-4 (monthly)" {
+	if len(windows) != 2 || windows[0].Name != "included usage" || windows[1].Name != "included API usage" {
 		t.Fatalf("windows = %+v", windows)
 	}
-	if windows[0].Used != 25 {
-		t.Fatalf("used = %d, want 25 (246/1000)", windows[0].Used)
+	if windows[0].Used != 5 {
+		t.Fatalf("included usage = %d, want 5 (4.5 rounds to the dashboard message)", windows[0].Used)
+	}
+	if windows[1].Used != 0 {
+		t.Fatalf("included API usage = %d, want 0", windows[1].Used)
 	}
 	if windows[0].exhausted() {
-		t.Fatal("25% must not read as exhausted")
+		t.Fatal("5% must not read as exhausted")
 	}
-	if plan != "1000 req/mo" {
+	if plan != "free" {
+		t.Fatalf("plan = %q, want membershipType", plan)
+	}
+	want := time.Date(2026, 10, 3, 3, 51, 46, 559000000, time.UTC)
+	for _, w := range windows {
+		if r := w.Resets; r ***REMOVED*** nil || !r.Equal(want) {
+			t.Fatalf("%s reset = %v, want %v", w.Name, r, want)
+		}
+	}
+}
+
+func TestParseCursorTeamMemberMeters(t *testing.T) {
+	// Live 2026-09-14 enterprise/team account: the per-user percent rides in
+	// individualUsage.plan even when limitType is "team" (12.35 → the
+	// dashboard's "12%"); teamUsage carries no per-user meters and is
+	// deliberately ignored.
+	body := []byte(`{"billingCycleStart":"2026-09-01T00:00:00.000Z","billingCycleEnd":"2026-10-01T00:00:00.000Z","membershipType":"enterprise","limitType":"team","isUnlimited":false,"individualUsage":{"plan":{"enabled":true,"apiPercentUsed":12.35,"totalPercentUsed":12.35}},"teamUsage":{"onDemand":{"enabled":false}}}`)
+	windows, plan, err := parseCursor(body, 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if len(windows) != 2 || windows[0].Used != 12 || windows[1].Used != 12 {
+		t.Fatalf("windows = %+v, want 12/12", windows)
+	}
+	if plan != "enterprise" {
 		t.Fatalf("plan = %q", plan)
-	}
-	want := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	if r := windows[0].Resets; r ***REMOVED*** nil || !r.Equal(want) {
-		t.Fatalf("reset = %v, want %v", r, want)
 	}
 }
 
 func TestParseCursorUncappedLaneNeverParks(t *testing.T) {
-	// Live 2026-09-14 personal account: a null maxRequestUsage is an UNLIMITED
-	// lane, not a spent one. It still gets a visible 0% window (the Quota
-	// table renders one row per window) and must never park the account.
-	body := []byte(`{"gpt-4":{"numRequests":0,"numRequestsTotal":0,"maxRequestUsage":null,` +
-		`"numTokens":0,"maxTokenUsage":null},"startOfMonth":"2026-09-03T03:51:46.559Z"}`)
+	// isUnlimited keeps the old dialect's uncapped-lane rule: the windows
+	// still render (one row each in the Quota table) but read 0% even when
+	// the vendor sent nonzero percents, so the account can never park.
+	body := []byte(`{"billingCycleEnd":"2026-10-01T00:00:00Z","membershipType":"pro","isUnlimited":true,"individualUsage":{"plan":{"totalPercentUsed":87.5,"apiPercentUsed":3}}}`)
 	windows, plan, err := parseCursor(body, 200)
 	if err != "" {
 		t.Fatalf("unexpected error: %s", err)
 	}
-	if len(windows) != 1 || windows[0].Used != 0 || plan != "uncapped" {
+	if len(windows) != 2 || windows[0].Used != 0 || windows[1].Used != 0 || plan != "uncapped" {
 		t.Fatalf("windows = %+v, plan = %q", windows, plan)
 	}
 	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
 		t.Fatal("an uncapped lane must never look exhausted")
-	}
-	want := time.Date(2026, 10, 3, 3, 51, 46, 559000000, time.UTC)
-	if r := windows[0].Resets; r ***REMOVED*** nil || !r.Equal(want) {
-		t.Fatalf("reset = %v, want %v", r, want)
 	}
 }
 
@@ -847,7 +868,7 @@ func TestParseCursorErrors(t *testing.T) {
 		{"forbidden session", `{}`, 403, "invalid or expired"},
 		{"vendor 5xx", `{}`, 503, "Cursor usage API error (503)"},
 		{"html interstitial", `<html>login</html>`, 200, "not valid JSON"},
-		{"no buckets", `{"startOfMonth":"2026-09-01T00:00:00.000Z"}`, 200, "no meter buckets"},
+		{"no summary meters", `{}`, 200, "no summary meters"},
 	} {
 		windows, plan, err := parseCursor([]byte(c.body), c.status)
 		if !strings.Contains(err, c.want) {
@@ -860,27 +881,24 @@ func TestParseCursorErrors(t *testing.T) {
 }
 
 func TestProbeCursorEndToEnd(t *testing.T) {
-	// The probe authenticates the way the browser dashboard does — a session
-	// cookie plus the uid query — and a spent pool parks the account.
-	var cookie, user string
+	// The probe authenticates the way the browser dashboard does — session
+	// cookie only, NO query params — and a spent 100% pool parks the account.
+	var cookie, rawQuery string
 	cs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/usage" {
+		if r.URL.Path != "/api/usage-summary" {
 			http.NotFound(w, r)
 			return
 		}
 		cookie = r.Header.Get("Cookie")
-		user = r.URL.Query().Get("user")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"gpt-4":        map[string]any{"numRequests": 1000, "maxRequestUsage": 1000},
-			"startOfMonth": "2026-09-01T00:00:00.000Z",
-		})
+		rawQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"billingCycleEnd":"2026-10-01T00:00:00Z","membershipType":"pro","individualUsage":{"plan":{"totalPercentUsed":100,"apiPercentUsed":40}}}`))
 	}))
 	defer cs.Close()
 
-	jwt := cursorTestJWT("auth0|user_01TEST")
+	jwt := cursorTestJWT("grok|user_01TEST")
 	parked := make(chan struct{}, 1)
 	tr := NewAt([]Target{{Provider: "cursor", AcctName: "work", AcctKey: jwt, Dialect: Cursor,
-		URL: cs.URL + "/api/usage"}}, func(Target, time.Time) { parked <- struct{}{} },
+		URL: cs.URL + "/api/usage-summary"}}, func(Target, time.Time) { parked <- struct{}{} },
 		nil, nil, time.Hour, nil, nil)
 	defer tr.Stop()
 	select {
@@ -888,8 +906,8 @@ func TestProbeCursorEndToEnd(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("a spent cursor pool never parked the account")
 	}
-	if user != "user_01TEST" {
-		t.Fatalf("?user = %q, want the sub minus its prefix", user)
+	if rawQuery != "" {
+		t.Fatalf("query = %q, want none (usage-summary needs no params)", rawQuery)
 	}
 	if want := "WorkosCursorSessionToken=user_01TEST%3A%3A" + jwt; cookie != want {
 		t.Fatalf("cookie = %q, want %q", cookie, want)
@@ -898,7 +916,7 @@ func TestProbeCursorEndToEnd(t *testing.T) {
 	if len(snaps) != 1 || snaps[0].Err != "" {
 		t.Fatalf("probe failed: %+v", snaps)
 	}
-	if snaps[0].Plan != "1000 req/mo" || len(snaps[0].Windows) != 1 || snaps[0].Windows[0].Used != 100 {
+	if snaps[0].Plan != "pro" || len(snaps[0].Windows) != 2 || snaps[0].Windows[0].Used != 100 {
 		t.Fatalf("snapshot = %+v", snaps[0])
 	}
 }

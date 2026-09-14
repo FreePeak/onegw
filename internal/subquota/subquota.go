@@ -83,8 +83,9 @@ func DefaultURL(dialect string) string {
 		// Same base the Grok Build CLI uses for everything else.
 		return "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 	case Cursor:
-		// Browser-dashboard usage API; the probe appends its own ?user=<uid>.
-		return "https://cursor.com/api/usage"
+		// Browser-dashboard usage-summary API — the whole meter state in one
+		// call, no query params (the session cookie identifies the account).
+		return "https://cursor.com/api/usage-summary"
 	}
 	return ""
 }
@@ -913,10 +914,12 @@ func grokReset(v any) *time.Time {
 // probeCursor fetches one Cursor account's meter state. The endpoint is the
 // browser dashboard's own API, so auth is a session cookie rather than a
 // bearer: WorkosCursorSessionToken=<uid>%3A%3A<jwt>, with <uid> the session
-// JWT's sub claim minus its identity-provider prefix, repeated as ?user=.
-// Contract ported from cursor-usage-extension/extension.js
-// (extractUserIdFromToken/buildCookie/fetchUsage) and live-verified against
-// both configured Cursor accounts on 2026-09-14.
+// JWT's sub claim minus its identity-provider prefix. usage-summary needs no
+// query parameter — the cookie alone identifies the account. Contract ported
+// from cursor-usage-extension/extension.js (extractUserIdFromToken/
+// buildCookie) and live-verified 2026-09-14 against both configured Cursor
+// accounts. NOTE: only BROWSER-type sessions authenticate here — a CLI/agent
+// keychain token gets 401 (measured 2026-09-14), unlike the old /api/usage.
 func (t *Tracker) probeCursor(ctx context.Context, tgt Target) Snapshot {
 	base := tgt.URL
 	if base ***REMOVED*** "" {
@@ -928,9 +931,7 @@ func (t *Tracker) probeCursor(ctx context.Context, tgt Target) Snapshot {
 		snap.Err = errMsg
 		return snap
 	}
-	full := base + "?user=" + url.QueryEscape(uid)
-	snap.URL = full
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base, nil)
 	if err != nil {
 		snap.Err = err.Error()
 		return snap
@@ -982,79 +983,75 @@ func cursorUserID(jwt string) (string, string) {
 	return uid, ""
 }
 
-// parseCursor decodes cursor.com/api/usage (live shape 2026-09-14):
+// parseCursor decodes cursor.com/api/usage-summary (live shape 2026-09-14,
+// both configured accounts probed with their own browser session cookies):
 //
-//	{"gpt-4":{"numRequests":246,"maxRequestUsage":1000,"numRequestsTotal":246,
-//	 "numTokens":0,"maxTokenUsage":null},"startOfMonth":"2026-09-01T00:00:00.000Z"}
+//	{"billingCycleStart":"2026-09-03T03:51:46.559Z","billingCycleEnd":
+//	 "2026-10-03T03:51:46.559Z","membershipType":"free","limitType":"user",
+//	 "isUnlimited":false,
+//	 "autoModelSelectedDisplayMessage":"You've used 5% of your included total usage",
+//	 "namedModelSelectedDisplayMessage":"You've used 0% of your included API usage",
+//	 "individualUsage":{"plan":{"enabled":true,"autoPercentUsed":9,
+//	  "apiPercentUsed":0,"totalPercentUsed":4.5},"onDemand":{"enabled":false}},
+//	 "teamUsage":{}}
 //
-// Every top-level object is one meter bucket; Cursor names the aggregate
-// premium-request bucket "gpt-4" whatever model was billed, so the bucket key
-// is carried through as the window name rather than translated. The percent is
-// numRequests/maxRequestUsage, and the reset is startOfMonth advanced by one
-// calendar month.
+// The two dashboard meters are totalPercentUsed and apiPercentUsed, and the
+// display messages are exactly those numbers rounded to whole percents — so
+// "included usage" and "included API usage" carry those names and the same
+// rounding, making the Quota table read like cursor.com's own banner. The
+// reset is the vendor's own billingCycleEnd (no month-anchor arithmetic: the
+// summary gives the instant, unlike the old startOfMonth + AddDate guess that
+// could read days off on signup-anchored cycles).
 //
-// A null maxRequestUsage is an UNCAPPED lane, not a spent one (live 2026-09-14:
-// the personal account reported 0 requests with a null cap while its
-// auto/composer traffic flowed freely). Uncapped buckets still emit a 0%
-// window, because the Quota table renders one row per window and an account
-// with none would silently vanish from it; 0% can never park anything.
+// isUnlimited is the uncapped-lane rule inherited from the old dialect: the
+// windows still render (a row per meter) but read 0% forever, so an uncapped
+// account is tracked, never parked. teamUsage is deliberately ignored: for
+// team members the per-user meters live in individualUsage.plan (live
+// 2026-09-14: the enterprise/team account's 12.35% headline appears there
+// while teamUsage carries only onDemand flags).
 func parseCursor(body []byte, status int) ([]Window, string, string) {
 	switch status {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, "", "Cursor session token invalid or expired — re-export it (IDE state.vscdb key cursorAuth/accessToken, or the CLI keychain item cursor-access-token)."
+		return nil, "", "Cursor session token invalid or expired — re-export it from a BROWSER cursor.com dashboard session (the WorkosCursorSessionToken cookie); CLI/agent keychain tokens get 401 on usage-summary."
 	default:
 		return nil, "", "Cursor usage API error (" + strconv.Itoa(status) + ")."
 	}
-	var top map[string]json.RawMessage
+	var top struct {
+		MembershipType  string `json:"membershipType"`
+		BillingCycleEnd string `json:"billingCycleEnd"`
+		IsUnlimited     bool   `json:"isUnlimited"`
+		IndividualUsage struct {
+			Plan struct {
+				TotalPercentUsed float64 `json:"totalPercentUsed"`
+				APIPercentUsed   float64 `json:"apiPercentUsed"`
+			} `json:"plan"`
+		} `json:"individualUsage"`
+	}
 	if err := json.Unmarshal(body, &top); err != nil {
 		return nil, "", "Cursor usage response is not valid JSON."
 	}
+	if top.MembershipType ***REMOVED*** "" && top.BillingCycleEnd ***REMOVED*** "" {
+		return nil, "", "Cursor usage response carried no summary meters."
+	}
 	var resets *time.Time
-	if raw, ok := top["startOfMonth"]; ok {
-		var s string
-		// ponytail: AddDate normalizes a 29-31 day anchor (Jan 31 → Mar 3), so
-		// a signup-anchored account can read up to 3 days off. Cursor anchors
-		// the calendar-month cohort on the 1st, which never normalizes.
-		if json.Unmarshal(raw, &s) ***REMOVED*** nil {
-			if anchor, err := time.Parse(time.RFC3339, s); err ***REMOVED*** nil {
-				next := anchor.AddDate(0, 1, 0)
-				resets = &next
-			}
+	if s := strings.TrimSpace(top.BillingCycleEnd); s != "" {
+		if ts, err := time.Parse(time.RFC3339, s); err ***REMOVED*** nil {
+			resets = &ts
 		}
 	}
-	buckets := make([]string, 0, len(top))
-	for k := range top {
-		if k != "startOfMonth" {
-			buckets = append(buckets, k)
-		}
+	inc, api := 0, 0
+	if !top.IsUnlimited {
+		inc, _ = asPercent(top.IndividualUsage.Plan.TotalPercentUsed)
+		api, _ = asPercent(top.IndividualUsage.Plan.APIPercentUsed)
 	}
-	sort.Strings(buckets) // stable rows for the dashboard and for tests
-	windows := make([]Window, 0, len(buckets))
-	maxCap := 0
-	for _, k := range buckets {
-		var b struct {
-			NumRequests     *int `json:"numRequests"`
-			MaxRequestUsage *int `json:"maxRequestUsage"`
-		}
-		if err := json.Unmarshal(top[k], &b); err != nil || b.NumRequests ***REMOVED*** nil {
-			continue // not a meter bucket
-		}
-		used := 0
-		if b.MaxRequestUsage != nil && *b.MaxRequestUsage > 0 {
-			used, _ = asPercent(float64(*b.NumRequests) * 100 / float64(*b.MaxRequestUsage))
-			if *b.MaxRequestUsage > maxCap {
-				maxCap = *b.MaxRequestUsage
-			}
-		}
-		windows = append(windows, Window{Name: k + " (monthly)", Used: used, Resets: resets})
+	windows := []Window{
+		{Name: "included usage", Used: inc, Resets: resets},
+		{Name: "included API usage", Used: api, Resets: resets},
 	}
-	if len(windows) ***REMOVED*** 0 {
-		return nil, "", "Cursor usage response carried no meter buckets."
-	}
-	plan := "uncapped"
-	if maxCap > 0 {
-		plan = strconv.Itoa(maxCap) + " req/mo"
+	plan := top.MembershipType
+	if top.IsUnlimited {
+		plan = "uncapped"
 	}
 	return windows, plan, ""
 }
