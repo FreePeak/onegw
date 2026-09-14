@@ -1,3 +1,6 @@
 onegw.toml
 data/
 onegw-deploy.env
+# compose bootstrap: .env is written by scripts/docker_deploy.sh --compose and
+# holds the gateway key; .env.example is the committed template
+.env
