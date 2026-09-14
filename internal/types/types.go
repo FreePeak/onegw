@@ -228,6 +228,13 @@ type APIError struct {
 	// flap-breaker exemption — treats it exactly like the text-matched
 	// model walls. Never serialized.
 	SharedWall bool `json:"-"`
+
+	// StreamCommitted marks a failure that happened AFTER the relay had
+	// already written the response status/headers (and usually bytes) to
+	// the client: retrying the target or falling through the combo would
+	// append a SECOND response onto the same stream. Router.Execute stops
+	// the loop when set. Never serialized.
+	StreamCommitted bool `json:"-"`
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).
