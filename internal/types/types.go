@@ -545,7 +545,7 @@ func (e *APIError) ContextWindowOverflow() (window, measured int, ok bool) {
 // 2026-09-11 06:14Z, seq 595). The verdict indicts the (provider, model)
 // lane for every key: same-target retries and account rotation are all
 // doomed, and it must not feed the provider-wide flap breaker either
-// (edgeFault exempts shared walls). Per the 1da3c2e contract it rides
+// (edgeFault exempts shared walls). Per the 4b46ea6 contract it rides
 // the per-request shared-wall fall-through — no wording park, keys stay
 // warm, and each request pays at most one doomed call before the next
 // combo leg serves.

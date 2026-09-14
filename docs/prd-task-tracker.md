@@ -93,7 +93,7 @@ status. Status as of 2026-09-08.
       version stamping for release binaries and Docker images — done
       2026-09-08
 - [x] #13 Web-search provider (SearXNG integration) — done 2026-09-08
-      (9bd3594): `kind = "searxng"` virtual provider answering `search/query`
+      (5b21356): `kind = "searxng"` virtual provider answering `search/query`
       with a SearXNG JSON search as a synthetic OpenAI completion; fail-open
       (retryable 503) in combos; unit + E2E tests. Enabled live 2026-09-08
       (#46/#47): local SearXNG compose stack + `search` provider +

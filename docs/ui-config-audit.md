@@ -1,6 +1,6 @@
 # Dashboard config-coverage audit (goal: all file configs visible in the UI)
 
-Audited 2026-09-14 against master (`5c07080`, v0.31.0 lineage). Source of truth
+Audited 2026-09-14 against master (`cd7f134`, v0.31.0 lineage). Source of truth
 for the config surface: `internal/config` (Server/Auth/Saver/Usage/ProviderCfg/
 Acct/ComboCfg/OAuth/Rotation/Update + Aliases). UI surface: the five editor
 templates + the admin API in `internal/server`. 9router patterns borrowed from

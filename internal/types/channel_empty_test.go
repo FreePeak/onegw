@@ -9,7 +9,7 @@ import "testing"
 // empty pool, so the error must classify shared: Router.Execute falls
 // through to the next combo leg after ONE doomed call (no same-target
 // retry, no key ladder), and edgeFault exempts it from the flap breaker.
-// Per the 1da3c2e contract there is deliberately NO wording park.
+// Per the 4b46ea6 contract there is deliberately NO wording park.
 func TestChannelEmpty503IsSharedWall(t *testing.T) {
 	const live = "No available channel for model glm-5.3-flash under group default (distributor) (request id: 20260911061408451165665c955d5687nrIByVO)"
 	e := &APIError{Status: 503, Type: "api_error", Message: live}

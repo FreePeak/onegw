@@ -114,7 +114,7 @@ func quoteJSON(s string) string {
 	return string(b)
 }
 
-// The distributor parse-reject shape (peer RCA 84fd1c9) delivered
+// The distributor parse-reject shape (peer RCA b38eab4) delivered
 // in-stream: same terminal-400 defect as the HTTP-level path, same
 // rewrite expected through the in-band normalizer.
 func TestInStreamParseRejectNormalized(t *testing.T) {

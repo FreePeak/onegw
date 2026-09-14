@@ -51,7 +51,7 @@ func TestStreamFastPathReplaysWholeBodyOnTransient429(t *testing.T) {
 
 // Body whose model field sits BEYOND the 16K peek window never reaches
 // the fast path: the buffered pipeline handles it, and Execute's
-// shared-concurrency rule (359e5a0) applies — a direct route surfaces the
+// shared-concurrency rule (73908b6) applies — a direct route surfaces the
 // model-wide wall ONCE with the honest 2s Retry-After (rotating keys or
 // retrying the same model hits the same wall; there is no next combo
 // target here).

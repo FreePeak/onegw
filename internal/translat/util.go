@@ -101,7 +101,7 @@ func UpstreamParseRejected(status int, typ, msg string) bool {
 // real failure as an error object mid-stream or in a 200 body) that
 // provider.Do applies to HTTP-level error responses: transient upstream
 // auth-verify outages rewrite to a retryable 502, and distributor-node
-// parse rejections of valid bodies (peer RCA 84fd1c9: 22 client-visible
+// parse rejections of valid bodies (peer RCA b38eab4: 22 client-visible
 // failures in ~40 h) rewrite to upstream_parse_rejected. Without this,
 // both shapes would surface terminally on streaming paths even though
 // the HTTP-level path already downgrades them. Mutates and returns e for
