@@ -279,3 +279,56 @@ func TestBillingParoleSelfHealsAfterVendorRecovery(t *testing.T) {
 		t.Fatalf("dead-key hits = %d, want 1 (only the initial refusal)", got)
 	}
 }
+
+// Grok Build mirror (learned from 9router's grok-cli executor): a 402 from
+// the openai-responses proxy means its weekly credit pool ran dry — it
+// self-recovers, so the account gets a short cooldown, never a terminal
+// invalidation. The foil is TestAllAccountsTerminalAnswersUnfunded: same
+// single-account shape, plain openai kind, and the second request there
+// answers 503 unfunded. Here it must stay retryable-shaped (429).
+func TestGrokBuildBilling402CoolsNotInvalidates(t *testing.T) {
+	up := newBillingUpstream("sk-dead")
+	defer up.srv.Close()
+	cfg := billingCfg(up, []config.Acct{{Name: "weekly", APIKey: "sk-dead"}})
+	cfg.Providers[0].Kind = "openai-responses"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+	h := srv.Handler()
+
+	// With no sibling to serve, the router answers with the bench itself:
+	// a rate-limit-shaped 429 naming the 402 and its reset hint — the
+	// terminal twin of this shape is the 503 provider_accounts_unfunded
+	// in TestAllAccountsTerminalAnswersUnfunded. Either way the pool
+	// recovers by itself; no key stays burned.
+	w := do(t, h, authed(t, "p/m", "sk-test-gw"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("first request: want 429 benched, got %d (%s)", w.Code, w.Body.String())
+	}
+	if ra := w.Header().Get("Retry-After"); ra ***REMOVED*** "" {
+		t.Fatal("bench answer must carry Retry-After")
+	}
+	def, _ := srv.cur().pool.Get("p")
+	if names := def.Invalidated(); len(names) != 0 {
+		t.Fatalf("grok 402 must not invalidate, pool says %v", names)
+	}
+	for _, e := range srv.reqlog.latest(64) {
+		if e.Kind ***REMOVED*** "key_invalidated" {
+			t.Fatalf("grok 402 logged a terminal row: %+v", e)
+		}
+	}
+
+	// While cooling, the account is skipped without burning upstream.
+	w = do(t, h, authed(t, "p/m", "sk-test-gw"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request: want 429 cooldown, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := up.fail.Load(); got != 1 {
+		t.Fatalf("cooldown re-burned upstream (hits=%d, want 1)", got)
+	}
+}
