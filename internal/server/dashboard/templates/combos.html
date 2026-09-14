@@ -3,13 +3,14 @@
 {{define "content"}}
 <div class="tblwrap">
 <table>
-<thead><tr><th>combo</th><th>fallback chain (tried in order)</th><th></th></tr></thead>
+<thead><tr><th>combo</th><th>fallback chain (tried in order)</th><th>strategy</th><th></th></tr></thead>
 <tbody>
 {{range .Rows}}<tr><td><b class="mono">{{.Name}}</b></td><td class="mono">{{.Targets}}</td>
+  <td><span class="pill" title="how the router orders this chain at request time">{{.Strategy}}</span></td>
   <td class="text-right"><button class="rowact" data-edit="{{.Name}}" type="button" title="edit combo {{.Name}}" aria-label="edit combo {{.Name}}">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke-linejoin="round"/></svg>
   </button></td></tr>
-{{else}}<tr><td colspan="3" class="empty">no combos configured — model strings resolve directly</td></tr>{{end}}
+{{else}}<tr><td colspan="4" class="empty">no combos configured — model strings resolve directly</td></tr>{{end}}
 </tbody>
 </table>
 </div>
@@ -28,6 +29,22 @@
       <textarea id="cf-targets" rows="5" spellcheck="false" placeholder="provider-a/model-x
 provider-b/model-y"></textarea>
     </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div class="field">
+        <label for="cf-strategy">strategy <span class="text-mut/60">(how the chain is ordered per request)</span></label>
+        <select id="cf-strategy">
+          <option value="">default — fastest decode, configured order below no-data legs</option>
+          <option value="order">order — always the configured sequence</option>
+          <option value="fastest">fastest — re-rank on measured decode speed</option>
+          <option value="size-aware">size-aware — steer on measured prefill, big turns only</option>
+          <option value="round-robin">round-robin — spread clients across the chain</option>
+        </select>
+      </div>
+      <div class="field" id="cf-rr-wrap" hidden>
+        <label for="cf-rr">round-robin limit <span class="text-mut/60">(requests per client, 0 = default)</span></label>
+        <input id="cf-rr" type="number" min="0" step="1" inputmode="numeric" value="0">
+      </div>
+    </div>
     <div class="mfoot">
       <button type="button" class="btn" id="ccancel">Cancel</button>
       <button type="submit" class="btn primary" id="csave">Save &amp; reload</button>
@@ -43,15 +60,20 @@ const CEDIT = {{.Edit}};
         errBox = document.getElementById('cerr'),
         saveBtn = document.getElementById('csave'),
         nameIn = document.getElementById('cf-name'),
-        targetsIn = document.getElementById('cf-targets');
+        targetsIn = document.getElementById('cf-targets'),
+        stratIn = document.getElementById('cf-strategy'),
+        rrIn = document.getElementById('cf-rr');
   let editing = null;
 
   function showErr(m){ errBox.textContent = m; errBox.hidden = false; }
+  function syncRR(){ document.getElementById('cf-rr-wrap').hidden = stratIn.value !== 'round-robin'; }
+  stratIn.onchange = syncRR;
 
   document.getElementById('addcombo').onclick = () => {
     editing = null;
     nameIn.value = ''; nameIn.disabled = false;
     targetsIn.value = ''; errBox.hidden = true;
+    stratIn.value = ''; rrIn.value = '0'; syncRR();
     document.getElementById('cmodal-title').textContent = 'Add combo';
     dlg.showModal();
     nameIn.focus();
@@ -62,6 +84,8 @@ const CEDIT = {{.Edit}};
     editing = c.name;
     nameIn.value = c.name; nameIn.disabled = true;
     targetsIn.value = (c.targets || []).join('\n');
+    stratIn.value = c.strategy || '';
+    rrIn.value = c.round_robin_limit || 0; syncRR();
     errBox.hidden = true;
     document.getElementById('cmodal-title').textContent = 'Edit combo · ' + c.name;
     dlg.showModal();
@@ -74,6 +98,8 @@ const CEDIT = {{.Edit}};
     const body = {
       name: nameIn.value.trim(),
       targets: targetsIn.value.split('\n').map(s => s.trim()).filter(Boolean),
+      strategy: stratIn.value,
+      round_robin_limit: stratIn.value === 'round-robin' ? (parseInt(rrIn.value, 10) || 0) : 0,
     };
     if (!body.name) { showErr('combo name is required'); return; }
     if (!body.targets.length) { showErr('at least one target is required'); return; }
