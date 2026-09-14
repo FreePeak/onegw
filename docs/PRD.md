@@ -1,3 +1,4 @@
+*Deployed: a4ce861 via scripts/deploy.sh --binary /tmp/onegw-new zero-drop at 22:14:51 local (pid 45275). Single listener verified, /admin/health 200 x2, real completion through `free`→qwen3.8-flash served by the new binary. Banner: budget 200 MiB, memlimit 2048 MiB (operator GOMEMLIMIT inherited). Config onegw.toml unchanged by the deploy; live***REMOVED***file ladder retained. Earlier:*
 *Last updated: 2026-09-14 (context-window overflow RECOVERY — prune + replay, not just fall-through):
 the #97-era work made a context-length 400 a *fall-through* verdict (try the next combo leg). That is correct
 when one leg has room, but the `free` combo proved the terminal case: a client session grew to 432,168 tokens,
