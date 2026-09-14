@@ -1,7 +1,7 @@
-*Deployed: 00c859a (cursor usage-summary dialect) via scripts/deploy.sh --binary /tmp/onegw-cs zero-drop at 23:06 local (pid 27586, single listener, old 45275 drained). Authenticated /admin/health 200; real completion through `free` 200. Config: mnhatlinh.doan@gmail.com cursor credential swapped to the browser web-type session token (exp 2026-11-13) — first poll 23:08:55 shows auth0-user plan "enterprise" included-usage 12% reset Oct-1, mnhatlinh plan "free" 5% reset Oct-3 03:51Z, both matching cursor.com's own meters, no probe errors. Stable path ~/.local/bin/onegw re-pointed to the same bytes. Earlier:*
+*Deployed: 73f6954 (cursor usage-summary dialect) via scripts/deploy.sh --binary /tmp/onegw-cs zero-drop at 23:06 local (pid 27586, single listener, old 45275 drained). Authenticated /admin/health 200; real completion through `free` 200. Config: mnhatlinh.doan@gmail.com cursor credential swapped to the browser web-type session token (exp 2026-11-13) — first poll 23:08:55 shows auth0-user plan "enterprise" included-usage 12% reset Oct-1, mnhatlinh plan "free" 5% reset Oct-3 03:51Z, both matching cursor.com's own meters, no probe errors. Stable path ~/.local/bin/onegw re-pointed to the same bytes. Earlier:*
 *Last updated: 2026-09-14 (cursor dialect now reads `/api/usage-summary` — the old `/api/usage` was blind to the grok account): the per-model `/api/usage` buckets returned all-zero/`maxRequestUsage:null` for the personal (grok-linked) account, which the poller rendered as "uncapped 0%" while cursor.com's own dashboard showed ~5% of included usage consumed — the meter simply does not live in those buckets. `usage-summary` carries the real state in one call: `totalPercentUsed`/`apiPercentUsed` are exactly the dashboard's display-message percentages (4.5→"5%", 12.35→"12%", verified with both accounts' own session cookies), and `billingCycleEnd` is the vendor's own reset instant (replacing the old startOfMonth + AddDate month-anchor guess that could read up to 3 days off). New windows: "included usage" + "included API usage" (0-100 percent, so the existing exhausted-≥100 parking works unchanged); plan label = `membershipType` ("free"/"enterprise"); `isUnlimited` keeps the tracked-only-never-parked rule; `teamUsage` is ignored (per-user meters ride in `individualUsage.plan` even for team members — live-verified). Auth is now cookie-only (no `?user=` append). IMPORTANT: `usage-summary` requires a BROWSER-type session JWT — the CLI/agent keychain token 401s there (measured 2026-09-14), so the `mnhatlinh.doan@gmail.com` account's credential was swapped to a browser session export (exp 2026-11-02). Tests rewritten against both live account shapes (`TestParseCursorSummaryMeters`, `TestParseCursorTeamMemberMeters`). Earlier:*
-*Last updated: 2026-09-14 (config live: cursor subquota enabled; `free` ladder restored to v7): `subscription_quota = "cursor"` added to the cursor provider block (valid now that the running binary is a4ce861/v0.37.0 — e92368d's dialect); `PUT /admin/config/reload` -> {reloaded:true, providers:9}; first poller cycle 22:33 fetched both cursor accounts via cursor.com/api/usage with the accounts' own session JWTs — auth0-user "1000 req/mo" gpt-4 monthly used=25, the CLI account "uncapped" (tracked only, never parked per the #79 rule). Issue #96 closed with this evidence. The same reload restored `free` to the v7 single leg ["b-ai/qwen3.8-flash"]: a 21:28 edit had re-added kilocode/tokenrouter/commandcode/glm/hy3 legs, contradicting the file's own v7 standing-order comment ("free is b-ai only, permanently"); the 17:49 verified state is served again (GET /admin/api/v1/combos). `dev`/`fast` untouched. Earlier:*
-*Deployed: a4ce861 via scripts/deploy.sh --binary /tmp/onegw-new zero-drop at 22:14:51 local (pid 45275). Single listener verified, /admin/health 200 x2, real completion through `free`→qwen3.8-flash served by the new binary. Banner: budget 200 MiB, memlimit 2048 MiB (operator GOMEMLIMIT inherited). Config onegw.toml unchanged by the deploy; live***REMOVED***file ladder retained. Earlier:*
+*Last updated: 2026-09-14 (config live: cursor subquota enabled; `free` ladder restored to v7): `subscription_quota = "cursor"` added to the cursor provider block (valid now that the running binary is 8404904/v0.37.0 — e92368d's dialect); `PUT /admin/config/reload` -> {reloaded:true, providers:9}; first poller cycle 22:33 fetched both cursor accounts via cursor.com/api/usage with the accounts' own session JWTs — auth0-user "1000 req/mo" gpt-4 monthly used=25, the CLI account "uncapped" (tracked only, never parked per the #79 rule). Issue #96 closed with this evidence. The same reload restored `free` to the v7 single leg ["b-ai/qwen3.8-flash"]: a 21:28 edit had re-added kilocode/tokenrouter/commandcode/glm/hy3 legs, contradicting the file's own v7 standing-order comment ("free is b-ai only, permanently"); the 17:49 verified state is served again (GET /admin/api/v1/combos). `dev`/`fast` untouched. Earlier:*
+*Deployed: 8404904 via scripts/deploy.sh --binary /tmp/onegw-new zero-drop at 22:14:51 local (pid 45275). Single listener verified, /admin/health 200 x2, real completion through `free`→qwen3.8-flash served by the new binary. Banner: budget 200 MiB, memlimit 2048 MiB (operator GOMEMLIMIT inherited). Config onegw.toml unchanged by the deploy; live***REMOVED***file ladder retained. Earlier:*
 *Last updated: 2026-09-14 (context-window overflow RECOVERY — prune + replay, not just fall-through):
 the #97-era work made a context-length 400 a *fall-through* verdict (try the next combo leg). That is correct
 when one leg has room, but the `free` combo proved the terminal case: a client session grew to 432,168 tokens,
@@ -71,7 +71,7 @@ with the accounts intact; a one-account key replace left its sibling key and eve
 Pre-existing, unrelated: `TestCursorKindEndToEnd` still hangs (real network dial) on a pristine HEAD checkout.
 Also dropped: the Settings "Gateway keys" list (now the keys page) and its dead fetch script.*
 
-*Last updated: 2026-09-14 (PR #97 merged as 533affe; `free` is b-ai-only by STANDING ORDER, ladder v7):
+*Last updated: 2026-09-14 (PR #97 merged as 560f5c1; `free` is b-ai-only by STANDING ORDER, ladder v7):
 Operator instruction, recorded so no later session re-litigates it from the
 measurement below: "remove the kilo free from my combo, do not add them again."
 `free` = ["b-ai/qwen3.8-flash"], one leg, capacity from the ten-account pool;
@@ -86,7 +86,7 @@ provider block's max_concurrency/selection notes), not another vendor. What the
 fallback leg could never have served anyway is the majority of this box's
 traffic - kilocode/kilo-auto/free caps at 262,144 input tokens while `free`
 runs in_p50 ~385K.
-Merged work (533affe, released as a patch by CI): (1) prefill is measured from
+Merged work (560f5c1, released as a patch by CI): (1) prefill is measured from
 the admission stamp, so the gateway's own max_concurrency queue no longer
 fakes a slow lane in the EWMA that `strategy = "size-aware"` ranks on
 (TestPrefillExcludesAdmissionQueue fails pre-fix at 752ms of "prefill" for a
@@ -186,7 +186,7 @@ nothing. The list also scrolls (`max-height:45vh`) so a 100-key pool stays usabl
 `[[oauth.accounts]]` entry at the HEAD of its provider's group instead of after its last entry, so the grid's sign-in
 pills agree with the roster order; the insert point is taken before the entry's leading gap, which keeps a hand-written
 comment attached to the entry it describes. Tests: 1 page-level (the Providers page 500s silently on a template/data
-mismatch) + 1 splice order test; `internal/server` green on top of bc4e730 except the pre-existing
+mismatch) + 1 splice order test; `internal/server` green on top of 8936e03 except the pre-existing
 `TestCursorKindEndToEnd` hang (reproduced on the tip without this change). Verified end-to-end against a scratch
 instance (:18099, this tree) driven in headless Chrome over CDP: single add lands on top and takes focus; a bulk paste
 of mixed line shapes plus a sign-in-service batch → rows in pasted order above the existing ones, duplicate name
@@ -221,7 +221,7 @@ opencode/deepseek-v4.1-flash at 144 tok/s). TWO LANDMINES FOR THE NEXT DEPLOY: (
 (internal/config/config.go:668 allows only order|fastest|round-robin) while origin/master — the lineage every
 binary running today was built from — accepts it, so a gateway built from local master and pointed at this file
 fails `config.Load` at boot and would also brick reload plus every dashboard config mutation; merge origin first
-(7e70d76's lineage) or pin dev back to `order`. (2) Peer sessions replaced the listener three times during this
+(881d862's lineage) or pin dev back to `order`. (2) Peer sessions replaced the listener three times during this
 work (7432 → 85596 → 75278 → 421), and one probe got "empty reply from server" purely because it landed on a
 draining process — the ladder is durable only because it lives in the file every restart re-reads, not in the
 process. PEER COLLISION, recorded because this file has no ownership model (#42): at 12:20 local a concurrent writer
@@ -341,7 +341,7 @@ installs and was verified end-to-end: volume tar -> fresh volume on a second con
 bearer without a re-login, and a generated admin password survives (the restored instance logs NO "FIRST-RUN
 ADMIN PASSWORD" and the old password still signs in). Operational caveat recorded there: never run two
 instances against one subscription account — single-active device sessions rotate each other out.*
-*Last updated: 2026-09-13 (dashboard provider-save hardening 4765076 + docker-compose default credentials; registry detail under § Dashboard):
+*Last updated: 2026-09-13 (dashboard provider-save hardening f96e402 + docker-compose default credentials; registry detail under § Dashboard):
 three defects on the roster path the provider modal drives were fixed before this slice could be trusted with
 subscription accounts. (1) A save DELETED the account fields the editor does not model — per-account
 `base_url` and `weight` are live (server.go copies both into provider.Account) but only the api key was
@@ -396,8 +396,8 @@ the live account was never exercised): page HTTP 200 carrying the sign-in button
 `responses models` / `subscription quota` fields and the editor's service select; pending → signed-in;
 upstream recorded `Bearer at-ui-token`; logout → signed-out with no stale bearer; inline JS parses
 (`node --check`). Docs: README § Providers/Combos + a dashboard recipe in § Grok subscriptions with the curl
-equivalents. Also in this session: docker-compose credential comments (b6adbcd).*
-*Last updated: 2026-09-13 (README + image config: ONEGW_KEYS is never auto-generated, 8cb4b1d):
+equivalents. Also in this session: docker-compose credential comments (a026579).*
+*Last updated: 2026-09-13 (README + image config: ONEGW_KEYS is never auto-generated, 5ab5509):
 the Docker quick start passes `-e ONEGW_KEYS=change-me` without saying it is mandatory, and
 the comment header of the config baked into the image documented only the admin password's
 first-boot generation — precisely the asymmetry that reads as "the key is probably generated
@@ -412,7 +412,7 @@ not. Verified on the published image (digest 78125d2): keyless boot exits 1 with
 after writing /data/admin_password; keyed boot listens on 0.0.0.0:8080 and gates /v1/models
 (401 bare, 200 with Bearer). Docs and TOML comments only — no code, no live config, no status
 change. Shipped as its own commit, built from the HEAD blob plus these 15 lines, so no peer hunk rides along.*
-*Last updated: 2026-09-13 (strategy "size-aware" + dev rewired to it, e4d02d3; live pid 19292):
+*Last updated: 2026-09-13 (strategy "size-aware" + dev rewired to it, 4b9d2bf; live pid 19292):
 the throughput RCA left one lever the user owns — the paid opencode-go leg answers the SAME ≥150K-token
 traffic in 4.1s pre-first-byte (p90 5.6s, 73.4 delivered tok/s) while b-ai/qwen3.8-flash takes 50.4s
 (p90 109.4s, 12.3 tok/s) — and `strategy = "fastest"` could not carry that leg, because it also re-ranks
@@ -421,7 +421,7 @@ small turns on decode EWMA, which is exactly why it was pulled from the free-fir
 prefill-only half: reorderBySpeed engages from provider.PrefillMattersAt (32K) input tokens up and only
 on measured prefill for that bucket, and RETURNS with the configured chain untouched below the gate or
 with nothing measured — so a fast-but-paid leg shares a free chain and is reached only by a measured
-pre-first-byte advantage on the request's own size class. Everything b2c9dc5 established still holds
+pre-first-byte advantage on the request's own size class. Everything cfc1fa3 established still holds
 (no-sample legs sort behind every measured leg, configured order among themselves, full chain preserved,
 `speed_order` row only on a real reorder). Two tests pin the gate with SEPARATE configured orders so each
 half fails alone: the small turn keeps a sequence whose decode ranking would have flipped it
@@ -429,7 +429,7 @@ half fails alone: the small turn keeps a sequence whose decode ranking would hav
 turn promotes the measured fast-prefill leg from last place; Resolve is pinned to set PrefillOrder and
 not SpeedOrder, Validate accepts the value and rejects the size_aware/sizeaware typos. README and
 docs/throughput-metrics.md gain the strategy (and lose the line-number citations the edits invalidated).
-Live, after deploying `git archive` of e4d02d3 zero-drop (scripts/deploy.sh --binary, pid 19292,
+Live, after deploying `git archive` of 4b9d2bf zero-drop (scripts/deploy.sh --binary, pid 19292,
 artifact /tmp/onegw-sizeaware-bin — do NOT sweep /tmp/onegw-*) and hot-reloading the operator's decision
 (dev: strategy "size-aware", `opencode/deepseek-v4.1-flash` appended as leg 5): 10 `speed_order` rows
 for model `dev` at in~156K-598K, every one `opencode > tokenrouter > b-ai > tokenharbor > glm`; a
@@ -452,7 +452,7 @@ genuinely cold prefixes the ranking is only as good as the samples that happen t
 a large turn's chosen leg as a bet, not a guarantee, and read the `speed_order` detail next to the served
 row. Earlier:)*
 *Last updated: 2026-09-13 (throughput RCA: the 60-150s term is pre-first-byte, steering unblocked
-(b2c9dc5), `dev` back on strategy="fastest", header budget 75s→120s; live pid 36886): the report was
+(cfc1fa3), `dev` back on strategy="fastest", header budget 75s→120s; live pid 36886): the report was
 "the provider table says b-ai 63.5 / tokenrouter 54.5 tok/s but omp shows ~3". Two different clocks,
 both honest (docs/throughput-metrics.md): 63.5 is DECODE (headers→relay-end); what the client divides
 by is the whole wall, and on these chains that wall is dominated BEFORE the headers. Ring evidence on
@@ -475,7 +475,7 @@ exactly this was inert twice over: `dev` ran strategy="order",
 and reorderBySpeed's size-aware regime scored legs WITHOUT bucket samples at 0 against the measured
 legs' NEGATIVE predicted seconds, so an unsampled leg always sorted to the FRONT — the promotion behind
 the 2026-09-12 00:30 revert and the reason the speed_order row carries "weigh it, don't trust the head
-leg". b2c9dc5 gives no-data legs -Inf (mirroring the decode regime's 0-tok/s contract) and
+leg". cfc1fa3 gives no-data legs -Inf (mirroring the decode regime's 0-tok/s contract) and
 TestReorderBySpeedNoDataLegSortsBehindMeasured pins the mixed case that was untested; mutation-checked
 (restoring the 0 default reproduces the promotion and fails). Warmth is worth the trip: on the same
 window b-ai's ≥100K-token successes split 32% cold (<50% cache hit) at 83.9s median pre-first-byte vs
@@ -494,9 +494,9 @@ measured 142.2s) — a correct wall predictor, a mislabeled vendor rate. #94: wi
 unmeasured leg can now only earn bucket samples via head-leg failure — the s=0 promotion was accidental
 forced exploration, so `strategy = "fastest"` is exploit-only until an explore knob exists (parent #70).
 Deployed zero-drop from
-`git archive` of b2c9dc5 (never the shared dirty tree) via scripts/deploy.sh --binary; artifact
+`git archive` of cfc1fa3 (never the shared dirty tree) via scripts/deploy.sh --binary; artifact
 /tmp/onegw-steer-bin — do NOT sweep /tmp/onegw-* (this pid maps it). Predecessor /tmp/onegw-exp-bin
-(pid 23427, build b7b55e2) drained on a verified single listener; the config levers (gitignored
+(pid 23427, build 206d4fd) drained on a verified single listener; the config levers (gitignored
 onegw.toml) went in through PUT /admin/config/reload and need no restart. Earlier:)*
 *Last updated: 2026-09-13 (README: moving an OAuth session between machines): the
 OAuth section now documents that a login's whole credential state is one file —
@@ -543,7 +543,7 @@ per-model p50/p95 recipe computed off the request ring (live proof: b-ai/qwen3.8
 16:51 snapshot: decode p50 64.1 / delivered p50 4.9 tok/s over 246 rows — the
 ~14× gap being what decode excludes and delivered includes), which became issue #90
 (ring-based per-model distribution, ~30 lines, no new state). Earlier:)*
-*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 69c25ea, live pid 23427):
+*Last updated: 2026-09-13 (memory-budget raise + GC-limit coupling, 7554125, live pid 23427):
 the dashboard Memory card pinned at 99.9 of a 100.0 MiB cap with waiting requests under
 long-context agentic load — the buffered path was the bottleneck, not a leak. Two-part change.
 (1) Live config (gitignored onegw.toml): `buffered_budget_bytes` 100 MiB (104857600, set
@@ -561,7 +561,7 @@ Pinned by TestApplyMemoryTuningFollowsBufferBudget (reads back /gc/gomemlimit:by
 keeps 90 MiB, 200 MiB budget moves the ceiling, zero falls back) and
 TestApplyMemoryTuningRespectsOperatorGOMEMLIMIT (sentinel survives); mutation-checked
 (hardcoded-return mutant fails the 200 MiB row). The RELOAD half was initially untested —
-the #63 harness hand-copied the closure, so dropping the re-tune kept CI green; 01e48b0
+the #63 harness hand-copied the closure, so dropping the re-tune kept CI green; 5c19c5b
 extracts newReloadHook as the one definition both runGateway and the test register, with a
 160 MiB reload fixture + 77 MiB sentinel making the assertion ordering-independent
 (drop-the-call mutant goes red). README/ARCHITECTURE/systemd/vps-deploy
@@ -570,7 +570,7 @@ the pushed commit (my build `/tmp/onegw-mem-bin2`, pid 49821). SUPERSEDED at 17:
 deploy: live is pid 23427 on `/tmp/onegw-exp-bin`, forensics-verified to carry BOTH the budget
 fix (`heapLimitBytes` present) and origin's billing-parole recheck (`billing_parole=3`) —
 banner `budget: 200 MiB, memlimit: 2048 MiB`, `onegw_budget_cap_bytes 209715200`. It predates
-the 01e48b0 refactor (`newReloadHook=0`, consistent with a 17:26 build against an 18:2x push),
+the 5c19c5b refactor (`newReloadHook=0`, consistent with a 17:26 build against an 18:2x push),
 which is behavior-preserving/test-only: read that as "the binary predates the pin", NOT "live
 is missing it" — no redeploy is owed on that basis.
 **Three `/tmp/onegw-*` artifacts, none sweepable:** `onegw-exp-bin` is mapped by the live pid,
@@ -583,21 +583,21 @@ question. Check the mapping before touching any of them:
 `"invalidated":true` absent while `"has_key"` is present (the load-bearing pairing — `omitempty`
 hides false), i.e. zero terminal parks. Earlier:)*
 **Ref-rewrite incident (direction corrected — the first record of this got it backwards), for
-the peers sharing this remote:** the memory-budget change first landed as b59ba41 on the LOCAL
-chain, and local↔origin had diverged BIDIRECTIONALLY: local was missing origin's c75dc18
+the peers sharing this remote:** the memory-budget change first landed as 171d5b9 on the LOCAL
+chain, and local↔origin had diverged BIDIRECTIONALLY: local was missing origin's 6ce7b4c
 billing-parole recheck (the #80-follow-up self-heal that ends the b-ai park-forever outage
 class, about 354 lines incl. its tests) while carrying about 101 lines origin never had
-(44bd2b7 opencode-free per-model Responses routing + the `muse-spark-*-contributor-free`
-catalog ids, 98c7392 README opencode-free section; note 06f06cc's responses_models variant is
-NOT patch-equivalent to origin's 00d5081). The local "sync/adopt the published stamp chain"
-commits adopted the shared CODE via cherry-picks but stopped short of c75dc18. Pushing the
+(cb3beb9 opencode-free per-model Responses routing + the `muse-spark-*-contributor-free`
+catalog ids, 91ad890 README opencode-free section; note 8f852e4's responses_models variant is
+NOT patch-equivalent to origin's 8daa672). The local "sync/adopt the published stamp chain"
+commits adopted the shared CODE via cherry-picks but stopped short of 6ce7b4c. Pushing the
 local tip required force-with-lease, which rewrote published master to a tree that was
 simultaneously missing published content and carrying unpublished work — and the first deploy
-(pid 42141) was built from it. Caught by `git diff --stat 69c25ea b59ba41`; origin restored to
-69c25ea (a908d8a + the budget change, cherry-picked on the real tip; tree hashes verified) and
+(pid 42141) was built from it. Caught by `git diff --stat 7554125 171d5b9`; origin restored to
+7554125 (45766fb + the budget change, cherry-picked on the real tip; tree hashes verified) and
 the binary rebuilt from `git archive` of it (pid 49821, /tmp/onegw-mem-bin2). Live consequence,
 stated exactly: during the 17-minute regressed window the serving binary (pid 42141, built from
-b59ba41) had NO billing-parole recheck (0 `parole` lines vs 24+2+3 on origin) — so a key newly
+171d5b9) had NO billing-parole recheck (0 `parole` lines vs 24+2+3 on origin) — so a key newly
 parked terminal by a 402 in that window would not have self-healed before the drain. The SIGTERM
 reset every park regardless (the pool's `invalidated` state is per-process) — that is the
 clearing mechanism, not the parole recheck; the residual exposure is user-visible b-ai free-lane
@@ -607,8 +607,8 @@ served in the first hour on the restored binary. Provenance cross-check: the pre
 (/tmp/onegw-rm-bin, pid 77921) and the restored binary carry the same feature set (billing_parole
 present, `muse-spark-*-free` routing absent) — origin's lineage is what was already serving, and
 `/tmp/onegw-rm-bin` stays on disk as the pre-session artifact (do not sweep). STILL UNPUBLISHED:
-44bd2b7 + 98c7392 + ed12019 live only on the local chain — the owning peer should cherry-pick
-them onto the origin tip rather than republish the local one; until 44bd2b7's merged
+cb3beb9 + 91ad890 + d4b16c9 live only on the local chain — the owning peer should cherry-pick
+them onto the origin tip rather than republish the local one; until cb3beb9's merged
 `case KindOpenCode, KindOpenCodeFree:` lands there is NO config-only route for
 `muse-spark-*-free` ids (origin's `Path` returns chat-completions unconditionally for the free
 kind, and `responses_models` is consulted only for `KindOpenAI`), so wiring them live requires
@@ -616,7 +616,7 @@ that commit — the live config already excludes them, so nothing is broken toda
 incident teaches: with a divergent local chain, NEVER force-push the local tip to master (that
 republished a behind-state and briefly removed published code from the live gateway). Cherry-pick
 onto the remote tip in a scratch worktree, push that, and build/deploy only from the pushed sha.
-*Last updated: 2026-09-13 (`responses_models`, 00d5081): xAI serves some ids only on its native
+*Last updated: 2026-09-13 (`responses_models`, 8daa672): xAI serves some ids only on its native
 /v1/responses endpoint — under an OAuth bearer that includes the flagship grok-4.5 (OmniRoute
 registry/xai/index.ts:31-37,66-69; the tagging exists because a chat-shaped body reaching
 /v1/responses 422s "missing input", upstream #10165). The `xai` provider is kind=openai on
@@ -629,7 +629,7 @@ request cannot bypass translation. Two tests pin both halves (opted id → /v1/r
 `input`, SSE translated back to a chat completion; sibling id → chat wire with `messages`),
 mutation-checked by deleting the routing branch. Whole `internal/...` suite green. README gained
 the knob under § Grok subscriptions. Earlier:)*
-*Last updated: 2026-09-13 (quota tracking no longer depends on a dead key in TOML, 08a9716,
+*Last updated: 2026-09-13 (quota tracking no longer depends on a dead key in TOML, 64e3eee,
 live pid 60600): `subTargets` skipped any account whose `api_key` was empty, so a subscription
 provider kept its quota row only while a static key sat in the config — and the README calls that
 key "the fallback until a token is stored", i.e. deletable. Deleting it (the obvious cleanup after
@@ -642,7 +642,7 @@ surfaces with its error, a credential-less one is still skipped — and is mutat
 the condition makes the wait time out). Verified live after deploy: GOAT weekly parked at 100 %
 with credits 85 %, Go 61 %, glm/opencode rows intact, `xai` failing open with "Grok session token
 rejected — re-run: onegw-oauth login -provider xai", `cursor/auto` → "PONG". Earlier:)*
-*Last updated: 2026-09-13 (SuperGrok chain proven end-to-end at the gateway, 9f02b51): the
+*Last updated: 2026-09-13 (SuperGrok chain proven end-to-end at the gateway, fd67fd0): the
 pieces had unit coverage but nothing showed the whole path, so `internal/server` now seeds one
 xAI device session into the data dir BEFORE boot (the tracker polls on `New()`, so an in-test
 login would race the first probe) and asserts what the operator actually gets: the borrowed
@@ -655,7 +655,7 @@ partial-pool must-not-park half, paired with `TestProbeGrokCliEndToEnd`'s 100 % 
 commit: no production code changed, no redeploy needed (live pid 28905 already carries every
 landed change). Verified beyond a single run: `-race` clean, 30 repeats at `-cpu=1`, whole-repo
 sweep green (`TestCursorKindEndToEnd` still skipped as the pre-existing network hang). Earlier:)*
-*Last updated: 2026-09-13 (cursor `auto` lane fixed, 38cf5b6, deployed pid 28905): the provider
+*Last updated: 2026-09-13 (cursor `auto` lane fixed, 30368da, deployed pid 28905): the provider
 advertised `auto`, which Cursor has never had as a model id — the encoder put the client string on
 the wire verbatim, so every `cursor/auto` request ended the AgentService turn with zero content
 (502 "cursor: empty response"). Both reference implementations rewrite it (`resolveRequestedModel`:
@@ -666,7 +666,7 @@ TestEncodeCursorAgentRequestRewritesAutoLane, and verified through the gateway a
 `cursor/auto` → "PONG" (11.4k tokens), `composer-2.5` unaffected, tools path answers. The
 auto-{cost,balance,intelligence} preference is dropped rather than guessed (Cursor's
 ModelParameter sub-fields are unrecovered here; the comment names the upgrade path). Earlier:)*
-*Last updated: 2026-09-13 (SuperGrok follow-through: 6e29d50 deployed, Grok Build provider
+*Last updated: 2026-09-13 (SuperGrok follow-through: e0a5693 deployed, Grok Build provider
 staged DISABLED, pid 16283): three fixes after the first landing. (1) The live reload of the
 borrower entry failed on the running binary — `OAuthAccounts()` defaults `service` from the
 provider name, so validateOAuth rejected every natural borrower with "unknown oauth service
@@ -685,7 +685,7 @@ approval, then proving `xai/*` serves, pruning the live catalog, and enabling `g
 after it answers 200 — are tracked as #89; until the approval lands the keepalive loop keeps the
 current URL at /tmp/onegw-xai-code.txt and the xai quota row reports "Grok session token
 rejected" and fails open. Earlier:)*
-*Last updated: 2026-09-13 (SuperGrok subscription wiring, 8d5df92 — code landed, live
+*Last updated: 2026-09-13 (SuperGrok subscription wiring, 1691b5f — code landed, live
 credential pending one browser approval): researched OmniRoute + 9router + xAI/OpenClaw docs to
 put the user's consumer SuperGrok plan behind onegw's xAI surfaces. Findings: one
 auth.x.ai device-flow session (public client b1a00492-…, scope
@@ -717,7 +717,7 @@ period spend, zero-drop deployed pid 66474): the commandcode credits window alwa
 the pool had headroom, because /alpha/billing/credits returns only REMAINING credits; the probe
 now also reads period spend from /alpha/usage/summary (soft-fail: totalCost, falling back to
 totalMonthlyCredits) and the window reports spend/(spend+remaining) — OmniRoute's totalCost math,
-which the original #79 port left unported (landed ad2c897). Live-verified: GOAT (harvey) 0% → 85%
+which the original #79 port left unported (landed d90aa04). Live-verified: GOAT (harvey) 0% → 85%
 (spend 59.87 + remaining 10.29 = 70 pool), Go (linhdmn) 61% (6.18 + 3.82). Park discipline is
 unchanged and hardened — the fraction floors below 100, so spend alone can never fabricate the
 drained park (only remaining ***REMOVED*** 0 does), and the GOAT key's real parking signal remains the
@@ -728,11 +728,11 @@ unit + e2e pins (85% GOAT / 61% Go / no-false-park), full internal/server + inte
 suites green (except the pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine
 HEAD), zero-drop deploy with /admin/health, combo 200 through the new pid, and a post-reload
 subscription API re-read. Earlier:)*
-*Last updated: 2026-09-12 22:00 (context-window overflow falls through, c5f74a1, deployed pid 69187): the
+*Last updated: 2026-09-12 22:00 (context-window overflow falls through, 0a7c8cf, deployed pid 69187): the
 "Advisor unavailable for onegw/dev" 400 — a 283,915-token advisor request answered by a 262,144-token leg
 (tokenrouter/z-ai/glm-5.3-free; glm's coding plan actually serves 335K, ring-verified) — had TWO causes: no
 leg ever filtered by context window, and Router.Execute treating the 400 as terminal (line 465: not
-Retryable/RegionLocked/Fallbackable → `return err` before later legs could serve). Fix (HEAD + c5f74a1, built
+Retryable/RegionLocked/Fallbackable → `return err` before later legs could serve). Fix (HEAD + 0a7c8cf, built
 and zero-drop deployed from the isolated /tmp/onegw-ctxfix worktree — peer WIP in types.go untouched):
 types.APIError.ContextWindowExceeded() classifies the family (z.ai "longer than the model's context length"
 verbatim, OpenAI "maximum context length"/context_length_exceeded, Anthropic "prompt is too long"; GLM effort
@@ -761,7 +761,7 @@ dead ladder legs would burn two doomed attempts per spilled request. Post-change
 200, free buffered 200 (served by b-ai glm-5.3-flash), dev stream 200. Earlier:)*
 
 *Last updated: 2026-09-13 (b-ai 503 RCA + billing parole, zero-drop REDEPLOYED pid 36763 —
-stable artifact /tmp/onegw-live built from origin/master 455f1b6; lsof single listener, health
+stable artifact /tmp/onegw-live built from origin/master 0f6ab4f; lsof single listener, health
 ok, direct b-ai/qwen3.8-flash 200 in 3.5s, 11 providers incl. opencode-free):
 the reported
 `provider_accounts_unfunded` 503 on b-ai had two layers. (1) Trigger, vendor-side: the
@@ -788,18 +788,18 @@ reload-carries-clock, server e2e self-heal after vendor recovery; mutation-check
 dials the real cursor host). REDEPLOY NOTE: the first artifact (/tmp/onegw-parole-bin2,
 pid 85592) was deleted by cleanup while the process still ran the unlinked inode — unre-executable
 by any crash/OOM/reboot respawn — hence pid 36763 from the stable /tmp/onegw-live. DEPLOY
-WARNING for peers: the shared worktree's local master (`ed12019`) does NOT contain `c75dc18`
+WARNING for peers: the shared worktree's local master (`d4b16c9`) does NOT contain `6ce7b4c`
 (verified: zero `billingParole`/`invalidatedAt` in its provider.go) while origin/master does —
 run `git fetch && git merge origin/master` in the main tree BEFORE building any deploy, or the
 self-heal silently reverts while this stamp still claims it live. No deploy.sh marker added:
-`strings` misses interned Go literals (a 455f1b6 build shows `opencode-free` = 0 yet serves
+`strings` misses interned Go literals (a 0f6ab4f build shows `opencode-free` = 0 yet serves
 it), so a marker would false-block; `billing_parole` (3 hits) is the one safe marker if ever
 added, after a `--dry-run` proof. Earlier:)*
 
 *Last updated: 2026-09-12 (reasoning-echo CONVERGED: echo_reasoning knob + runtime learn,
 live pid 95900): the two parallel implementations of the seq-198/2666 fix are reconciled on ONE
-knob — ProviderCfg/Def `EchoReasoning` + toml `echo_reasoning` (45ccd03) — and the runtime-learn
-layer (c5c5d7f, merged d10a2a2) consumes the SAME gate: learnedRE/LearnReasoningEcho on Def
+knob — ProviderCfg/Def `EchoReasoning` + toml `echo_reasoning` (d86a1a1) — and the runtime-learn
+layer (8cf4e9f, merged 888a641) consumes the SAME gate: learnedRE/LearnReasoningEcho on Def
 mirrors learnedAT/learnedNT, attempt() classifies the echo-refusal 400 (types.ReasoningEchoRequired)
 and grants exactly ONE Fallbackable retry on a FRESH learn (that retry's body carries the newly
 synthesized echoes; an already-known echo model replays byte-identically, stays non-Fallbackable,
@@ -813,7 +813,7 @@ serve-assertions could only pass through the fallback leg); the no-retry pin is 
 learn-scoped tests (reasoning_echo_learn_test.go: serve-on-retry, upfront fill, repeat-refusal
 containment, per-model scoping, stream gate). Regression replay (the old hand-off probe):
 seq-2666-shaped body, opencode/deepseek-v4.1-flash, stream true → 200 SSE; buffered 200; combo
-"free" 200. Live pid 95900 (onegw-echo-rt2, master + c5c5d7f, single listener verified). Both
+"free" 200. Live pid 95900 (onegw-echo-rt2, master + 8cf4e9f, single listener verified). Both
 combos now run strategy="order" (free first; dev included 00:30 — prefill steering was promoting
 opencode first on large hermes requests). Earlier:)*
 *Last updated: 2026-09-11 (commandcode subscription quota dialect (#79), ported from OmniRoute's
@@ -826,11 +826,11 @@ vendor's own exceeded flags agree live), and a monthly credits pool window reads
 healthy and 100% only when monthly+purchased+free remaining are all zero AND the credits object
 is present (absent credits must fail open, never park). 401/403 = probe error, fail-open.
 SnapshotURL override semantics differ for this dialect: subscription_url replaces the API BASE.
-Live onegw.toml: commandcode → subscription_quota = "commandcode". Landed 90b1f79,
+Live onegw.toml: commandcode → subscription_quota = "commandcode". Landed 5914820,
 live pid 53497 (peer's /tmp/onegw-echo-bin carries the dialect): commandcode/harvey serving,
 plan "Command Code · Go", 5h 0% / Weekly 0% / Credits (monthly) 0%, reset 2026-09-27 (the
 configured account probed healthy from its first cycle — the exhausted-weekly shape in the
-parser/e2e tests came from the calibration key, not this account). Follow-up 461efb2: window
+parser/e2e tests came from the calibration key, not this account). Follow-up 6fe790c: window
 percents are FLOORED, not rounded — 34.9/35 reads 99 (headroom remains, no park), used>=cap
 reads 100 (park); rounding parked 99.5-99.99% accounts every cycle. Soft-call guards:
 whoami/subscriptions failures leave Err empty while credits still parks; absent credits
@@ -872,18 +872,18 @@ value), the onegw_provider_prefill_tokens_per_second_x100{provider,model,bucket}
 the speed_order ring rows. Live-verified on the scratch gateway: steer combo (qwen configured
 first) served by glm at 2.2-4.2s; reasoning tokens 50 with default_effort vs 392-395 unset.
 STATUS CORRECTION (2026-09-11, after this stamp was written): this work was landed on master
-as 276032f by the rotation session as an explicit handover (green gate passed, owner idle ~3h)
+as c83a224 by the rotation session as an explicit handover (green gate passed, owner idle ~3h)
 — the "uncommitted, pending review" state above is superseded. NOT yet deployed: the live
-gateway (10264) still runs the pre-276032f build, so size-aware steering and default_effort are
+gateway (10264) still runs the pre-c83a224 build, so size-aware steering and default_effort are
 NOT affecting live routing until the user approves a redeploy. Revert is one command
-(git revert 276032f) if review after the fact finds a problem.
+(git revert c83a224) if review after the fact finds a problem.
 The post-200 stall watchdog was dropped on evidence (headers→first chunk 0.07-1.38s), and the
 per-first-byte-budget change stays forbidden — docs/b-ai-free-tier-limits.md §6 records the
 regression trap and the peer's occupancy pick as the fix for the timeout storm. Composes with
 the in-flight pick per the PRD's own note: prefill steering picks the LEG, occupancy picks
 the KEY. Reload still gated. Earlier:)*
 
-*Last updated: 2026-09-11 (rotation follow-ups MERGED + DEPLOYED — 225625a, live pid 10264):
+*Last updated: 2026-09-11 (rotation follow-ups MERGED + DEPLOYED — 62cd402, live pid 10264):
 PR #86 merged on GitHub; the main tree synced to origin/master (peer WIP preserved on
 wip/peer-snapshot-20260911-182333 + /tmp patches); zero-drop deployed via scripts/deploy.sh
 (markers ok, single listener 10264, health x2, live probe 200). All four features live:
@@ -903,7 +903,7 @@ applies an occupancy gate to EVERY strategy (bug caught by the new
 TestSelectionOccupancyGateAcrossModes — the gate had only applied when all slots were busy).
 Suites: `go test ./... -skip TestCursorKindEndToEnd` exit 0 (19 packages ok). Earlier:)*
 
-*Last updated: 2026-09-11 (sticky pin yields while busy, b1f1497, live pid 4753): the 469633e
+*Last updated: 2026-09-11 (sticky pin yields while busy, 555e492, live pid 4753): the 5688582
 occupancy pick had one bypass — next()'s sticky-pin branch returned on available() alone and
 never read slot occupancy, so a provider with `sticky` set would have re-created the seq-879
 stack through the pin (two concurrent same-identity requests both pinned onto one key). It
@@ -919,7 +919,7 @@ pre-existing TestCursorKindEndToEnd hang. Live: pid 4753, three concurrent
 b-ai/qwen3.8-flash requests again spread three ways. Earlier:)*
 
 *Last updated: 2026-09-11 (seq-879 RCA addendum — what the ring can and cannot prove):
-four measured corrections to the occupancy-pick commit (469633e); none changes the fix:
+four measured corrections to the occupancy-pick commit (5688582); none changes the fix:
 (1) RING GRANULARITY: upstreamErr records one failed ATTEMPT, and attempt() logs the ROUTED leg
 model — so a "qwen3.8-flash" 504 row is leg-level and cannot tell a combo leg from a direct
 route; client visibility of seq 879 is therefore UNKNOWN from the ring (no request id). What IS
@@ -930,7 +930,7 @@ twice (free: leg 3; dev: leg 2), so 879+880 are two requests, not a same-target 
 after writeRequestBody returns (h2_bundle.go 8826-8845, Go 1.25.14), so neither body upload nor
 h2 stream-admission waits consume it. The uncached-prefill/queue correlation is the whole
 mechanism, and the lever space is exactly two: warm the prefill, or adapt the budget (a bare
-raise only moves the wall and lengthens the burn — which is why 469633e changes neither).
+raise only moves the wall and lengthens the burn — which is why 5688582 changes neither).
 (3) THE QUEUE IS PRE-FIRST-BYTE, NOT PER-REQUEST: while a 1200-token generation streamed on
 clone2 for 34.9s, a second request on the SAME key answered in 0.72s (same key baseline 1.11s).
 Releasing occupancy at response headers is therefore the correct scope — long-session streams do
@@ -943,7 +943,7 @@ real (seq 874: cache_read 141440/144556 -> prefb 6.0s vs 40-72s cold), so the fo
 designing is a conversation-scoped identity (prompt-prefix hash) before any sticky TTL. Pinning
 was also ruled out as an A/B confound: newAccountPool sets ttl = the configured value with no
 default, and the scratch config sets none. Earlier:)*
-*Last updated: 2026-09-11 (dynamic per-provider quota windows (#85, b96eac5, live pid 94769):
+*Last updated: 2026-09-11 (dynamic per-provider quota windows (#85, 142ab41, live pid 94769):
 the local quota_window was a fixed enum (5h | daily | weekly), so a provider whose real cap
 resets monthly — or on any other period — could not be modelled at all (leg rejection itself
 already worked: the attempt()/stream_relay gates answer before def.Do, proven by frozen
@@ -1003,7 +1003,7 @@ concurrent stalled requests — old binary routes a1/a1/a1 (reproduces 892-894),
 a1/a2/a3; unit tests TestPickSpreadsOffBusyAccount / TestDoHoldsOccupancyUntilReturn,
 mutation-checked in both directions (drop the comparator -> spread test fails; drop the
 deferred end -> release test fails). Full suite green on a clean base except the
-pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine a1465b2.
+pre-existing TestCursorKindEndToEnd hang, which also hangs on pristine e42c1a0.
 Complementary, not conflicting: the size-aware PREFILL EWMA steering (prefill.go, issue #81
 pool-selection work) chooses the right LEG; this chooses the right KEY within a leg. The
 header budget stays 75s on purpose — spreading removes the queue that made it look too
@@ -1048,8 +1048,8 @@ flapThreshold/flapOpen, ModelBenchTTL, the gated-403 signature, the shared-wall 
 only the two rotation-relevant links: reset-aware/reset-window share rrCounters with
 round-robin (tie-band consistency), and their quota feed is the same one #79 provides. Earlier:)*
 
-*Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 546f997):
-follow-up to the splice-corruption fix (ace1969). The editor prefill synthesizes rows for legacy
+*Last updated: 2026-09-11 (legacy keys/api_key providers convert on an accounts Save, 0c21e46):
+follow-up to the splice-corruption fix (9d22fa3). The editor prefill synthesizes rows for legacy
 top-level credentials (providerEditViews: keys → "key-N", api_key → "default"), but the splice knew
 none of those names: an accounts-bearing Save rendered keyless rows next to the surviving legacy
 lines — on a keys-style provider the next Load appended the expansion's keyed key-N accounts
@@ -1063,7 +1063,7 @@ multi-line keys-style, and api_key-style fixtures; verified on a scratch gateway
 against a copy of the live keys-shaped config: the UI-shaped Save converts opencode cleanly.
 Earlier:)*
 
-*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), 8c3d404, live pid 80593:
+*Last updated: 2026-09-11 (upstream subscription quota tracker (#79), 910233c, live pid 80593:
 ported from 9router's open-sse/services/usage/{opencode-go,glm}.js + OmniRoute's
 opencodeQuotaFetcher.ts. internal/subquota polls the VENDOR's own subscription usage
 per (provider, account) — "" off | "opencode-go" (GET https://opencode.ai/zen/go/v1/usage:
@@ -1087,7 +1087,7 @@ e2e (stub vendors → JSON + page render + exhausted zai account parked while th
 opencode account keeps serving; no-providers null→[]). Verified in a detached worktree
 on pristine HEAD (config+subquota+provider+quota suites green; the combined server run
 reproduces the pre-existing stream-fast-path bench bleed on clean HEAD, not a
-regression). Live config (BOTH onegw.toml and ~/.onegw/onegw.toml): opencode → subscription_quota = "opencode-go", glm → "zai". Live proof on the serving binary: glm/harvey plan "Lite" — Session (5h) 23% (resets in 5.0h), Weekly (7d) 75% (in 3.2d); opencode key-1 rolling 0% / weekly 2% / monthly 28%, key-2 rolling 68% / weekly 34% / monthly 67% — per-key windows now visible for the first time; the Quota page renders 8 window rows with countdowns, zero exhausted pills (nothing parked — correct while every window has headroom). Zero-drop deployed (markers ok, single listener 95082, health x2). Hardening follow-up e61fb5d→8c3d404: probe-time bearer resolution via the live pool (OAuth TokenProvider tokens rotate in the background), key-hash in the snapshot cache key so a rotated key replaces the old snapshot outright (Inherit matches by provider+account prefix), park matching by account name; mutation-checked (neutering the resolver or the same-prefix replace fails TestTrackerResolvesLiveKey). LIVE PARK PROOF same evening: glm/harvey session window crossed 100% (z.ai monitor: percentage 100, remaining 0; direct chat probe → 429 1308 'Usage limit reached for 5 hour... reset at 20:04:35') and the gateway parked the account — direct glm model route answered 429 provider_rate_limited with Retry-After 27s WITHOUT touching z.ai, while the dev combo served via b-ai/tokenrouter (ring: zero glm rows during the window). Self-heals on the vendor's own reset.
+regression). Live config (BOTH onegw.toml and ~/.onegw/onegw.toml): opencode → subscription_quota = "opencode-go", glm → "zai". Live proof on the serving binary: glm/harvey plan "Lite" — Session (5h) 23% (resets in 5.0h), Weekly (7d) 75% (in 3.2d); opencode key-1 rolling 0% / weekly 2% / monthly 28%, key-2 rolling 68% / weekly 34% / monthly 67% — per-key windows now visible for the first time; the Quota page renders 8 window rows with countdowns, zero exhausted pills (nothing parked — correct while every window has headroom). Zero-drop deployed (markers ok, single listener 95082, health x2). Hardening follow-up e61fb5d→910233c: probe-time bearer resolution via the live pool (OAuth TokenProvider tokens rotate in the background), key-hash in the snapshot cache key so a rotated key replaces the old snapshot outright (Inherit matches by provider+account prefix), park matching by account name; mutation-checked (neutering the resolver or the same-prefix replace fails TestTrackerResolvesLiveKey). LIVE PARK PROOF same evening: glm/harvey session window crossed 100% (z.ai monitor: percentage 100, remaining 0; direct chat probe → 429 1308 'Usage limit reached for 5 hour... reset at 20:04:35') and the gateway parked the account — direct glm model route answered 429 provider_rate_limited with Retry-After 27s WITHOUT touching z.ai, while the dev combo served via b-ai/tokenrouter (ring: zero glm rows during the window). Self-heals on the vendor's own reset.
 Earlier:)*
 *Last updated: 2026-09-11 (kilo-auto/free reasoning-knob conflict 400 — no_thinking strip, live-verified):
 seq 1798 (onegw.toml, kilocode/kilo-auto/free, account mnhatlinh.doan@gmail.com) —
@@ -1113,7 +1113,7 @@ TestNoThinkingConflict400 (mutation-checked: neutering either strip branch or th
 classifier fails them); live config: kilocode always_thinking=["z-ai/glm-*"] +
 no_thinking=["kilo-auto/*"]. Earlier:
 
-*Last updated: 2026-09-11 (provider toggle/update splice corruption fix, ace1969, live pid 88714):
+*Last updated: 2026-09-11 (provider toggle/update splice corruption fix, 9d22fa3, live pid 88714):
 the dashboard's provider on/off toggle and PUT editor corrupted onegw.toml on the shapes the live
 config actually contains. Root causes, all in internal/server/admin_config_edit.go line splicers:
 (1) scanBlocks treated a SINGLE-bracket nested table ([providers.extra_headers]) as a new section,
@@ -1134,7 +1134,7 @@ gateway (port 18081) against a copy of the live config. Live repair: one PUT thr
 endpoint re-homed opencode's stranded lines (models live again in /v1/models), account keys
 carried over by name; toggle round trip verified byte-exact on the live config.*
 
-*Last updated: 2026-09-11 (distributor channel-empty 503 → shared-wall fall-through, 5e4c6b1, live pid 23877):
+*Last updated: 2026-09-11 (distributor channel-empty 503 → shared-wall fall-through, d499283, live pid 23877):
 b-ai's one-api distributor answers 503 "No available channel for model glm-5.3-flash under group
 default (distributor)" when its upstream channel pool for the model is empty (live 06:14Z, seq 595).
 The error was plain-retryable, so Router.Execute burned the same-target retry ladder (rotate keys +
@@ -1144,7 +1144,7 @@ turns. Fix: classify the wording in SharedConcurrency()'s 503 branch — the lan
 503s already ride — so each request pays ONE doomed call, then falls through to the next combo leg
 immediately; keys stay warm (no account bench), the flap breaker stays exempt (the verdict indicts
 one model lane, not the provider edge), and direct routes surface Retry-After=2. No wording park:
-per 1da3c2e, parks break the fast-path whole-body replay contract. Mutation-verified regression
+per 4b46ea6, parks break the fast-path whole-body replay contract. Mutation-verified regression
 tests at all three layers (types classify, provider Do keys-warm/no-park/no-flap-strike, router
 fall-through-after-one-call + direct-route Retry-After). Earlier:)*
 *Last updated: 2026-09-11 (README refactor, docs-only: dashboard screenshot moved into
@@ -1152,15 +1152,15 @@ the hero above the fold, Quick start relocated ahead of Why/Features, Contents t
 TL;DR callout + feature-chip row, release + build badges added (v0.19.0, release.yml);
 follow-up: first-run admin-password pointer added to the Quick start install paragraph.
 No code or config change. Earlier:)*
-*Last updated: 2026-09-11 (client-delivered tok/s + sidebar icon rail + wording-park revert, 1da3c2e+97e9427+15263ae):
-(1) fix(provider) 1da3c2e — the wording-path model park (Concurrency/TPM limit 429 -> 6s BenchModel)
+*Last updated: 2026-09-11 (client-delivered tok/s + sidebar icon rail + wording-park revert, 4b46ea6+d53735f+d888744):
+(1) fix(provider) 4b46ea6 — the wording-path model park (Concurrency/TPM limit 429 -> 6s BenchModel)
 broke TestStreamFastPathReplaysWholeBodyOnTransient429: the fast path's whole-body replay re-enters
 the buffered pipeline and hit the fresh bench skip, surfacing a client-visible 503 one attempt away
 from a 200. Reverted; wording walls ride the SharedConcurrency fall-through (per-request, ladder-
 skipped, keys warm), ModelWall removed. The BEHAVIORAL burst park stays (2nd distinct account inside
 5s — rotation proven futile; a single-account replay can never trip it). Lesson: parks must key off
 evidence that rotation cannot help, never off wording that a same-request replay can outlive.
-(2) feat(metrics) 97e9427 — CLIENT-delivered tok/s + TTFT, the number omp actually experiences:
+(2) feat(metrics) d53735f — CLIENT-delivered tok/s + TTFT, the number omp actually experiences:
 winning attempt's output tokens over the WHOLE request wall (failed attempts, rotation, backoff,
 prefill in the denominator), EWMA per CLIENT model (boundedModel keys), folded at the single
 relayResponse success site via a delivery ctx seeded at handler entry. Surfaces: /metrics
@@ -1169,13 +1169,13 @@ e2e_ms/dtps, Console Log 'delivered' column. proxyStream tags ctx ONLY at the re
 WithContext fork of r makes streamFallback's body restoration land on a copy (11 stream-fallback
 tests caught it). Tests: EWMA/gates/stale/cap + end-to-end fold (tracker + ring + wall >= stub sleep),
 mutation-checked.
-(3) feat(dashboard) 15263ae — sidebar icon rail: brand-row toggle collapses the 224px left nav to a
+(3) feat(dashboard) d888744 — sidebar icon rail: brand-row toggle collapses the 224px left nav to a
 56px icon rail (labels drop, per-page glyphs stay — inline stroke SVGs, Lucide geometry: gauge, bars,
 list, server rack, route, pie, banknote, terminal, sliders; currentColor, zero new assets), header
 toggle hides/shows the right rail; ogw-side/ogw-rail localStorage persistence, state restored before
 first paint, aria-expanded synced.
 
-*Last updated: 2026-09-11 (first-run admin password + dashboard password reset, c538c56, LIVE pid 71003):
+*Last updated: 2026-09-11 (first-run admin password + dashboard password reset, 3b7b486, LIVE pid 71003):
 an install with no admin_password (bare `onegw`, the docker image's baked default config, or a
 config leaving the key empty) used to fall back to the guessable in-code "admin". Now: (1)
 internal/config/adminpw.go — boot mints a 22-char crypto/rand credential, persists it at
@@ -1204,9 +1204,9 @@ read-only-mount paths. Deployed to :8080 via scripts/deploy.sh zero-drop (single
 /health 200 twice, /v1/models 200). scripts/deploy.sh + deploy_vps.sh read the marker when the config key
 is empty instead of probing with "admin". Earlier:)*
 
-*Last updated: 2026-09-11 (cross-account burst-wall park + bench-recency ok(), commit 092179c, live pid 89451):
+*Last updated: 2026-09-11 (cross-account burst-wall park + bench-recency ok(), commit 3dfce5d, live pid 89451):
 the user's seq-5977 RCA — b-ai's one-api edge answers shared-limit bursts with a raw 429 and an
-EMPTY body (no Retry-After, no window, no limit wording), invisible to the 103c253 text
+EMPTY body (no Retry-After, no window, no limit wording), invisible to the 03cd64c text
 classifiers, so every such 429 took the per-key ladder while the ring (5960-6000) showed three
 DIFFERENT accounts striking the same (b-ai, qwen3.8-flash) within 2s and the same keys serving
 200s seconds later — the cross-account signature of a shared lane, where account rotation can
@@ -1238,10 +1238,10 @@ immediate unless the group has no alternatives, else >50% fails/min in a rolling
 default park, DualCache/Redis counters) + rpm/tpm-aware simple-shuffle default, least-busy,
 latency-based and cost-based strategies, model-level fallback chains. onegw's shipped stack now
 covers the same triage — health-gated pool (ladder + benches that STICK), scoped parks (account /
-model / provider-flap), speed-steered legs (7567e41) — with the burst detector adding the
+model / provider-flap), speed-steered legs (1def8c1) — with the burst detector adding the
 behavioural signal none of the three have for wording-less walls.)*
 
-*Last updated: 2026-09-11 (failover deep-dive fan-out (4 scouts) → two fixes + config trims, commit 2e28d44, live pid 23608):
+*Last updated: 2026-09-11 (failover deep-dive fan-out (4 scouts) → two fixes + config trims, commit 29490b4, live pid 23608):
 (1) header-timeout STORM bench — a lone pre-first-byte abort stays request-shaped (unchanged
 design), but 3 header-budget 504s on the same (provider, model) inside a tumbling 3-min window
 now bench that leg for 3 min via #72 BenchModel, so Execute skips it at zero cost instead of
@@ -1255,14 +1255,14 @@ combos trimmed of the dead legs — commandcode/deepseek-v4-flash (weekly cap, d
 response_header_timeout lowered 120s→75s (user call: fail faster, rotate sooner). Scout
 findings on the record: gateway adds ~25-35ms CPU per 300-400KB combo request and ZERO fixed
 blocking hops (TTFB is ~99% upstream); h2 flow-control starvation is structurally impossible
-(Go grants 1GiB conn window / 4MiB stream, auto-replenished — the 7702820 ping fix was the
+(Go grants 1GiB conn window / 4MiB stream, auto-replenished — the 3a9ff90 ping fix was the
 right transport lever); the 4x-body budget reservation held for stream lifetime is the known
 RAM-vs-saturation ceiling (~60x 400KB bodies to starve; revisit if concurrency grows);
 router Backoff's SharedConcurrency tier is dead code (breaks at router.go:439 first) — flagged,
 not yet removed; TestCursorKindEndToEnd hangs on clean origin/master (pre-existing flake,
 needs its own RCA))
 
-*Last updated: 2026-09-11 (throughput metrics + speed steering, 7567e41+ec958b9, live pid 70807:
+*Last updated: 2026-09-11 (throughput metrics + speed steering, 1def8c1+d989047, live pid 70807:
 the user-reported throughput collapse (22 → 6 tok/s average) RCA'd with simultaneous 120-token
 streaming probes across every dev/free combo leg: b-ai/glm-5.3-flash — combo leg #1 — served
 ~1.3 tok/s under the 22-inflight storm while commandcode did ~51 and glm (Zhipu direct) ~25,
@@ -1278,7 +1278,7 @@ noise floor, 10-minute stale reset. (2) accountPool.next picks the FASTEST open 
 stable-sorts the chain by each leg's ModelTPS before the first attempt — no-data legs keep
 the configured order, nothing is removed from the chain; both live combos opted in (onegw.toml,
 hot-reloadable). (4) Instrumentation: logEntry ms+tps (200ms noise floor after a live probe
-caught 1.38M tok/s on sub-ms buffered replies — ec958b9 regression-tested), logs-page tok/s
+caught 1.38M tok/s on sub-ms buffered replies — d989047 regression-tested), logs-page tok/s
 column, Overview throughput card (per-provider EWMA ranking), provider-card tok/s pills,
 onegw_provider_tokens_per_second_x100 gauge (scrape-refreshed). Live proof on the serving
 binary: streaming probe 300 tok / 3937ms = 76.2 tok/s on b-ai with attempts=1, ring rows
@@ -1286,8 +1286,8 @@ binary: streaming probe 300 tok / 3937ms = 76.2 tok/s on b-ai with attempts=1, r
 b-ai currently decodes 40-76 tok/s; the steering matters when a leg degrades again, and the
 dashboard now makes degradation visible per provider/account instead of invisible inside an
 average. Known neighbor regression (NOT this change): TestCursorKindEndToEnd hangs since the
-peer's 7702820 h2 health pings (bisect-confirmed, #77). Earlier:)*
-*Last updated: 2026-09-11 (console-log page responsiveness, 9acf84e, live pid 88946:
+peer's 3a9ff90 h2 health pings (bisect-confirmed, #77). Earlier:)*
+*Last updated: 2026-09-11 (console-log page responsiveness, 83a1761, live pid 88946:
 /admin/ui/logs reflowed like the rest of the shell — at >=1280 (rail visible) `.content` was a
 flex item without min-width:0, so the 10-column log table's ~1100px min-content width floored the
 column and shoved `.rail` past the viewport (doc scrollWidth 1655 vs 1512 — page-level horizontal
@@ -1299,7 +1299,7 @@ flex-wrap + max-w-full on the filter input (209px overflow at 390). Browser-veri
 usage/combos/quota/saver/tools/settings); SSE live rows + filter/expand/pause re-verified
 post-deploy; zero-drop deployed. Known pre-existing outlier (not this fix, tracked #76):
 /admin/ui/settings overflows 80px at 390 — the hdr .hactions nowrap version string, shell-header-level. Earlier:)*
-*Last updated: 2026-09-10 (model-404 combo fall-through + reasoning-echo rename RCA, 747c6ac, live pid 653:
+*Last updated: 2026-09-10 (model-404 combo fall-through + reasoning-echo rename RCA, f4d559f, live pid 653:
 an omp session died twice on the free combo's tokenharbor/deepseek-v4.1-flash:free leg (raw request
 ~/.omp/logs/http-400-requests/1789022741528-*.json). Root causes: (1) tokenharbor's catalog CHURNS on
 ~10-min scales — deepseek-v4.1-flash left their live /v1/models mid-day (every key 404ed), came back by
@@ -1313,7 +1313,7 @@ reasoning_content in the thinking mode must be passed back to the API.", isRetry
 layers: same-format passthrough now renames the assistant echo (string → reasoning_content, null
 dropped) inside the normalizeRoles pass, and the streaming fast-path gate pins reasoning-bearing bodies
 to the buffered pipeline; a residual 400 of this shape (message names reasoning_content + thinking mode)
-now falls through to the next combo leg — reconciled 2026-09-10 (3a3499a + 86369df, live pid 53909 =
+now falls through to the next combo leg — reconciled 2026-09-10 (c3f4130 + cc6a3ba, live pid 53909 =
 /tmp/onegw-echo2-bin, hub record onegw-echo2): the independent commandcode RCA (seqs 2455/2621/2812,
 same 400 wording via api.commandcode.ai/provider/v1) landed types.ReasoningEchoRequired + a router break,
 which supersedes the Fallbackable mark — normalizeRoles applies identically on every attempt, so the
@@ -1337,13 +1337,13 @@ Remaining honest gap: the router fall-through itself (echo-400 → next combo le
 mutation-proven but has not yet been observed live on a real storm-window refusal — the storm
 subsided mid-investigation, so the fix carries the same "unobserved live until recurrence" caveat
 as the original stamp.
-Context facts (unchanged from 747c6ac): all six tokenharbor accounts are 429 free_tier_limit_reached
+Context facts (unchanged from f4d559f): all six tokenharbor accounts are 429 free_tier_limit_reached
 on :free until 2026-09-17 (rolling 7-day allowance; 429 is already Retryable/OverQuota so the ladder
 handles it); the 400's providerMetadata.gateway.routing envelope is tokenharbor's own (AI-SDK gateway,
 system deepseek credentials) passed through byte-for-byte. Honest gap narrowed: the echo contract now
 has live proof on a real DeepSeek-dialect thinking upstream (commandcode/deepseek-v4-flash 200s above);
 tokenharbor itself stays unverifiable until 09-17 (tracked in #75). Earlier:)*
-*Last updated: 2026-09-10 (dashboard adaptive reflow at laptop sizes, 10e7929, live pid 55951:
+*Last updated: 2026-09-10 (dashboard adaptive reflow at laptop sizes, 248892a, live pid 55951:
 the fluid layout had no real laptop-width behavior — stat grids (.grid.c4/.c3 auto-fit minmax)
 orphaned the last card with dead space at half-screen widths, the <=767px folded nav strip
 clipped links mid-word, and 768-1279px windows got no intermediate handling. Changes (CSS only,
@@ -1353,7 +1353,7 @@ nth-child(odd), folded nav wraps instead of clipping, cards became inline-size c
 .kv key-value lists restack when the card itself is narrow (3-up rows at 1280, ~300px provider
 cards). Desktop >=1280 layout unchanged. Browser-verified headless-Chrome at 756/1024/1280/1512
 against live-served bytes; full suite green. Earlier:)*
-*Last updated: 2026-09-10 (b-ai TPM-wall 429 RCA + classifier fix, 103c253, live pid 56684:
+*Last updated: 2026-09-10 (b-ai TPM-wall 429 RCA + classifier fix, 03cd64c, live pid 56684:
 console burst 11:10-11:15 showed a THIRD b-ai 429 class alongside the two known ones —
 "The request rate exceeds the current model TPM limit 340000000" (kind gateway_error).
 Ring evidence: the TPM wall struck 2-3 DIFFERENT accounts in the same second (kisame/linh.mn/
@@ -1372,10 +1372,10 @@ classifier hole was the whole bug. Tests: types classification (TPM/concurrency/
 variants + per-key negative guards incl. the Chinese per-account body and the windowed
 free-tier body), provider ladder-skip, router instant fall-through; all three
 mutation-checked (neutered regex → red, restored → green); full suite 18/18. Zero-drop
-deployed via scripts/deploy.sh, provenance verified (/admin/health revision 103c253, single
+deployed via scripts/deploy.sh, provenance verified (/admin/health revision 03cd64c, single
 listener), live probe 200 + X-OneGW-Decision attempts=1. Earlier:)*
 *Last updated: 2026-09-10 (tokenrouter usage accounting fix — sniffer max-over-matches,
-24e9bb5, live pid 56241: seq 516 RCA — every tokenrouter/z-ai-glm-5.3-free 200 logged
+ca347e6, live pid 56241: seq 516 RCA — every tokenrouter/z-ai-glm-5.3-free 200 logged
 out=0/cached=0 with input=bodyLen/4 (12 of 12 ring rows). Root cause: tokenrouter's stream
 usage chunk (new-api shape) appends zero-valued vendor aliases AFTER the real counts
 ("prompt_tokens":10,…,"input_tokens":0,"output_tokens":0); the sniffer's lastMatch took the
@@ -1386,11 +1386,11 @@ Fix: lastMatch → maxMatch (max across all matches in the window), mirroring th
 cross-window running maxima extract() already kept; counts grow monotonically within one
 response. Regression tests pin the verbatim tokenrouter chunk (buffered + SSE), mutation-
 checked (restored last-match → both fail with the exact production symptom "usage marker
-not seen"); full suite green; zero-drop deployed from archive of 24e9bb5 (scripts/deploy.sh
+not seen"); full suite green; zero-drop deployed from archive of ca347e6 (scripts/deploy.sh
 --binary, pid 56241); live behavioral proof: tokenrouter streaming request now logs
 in=583 out=2 (real sniffed values; 583 = ponytail inject ~566 + client 17). Earlier:)*
-*Last updated: 2026-09-10 (router direct-route table fix live, c9b320d (deployed zero-drop as
-pid 75127, then superseded by peer's 24e9bb5 deploy, pid 56241 — same lineage): the apply()
+*Last updated: 2026-09-10 (router direct-route table fix live, dfc6137 (deployed zero-drop as
+pid 75127, then superseded by peer's ca347e6 deploy, pid 56241 — same lineage): the apply()
 wiring called rt.SetModels(p.Models) once PER PROVIDER, but SetModels REPLACES the table wholesale and
 drops slash-less routes — so with tokenharbor
 (all-bare ids) last in onegw.toml the direct-route table ended up EMPTY, and failure rows
@@ -1418,7 +1418,7 @@ each, clone1 rpm=0 uncapped) — plain round-robin pool, no code change, hot rel
 Request-log probes (GET /admin/api/v1/logs records the serving account): account-scoped 429
 benched "linh" and the next attempt landed "kisame" 200; 200s observed on the other five
 accounts, none on benched "linh". Earlier:)*
-*Last updated: 2026-09-10 (fanout wave 1 live, 0dc852a, pid 32476 under hub record onegw-fanout:
+*Last updated: 2026-09-10 (fanout wave 1 live, 9e5bd5a, pid 32476 under hub record onegw-fanout:
 three OmniRoute-inspired features built in parallel worktrees (.worktrees/feat-*) by three
 subagents, merged clean, 18/18 packages green, issues #71/#72/#73 closed by merge:
 (1) X-OneGW-Decision response header (issue #71) — every proxied response carries
@@ -1447,7 +1447,7 @@ tracked as issues #69 (USD quotas), #70 (combo strategies), #74 (quota-share). E
   ...) keep first-provider resolution; reachable explicitly as tokenharbor/<id>. Live-verified:
   tokenharbor/deepseek-v4.1-flash:free 200 PONG through the gateway; /v1/models advertises the
   tokenharbor/* ids. Earlier:)*
-*Last updated: 2026-09-10 (providers grid + Kibana log table live, 2a37780, pid 38997 under
+*Last updated: 2026-09-10 (providers grid + Kibana log table live, df396df, pid 38997 under
 hub record onegw-ui: (1) [[providers]] gained `disabled` — combos skip the target and fall
 through, direct routes answer honest 503 provider_disabled (not a 404), /v1/models stops
 advertising a paused provider, bare-model fallback skips it; persisted in onegw.toml so a
@@ -1457,12 +1457,12 @@ or keys (the full-field PUT editor stays for real edits). (2) Providers page is 
 style responsive card grid with a per-card on/off switch; (3) Console Log page is a
 Kibana-style table: sticky header, status-colored rows, live SSE streaming, free-text filter,
 click-to-expand document detail (full error text, ISO ts, seq), pause + backfill on resume.
-Note: 6308d0a swept the half-wired provider.Def.Disabled field to origin mid-session; this
+Note: 19690cb swept the half-wired provider.Def.Disabled field to origin mid-session; this
 commit completed the config field, routing gate, endpoint, tests, and UI. Regression tests
 mutation-checked (neutered gate → red, restored → green); live probes: kilocode toggle
 off → gone from /v1/models + direct call 503 provider_disabled → on → 3 ids restored, file
 byte-clean (0 stale disabled keys), peer comments preserved. Earlier:)*
-*Last updated: 2026-09-10 (flap breaker refinements live, 6308d0a, pid 150: consolidated the
+*Last updated: 2026-09-10 (flap breaker refinements live, 19690cb, pid 150: consolidated the
 breaker strike to ONE site at Do's final error exit so plain JSON 502/503/504 bodies (the
 common one-api shape) trip it — previously only HTML/empty/transport faults did; pinned by
 TestFlapBreakerTripsOnPlainJSON502. edgeFault excludes NoSameTargetRetry (header-budget 504)
@@ -1473,9 +1473,9 @@ each request one full budget burn before fall-through — NoSameTargetRetry alre
 same-target retry, and counting budget-504s would park providers under heavy prefills. Shared-
 concurrency walls stay excluded. Mutation-checked (neuter exclusion → predicate test fails);
 full suite green; zero-drop redeployed from archive HEAD. Attribution: breaker code body rode
-the shared-tree sweep b6c08bc; classification refinement + tests 2f8c180; this consolidation
-6308d0a. Earlier:)*
-*Last updated: 2026-09-10 (b-ai HTML-502 flap breaker live, 2f8c180, pid 41359: deepdive of the
+the shared-tree sweep 1ef985c; classification refinement + tests ed37815; this consolidation
+19690cb. Earlier:)*
+*Last updated: 2026-09-10 (b-ai HTML-502 flap breaker live, ed37815, pid 41359: deepdive of the
 22:54:38–22:55:03 burst — every b-ai account (all 7) answered the STOCK nginx page
 "<html><head><title>502 Bad Gateway</title>" simultaneously for ~25s while traffic before and
 after served 100% 200. RCA: provider-WIDE origin-pool flap at api.b.ai's edge, not per-key
@@ -1491,7 +1491,7 @@ half-opens exactly one probe, a failed probe re-arms. Cost today: ~1-2 requests 
 before the breaker trips; sustained flaps pay ≤1 probe per 15s instead of a 7-account fan per
 request (this burst: 17 doomed attempts → would have been ~5). Mutation-checked (neuter →
 breaker suite fails); full suite green; zero-drop deployed from archive HEAD. Earlier:)*
-*Last updated: 2026-09-10 (tokenrouter 8/min window — fix live, b6c08bc+aa91d07, pid 16156: ring
+*Last updated: 2026-09-10 (tokenrouter 8/min window — fix live, 1ef985c+5cec8fe, pid 16156: ring
 proof the "Maximum 8 requests within 1 minutes" budget is SHARED across keys (harvey 429ed with
 ~5 attempts in its trailing window while linh served 200s). Two changes: (1) `[[providers]] rpm`
 is now a provider-wide shared token bucket gating every account (onegw.toml: rpm = 6, worst
@@ -1513,9 +1513,9 @@ service-file env pinning only for keyless legacy configs, starter config on true
 only. Live-proven in a sandbox: re-run beside a seeded config leaves it byte-identical, no
 ONEGW_* env on the started process, old admin password + old client key both auth 200, wrong
 key 401. The update-path half — `onegw update` dying on HTTP 401 Bad credentials from a stale
-env GITHUB_TOKEN — is fixed by 96c1fd3 (anonymous public-repo fallback).)*
+env GITHUB_TOKEN — is fixed by 7fc339d (anonymous public-repo fallback).)*
 
-*Last updated: 2026-09-09 (ponytail inject mode live, 6ca71ab, issue #65: onegw now
+*Last updated: 2026-09-09 (ponytail inject mode live, 63eab47, issue #65: onegw now
   ships the [ponytail](https://github.com/DietrichGebert/ponytail) lazy-senior-dev
   ruleset (MIT, adapted) as `[[saver.inject]] mode = "ponytail"` — the gateway
   prepends the YAGNI → reuse → stdlib → native → dependency → one-line → minimum
@@ -1526,13 +1526,13 @@ env GITHUB_TOKEN — is fixed by 96c1fd3 (anonymous public-repo fallback).)*
   the body) is NOT stacked a second time. Tests: ladder injection + client-plugin
   skip + config validation, all mutation-checked. Live: injected rule visible in
   /admin/config (pid 72826, hot-reloaded via SIGHUP; live binary = peer 401fix
-  build which includes 6ca71ab, marker count 3), and end-to-end behavioral proof
+  build which includes 63eab47, marker count 3), and end-to-end behavioral proof
   through the live gateway — model reasoning quotes the injected ladder's
   rung 3 verbatim. Live config note: during the session a peer redeploy rotated
   the live config from ~/.onegw/onegw.toml to the repo onegw.toml; the ponytail
   rule was added to BOTH files so the rule survives either config path.)*
 
-*Last updated: 2026-09-09 (update check 401 fix, 96c1fd3: the environment's stale
+*Last updated: 2026-09-09 (update check 401 fix, 7fc339d: the environment's stale
   GITHUB_TOKEN made every release check fail with "HTTP 401 Bad credentials" even though
   FreePeak/onegw is PUBLIC and anonymous reads work. internal/update now sends the token
   when configured and, on 401, retries the SAME request once without credentials — both
@@ -1571,14 +1571,14 @@ env GITHUB_TOKEN — is fixed by 96c1fd3 (anonymous public-repo fallback).)*
   auto-restart — re-create the record with the NEW path if the old /tmp file was
   replaced.)*
 
-*Last updated: 2026-09-09 (docker anonymous-volume fork closed, 2d6f08d: dropped
+*Last updated: 2026-09-09 (docker anonymous-volume fork closed, 1b53405: dropped
 VOLUME ["/data"] from the Dockerfile — it allocated an anonymous volume on every
 plain docker run, so the documented pull+recreate update path silently re-homed
 usage.db onto a fresh volume (the containerized variant of #62's data-loss class);
 persistence is explicit (compose onegw-data named volume / -v onegw-data:/data).
 ContainerGuidance now prints the exact volume-preserving recreate commands +
 docker cp escape hatch. Local volumes re-verified all Postgres — this Mac's incident
-ran through the native path fixed by 47e2984; issue #62 carries the full RCA +
+ran through the native path fixed by a4b39b6; issue #62 carries the full RCA +
 docker note)*
 
 *Last updated: 2026-09-09 (live ops: `[update] check_interval = "12h"` set in the live
@@ -1591,7 +1591,7 @@ update endpoints 401ing until SIGHUP/restart — FIXED same day: Server.SetOnCon
 hook fired by Server.Reload, main passes curCfg.Store (regression test
 TestDashboardReloadKeepsUpdateEndpointAuthed in cmd/onegw/update_admin_test.go).)*
 
-*Last updated: 2026-09-09 (relative data_dir data-loss incident, fixed 47e2984: a
+*Last updated: 2026-09-09 (relative data_dir data-loss incident, fixed a4b39b6: a
 relative `data_dir` resolved against the process cwd, so when the update-feature
 install.sh restart launched the gateway from ~/.onegw with a copy of the user's
 config, it silently opened a FRESH EMPTY usage.db — usage history "disappeared".
@@ -1601,7 +1601,7 @@ old/new rows can't collide) while serving. Hardening: internal/config anchorData
 resolves a relative data_dir against the config FILE's directory (one config file
 means exactly one data dir regardless of launcher cwd; absolute paths, "memory"
 sentinel, and the absolute default untouched); both live configs pinned absolute;
-zero-drop redeployed (pid 19071, archive-built 47e2984, /admin/update auth re-synced).
+zero-drop redeployed (pid 19071, archive-built a4b39b6, /admin/update auth re-synced).
 Recovery copy: /tmp/onegw-recover/usage.db. Filed as issue #62. Follow-up: peer WIP
 check_markers in scripts/deploy.sh false-fails under pipefail (strings|grep -q SIGPIPEs on match).)*
 
@@ -1625,12 +1625,12 @@ users until org package visibility is flipped Public. Filed as issue #60; interi
 `docker login ghcr.io` with a read:packages PAT or `docker compose up -d --build` on the VPS.)*
 *Last updated: 2026-09-09 (cursor provider live — KindCursor promoted from
 fail-fast skeleton to a full AgentService+ChatService executor (issue #12
-follow-up, commit 12fd081): Connect-RPC/protobuf port of 9router's cursor
+follow-up, commit cd74d7b): Connect-RPC/protobuf port of 9router's cursor
 executor, Jyh-cipher checksum (JS shift masking emulated), full-duplex
 handshake over net/http (pre-answering the context question does NOT work —
 live-proven), system text folded into the user turn (field 8 kills the turn,
 live-proven 3/3), stop-frame termination (upstream never EOFs, 10s
-keepalives). Live: binary 12fd081 zero-drop deployed (pid 8774 → 10264),
+keepalives). Live: binary cd74d7b zero-drop deployed (pid 8774 → 10264),
 onegw.toml kind="cursor" provider hot-reloaded (9 providers), cursor/gpt-5.2
 answers PONG with real upstream usage (11859/6) through the live gateway,
 streaming verified; token from 9router DB (exp 2026-11-02, no refresh —
@@ -1640,12 +1640,12 @@ MCP tool defs upstream today (same as 9router production).)*
 *Last updated: 2026-09-09 (README dashboard section synced to the editable
 console — Providers/Combos in-page editing, Quota/Token Saver split out,
 Settings maintenance card — overview screenshot re-shot after redeploying
-master 46936d1 zero-drop (pid 91238 → 8774; old binary predated the
+master f861d31 zero-drop (pid 91238 → 8774; old binary predated the
 dashboard tabular-nums commit); docs-only, no code change.)*
-*Last updated: 2026-09-09 (dashboard M.O.N.K.Y OS revamp 74fbff2 — flat ink/indigo/neon design,
-branded sidebar, right-rail clock/status/ranking, overview chart — zero-drop deployed pid 91238 (rebased onto origin as 74fbff2).
-Earlier: commandcode-520 + glm-empty-500 RCA 289cd47+d41d078.)*
-**2026-09-09 — commandcode 520 terminal + glm empty-500 RCA (289cd47, test fix d41d078):** the
+*Last updated: 2026-09-09 (dashboard M.O.N.K.Y OS revamp 60f24c9 — flat ink/indigo/neon design,
+branded sidebar, right-rail clock/status/ranking, overview chart — zero-drop deployed pid 91238 (rebased onto origin as 60f24c9).
+Earlier: commandcode-520 + glm-empty-500 RCA ea67a63+2eee974.)*
+**2026-09-09 — commandcode 520 terminal + glm empty-500 RCA (ea67a63, test fix 2eee974):** the
 dashboard showed `commandcode/unresolved 520 server_error` (transient; "Upstream model provider is
 temporarily unavailable. Please try again in a moment.") killing combo chains, and
 `glm/glm-5.3-flash 500 upstream_error` rows with NO message. Root causes + fixes, all
@@ -1663,8 +1663,8 @@ advertised in a provider models table ("z-ai/glm-5.3-flash") stay resolved in fa
 — they collapsed to "unresolved" because the provider-prefix branch returned early (that is why
 the console read commandcode/unresolved; TestKnownModelAdvertisedSlashModel). (5) Stale
 TestBufferedPathSharedConcurrency429RetriesThenHints was red on pristine origin/master (pinned
-pre-359e5a0 two-attempt behavior); renamed ...SurfacesOnceWithHint, hits=1 per the landed
-contract (d41d078). glm/harvey key state is upstream-owned: 403 model_access_denied on /api/v1,
+pre-73908b6 two-attempt behavior); renamed ...SurfacesOnceWithHint, hits=1 per the landed
+contract (2eee974). glm/harvey key state is upstream-owned: 403 model_access_denied on /api/v1,
 429 code 1113 insufficient-balance on /api/paas/v4 — combo targets fall through; direct requests
 surface the pool-empty 429 with the honest cause until the key is re-provisioned.
 **Deploy-loop incident + provenance recipe:** the live pid churned 38299→791→30474→89605→26764
@@ -1674,7 +1674,7 @@ cycle, overwriting refreshed sources and rebuilding a binary WITHOUT these fixes
 loop: every cycle is a deliberate deploy.sh-style takeover (/tmp/onegw-new.log). Any session can
 re-prove provenance in one command:
 `strings "$(curl -s -H 'X-Admin-Password: <pw>' http://127.0.0.1:8080/admin/health | jq -r .owner.argv[0])" | grep -c upstream_empty_body`
-— ≥1 = fixes live; 0 = the serving binary predates 289cd47, deploy origin tip (a stable
+— ≥1 = fixes live; 0 = the serving binary predates ea67a63, deploy origin tip (a stable
 origin-tip binary is kept at /tmp/onegw-rca-tip-bin). Live serving verified: commandcode 200
 through the gateway post-deploy.
 Earlier:
@@ -1688,10 +1688,10 @@ within 1 minutes" per their own 429 body; same governor mechanism as b-ai keys.)
   the running gateway — global in-flight buffered-bytes budget, the "RSS contract" (not a hard RSS cap;
   total-process memory is GOMEMLIMIT, not config-exposed). Edit in gitignored onegw.toml; fresh pid 39967
   loaded it at startup after the peer's zero-drop deploy — verify-then-trust, no second redeploy; verified
-  via /admin/config, double health, /v1/models 200. Earlier: shared-wall fall-through 359e5a0 + glm demotion/rpm cap live,
+  via /admin/config, double health, /v1/models 200. Earlier: shared-wall fall-through 73908b6 + glm demotion/rpm cap live,
   pid 39967 — earlier: Merlin research #58 + RPM governor #56, below.)*
 
-**2026-09-09 — shared-wall fall-through + glm direct demotion (359e5a0, deployed pid 39967):**
+**2026-09-09 — shared-wall fall-through + glm direct demotion (73908b6, deployed pid 39967):**
 with >=20 sessions in flight the Tencent model-wide "Concurrency limit 1200" wall kept
 surfacing on b-ai/glm-5.3-flash because Router.Execute burned a 1s in-target backoff and a
 second attempt on the SAME model before falling through — a different key hits the same wall;
@@ -1700,8 +1700,8 @@ fall through to the next combo target immediately (same shape as NoSameTargetRet
 routes surface the wall once with an honest 2s Retry-After; ordinary per-account 429s keep
 their same-target retry (account rotation does help there). 3 regression tests,
 mutation-checked. Deploy-day pid discipline incident: the pid-43915 build was silently
-replaced 4 minutes later by a peer's pre-359e5a0 binary (/tmp/onegw-504fix-bin, built 08:57Z
-vs 359e5a0 pushed 09:07Z) — the fix was pushed but NOT live; re-provenance checked (governor
+replaced 4 minutes later by a peer's pre-73908b6 binary (/tmp/onegw-504fix-bin, built 08:57Z
+vs 73908b6 pushed 09:07Z) — the fix was pushed but NOT live; re-provenance checked (governor
 symbols newTokenBucket/refillAt present in both binaries) and origin tip re-deployed
 (pid 39967). New top error source emerged under load: glm/glm-5.3-flash direct (single
 z.ai key) — 48 empty-body 500s/10min, and 500s never bench, so the chain burned 2 attempts
@@ -1712,7 +1712,7 @@ Post-fix 7-min window at ~24 inflight: glm 500s 0 (was 48/10min), b-ai per-accou
 fall-throughs). tokenrouter free-lane 429s (8-req cap on z-ai/glm-5.3-free) remain the
 largest fall-through source — upstream-owned, absorbed.
 *Last updated: 2026-09-09 (Merlin AI upstream research #58 published — wire contract live-verified,
-implementation pending; earlier: b-ai per-account 429 RCA + RPM governor 729c190 + free/dev
+implementation pending; earlier: b-ai per-account 429 RCA + RPM governor 5f0a9fc + free/dev
 rotation, zero-drop deployed pid 96925, closes #56 — earlier: four-lane wave
 #54/#32/#34/#35/#55/#14, below.)*
 **2026-09-09 — Merlin AI (getmerlin.in) upstream research (#58, research-only):** deep dive on the
@@ -1725,7 +1725,7 @@ Teams $19/seat; discounted plans carry a $5/day + $20/month fair-usage cap. Deli
 issue #58: options A (native kind="merlin" — refresh-token account + ForcedStream SSE
 translator, mirrors commandcode) vs B (self-hosted getmerlin-worker bridge as kind=openai).
 Earlier:
-**2026-09-09 — b-ai per-account 429 RCA + RPM governor (729c190, zero-drop deployed pid 96925):**
+**2026-09-09 — b-ai per-account 429 RCA + RPM governor (5f0a9fc, zero-drop deployed pid 96925):**
 the console showed two distinct b-ai 429 classes: `gateway_error` "Concurrency limit 1200"
 (Tencent GLM model-wide limit shared by ALL of the reseller's traffic — already handled by #52's
 shared-wall backoff, honest per client) vs `upstream_error` 您的账户已达到速率限制 — the
@@ -1754,32 +1754,32 @@ per-account concurrent sessions, tiered — consistent with the observed ~6/min 
 with the governor active. (closes #56)
 
 *Last updated: 2026-09-09 (four-lane wave landed + merged on origin/master, full suite green on
-the merged tree: #54 task-aware combo reordering (d94921d) — local stateless classifier
+the merged tree: #54 task-aware combo reordering (8ecd382) — local stateless classifier
 (light/standard/heavy/critical, no LLM) + config-declared model power ([[providers.tier]], 0-150)
 + stable re-sort of combo targets inside router.Execute before account selection (never removes
 targets), `task_routing = off` default, decision rows to the #19 log ring only when order changes;
-#32/#34/#35 (dd6d92b, reconciled from the earlier encode-layer WIP): cache_control /
+#32/#34/#35 (77163c9, reconciled from the earlier encode-layer WIP): cache_control /
 prompt_cache_key / session_id survive cross-format translation and re-emit only on accepting
 wires, never invented; per-provider `cache_profile` (claude-anchor | dashscope-marker |
 sticky-key) anchors LAST at the attempt choke point with profiled providers herded off the
 stream fast path; saver sticky gate no longer flips the request prefix (all-or-nothing global
 gate only when the canonical form is already cache-stable); duplicate #50 coercion deleted in
 favor of master's coerceAlwaysThinkingUnified + EncodeAnthropicRequest TopK-drop regression
-restored; #55 VPS deploy foundation (bb023d3) — docs/vps-deploy.md runbook, scripts/deploy_vps.sh
+restored; #55 VPS deploy foundation (abcf009) — docs/vps-deploy.md runbook, scripts/deploy_vps.sh
 zero-drop VPS analog (build from git archive HEAD, NEW-before-OLD takeover, live-tested on
 scratch port incl. abort paths), hardened contrib/systemd/onegw.service; #14 follow-through
-(7bd9d9b) — release workflow publishes SHA256SUMS, install.sh verifies downloads and proves
-the install with `onegw version`, Dockerfile bounded GO_BUILD_JOBS. Integration merge be699f6
-over peer's 987a849 dashboard revamp; conflicts resolved: server.go identity+task ctx wiring
+(ab7a955) — release workflow publishes SHA256SUMS, install.sh verifies downloads and proves
+the install with `onegw version`, Dockerfile bounded GO_BUILD_JOBS. Integration merge acce8db
+over peer's 6ef24ae dashboard revamp; conflicts resolved: server.go identity+task ctx wiring
 unified, config.go/provider.go additive both-sides.)*
-*Last updated: 2026-09-09 (dashboard revamp 987a849: ui-ux-pro-max design pass — slate
+*Last updated: 2026-09-09 (dashboard revamp 6ef24ae: ui-ux-pro-max design pass — slate
 glassmorphism tokens, Fira Sans/Fira Code vendored, contrast-fixed both themes — PLUS the
 provider/combo config editor: PUT /admin/config/providers and /admin/config/combos popup
 modals that splice the TOML file (comments + foreign keys preserved), validate with
 config.Load before the atomic write, then Load+Reload — save hot-reloads the live gateway
 and publishes an SSE config event; secrets never leave the file (empty key = keep existing);
 mutation-checked tests, staged-tree suite green, zero-drop deployed — earlier: live config: commandcode (GOAT plan, 48-model roster, GLM-5.3 always_thinking probes) + tokenrouter (new-api aggregator, 80 openai-type models, $0 balance) providers hot-reloaded into onegw.toml)*
-**2026-09-09 — dashboard revamp + config editor (987a849, zero-drop deployed):** the admin
+**2026-09-09 — dashboard revamp + config editor (6ef24ae, zero-drop deployed):** the admin
 console was redesigned with the [ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)
 design system (Real-Time/Operations pattern → slate glassmorphism, emerald interactive
 accent, Fira Sans/Fira Code vendored as OFL latin woff2 subsets — old three fonts removed).
@@ -1815,18 +1815,18 @@ $0.00 — all requests 403 insufficient_user_quota until topped up (live-probed;
 Earlier:
 research-delivered + step-1-shipped — follow-ups opened: #54 task-aware combo reordering (#44 step 2), #55
 omp+onegw VPS deploy; open-work table synced with struck rows; #50 cross-format always-thinking
-coercion landed 8b47d9d: coerceAlwaysThinkingUnified coerces the client-set ReasoningEffort and drops the
+coercion landed 32d11de: coerceAlwaysThinkingUnified coerces the client-set ReasoningEffort and drops the
 Anthropic thinking budget on prepareUpstreamBody's cross-format branches before encodeFor (the same-format
 raw-body path was already covered — the unified decode/encode path was the last leak); regression test pins the
 Responses wire (effort ladder, budget drop, no invention, passthrough), mutation-checked; isolation build from
 git archive (tree carried untracked peer WIP in admin_config_edit.go), zero-drop deployed pid 74239 from the
-archive binary, live smoke: Anthropic thinking:enabled → dev combo → glm-5.3-flash 200. earlier: #52 follow-up 51ccf1e: NormalizeInStreamError now also rewrites the
-in-stream variant of the distributor parse-reject 400 (84fd1c9 shape) to retryable
+archive binary, live smoke: Anthropic thinking:enabled → dev combo → glm-5.3-flash 200. earlier: #52 follow-up 75aa9a4: NormalizeInStreamError now also rewrites the
+in-stream variant of the distributor parse-reject 400 (b38eab4 shape) to retryable
 upstream_parse_rejected — the helper had shipped claiming "the same transient-fault rewrites"
 while only carrying auth-verify, leaving streaming paths surfacing that fault as a terminal
 400; mutation-checked, isolation green, zero-drop redeployed pid 53121, live smoke verified;
-smaller #52 follow-up 0a76838: the same transient-fault downgrades now also apply to IN-STREAM error objects — one-api proxies can deliver the auth-verify 401 as an error object inside a 200 body or a mid-stream chunk, and those paths built APIErrors directly via statusFromOAErr, bypassing the HTTP-level rewrite; translat.NormalizeInStreamError applies the identical 502 upstream_auth_verify_failed downgrade at all three in-stream construction sites (DecodeOpenAIResponse, decodeOpenAIStreamEvent, grok response.failed), real in-band invalid-key 401s stay terminal; test mutation-checked, isolation build green, zero-drop redeployed pid 36916 + live smoke verified; earlier: RCA + fix: third b-ai transient-fault class — distributor node parse-rejects of large
-valid bodies no longer surface as terminal 400s (84fd1c9, zero-drop deployed, live-verified). Client-side omp dumps
+smaller #52 follow-up e8b944a: the same transient-fault downgrades now also apply to IN-STREAM error objects — one-api proxies can deliver the auth-verify 401 as an error object inside a 200 body or a mid-stream chunk, and those paths built APIErrors directly via statusFromOAErr, bypassing the HTTP-level rewrite; translat.NormalizeInStreamError applies the identical 502 upstream_auth_verify_failed downgrade at all three in-stream construction sites (DecodeOpenAIResponse, decodeOpenAIStreamEvent, grok response.failed), real in-band invalid-key 401s stay terminal; test mutation-checked, isolation build green, zero-drop redeployed pid 36916 + live smoke verified; earlier: RCA + fix: third b-ai transient-fault class — distributor node parse-rejects of large
+valid bodies no longer surface as terminal 400s (b38eab4, zero-drop deployed, live-verified). Client-side omp dumps
 (~/.omp/logs/http-400-requests) showed 22 "400 Invalid request body. (request id: …c955d568…)" (type=api_error)
 in ~40 h, all combo free/dev to b-ai/glm-5.3-flash, bodies 228 KB-2.3 MB; forensics: every failing request id
 carries the same backend-node marker, while byte-identical replays of three of those exact bodies served 200
@@ -1838,7 +1838,7 @@ auth-verify precedent: translat.UpstreamParseRejected (narrow: 400 + api_error +
 upstream_parse_rejected with the upstream diagnostic preserved, no account bench — Router retries the target
 (fresh node may serve) and combos fall through; client sees 200 or a retryable 502, never the lying 400.
 Tests mutation-checked; full suite green on the merged tree; earlier: RCA + fix #52: b-ai transient faults no longer surface as terminal
-client errors — 9fb6e69, zero-drop deployed, live-verified. Live dashboard showed two raw 429s
+client errors — 588a938, zero-drop deployed, live-verified. Live dashboard showed two raw 429s
 ("model Concurrency limit 1200" — Tencent GLM's model-WIDE limit shared across all of the
 reseller's traffic, not per-key) and a terminal 401 whose body was the upstream's own internal
 auth/verify service failing (鉴权服务请求失败: read tcp ... connection reset). Fixes:
@@ -1857,13 +1857,13 @@ flat-30s bug fixed — empty/garbage Retry-After now engages the documented adap
 (10s base doubling to 60s), which previously never ran for headerless HTTP 429s. All regression
 tests mutation-checked; isolation build of the committed tree green; issue #52 opened + closed;
 earlier: three-lane parallel implementation wave landed, merged with the
-concurrent 502-storm RCA work (3e3e87b) — all attribution split by hunk in the merge commit
-7e28aa0; full suite green on the merged tree before push: #48 b-ai premium-gating 403
+concurrent 502-storm RCA work (789c41f) — all attribution split by hunk in the merge commit
+962ddaa; full suite green on the merged tree before push: #48 b-ai premium-gating 403
 (403 + access_denied/"Deposit required" signature) benches the ACCOUNT on the adaptive 429
-ladder and falls through instead of surfacing (242f303); #36 session-affinity headers
-forwarded verbatim + opt-in per-provider derived id (242f303); #31 cache-inclusive usage
-convention with direction-pinned tests + #33 DeepSeek/Responses/Kimi cache shapes (f03dfcc);
-#44 step 1 config-only tiny/planning combo examples (e797986); earlier:
+ladder and falls through instead of surfacing (e0e0a25); #36 session-affinity headers
+forwarded verbatim + opt-in per-provider derived id (e0e0a25); #31 cache-inclusive usage
+convention with direction-pinned tests + #33 DeepSeek/Responses/Kimi cache shapes (3775d8b);
+#44 step 1 config-only tiny/planning combo examples (73f6f3e); earlier:
 RCA + fix: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte
 budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
 `[server] response_header_timeout` knob (live: 75s since 2026-09-11 — user call to fail over faster; was 120s) + transport-error classification
@@ -1873,7 +1873,7 @@ h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall t
 fix/upstream-header-timeout)*
 `search` provider + `search-or-llm` combo dropped from live onegw.toml, gateway rebuilt from HEAD and zero-drop restarted;
 earlier: docs: open-work table synced with GitHub — #2-#12 struck done,
-close dates from the issue tracker, #17 verified landed via 7e935f2; earlier: issue #44
+close dates from the issue tracker, #17 verified landed via 295da5e; earlier: issue #44
 research published cleanly to the
 issue — the body had been stored double-JSON-encoded and rendered on GitHub
 as a raw JSON blob; reviewed and re-verified against sources (LiteLLM current
@@ -1882,7 +1882,7 @@ constants), dangling "implementation candidate below" reference fixed; earlier:
 adaptive 429 cooldown ladder — b.ai's one-api
 style upstream 429s per-key with an empty body and no Retry-After; live
 metrics showed 65% of b-ai attempts failing (666×429 vs 352×200) because
-plain round-robin re-picked spent keys every request. Shipped e820571,
+plain round-robin re-picked spent keys every request. Shipped cdab742,
 live-verified: per-account adaptive cooldown (10 s base, doubling per
 consecutive 429, 60 s cap, reset on success; upstream Retry-After wins
 verbatim), `NextAccount` returns (nil, soonest-ready) when the whole pool
@@ -1895,7 +1895,7 @@ attempt()'s quota gate, so a quota-cooled pool answered 429 instead of
 with the quota check: exhausted windows answer the same 503
 provider_quota_exhausted, genuine 429-limits keep the fast-fail. Caught
 in the post-commit audit (3 quota tests red in-tree and on master at
-e820571), fixed, full suite green; live post-deploy: ~70% success
+cdab742), fixed, full suite green; live post-deploy: ~70% success
 sustained (130×200 / 56×429 vs 352×200 / 666×429 pre-fix), client-visible
 429s now carry Retry-After; earlier: auto-update: `onegw update`/`version` commands, background checks, zero-drop self-handoff + rollback, container check-and-guide mode, CI version stamping; dashboard shipped (#41/#45/#19): full 9-page admin
 console live — Go html/template + vendored htmx + uPlot (zero external
@@ -1908,7 +1908,7 @@ earlier: #42 ownership model landed: `internal/owner`
 stamps `<data_dir>/owner.json` at startup and re-stamps on every successful
 reload; `/admin/health` reports pid/listen/start/config mtime/argv/build
 revision; README "Operations" section added; earlier: #13 docs sync: SearXNG web-search provider — shipped
-2026-09-08 in 9bd3594 as `kind = "searxng"` virtual provider answering
+2026-09-08 in 5b21356 as `kind = "searxng"` virtual provider answering
 `search/query` with a SearXNG JSON search as a synthetic OpenAI completion,
 fail-open in combos; PRD gap list + issue table marked done, feature bullet
 added, tracker ticked, README how-to filled; earlier: dashboard build-approach
@@ -2107,7 +2107,7 @@ same-format passthrough). Packages:
   session, so massive session counts cost nothing. Note: `session_id` keys
   nothing today either — `ChatRequest.SessionID` is parsed from `user` /
   `metadata.user_id` (`openai.go:192`, `anthropic.go:123`) but read nowhere,
-  and rollups key on day/hour/provider/model/api_key. Header affinity landed (#36, 242f303:
+  and rollups key on day/hour/provider/model/api_key. Header affinity landed (#36, e0e0a25:
   x-grok-conv-id/x-grok-session-id/x-session-id/session_id forwarded verbatim, per-provider opt-in derived
   id); cache-affinity breakpoint/key-forwarding remains open work (#34).
 - `GOGC=60` (set at startup if `GOGC` env unset); the soft memory limit follows
@@ -2537,7 +2537,7 @@ Two distinctions worth keeping straight, both easy to get wrong:
   b-ai — verified by live probe) must not receive it; adding bytes that buy
   nothing is worse than adding nothing. Anchoring is opt-in per provider and
   runs after every body mutation.
-- **Public-repo update checks never require a GitHub token** (96c1fd3): the
+- **Public-repo update checks never require a GitHub token** (7fc339d): the
   update client sends `ONEGW_GITHUB_TOKEN`/`GITHUB_TOKEN` when set, and on
   401 retries the same request once anonymously. FreePeak/onegw is public —
   anonymous reads answer — so a stale token in the environment (user shell,
@@ -2562,41 +2562,41 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 | ~~#8~~ | ~~Streaming request bodies (client→upstream)~~ — **done 2026-09-07** | v2 tracker |
 | ~~#9~~ | ~~Audio and embeddings surfaces (STT/TTS/embeddings)~~ — **done 2026-09-07** | 9router gap |
 | ~~#10~~ | ~~Multi-node usage rollup export~~ — **done 2026-09-07** | v2 candidate |
-| ~~#16~~ | ~~Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family)~~ — **done 2026-09-07**; per-provider `always_thinking` globs + same-format effort coercion/drop, knob documented in README + onegw.toml.example, regression tests (commit 40977cf) | production hit |
+| ~~#16~~ | ~~Always-thinking upstreams 400 on streaming medium/disable-thinking requests (glm-5.3 family)~~ — **done 2026-09-07**; per-provider `always_thinking` globs + same-format effort coercion/drop, knob documented in README + onegw.toml.example, regression tests (commit 5ea1306) | production hit |
 | ~~#11~~ | ~~Runtime config surface~~ — **done 2026-09-07** via #21 (masked view, no-shell reload, keys/aliases PATCH); dashboard stays read-mostly by design | LiteLLM gap |
 | ~~#12~~ | ~~Custom wire formats: commandcode (NDJSON), grok-cli (Responses), cursor (protobuf)~~ — **done 2026-09-08** (cursor as skeleton, #29) | 9router gap |
-| ~~#13~~ | ~~Web-search provider (SearXNG integration)~~ — **done 2026-09-08**; `kind = "searxng"` virtual search provider (9bd3594): `search/<x>` model requests answered with a SearXNG JSON search as a synthetic OpenAI completion, retryable-503 fail-open in combos, `max_results`/`timeout`/`extra_headers` knobs, unit + E2E tests on both client surfaces | 9router gap |
+| ~~#13~~ | ~~Web-search provider (SearXNG integration)~~ — **done 2026-09-08**; `kind = "searxng"` virtual search provider (5b21356): `search/<x>` model requests answered with a SearXNG JSON search as a synthetic OpenAI completion, retryable-503 fail-open in combos, `max_results`/`timeout`/`extra_headers` knobs, unit + E2E tests on both client surfaces | 9router gap |
 | #14 | Easier setup: auto-release CI, one-command install, one-click agent-CLI install, Docker deploy | user request |
-| ~~#17~~ | ~~Self-healing thinking-dialect fallback~~ — **done 2026-09-08**; shipped as always-thinking self-healing (7e935f2): coerceEffort xhigh→max/unknown→high, signature-400 detection, learned per (provider, model) on the Def (fresh on reload), Fallbackable retry-once then combo fall-through, stream fast path learns; live-verified with the xhigh replay; issue closed with landed note | #16 follow-up |
-| ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (a59c2a3); **extended 2026-09-09** (ab62468): every row carries the upstream account name (`@account` in the console line, `account` in the JSON), and entries older than 7 days are auto-cleared from the view (ring bounds memory, age window bounds staleness) | user request |
-| ~~#31~~ | ~~Fix cache-inclusive/exclusive usage semantics across translation~~ — **done 2026-09-09** (f03dfcc): `Usage.InputTokens` = cache-INCLUSIVE total documented on the type; Anthropic decode folds read+write in, every Anthropic-format emitter denormalizes via `anthropicInputTokens` (clamped ≥ 0); sniffer normalizes Anthropic payloads at the same boundary; TotalTokenCount includes cache-write; 18 non-stream + 12 stream direction pairs pinned | research 2026-09-08 |
+| ~~#17~~ | ~~Self-healing thinking-dialect fallback~~ — **done 2026-09-08**; shipped as always-thinking self-healing (295da5e): coerceEffort xhigh→max/unknown→high, signature-400 detection, learned per (provider, model) on the Def (fresh on reload), Fallbackable retry-once then combo fall-through, stream fast path learns; live-verified with the xhigh replay; issue closed with landed note | #16 follow-up |
+| ~~#19~~ | ~~Dashboard console log~~ — **done 2026-09-08**; 512-entry in-memory ring fed from the same completion points as /metrics, `GET /admin/api/v1/logs?limit=N` + live SSE `logs` topic, console pane with colored status/token columns (b916702); **extended 2026-09-09** (516d94b): every row carries the upstream account name (`@account` in the console line, `account` in the JSON), and entries older than 7 days are auto-cleared from the view (ring bounds memory, age window bounds staleness) | user request |
+| ~~#31~~ | ~~Fix cache-inclusive/exclusive usage semantics across translation~~ — **done 2026-09-09** (3775d8b): `Usage.InputTokens` = cache-INCLUSIVE total documented on the type; Anthropic decode folds read+write in, every Anthropic-format emitter denormalizes via `anthropicInputTokens` (clamped ≥ 0); sniffer normalizes Anthropic payloads at the same boundary; TotalTokenCount includes cache-write; 18 non-stream + 12 stream direction pairs pinned | research 2026-09-08 |
 | #32 | Preserve `cache_control` / `prompt_cache_key` / `session_id` across translation | research 2026-09-08 |
-| ~~#33~~ | ~~Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests~~ — **done 2026-09-09** (f03dfcc): `prompt_cache_hit_tokens` in the sniffer's cache-read pattern; Responses `input_tokens_details` + Kimi top-level `cached_tokens` on the typed path; all six vendor shapes pinned through sniffer + typed decode (TestSniffVendorUsageShapes) | research 2026-09-08 |
+| ~~#33~~ | ~~Parse missing vendor cache-usage shapes (DeepSeek hit tokens); pin with tests~~ — **done 2026-09-09** (3775d8b): `prompt_cache_hit_tokens` in the sniffer's cache-read pattern; Responses `input_tokens_details` + Kimi top-level `cached_tokens` on the typed path; all six vendor shapes pinned through sniffer + typed decode (TestSniffVendorUsageShapes) | research 2026-09-08 |
 | #34 | Per-provider cache profiles: breakpoint anchoring, anchor-last ordering | research 2026-09-08 |
 | #35 | Saver's global gate can flip the request prefix and bust implicit caches | research 2026-09-08 |
-| ~~#36~~ | ~~Forward `x-grok-conv-id` — live sticky-routing loss on xai~~ — **done 2026-09-09** (242f303): allow-list (x-grok-conv-id, x-grok-session-id, x-session-id, session_id) forwarded verbatim through Do/DoPassthrough for every provider; absent client values, stable per-key `ses_` id derived (generalized opencodeSession) only when the per-provider `session_header` knob opts in — nothing invented ungated | research 2026-09-08 |
-| ~~#41~~ | ~~Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API~~ — **done 2026-09-08**; full IA shipped (Overview/Usage/Providers/Combos/Quota/Saver/Logs/CLI Tools/Settings), variant-A stack, grouped `/admin/api/v1`, live-deployed + browser-verified + memory-benched (16f3dc9, a59c2a3); runtime dashboard *writes* stay #11 | user request |
-| ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1aa6a95) | #37/#39 follow-up |
+| ~~#36~~ | ~~Forward `x-grok-conv-id` — live sticky-routing loss on xai~~ — **done 2026-09-09** (e0e0a25): allow-list (x-grok-conv-id, x-grok-session-id, x-session-id, session_id) forwarded verbatim through Do/DoPassthrough for every provider; absent client values, stable per-key `ses_` id derived (generalized opencodeSession) only when the per-provider `session_header` knob opts in — nothing invented ungated | research 2026-09-08 |
+| ~~#41~~ | ~~Dashboard revamp: 9router/LiteLLM-style multi-page admin UI + grouped admin API~~ — **done 2026-09-08**; full IA shipped (Overview/Usage/Providers/Combos/Quota/Saver/Logs/CLI Tools/Settings), variant-A stack, grouped `/admin/api/v1`, live-deployed + browser-verified + memory-benched (87c11ae, b916702); runtime dashboard *writes* stay #11 | user request |
+| ~~#43~~ | ~~TestQuotaRebuildFromRollups red on master~~ — **done 2026-09-08**; not a regression but a midnight-UTC time-bomb in test seeding (00:00–01:00 UTC the −1h seed bucket crosses the daily window boundary); midday-anchored reference time, RCA comment + issue closed (1057251) | #37/#39 follow-up |
 | ~~#42~~ | ~~Ownership model for the live gateway + shared config~~ — **done 2026-09-08**; `internal/owner` stamps `<data_dir>/owner.json` at startup (pid, listen, start time, config path + mtime, argv, build stamp: module version/git revision/dirty flag) and re-stamps on every successful reload (SIGHUP or `PUT /admin/config/reload`); `/admin/health` reports the same record live; file is atomic and survives exit as crash evidence; reload-not-restart + deploy discipline in README "Operations"; optional younger-build start guard skipped — single-instance is operator discipline after the #38 revert | incident RCA |
-| ~~#37~~ | ~~Zero-drop deploy runbook: start→verify→stop ordering~~ — **done 2026-09-08**; `scripts/deploy.sh` (build → overlap-bind → health-verify NEW → SIGTERM OLD → confirm single NEW listener; setsid isolates NEW from the deploying session's process group after the freeze RCA), 5 behavioral scenarios tested on scratch ports (d14441d, 9cabbf6) | incident RCA |
-| ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in cfce76f, reverted at user decision in 9049dd4 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
-| ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 5d17c82, reverted at user decision in 9049dd4 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
-| ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in dbe02bd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at dbe02bd^) (e5ecff8) | incident RCA |
-| ~~#44~~ | ~~Model tiering / task-aware routing research~~ — **done 2026-09-09**; research deliverable verified vs LiteLLM/9router/OmniRoute/omp (verdict: client-side roles now, gateway feature = task-aware combo reordering); step 1 config-only tiny/planning combos shipped (e797986); step 2 tracks as #54 | user request |
-| ~~#45~~ | ~~Dashboard build approach for #41~~ — **done 2026-09-08**; decision held: Go html/template + vendored htmx 2.0.6 + uPlot 1.6.32, stdlib SSE with bounded fan-out, cookie sessions; health strip fixed to server-rendered HTML in fe2d532; RSS bench pre/post ≈ 88/89 MiB peak | #41 deep dive |
+| ~~#37~~ | ~~Zero-drop deploy runbook: start→verify→stop ordering~~ — **done 2026-09-08**; `scripts/deploy.sh` (build → overlap-bind → health-verify NEW → SIGTERM OLD → confirm single NEW listener; setsid isolates NEW from the deploying session's process group after the freeze RCA), 5 behavioral scenarios tested on scratch ports (3e7a634, c65987c) | incident RCA |
+| ~~#38~~ | ~~Single-instance guard on data_dir~~ — **landed then deliberately reverted 2026-09-08**; heartbeat peer scan + `onegw_data_dir_peers` gauge shipped in 060c800, reverted at user decision in 57add10 — single-instance stays an operator discipline, not a feature; issue stays closed | incident RCA |
+| ~~#39~~ | ~~Keyless provider fails the whole boot~~ — **landed then deliberately reverted 2026-09-08**; loopback warn-and-skip shipped in 33de915, reverted at user decision in 57add10 — boot is strict `Validate` again (keyless provider fails any bind); issue stays closed | incident RCA |
+| ~~#40~~ | ~~Buffered-path byte reservation leak across SIGHUP~~ — **done 2026-09-08**; leak fixed in 3bd52fd, regression guard `TestRelayResponseBudgetSurvivesReloadMidAcquire` mutation-verified (fails at 3bd52fd^) (6adaf76) | incident RCA |
+| ~~#44~~ | ~~Model tiering / task-aware routing research~~ — **done 2026-09-09**; research deliverable verified vs LiteLLM/9router/OmniRoute/omp (verdict: client-side roles now, gateway feature = task-aware combo reordering); step 1 config-only tiny/planning combos shipped (73f6f3e); step 2 tracks as #54 | user request |
+| ~~#45~~ | ~~Dashboard build approach for #41~~ — **done 2026-09-08**; decision held: Go html/template + vendored htmx 2.0.6 + uPlot 1.6.32, stdlib SSE with bounded fan-out, cookie sessions; health strip fixed to server-rendered HTML in e771465; RSS bench pre/post ≈ 88/89 MiB peak | #41 deep dive |
 | #46 | Self-hosted SearXNG stack for the search provider (compose service + JSON-format settings) — shipped 2026-09-08 | #13 follow-up |
 | #47 | Enable the SearXNG search provider in the live config; live-verify surfaces + fail-open combo — done 2026-09-08 | #13 follow-up |
-| ~~#48~~ | ~~b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down~~ — **done 2026-09-09** (242f303): narrow gated-403 signature (403 + access_denied/"Deposit required") benches the ACCOUNT on the adaptive 429 ladder (deposit-clearing success resets via pool.ok), marks Fallbackable — buffered rotates accounts→combo targets, router rotates pool-bounded without spending retry budget, all-gated pools answer 429+Retry-After, stream fast path answers pre-body; non-gated 403s fail fast unchanged; quota-503 untouched | found live testing #47 |
-| ~~#50~~ | ~~Cross-format encode path never coerces always-thinking effort (residual from #17)~~ — **done 2026-09-09** (8b47d9d): coerceAlwaysThinkingUnified in prepareUpstreamBody's cross-format branches — client-set ReasoningEffort coerced via coerceEffort (empty stays empty, never invented), Anthropic thinking budget dropped (no GLM-wire representation; budgetToEffort can emit outside low|high|max); streaming already herds into the buffered path; mutation-checked regression test on the Responses wire; zero-drop deployed pid 74239, live-verified | #17 residual |
+| ~~#48~~ | ~~b-ai premium-gated accounts surface 403 "Deposit required" instead of cooling down~~ — **done 2026-09-09** (e0e0a25): narrow gated-403 signature (403 + access_denied/"Deposit required") benches the ACCOUNT on the adaptive 429 ladder (deposit-clearing success resets via pool.ok), marks Fallbackable — buffered rotates accounts→combo targets, router rotates pool-bounded without spending retry budget, all-gated pools answer 429+Retry-After, stream fast path answers pre-body; non-gated 403s fail fast unchanged; quota-503 untouched | found live testing #47 |
+| ~~#50~~ | ~~Cross-format encode path never coerces always-thinking effort (residual from #17)~~ — **done 2026-09-09** (32d11de): coerceAlwaysThinkingUnified in prepareUpstreamBody's cross-format branches — client-set ReasoningEffort coerced via coerceEffort (empty stays empty, never invented), Anthropic thinking budget dropped (no GLM-wire representation; budgetToEffort can emit outside low|high|max); streaming already herds into the buffered path; mutation-checked regression test on the Responses wire; zero-drop deployed pid 74239, live-verified | #17 residual |
 | ~~#51~~ | ~~Baseline research: peer gateways + free-model inventory (omp+onegw VPS foundation)~~ — **done 2026-09-09**; deliverable in the issue body (six tools verified vs source/docs/live endpoints); follow-up #55 tracks the actual VPS deploy | user request |
-| ~~#53~~ | ~~b-ai distributor nodes parse-reject large valid bodies as terminal 400~~ — **done 2026-09-09** (84fd1c9 + 51ccf1e): translat.UpstreamParseRejected (narrow 400 + api_error + "Invalid request body" + request-id trailer) rewrites to retryable 502 upstream_parse_rejected, no bench, Router retries / combo falls through; NormalizeInStreamError covers the in-stream variant; genuine schema 400s stay terminal (test-pinned); zero-drop deployed pid 53121, live-verified | #52 follow-up |
+| ~~#53~~ | ~~b-ai distributor nodes parse-reject large valid bodies as terminal 400~~ — **done 2026-09-09** (b38eab4 + 75aa9a4): translat.UpstreamParseRejected (narrow 400 + api_error + "Invalid request body" + request-id trailer) rewrites to retryable 502 upstream_parse_rejected, no bench, Router retries / combo falls through; NormalizeInStreamError covers the in-stream variant; genuine schema 400s stay terminal (test-pinned); zero-drop deployed pid 53121, live-verified | #52 follow-up |
 | #54 | Task-aware combo reordering: local difficulty classification + stable re-sort of combo targets (#44 step 2) | #44 follow-up |
 | #55 | Deploy omp+onegw coding tool on personal VPS | #51 follow-up |
 | #58 | Merlin AI (getmerlin.in) upstream integration — research done (pricing, Firebase-auth wire contract live-verified 2026-09-09 incl. guest free-tier chat, adapter landscape, native kind="merlin" vs bridge options); implementation pending | user request |
-| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #80 | Terminal key invalidation on 402/insufficient-balance — one dead key must not burn a doomed first attempt on every request (OmniRoute `recordKeyTerminal` analog); plus the A3 guard shape (one key's 401 never disables the provider) — **merged 62cd402, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #80b | Billing-parole recheck (root-cause fix for the 2026-09-12 b-ai outage): #80's terminal mark had NO timer and no self-heal, so a transient vendor pricing event parked all 8 free accounts on `insufficient_quota` until a manual dashboard reset — the vendor recovered ~2.5h later and the pool did not. Now `[rotation].billing_parole` (default 30m, per-provider overridable) re-offers a terminal key as ONE probe per window: a 200 clears the mark (with the same recency rule as cooldowns, so a concurrent 402 during the request's flight survives it), a fresh refusal re-parks for a full window, and the unfunded 503's `Retry-After` names the soonest recheck instead of a flat 300 | 2026-09-12 live incident |
-| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
-| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **merged 225625a, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #81 | Account-pool selection strategies: p2c (health score incl. #79 quota headroom) / least-used / strict-random (shuffle deck) — complements #78's decaying recent-429 term rather than defining it — **merged 62cd402, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
+| #82 | Sticky round-robin combo strategy: N consecutive successes on a leg, then rotate (config `round_robin_limit`) — **merged 62cd402, live pid 10264**; config-off by default (empty `[rotation]`, absent `selection`, unchanged strategies unless configured) | OmniRoute rotation research 2026-09-11 |
 | #83 | PRD open-work table is stale (stops at #58 while #68–#82 exist) — backfill rows or retire the table in favor of the issue list | PRD audit 2026-09-11 |
 | #84 | Make rotation policy configurable (cooldown base/cap, flap threshold/window, model-bench TTL, per-status rotate-after-N-in-window) — **partially implemented, PR #86 (pending merge)**: the five cooldown/threshold/TTL knobs ship (global `[rotation]` + `[providers.rotation]`, shipped values as defaults, config-off by default); the **per-status rotate-after-N-in-window gate is NOT included** (it changes failure semantics; the shipped default is rotate-immediately, so it only matters for an orchestrator damping rotation) — tracked as remaining scope on this issue | OmniRoute rotation research 2026-09-11 |
 
@@ -2604,7 +2604,7 @@ All post-v1 tasks live as GitHub issues (https://github.com/FreePeak/onegw/issue
 
 Tier 1 — reliability first (incident follow-ups) — **done 2026-09-08**:
 ~~#43~~ → ~~#39~~ → ~~#38~~ → ~~#37~~ → ~~#40~~ all landed and closed (the #39/#38
-features were later deliberately reverted, 9049dd4); ~~#42~~ ownership model
+features were later deliberately reverted, 57add10); ~~#42~~ ownership model
 landed 2026-09-08 (`owner.json` + `/admin/health` owner block). Tier 1 complete.
 
 Tier 3 — remaining 2026-09-09: #50 (cross-format effort coercion, in progress) → #32 + #34/#35
@@ -2761,7 +2761,7 @@ the issue):
   change or at finish, and retires the client index on every close so a
   closed index is never reopened; regression test pins the full event
   sequence (thinking@0 → text@1).
-- **Web search (SearXNG)** (#13, shipped 2026-09-08 in 9bd3594): `kind =
+- **Web search (SearXNG)** (#13, shipped 2026-09-08 in 5b21356): `kind =
   "searxng"` virtual provider — clients send model `search/query`, the gateway
   answers with a SearXNG JSON search (last user message = query) formatted as
   a synthetic OpenAI completion through the normal pipeline (cross-format
@@ -2855,7 +2855,7 @@ the issue):
   ring (live: b-ai decode p50 57.2 vs delivered 7.8 tok/s); files #90 (ring-based
   per-model distribution).
 
-Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
+Dashboard Tailwind v4 revamp (b8a4e99): professional restyle of all 9 admin
   pages to the UnoRouter design language (user-selected reference,
   unorouter.com/en/compare) — near-black canvas, hairline white/10 borders,
   sharp corners, inverted primary buttons, zinc muted grays, status
@@ -2874,7 +2874,7 @@ Dashboard Tailwind v4 revamp (0b6202d): professional restyle of all 9 admin
   clean git-archive build of the commit. Peer metrics work (acct-labeled
   log entries) remains uncommitted in the tree by design.
 
-Local-calendar dashboard windows (e39fb12): every admin-dashboard time
+Local-calendar dashboard windows (96c948d): every admin-dashboard time
   surface now follows the gateway host's LOCAL calendar instead of UTC —
   usage page range/table/charts ("per hour (local)", "local day YYYY-MM-DD
   (+07)"), overview "today" stats + hourly chart, right-rail 7-day rank,
@@ -2889,7 +2889,7 @@ Local-calendar dashboard windows (e39fb12): every admin-dashboard time
   Zero-drop deployed from the origin/master archive (live page verified:
   xs[0] ***REMOVED*** local-midnight epoch).
 
-Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
+Usage dashboard chart fix (5020c34): the tokens chart legend/hover showed
   cumulative raw integers (stack accumulation without a per-series `value`
   formatter) — cache read/output/input read as wrong values with no K/M/B
   unit. Series now map back to their per-layer arrays via kmb; stacked
@@ -2898,11 +2898,11 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
 ---
 
 
-*Last updated: 2026-09-09 (local-calendar dashboard windows, e39fb12: usage/overview/rank
+*Last updated: 2026-09-09 (local-calendar dashboard windows, 96c948d: usage/overview/rank
   windows, charts, and labels now render the host's local time — "per hour (local)" — while
   rollups stay UTC-keyed; local windows map onto UTC-key supersets so straddling local days
   no longer drop edge hours; zero-drop deployed and live-verified; earlier: README dashboard
-  docs refresh (71fc475): replaced the overview
+  docs refresh (3765697): replaced the overview
   screenshot with a current dark-mode capture (Playwright+Chrome headless against the live
   admin, 2x scale) and updated the Overview description — hourly token chart, top-providers
   rail, Providers/Combos in-page editing, Settings maintenance card; added dark-by-default +
@@ -2920,7 +2920,7 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   end-to-end verified via /v1/messages stream + request ring 200 @harvey; the 22:33
   key rotation (15d3854e→ac679568) was a red herring — both keys are valid coding-plan
   keys; earlier: tokenrouter engine admission walls are shared, not per-key
-  — issue #64, fix 5f365b2 pushed: the 21:37 client 503 "cache-only admission rejected a
+  — issue #64, fix c69a852 pushed: the 21:37 client 503 "cache-only admission rejected a
   cold, unavailable, or overloaded request" is tokenrouter's z-ai engine cache-aware
   cold-prefill admission rejecting ~180K-token all-uncached requests when concurrent
   sessions exhaust the engine's outstanding-uncached budget; ring proves the wall is
@@ -2940,38 +2940,38 @@ Usage dashboard chart fix (9e1e5a4): the tokens chart legend/hover showed
   168 of 512 ring rows were 429s — 140 upstream per-account (up to 11 429s/min on ONE key,
   impossible under the #56 rpm=5 token bucket) + 16 Tencent shared-wall + 12 tokenrouter
   8/min-wall; root cause: FOUR successive peer deploy generations (pids 15538/89605/26764,
-  /tmp/onegw-mk-binary) shipped binaries built from stale refs predating 729c190/9a3dbc0 —
+  /tmp/onegw-mk-binary) shipped binaries built from stale refs predating 5f0a9fc/01d5afb —
   strings check: newTokenBucket/refillAt/upstream_empty_body all 0; fix: archive-built
-  origin/master d41d078 and zero-drop deployed (scripts/deploy.sh --binary, pid 996);
+  origin/master 2eee974 and zero-drop deployed (scripts/deploy.sh --binary, pid 996);
   post-deploy verification: per-account attempts capped ≤6/min and ≤2/sec (burst-2 governor
   observable), 8 residual 429s in 3 min vs 168 in 5 — all residual rows are the two by-design
-  classes (shared-wall fall-through per 359e5a0 + burst-edge per-account); no code change,
+  classes (shared-wall fall-through per 73908b6 + burst-edge per-account); no code change,
   ops-only; earlier: tokenrouter 504 budget fix: pre-first-byte
   exhaustion marked NoSameTargetRetry, Router.Execute falls through instead
   of a second silent 120s retry on the same target; dial/TLS timeouts stay
   retryable; live TTFB probes 6-37s nominal, bimodal free-lane queue events
   past 120s; earlier: request log diagnosability: rows carry the upstream
   account name (@account in the console line, account JSON field) + 7-day
-  auto-clear, ab62468 — committed from a clean archive of HEAD (full suite green
+  auto-clear, 516d94b — committed from a clean archive of HEAD (full suite green
   in /tmp), zero-drop deployed live (pid 67617), end-to-end verified: b-ai rows
   show per-request accounts clone3/clone2/harvey; earlier: dashboard Tailwind v4 revamp to the UnoRouter design
-  language, 0b6202d — standalone-CLI pipeline, vendored OFL fonts, grouped sidebar,
+  language, b8a4e99 — standalone-CLI pipeline, vendored OFL fonts, grouped sidebar,
   themed uPlot axes; browser-verified dark/light, commit green from clean archive,
   pushed; earlier: usage-chart hover fix: per-layer values + units,
-  9e1e5a4, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
+  5020c34, zero-drop deployed; earlier RCA: b-ai/glm-5.3-flash 502 storms — fixed 60s pre-first-byte budget aborted massive thinking-model prefills (`http2: timeout awaiting response headers`);
 `[server] response_header_timeout` knob (live: 75s since 2026-09-11 — user call to fail over faster; was 120s) + transport-error classification
 (504 upstream_timeout, retryable so combos fall through; client-hangup detection via request
 ctx state — Go's header-timeout error also aliases context.DeadlineExceeded, probe-verified
 h1+h2, Go 1.25); zero-drop deployed live, failures now 504-classified and fall through; branch
 fix/upstream-header-timeout; earlier: admin login lockout aligned to spec (24h after 5 failures,
-6790dba) — master pushed through 6790dba and live gateway redeployed zero-drop from it (pid in
+a41b3e7) — master pushed through a41b3e7 and live gateway redeployed zero-drop from it (pid in
 /admin/health); xai OAuth token still expired — re-auth in 9router then re-import)*
 
 *Last updated: 2026-09-11 (update-check observability: failed periodic checks now logged
 with a timestamp — Status.LastError self-erases on the next successful tick, which hid the
 2026-09-10 x509 unknown-authority failure; RCA notes for x509 unknown authority added to the
 self-update bullet; regression test TestWakeLogsFailedCheck; no TLS-skip fallback by design);
-h2 health pings on the shared upstream transport (7702820, branch fix/h2-ping, live pid 27421):
+h2 health pings on the shared upstream transport (3a9ff90, branch fix/h2-ping, live pid 27421):
 2026-09-10 16:29-16:48 b-ai storm logged 52 "http2: timeout awaiting response headers" 504s
 across EVERY account while fresh connections served instantly — all accounts multiplex onto
 ONE h2 connection per host, so one degraded connection stalls them all and each request burns

@@ -10,7 +10,7 @@ import (
 // model glm-5.3-flash under group default (distributor)". The credential
 // is healthy and the lane is shared by every key, so Do must NOT bench
 // the account (keys stay warm) and must NOT park the (provider, model)
-// pair (1da3c2e: wording parks break the fast-path whole-body replay).
+// pair (4b46ea6: wording parks break the fast-path whole-body replay).
 // The error rides the shared-wall contract: Router.Execute falls through
 // after one doomed call.
 func TestChannelEmpty503KeepsKeysWarmNoPark(t *testing.T) {
@@ -26,7 +26,7 @@ func TestChannelEmpty503KeepsKeysWarmNoPark(t *testing.T) {
 		t.Fatalf("dead-lane 503 must not bench the healthy key, cooldown=%v strikes=%d", slot.cooldown, slot.strikes)
 	}
 	if benched, _ := def.ModelBenched("glm-5.3-flash"); benched {
-		t.Fatal("wording walls must not park the (provider, model) pair (1da3c2e)")
+		t.Fatal("wording walls must not park the (provider, model) pair (4b46ea6)")
 	}
 	if edgeFault(apiErr) {
 		t.Fatal("shared-wall 503 must not strike the provider-wide flap breaker")

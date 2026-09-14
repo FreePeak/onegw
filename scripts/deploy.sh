@@ -58,8 +58,8 @@ run() { # run <desc> <cmd...>: execute, or print only under --dry-run
 # resurrecting the b-ai 429 storm. Loose (UNANCHORED) strings matches
 # discriminate current master — stripped -trimpath builds mangle method
 # symbols into dotted forms, so anchored patterns false-negative:
-#   newTokenBucket       #56 per-account RPM governor (729c190)
-#   upstream_empty_body  honest empty-body upstream errors (289cd47)
+#   newTokenBucket       #56 per-account RPM governor (5f0a9fc)
+#   upstream_empty_body  honest empty-body upstream errors (ea67a63)
 check_markers() {
   [ -x "$1" ] || die "binary not executable: $1"
   # grep -q closes the pipe on first match, so strings dies of SIGPIPE and
@@ -68,7 +68,7 @@ check_markers() {
   # Count instead: the full stream is consumed, exit status is grep's.
   MISSING=""
   [ "$(strings "$1" | grep -c newTokenBucket)" -ge 1 ] || MISSING="$MISSING newTokenBucket(#56)"
-  [ "$(strings "$1" | grep -c upstream_empty_body)" -ge 1 ] || MISSING="$MISSING upstream_empty_body(289cd47)"
+  [ "$(strings "$1" | grep -c upstream_empty_body)" -ge 1 ] || MISSING="$MISSING upstream_empty_body(ea67a63)"
   [ -z "$MISSING" ] || die "binary $1 missing feature marker(s):$MISSING — rebuild from git archive origin/master (or pass --force-stale for deliberate archaeology deploys)"
 }
 

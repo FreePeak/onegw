@@ -893,7 +893,7 @@ const (
 // Burst-wall detection (live 2026-09-11, ring seqs 5960-6000): b-ai's
 // one-api edge answers bursty shared-limit pressure with a raw 429 and an
 // EMPTY body — no "concurrency limit"/"TPM limit" wording, no Retry-After,
-// no request-count window, so the 103c253 text classifiers see nothing and
+// no request-count window, so the 03cd64c text classifiers see nothing and
 // every such 429 takes the per-key ladder. The ring shows three DIFFERENT
 // accounts 429ing within 2s (5977 mnhatlinh, 5978/5979 clone2) while the
 // same accounts served 200s seconds later — the cross-account clustering
@@ -1569,7 +1569,7 @@ type wallSight struct {
 // reports whether it COMPLETES a proven shared-wall burst inside
 // wallWindow. Two evidence modes:
 //   - distinct (text=false): a DIFFERENT account struck the same model
-//     within the window — the 103c253 behavioural rule for walls whose
+//     within the window — the 03cd64c behavioural rule for walls whose
 //     wording says nothing (empty-body one-api 429s).
 //   - text (wording-matched model walls): the message itself proves the
 //     lane is shared, so any two strikes within the window complete the
@@ -2263,7 +2263,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// Concurrency-limit 429 is the transient the whole-body
 			// replay rides out, and a first-sight park turned that replay
 			// into a client-visible 503 (reverted once already — see
-			// 1da3c2e; TestStreamFastPathReplaysWholeBodyOnTransient429
+			// 4b46ea6; TestStreamFastPathReplaysWholeBodyOnTransient429
 			// pins the contract).
 			shared := sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message)
 			if !shared {

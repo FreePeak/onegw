@@ -16,7 +16,7 @@ import (
 
 // TestRelayResponseBudgetSurvivesReloadMidAcquire is the regression guard for
 // issue #40: the buffered cross-format path in relayResponse must take its
-// Acquire/Release pair on ONE state snapshot. Before dbe02bd the deferred
+// Acquire/Release pair on ONE state snapshot. Before 3bd52fd the deferred
 // Release re-read s.cur() after Acquire returned, so a SIGHUP reload landing
 // in between released the bytes on the NEW budget and leaked the reservation
 // on the OLD one — a monotonic leak in exactly the counter that bounds RSS
