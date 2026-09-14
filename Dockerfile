@@ -44,8 +44,14 @@ COPY docker/onegw.default.toml /etc/onegw/onegw.toml
 # write is atomic (temp file in the same directory + rename). The directory
 # therefore has to be writable by the non-root user, or every in-page save
 # answers 500 "temp file: open /etc/onegw/.onegw-config-*.toml: permission
-# denied" — the bare `docker run` path did exactly that until this line. A named
-# volume mounted here inherits this ownership, so edits also survive a recreate.
+# denied" — the bare `docker run` path did exactly that until this line.
+#
+# This chown covers the CONTAINER's own filesystem only. A named volume mounted
+# at /etc/onegw is seeded from this directory by Docker but the copy arrives
+# root:root, so an empty `-v onegw-config:/etc/onegw` is NOT enough: compose
+# installs heal it with the `config-init` service (docker-compose.yml) and
+# `docker run` installs with the `docker run -u 0 --entrypoint chown` pass in
+# scripts/docker_deploy.sh. Both are one-shot root runs over the volume.
 RUN chown onegw:onegw /etc/onegw /etc/onegw/onegw.toml
 
 # Runtime config; /data holds usage.db (bind-mount or named volume it).
