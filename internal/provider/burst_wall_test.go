@@ -5,7 +5,7 @@ package provider
 // complaint on b-ai/qwen3.8-flash): the reseller's one-api edge answers
 // bursty shared-limit pressure with a raw 429 and an EMPTY body — no
 // "concurrency limit"/"TPM limit" wording, no Retry-After, no request-count
-// window, so the 103c253 text classifiers see nothing and every such 429
+// window, so the 03cd64c text classifiers see nothing and every such 429
 // took the per-key ladder. The ring shows three DIFFERENT accounts 429ing
 // within 2s (5977 mnhatlinh, 5978/5979 clone2) while the same accounts
 // served 200s seconds later — the cross-account clustering that marks a
@@ -190,7 +190,7 @@ func TestOKKeepsFreshBenchClearsStaleBench(t *testing.T) {
 // replay rides out the ~2-5s window; a first-sight park turned that replay
 // into a client-visible 503, caught by
 // TestStreamFastPathReplaysWholeBodyOnTransient429 and reverted once in
-// 1da3c2e).
+// 4b46ea6).
 func TestWordingWallParksOnSecondSight(t *testing.T) {
 	srv, hits := mkErrStub(t, 429, sharedTPMLimitBody)
 	def := newTwoAccountDef(t, srv, "b-ai")
