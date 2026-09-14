@@ -91,7 +91,10 @@ CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day);
 	}
 	col.Close()
 	if hasNode {
-		return s.migrateQuota() // already sharded; still ensure quota state
+		if err := s.migrateQuota(); err != nil { // already sharded; still ensure quota state
+			return err
+		}
+		return s.migratePresets()
 	}
 	const rebuild = `
 BEGIN IMMEDIATE;
@@ -130,7 +133,10 @@ COMMIT;`
 	if _, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day)`); err != nil {
 		return err
 	}
-	return s.migrateQuota() // issue #7 quota window state
+	if err := s.migrateQuota(); err != nil { // issue #7 quota window state
+		return err
+	}
+	return s.migratePresets()
 }
 
 // FlushBuckets upserts rollups. Implements usage.Sink.
