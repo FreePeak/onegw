@@ -1,3 +1,27 @@
+*Last updated: 2026-09-14 (context-window overflow RECOVERY — prune + replay, not just fall-through):
+the #97-era work made a context-length 400 a *fall-through* verdict (try the next combo leg). That is correct
+when one leg has room, but the `free` combo proved the terminal case: a client session grew to 432,168 tokens,
+**no** leg in the chain holds a window that large, and every target answered 400 — an honest fall-through to
+nothing, and the agent session died. `internal/server/overflow.go` now *recovers* the request instead: when the
+whole chain still refuses with a context-length 400 (`execErr.ContextWindowExceeded()` and nothing written to the
+client yet, `Content-Type` empty), the gateway parses the refusal's own numbers (`types.ContextWindowOverflow()` →
+window + measured input), **drops the oldest complete conversation units** from the body until the input estimate
+fits that window, and **replays the combo chain once**. The session survives on recent context. Pruning preserves the
+invariants upstreams enforce: only whole messages before a safe cut, an assistant `tool_calls` turn never parts from
+its `tool_result`s, the kept head starts at a user turn, and everything outside `messages` (system/tools,
+`stream_options`) is re-encoded verbatim with `json.Number` fidelity. The budget uses the refusal's measured count
+when the dialect carries one (so bytes/4 estimator error cancels on CJK bodies), else a 25% haircut
+(`overflowEstFactor`). Scope is the OpenAI + Anthropic chat surfaces, where agentic sessions actually overflow; the
+Gemini surface keeps the honest 400. Parsed dialects: z.ai/new-api (`input (…) context length (…)`), OpenAI
+(`maximum context length is … resulted in …`), Anthropic (`prompt is too long: N tokens > M`), and Qwen/DashScope
+(`Range of input length should be [1, 983616]`) — so `contextWindowRe` gained `|range of input length`, **merged with
+origin's existing `input tokens? exceed` (#97), not replacing it**. Companion fix: `types.PaymentRequired` now matches
+the canonical `insufficient_quota` marker in *either* `Code` or `Type` (live experiential-labs: 429
+`{"type":"insufficient_quota","code":"card_required"}` was being benched as a 10s rate cooldown and re-hitting upstream
+forever). Tests: `TestContextWindowOverflowParsing` (dialect-by-dialect), the `TestPruneToFit*` invariant table, and
+`TestOverflowPruneRetryEndToEnd` (prune→replay through the real handler); `TestPaymentRequiredClassification` pins the
+type/ code case. Build + `go vet` + `internal/types`/`internal/server`/`internal/router` green on the shipped tip.
+Earlier:)*
 *Last updated: 2026-09-14 (dashboard UI revamp: collapsing-by-default grid, one API-keys page, model discovery, xAI browser sign-in):
 the console grew into a wall of always-open forms, so the config surface was rebuilt around three rules.
 (1) **Collapse by default, open when it still needs you.** Every provider card is now a `<details>` whose

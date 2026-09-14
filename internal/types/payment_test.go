@@ -13,6 +13,11 @@ func TestPaymentRequiredClassification(t *testing.T) {
 	}{
 		{"402 status", &APIError{Status: 402}, true},
 		{"openai insufficient_quota code", &APIError{Status: 429, Code: "insufficient_quota"}, true},
+		// Live 2026-09-12 experiential-labs: the canonical OpenAI-family
+		// signal rides type while code carries the vendor's own token.
+		// Reading code alone left the billing wall as a 10s rate-limit
+		// cooldown, so the pool re-hit upstream on every request.
+		{"insufficient_quota type + vendor card_required code", &APIError{Status: 429, Code: "card_required", Type: "insufficient_quota", Message: "Complete the $1 card verification to spend platform credits"}, true},
 		{"balance wording", &APIError{Status: 400, Message: "Insufficient balance: top up your account"}, true},
 		{"credits wording", &APIError{Status: 403, Message: "insufficient credits for this model"}, true},
 		// Must NOT be terminal: the gated-403 deposit family keeps its #48

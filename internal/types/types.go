@@ -305,7 +305,7 @@ func (e *APIError) OverQuota() bool {
 
 // PaymentRequired reports an upstream refusal that indicts the ACCOUNT
 // BALANCE, not the request and not the rate window: HTTP 402, or the
-// explicit OpenAI-family `insufficient_quota` code, or unambiguous
+// explicit OpenAI-family `insufficient_quota` code or type, or unambiguous
 // insufficient-balance/credits wording. Unlike a 429 there is nothing to
 // wait out — the credential cannot serve until credits are added — so the
 // pool marks it terminal instead of offering it on every subsequent request
@@ -318,6 +318,16 @@ func (e *APIError) PaymentRequired() bool {
 		return false
 	}
 	if e.Status ***REMOVED*** 402 {
+		return true
+	}
+	// Vendors split the canonical signal across fields: some send
+	// code="insufficient_quota" (lands in Code), others keep the canonical
+	// type and put a vendor code in `code` — live 2026-09-12
+	// experiential-labs: 429 {"type":"insufficient_quota","code":"card_required"}
+	// ("Complete the $1 card verification to spend platform credits"). Reading
+	// Code alone treated that billing wall as a rate-limit cooldown and re-hit
+	// upstream forever, so the canonical marker is matched in either field.
+	if e.Type != "" && strings.EqualFold(e.Type, "insufficient_quota") {
 		return true
 	}
 	probe := strings.ToLower(e.Code + " " + e.Type + " " + e.Message)
@@ -412,9 +422,13 @@ func (e *APIError) ReasoningEchoRequired() bool {
 //     in the same minute).
 //   - The same relay, shorter dialect, plural or singular "token": qwen's
 //     "Input token exceed the limit" (live 2026-09-14, a 399,078-token body).
+//   - Qwen/DashScope (live 2026-09-14, b-ai qwen3.8-flash): 400 "Range of
+//     input length should be [1, 983616]" — the ceiling is the bracket's
+//     second number; ContextWindowOverflow parses it so overflow.go can prune.
+//
 // Deliberately scoped to window wording so quota/TPM 400s ("too many tokens",
 // "current model TPM limit") keep their own contract.
-var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|maximum context|prompt is too long|input is too long|input tokens? exceed`)
+var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|maximum context|prompt is too long|input is too long|input tokens? exceed|range of input length`)
 
 // ContextWindowExceeded reports whether a 400 is the upstream's context-window
 // overflow refusal. The verdict is about THIS (provider, model) vs THIS body:
@@ -426,6 +440,71 @@ var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|m
 // target) still surfaces the 400 honestly.
 func (e *APIError) ContextWindowExceeded() bool {
 	return e != nil && e.Status ***REMOVED*** 400 && contextWindowRe.MatchString(e.Type+" "+e.Code+" "+e.Message)
+}
+
+// Dialects that carry BOTH numbers the overflow recovery needs — the model's
+// window and the refusal's own measured input — so recovery can budget against
+// a real tokenizer count instead of the gateway's bytes/4 estimate. Each pair
+// captures (measured, window); tried in order.
+var contextWindowNumbersRe = []*regexp.Regexp{
+	// z.ai / GLM fronted by new-api resellers (live 2026-09-14, `free` combo:
+	// 400 "The input (432168 tokens) is longer than the model's context
+	// length (262144 tokens).").
+	regexp.MustCompile(`(?i)input\D{0,4}(\d+) tokens\)\s*is longer than.{0,40}?context length\D{0,4}(\d+)`),
+	// OpenAI: "This model's maximum context length is 128000 tokens.
+	// However, your messages resulted in 150000 tokens."
+	regexp.MustCompile(`(?i)maximum context length is\D+(\d+) tokens?.{0,80}?resulted in\D+(\d+) tokens`),
+	// Anthropic: "prompt is too long: 210000 tokens > 200000 maximum".
+	regexp.MustCompile(`(?i)too long:\s*(\d+) tokens?\s*>\s*(\d+)`),
+}
+
+// windowOnlyRe carries dialects whose message names ONLY the window — the
+// measured input may be absent, so ContextWindowOverflow reports it as 0.
+var windowOnlyRe = regexp.MustCompile(`(?i)(?:context (?:length|window|limit)|maximum context)\D+(\d+)`)
+
+// dashscopeMaxRe: Qwen/DashScope (b-ai qwen3.8-flash, live 2026-09-14): 400
+// "Range of input length should be [1, 983616]". The bracket's SECOND number
+// is the input ceiling; the first (min) must never be mistaken for the window.
+var dashscopeMaxRe = regexp.MustCompile(`(?i)range of input length should be \[\s*\d+\s*,\s*(\d+)\s*\]`)
+
+// ContextWindowOverflow extracts (window, measured) token counts from a
+// context-window overflow refusal. window is the model's context length,
+// measured is the upstream's count of THIS request's input (0 when the
+// dialect only states the window). ok=false when the message carries no
+// number at all; callers then fall back to a conservative window.
+// Companion to ContextWindowExceeded — only trust it after that says yes.
+func (e *APIError) ContextWindowOverflow() (window, measured int, ok bool) {
+	if e ***REMOVED*** nil {
+		return 0, 0, false
+	}
+	for _, re := range contextWindowNumbersRe {
+		if m := re.FindStringSubmatch(e.Message); m != nil {
+			// Dialect 1 groups are (measured, window); dialect 2 is
+			// (window, measured); normalize by which number is bigger —
+			// the refusal says the input no longer FITS the window, so
+			// measured > window in every overflow.
+			a, err1 := strconv.Atoi(m[1])
+			b, err2 := strconv.Atoi(m[2])
+			if err1 != nil || err2 != nil || a <= 0 || b <= 0 {
+				continue
+			}
+			if a > b {
+				return b, a, true
+			}
+			return a, b, true
+		}
+	}
+	if m := dashscopeMaxRe.FindStringSubmatch(e.Message); m != nil {
+		if n, err := strconv.Atoi(m[1]); err ***REMOVED*** nil && n > 0 {
+			return n, 0, true
+		}
+	}
+	if m := windowOnlyRe.FindStringSubmatch(e.Message); m != nil {
+		if n, err := strconv.Atoi(m[1]); err ***REMOVED*** nil && n > 0 {
+			return n, 0, true
+		}
+	}
+	return 0, 0, false
 }
 
 // SharedConcurrency reports whether a 429 is the upstream's model-wide
