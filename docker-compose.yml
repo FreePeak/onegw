@@ -1,54 +1,117 @@
-# onegw on a VPS: `docker compose up -d`
-# (or let scripts/docker_deploy.sh do the whole setup: key generation, the
-#  config volume's ownership, ONEGW_* forwarding, and a health check)
+# onegw on Docker Compose.
+#
+# One command, from a fresh clone (mints the gateway key into .env, picks a free
+# host port, brings the stack up, verifies /admin/health through the PUBLISHED
+# port and prints the dashboard credential):
+#
+#   ./scripts/docker_deploy.sh --compose
+#   ./scripts/docker_deploy.sh --compose --port 18080 --loopback   # any port, loopback only
+#   ./scripts/docker_deploy.sh --compose --build                   # build this tree's image
+#
+# Plain `docker compose up -d` works too once .env exists (see .env.example).
+# Everything tunable afterwards lives in .env plus the config volume — no edit
+# of this file, and `docker compose up -d` re-applies it (it recreates the
+# container when the published port changes).
+#
+# Deliberately NO `${VAR:?required}` guards here: Compose interpolates the whole
+# file for every subcommand, so a required variable makes `docker compose ps`,
+# `logs`, `restart` and `down` fail with "required variable ONEGW_KEYS is
+# missing" — you could not even tear the stack down without re-supplying the
+# secret. The mandatory key is enforced by the gateway instead: the baked config
+# binds 0.0.0.0:8080 and onegw exits at startup with
+# `refusing to serve "0.0.0.0:8080" with no auth keys` rather than opening an
+# unauthenticated proxy, so a keyless `up` fails loudly in `docker compose logs`
+# and no placeholder credential can be shipped by accident.
+
+# Fixed project name: volumes and network are `onegw_*` no matter which
+# directory the clone lives in, so `docker compose down -v` / backup commands in
+# the docs name the same volumes everywhere (and a checkout in ~/onegw vs
+# ~/work/.../onegw is the SAME deployment, not two).
+name: onegw
+
 services:
-  onegw:
-    image: ghcr.io/freepeak/onegw:latest
-    # build: .                 # uncomment to build from this directory instead
-    restart: unless-stopped
-    ports:
-      - "8080:8080"           # LAN/public; use "127.0.0.1:8080:8080" to keep it loopback-only
-                              # (that limits the HOST side only — the in-container bind
-                              # stays 0.0.0.0:8080, so ONEGW_KEYS below is still required)
-    environment:
-      # REQUIRED, and never auto-generated: the baked config binds 0.0.0.0:8080
-      # and onegw refuses to start a non-loopback listener with no auth keys
-      # (open-proxy guard). Compose refuses to start without a value, so a
-      # placeholder that bills your upstream accounts cannot be shipped by
-      # accident:
-      #   ONEGW_KEYS=$(openssl rand -hex 24) docker compose up -d
-      ONEGW_KEYS: "${ONEGW_KEYS:?set ONEGW_KEYS to a secret (openssl rand -hex 24)}"
-      # Dashboard/admin API. Deliberately not set: first boot mints a random
-      # password, prints it once as "FIRST-RUN ADMIN PASSWORD" in `docker logs`,
-      # and persists it at /data/admin_password (0600) across restarts.
-      # Uncomment to pin your own instead:
-      # ONEGW_ADMIN_PASSWORD: "pick-a-long-one"
-      # ONEGW_PROVIDER_OPENROUTER_KEY: "sk-..." # upstream keys (or mount a config)
+  # Ownership fix-up for the config volume — run once before the gateway.
+  #
+  # Docker seeds a fresh named volume from the image's /etc/onegw, but the
+  # copied file arrives root:root even though the Dockerfile chowns it to the
+  # container user. The dashboard's provider/combos editor saves with an atomic
+  # temp-file + rename IN THAT DIRECTORY, so on a compose install every in-page
+  # save answered 500 "temp file: open /etc/onegw/.onegw-config-*.toml:
+  # permission denied" — i.e. a stack you could run but never configure. One
+  # root pass over the volume fixes it, and it is idempotent (also heals a
+  # volume created by an older compose file). `/data` is unaffected: an empty
+  # image directory keeps its baked ownership.
+  config-init:
+    image: ${ONEGW_IMAGE:-ghcr.io/freepeak/onegw:latest}
+    entrypoint: ["/bin/sh", "-c", "chown -R onegw:onegw /etc/onegw && chmod 755 /etc/onegw"]
+    user: "0:0"
     volumes:
-      - onegw-data:/data       # usage.db persists across upgrades
-      # Config: the dashboard's provider editor SAVES INTO this file (atomic temp
-      # file + rename), so give it a writable DIRECTORY — a named volume is
-      # initialized from the image with the right ownership and survives a
-      # recreate:
       - onegw-config:/etc/onegw
-      # A single-file mount does NOT work for in-page editing, for two reasons:
-      # the save's temp file needs a writable DIRECTORY, and even then rename()
-      # cannot replace a bind-mounted file ("device or resource busy"); :ro is
-      # read-only by definition. A DIRECTORY mount does work — hand it to the
-      # container's user on a Linux VPS (chown -R 100:101). Use the file form
-      # only to hand-edit the config:
-      # - ./onegw.toml:/etc/onegw/onegw.toml:ro
+    restart: "no"
+
+  onegw:
+    image: ${ONEGW_IMAGE:-ghcr.io/freepeak/onegw:latest}
+    # `docker compose build` / up --build / --compose --build. Compose only
+    # builds when the image tag is absent locally, so a pinned ghcr tag stays put.
+    build:
+      context: .
+      args:
+        VERSION: ${ONEGW_BUILD_VERSION:-dev}
+    # The documented one-off commands (`docker exec -it onegw onegw oauth …`)
+    # work for a compose install too, not just for `docker run --name onegw`.
+    container_name: ${ONEGW_CONTAINER_NAME:-onegw}
+    restart: unless-stopped
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+    ports:
+      # HOST side only: the in-container bind stays 0.0.0.0:8080 (see the
+      # open-proxy note above), so ONEGW_KEYS is still required. Override in
+      # .env — ONEGW_HOST_PORT=18080, ONEGW_HOST_BIND=127.0.0.1 — instead of
+      # editing this line.
+      - "${ONEGW_HOST_BIND:-0.0.0.0}:${ONEGW_HOST_PORT:-8080}:8080"
+    # Every credential and runtime setting comes from .env (compose auto-loads
+    # it for interpolation; this line is what forwards it into the container):
+    #   ONEGW_KEYS                  gateway client keys — required (see above)
+    #   ONEGW_ADMIN_PASSWORD        unset → first boot mints one, prints it once
+    #                               as "FIRST-RUN ADMIN PASSWORD" and persists it
+    #                               at /data/admin_password (0600)
+    #   ONEGW_PROVIDER_<NAME>_KEY   upstream keys (_KEY2.._KEY9 pool a provider)
+    #   ONEGW_TASK_ROUTING          "on" enables task-aware combo reordering
+    # The host-side knobs (ONEGW_HOST_PORT, ONEGW_HOST_BIND, ONEGW_IMAGE,
+    # ONEGW_CONTAINER_NAME, ONEGW_BUILD_VERSION) are ignored by the binary.
+    # `required: false` keeps a first `docker compose up -d` working before .env
+    # exists — the gateway then reports the missing key itself.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - onegw-data:/data       # usage.db, oauth-tokens.json, admin_password
+      - onegw-config:/etc/onegw
+      # Hand-managed config instead of the dashboard editor? A single-file mount
+      # CANNOT be edited in-page (rename() cannot replace a bind-mounted file →
+      # "device or resource busy"), so use the directory form and give it to the
+      # container's user on Linux (`chown -R 100:101 ./cfg`):
+      # - ./cfg:/etc/onegw
     mem_limit: 256m            # gateway targets <=100 MB RSS
     cpus: 1
 
   # Optional local SearXNG for onegw's web-search provider (issue #46):
-  #   docker compose --profile search up -d searxng
-  # Serves the JSON API onegw calls (GET /search?q=…&format=json) on the
-  # loopback only; point the provider's base_url at http://127.0.0.1:8888.
+  #   docker compose --profile search up -d      (or: ./scripts/docker_deploy.sh --compose --with-search)
+  # onegw calls GET {base_url}/search?q=…&format=json. From INSIDE the gateway
+  # container the instance is on the compose network, so the provider's base_url
+  # is http://searxng:8080 (alias `searx` also resolves — that is the value the
+  # README's config example uses). The published 127.0.0.1:8888 is for a gateway
+  # running on the HOST; a containerized gateway pointing at it reaches its own
+  # loopback and finds nothing. Stop it with `--profile search down`: a plain
+  # `docker compose down` leaves profile services running.
   searxng:
     image: searxng/searxng:latest
     profiles: ["search"]
     restart: unless-stopped
+    networks:
+      default:
+        aliases: [searx]
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
@@ -57,5 +120,12 @@ services:
     cpus: 1
 
 volumes:
+  # Explicit names, identical to the ones `docker run -v onegw-data:/data` and
+  # scripts/docker_deploy.sh use (Compose would otherwise prefix the project:
+  # `onegw_onegw-data`). One set of volumes for both installs means the backup and
+  # move commands in docs/vps-deploy.md are the same commands, and switching from
+  # `docker run` to Compose — or back — keeps the usage history and the config.
   onegw-data:
+    name: onegw-data
   onegw-config:
+    name: onegw-config

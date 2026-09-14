@@ -338,18 +338,25 @@ curl -s -H "X-Admin-Password: $PW" http://127.0.0.1:8080/admin/api/v1/providers 
 | Mount | Dashboard "Save & reload" | Survives `docker rm` + recreate |
 |---|---|---|
 | none (baked config) | 200 — the image chowns `/etc/onegw` to the container user | **no** (writable layer) |
-| `-v onegw-config:/etc/onegw` (named volume) | 200 | **yes** |
+| `-v onegw-config:/etc/onegw` (named volume) | 200 **after** the ownership pass; 500 `permission denied` without it — Docker seeds a fresh volume from the image but copies it **root-owned** | **yes** |
 | `-v /host/dir:/etc/onegw` (dir owned by uid 100) | 200 | yes (your backup discipline) |
 | `-v file.toml:/etc/onegw/onegw.toml[:ro]` | 500 `device or resource busy` / read-only | yes, but only hand-editable |
+
+That named-volume row is the trap the tooling exists to close: the image's own
+`chown` covers the container filesystem, not a volume mounted over it, so every
+install path runs one root pass over the volume before the gateway starts —
+`docker run --rm -u 0 --entrypoint chown -v onegw-config:/etc/onegw <image> -R
+onegw:onegw /etc/onegw` (what `scripts/docker_deploy.sh` does, and what the
+`config-init` service in `docker-compose.yml` does on every `up`). Without it the
+in-page editor is dead while everything else looks healthy.
 
 The file-mount row fails for two independent reasons, both worth knowing before
 blaming the gateway: the atomic save needs a writable DIRECTORY for its temp file
 (images before 2026-09-13 stopped exactly there — `temp file: open
-/etc/onegw/.onegw-config-*.toml: permission denied` — which is why the image now
-chowns `/etc/onegw`), and even with a writable directory `rename()` cannot replace
-a bind-mounted file. The directory row is the middle ground: verified with the
-literal recipe below (`chown -R 100:101`), save 200 and the edit visible on the
-host file.
+/etc/onegw/.onegw-config-*.toml: permission denied`), and even with a writable
+directory `rename()` cannot replace a bind-mounted file. The directory row is the
+middle ground: verified with the literal recipe below (`chown -R 100:101`), save
+200 and the edit visible on the host file.
 
 `docker commit` is **not** a migration path: it snapshots the writable layer
 into an unmanaged image, loses volume semantics, and leaves the config inside a
@@ -372,7 +379,16 @@ Two operational notes:
   `docker stop onegw` on the old host before starting the new one.
 - The image's `/data` is a plain directory, not a `VOLUME` declaration, so a
   `docker run` **without** `-v` silently uses a throwaway location. Always name
-  the volume (or use the compose file, which does).
+  the volume.
+- **Compose installs use the same volume names.** `docker-compose.yml` pins
+  `onegw-data` / `onegw-config` (instead of the project-prefixed
+  `onegw_onegw-data`), so the commands in this section are identical for either
+  install, and switching from `docker run` to Compose — or back — keeps the usage
+  history and the config. Its settings (published port, loopback bind, image,
+  `ONEGW_KEYS`, provider keys) live in the project's `.env`;
+  `./scripts/docker_deploy.sh --compose --port <port>` writes it, and
+  `docker compose --profile '*' down` is the only `down` that also stops the
+  profile-gated SearXNG.
 
 ## 9. Latency sanity checklist
 
