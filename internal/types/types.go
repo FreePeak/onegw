@@ -402,9 +402,19 @@ func (e *APIError) ReasoningEchoRequired() bool {
 //   - OpenAI: "This model's maximum context length is 128000 tokens."
 //     (code context_length_exceeded).
 //   - Anthropic: "prompt is too long: 250000 tokens > 200000 maximum".
+//   - Tencent Hunyuan direct (live 2026-09-14, b-ai/hy3 at 279,229 input
+//     tokens on the `free` combo): 400 "The request is invalid: Input tokens
+//     exceed the configured limit of 192000 tokens. Your messages resulted in
+//     279229 tokens." — the window is stated as a per-model CONFIGURED LIMIT,
+//     with none of the words the other dialects share, so an unlisted variant
+//     here answers the client a terminal 400 instead of falling through to a
+//     leg that has the room (b-ai/qwen3.8-flash served 279,287 tokens at 200
+//     in the same minute).
+//   - The same relay, shorter dialect, plural or singular "token": qwen's
+//     "Input token exceed the limit" (live 2026-09-14, a 399,078-token body).
 // Deliberately scoped to window wording so quota/TPM 400s ("too many tokens",
 // "current model TPM limit") keep their own contract.
-var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|maximum context|prompt is too long|input is too long`)
+var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|maximum context|prompt is too long|input is too long|input tokens? exceed`)
 
 // ContextWindowExceeded reports whether a 400 is the upstream's context-window
 // overflow refusal. The verdict is about THIS (provider, model) vs THIS body:
