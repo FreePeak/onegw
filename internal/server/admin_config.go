@@ -218,9 +218,15 @@ func (s *Server) handleAdminConfigReload(w http.ResponseWriter, r *http.Request)
 // PATCH /admin/config/keys and /admin/config/aliases — file surgery
 // ---------------------------------------------------------------------------
 
+// keysPatchReq is PATCH /admin/config/keys's body. `add`/`remove` are the
+// gateway's own client keys ([auth] keys); `provider_set`/`provider_clear`
+// reach one provider ACCOUNT's upstream key without rewriting the rest of the
+// provider — the dashboard's keys page sends both kinds in one call.
 type keysPatchReq struct {
-	Add    []string `json:"add"`
-	Remove []string `json:"remove"`
+	Add           []string    `json:"add"`
+	Remove        []string    `json:"remove"`
+	ProviderSet   []keyRowOp  `json:"provider_set"`
+	ProviderClear []keyRowRef `json:"provider_clear"`
 }
 
 func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
@@ -238,9 +244,22 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if len(req.Add) ***REMOVED*** 0 && len(req.Remove) ***REMOVED*** 0 {
+	if len(req.Add) ***REMOVED*** 0 && len(req.Remove) ***REMOVED*** 0 && len(req.ProviderSet) ***REMOVED*** 0 && len(req.ProviderClear) ***REMOVED*** 0 {
 		adminError(w, http.StatusBadRequest, "add and remove are both empty")
 		return
+	}
+	if err := validateKeyRowOps(append([]keyRowOp{}, req.ProviderSet...), req.ProviderClear); err != nil {
+		adminError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// The provider-row rebuild reads the config the caller was looking at, so
+	// snapshot it before the file is touched.
+	var snapshot []config.ProviderCfg
+	var oauthAccounts []config.OAuthAccount
+	if st := s.cur(); st != nil {
+		snapshot = st.cfg.Providers
+		oauthAccounts = st.cfg.OAuthAccounts()
 	}
 
 	s.cfgMu.Lock()
@@ -248,40 +267,57 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 
 	var keys []string
 	var added, removed int
+	var touched []string
 	fresh, err := s.patchConfigFile(func(lines []string) ([]string, error) {
-		var out []string
-		out, keys, added, removed, err = spliceAuthKeys(lines, req.Add, req.Remove)
-		return out, err
+		var err error
+		if len(req.Add) > 0 || len(req.Remove) > 0 {
+			lines, keys, added, removed, err = spliceAuthKeys(lines, req.Add, req.Remove)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if edited, names, err := applyKeyRowOps(lines, snapshot, oauthAccounts, req.ProviderSet, req.ProviderClear); err != nil {
+			return nil, err
+		} else {
+			lines, touched = edited, names
+		}
+		return lines, nil
 	})
 	if err != nil {
 		editFailed(w, err)
 		return
 	}
-	log.Printf("admin: auth keys changed: +%d -%d (total %d)", added, removed, len(keys))
-	writeJSON(w, map[string]any{"added": added, "removed": removed, "total": len(keys)})
+	if added != 0 || removed != 0 {
+		log.Printf("admin: auth keys changed: +%d -%d (total %d)", added, removed, len(keys))
+	}
+	if len(touched) > 0 {
+		log.Printf("admin: provider credentials changed: %s (config reloaded)", strings.Join(touched, ", "))
+	}
+	writeJSON(w, map[string]any{
+		"added": added, "removed": removed, "total": len(keys),
+		"providers": touched,
+	})
 	_ = fresh
 }
 
-// handleAdminKeysGet reveals the gateway's own auth.keys in full to an
+// handleAdminKeysGet reveals every credential the gateway holds to an
 // already-admin-authenticated caller — the deliberate mirror of 9router's
-// /api/keys, so the dashboard can offer copy-the-key buttons. The masking
-// posture of GET /admin/config (and every third-party credential: provider
-// api_keys and account keys) is unchanged; only auth.keys lives here.
+// /api/keys, so the dashboard can offer copy-the-key buttons. `keys` is the
+// gateway's own auth.keys (unchanged shape, plus the policy fields a reader
+// can ignore); `providers` is one row per provider account with the upstream
+// key it sends. The masking posture of GET /admin/config is unchanged: this is
+// the one endpoint that opens the vault, and it opens only to an admin.
 func (s *Server) handleAdminKeysGet(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
 		adminUnauthorized(w)
 		return
 	}
-	type keyView struct {
-		Key  string `json:"key"`
-		Name string `json:"name"`
+	out := map[string]any{"keys": []clientKeyView{}, "providers": []providerKeyView{}}
+	if st := s.cur(); st != nil {
+		out["keys"] = clientKeyViews(st)
+		out["providers"] = providerKeyViews(st)
 	}
-	list := s.cur().cfg.Auth.KeyList
-	keys := make([]keyView, 0, len(list))
-	for _, k := range list {
-		keys = append(keys, keyView{Key: k.Key, Name: k.Name})
-	}
-	writeJSON(w, map[string]any{"keys": keys})
+	writeJSON(w, out)
 }
 
 func (s *Server) handleAdminAliases(w http.ResponseWriter, r *http.Request) {

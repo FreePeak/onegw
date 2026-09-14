@@ -20,7 +20,8 @@ import (
 // Endpoints mirror the 9router registry (wire-captured from the official
 // CLIs). Client IDs are public (native apps); no secrets involved.
 
-// Provider describes one OAuth device-flow provider.
+// Provider describes one OAuth login profile: a device-flow dialect and, for
+// the vendors that have one, an authorization-code + PKCE browser flow.
 type Provider struct {
 	Name          string // config name: "xai", "kilocode"
 	DeviceCodeURL string // RFC 8628: where a device code is requested
@@ -28,6 +29,17 @@ type Provider struct {
 	Scope         string
 	Extra         map[string]string // form fields appended to the start request (e.g. referrer)
 	ClientID      string
+
+	// AuthURL is the authorize endpoint; non-empty opts the profile into the
+	// browser (authorization-code + PKCE) flow. CallbackPort/CallbackPath
+	// fix the loopback redirect address the vendor has registered for
+	// ClientID, and AuthExtra/Nonce carry the extra authorize parameters the
+	// real client sends (plan, referrer, nonce). See pkce.go.
+	AuthURL      string
+	CallbackPort int
+	CallbackPath string
+	AuthExtra    map[string]string
+	Nonce        bool
 
 	// MaxTokenTTL caps the lifetime onegw trusts a token to have, no
 	// matter what the vendor's expires_in claims. xAI answers 21600 (6 h)
@@ -65,6 +77,15 @@ func Lookup(name string) (Provider, bool) {
 			TokenURL:      "https://auth.x.ai/oauth2/token",
 			Scope:         "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write",
 			Extra:         map[string]string{"referrer": "grok-build"},
+			// The Grok CLI's own login: browser authorize + loopback
+			// callback on the registered fixed port. Params mirror
+			// CLIProxyAPI's BuildAuthorizeURL (via 9router), which is what
+			// this public client id is provisioned for.
+			AuthURL:      "https://auth.x.ai/oauth2/authorize",
+			CallbackPort: DefaultCallbackPort,
+			CallbackPath: "/callback",
+			AuthExtra:    map[string]string{"plan": "generic", "referrer": "cli-proxy-api"},
+			Nonce:        true,
 			// SuperGrok device tokens die silently at ~40-45 min despite
 			// the 6 h expires_in, so trust 40 and let the loop rotate.
 			MaxTokenTTL: 40 * time.Minute,

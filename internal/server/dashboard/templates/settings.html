@@ -10,7 +10,7 @@
   <span class="k">admin auth</span><span>{{if .AdminSet}}password set{{else}}<span class="pill warn">open — no admin_password</span>{{end}}</span>
 </div></div>
 
-<div class="card mb-3"><h3>Version</h3>
+<details class="card acc mb-3" data-acc="set:version"><summary>Version</summary>
 <div class="kv">
   <span class="k">running</span><span class="mono" id="upd-current">{{.UpdCurrent}}</span>
   <span class="k">latest release</span><span class="mono" id="upd-latest">{{or .UpdLatest "—"}}</span>
@@ -23,13 +23,13 @@
   <span class="text-mut" id="upd-hint"></span>
 </div>
 <pre id="upd-res" class="mono mt-2.5 text-mut">{{if .UpdErr}}last error: {{.UpdErr}}{{end}}{{if .UpdApply}} · last apply: {{.UpdApply}}{{end}}</pre>
-</div>
+</details>
 
-<div class="card mb-3" id="sections-card"><h3>Configuration sections</h3>
+<details class="card acc mb-3" id="sections-card" data-acc="set:sections"><summary>Configuration sections</summary>
 <p class="sub mb-2">Every file block the gateway reads, shown with its effective value (defaults included). Edits are spliced into <span class="mono">onegw.toml</span>, validated, and hot-reloaded — a value left at its default is removed from the file. Secrets show as dots; leave one untouched to keep it, type to replace.</p>
-<div id="sections">loading…</div></div>
+<div id="sections">loading…</div></details>
 
-<div class="card mb-3"><h3>Admin password</h3>
+<details class="card acc mb-3" data-acc="set:pw"><summary>Admin password</summary>
 <p class="sub mb-2">Takes effect immediately and signs every session out — including this one. Leave the new password blank to generate a strong one.</p>
 <div class="grid grid-cols-2 gap-3">
   <div class="field"><label for="pw-cur">current password <b>*</b></label><input id="pw-cur" type="password" autocomplete="current-password"></div>
@@ -39,11 +39,11 @@
   <button class="btn primary" id="pw-save">Change password</button>
   <span class="text-mut" id="pw-hint"></span>
 </div>
-<pre id="pw-res" class="mono mt-2.5 text-mut"></pre></div>
+<pre id="pw-res" class="mono mt-2.5 text-mut"></pre></details>
 
-<div class="card mb-3"><h3>Gateway keys</h3>
-<p class="sub mb-2">The bearer keys clients send as <code class="chip">Authorization: Bearer …</code>. Fetched on demand from <code class="chip">GET /admin/config/keys</code> — they are never server-rendered into this page.</p>
-<div id="keys-list" class="kv"></div></div>
+<div class="card mb-3"><h3>API keys</h3>
+<p class="sub mb-2">Client keys and provider credentials now live on their own page, where they can be
+added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></p></div>
 
 <div class="card mb-3"><h3>Maintenance</h3>
 <div class="flex items-center gap-2.5">
@@ -52,13 +52,15 @@
 </div>
 <pre id="reload-res" class="mono mt-2.5 text-mut"></pre></div>
 
-<div class="card"><h3>Admin API</h3>
+<details class="card acc" data-acc="set:api"><summary>Admin API</summary>
 <div class="kv">
   <span class="k">JSON (flat, stable)</span><span class="mono">/admin/health · /admin/usage · /admin/quota · /admin/config</span>
   <span class="k">JSON (grouped)</span><span class="mono">/admin/api/v1/{usage/daily,logs,providers,combos,quota,saver}</span>
   <span class="k">auth</span><span class="mono">X-Admin-Password header · or session cookie via POST /admin/login</span>
   <span class="k">password</span><span class="mono">PUT /admin/config/password {"current_password","new_password"} — blank new = generated</span>
-</div></div>
+  <span class="k">credentials</span><span class="mono">GET · PATCH /admin/config/keys — client keys + provider account keys (plaintext, admin only)</span>
+  <span class="k">models</span><span class="mono">GET /admin/api/v1/models · POST /admin/config/providers/{name}/models/fetch</span>
+</div></details>
 {{end}}
 {{define "scripts"}}
 <script>
@@ -117,36 +119,7 @@
     anchor.after(btn);
   };
 })();
-// Gateway keys: fetched (never server-rendered — GET /admin/config's masking
-// posture stays intact), one copy button per key with the full key as
-// payload. Labels fall back to the key itself for unnamed flat entries.
-(function(){
-  var list = document.getElementById('keys-list');
-  if (!list) return;
-  fetch('/admin/config/keys').then(function(r){
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(function(j){
-    var keys = (j && j.keys) || [];
-    if (!keys.length) { list.textContent = 'none — [auth] keys is empty'; return; }
-    keys.forEach(function(k){
-      var label = document.createElement('span');
-      label.className = 'k mono';
-      label.style.overflowWrap = 'anywhere'; // 170px label column, long keys wrap
-      label.textContent = k.name || k.key;
-      var b = document.createElement('button');
-      b.className = 'btn copy sm';
-      b.type = 'button';
-      b.dataset.copy = k.key;
-      b.setAttribute('aria-label', 'copy gateway key ' + (k.name || k.key));
-      b.textContent = 'copy';
-      var cell = document.createElement('span');
-      cell.appendChild(b);
-      list.appendChild(label);
-      list.appendChild(cell);
-    });
-  }).catch(function(e){ list.textContent = 'keys unavailable: ' + e.message; });
-})();
+
 </script>
 <script>
 (function(){

@@ -416,7 +416,21 @@ out — the new password is required immediately).
   your OS preference on first visit, and the `◐` header button persists
   your choice — the screenshot at the top of this README shows the dark theme.
 
-Eight more pages complete the console:
+The sidebar is three groups — **Monitor** (overview, usage, console log),
+**Configure** (providers, models, API keys, combos) and **Administer** (quota,
+token saver, CLI tools, settings) — and long config collapses. Every provider
+card is a disclosure whose summary row carries the enable switch, the kind, the
+decode-speed and the status pills; base URL, account pool, quota windows,
+subscription state and the advertised ids sit behind it. A card that is *not*
+finished opens itself and says why on the summary (`no credential`,
+`sign you@example.com in`), so nothing that needs you is ever behind a click —
+and any card you open or close by hand stays that way across reloads
+(`localStorage`, like the theme and the rails). The provider editor collapses
+the rarely-touched groups the same way: *routing limits* (concurrency, sticky,
+quota window and limits) and *wire dialect* (responses-only ids, upstream quota
+profile), leaving name, kind, base URL, key and models in view.
+
+Ten more pages complete the console:
 
 - **Usage** — per `provider/model` rollups over today / 7 days / 1 month /
   all time, with uPlot charts (stacked tokens and request counts). The same
@@ -438,6 +452,31 @@ Eight more pages complete the console:
   `name, key` per line; a bare line is the key, and choosing a sign-in service
   makes it the account name), so a freshly added account is immediately
   visible and is first in the order written to `onegw.toml`.
+- **API Keys** — one page for every credential onegw holds, in both
+  directions: the **client keys** your CLIs send as
+  `Authorization: Bearer …`, and the **upstream key** each provider account
+  sends out. Rows are masked on screen, every one has a copy button that puts
+  the plaintext on your clipboard, a client key is added (paste one, or generate
+  32 random bytes) or removed in place, and a provider key is replaced or
+  removed per account without opening the provider editor — the untouched
+  accounts and every other field of the block are carried over verbatim.
+  Clearing a provider's last credential, or removing its last client key, is
+  refused rather than applied. Subscribed accounts show `oauth · xai` and hand
+  you back to the provider card's **Sign in**. `GET /admin/config/keys` returns
+  both families in full and `PATCH /admin/config/keys` takes `add`/`remove` plus
+  `provider_set`/`provider_clear`; plaintext is served only to an authenticated
+  admin and never server-rendered into the page.
+- **Models** — what each provider advertises against what it actually serves.
+  Clicking an id copies `provider/model`, the exact string a CLI puts in its
+  model field (short lists render unfolded; longer ones collapse). **↻ Fetch**
+  asks that provider's own catalog endpoint (`/v1/models`, or `/v1beta/models`
+  for a `gemini` kind), trying its accounts in turn; opening the page fires the
+  same probe in the background for anything not yet known, and **↻ Fetch all**
+  re-asks everything. Answers are cached per provider (6 h, with a short back-off
+  after a failure) and `GET /admin/api/v1/models` serves the rows. **Pin** is the
+  only button that writes config, because a provider with no `models` list is
+  *pass-through* — advertising a list restricts what routes there, so that stays
+  an explicit choice.
 - **Quota / Token Saver** — read-only: local quota windows with reset
   countdowns, upstream-reported subscription windows (OpenCode Go,
   z.ai GLM Coding Plan — see below), and token-saver stats.
@@ -952,8 +991,10 @@ page's `parked` marker shows it. `onegw-oauth login` is always run against the
 ### Grok subscriptions (SuperGrok / Grok Build)
 
 A consumer **SuperGrok** (or X Premium/Premium+/SuperGrok Heavy) plan is
-reachable with one `auth.x.ai` device-code session — no API key and no
-per-token billing. xAI exposes that same session on two surfaces, and onegw
+reachable with one `auth.x.ai` session — no API key and no per-token billing.
+The dashboard signs in with xAI's own browser flow (authorization-code + PKCE,
+loopback callback); `onegw-oauth login` and `?flow=device` use the RFC 8628
+device code. Both end in the same stored credential. xAI exposes that same session on two surfaces, and onegw
 can front either:
 
 | surface | base URL | wire | notes |
@@ -998,11 +1039,24 @@ does — no TOML editing, no shell:
    writes both `[[providers.accounts]]` and the matching `[[oauth.accounts]]`
    entry (`service = "xai"`) into `onegw.toml` and hot-reloads the running
    gateway.
-3. The card now shows `you@example.com · xai · signed-out` with **Sign in**.
-   Clicking it starts the device flow and displays the **code** and the
-   activation link; approve in the browser and the dialog follows the login by
-   itself, flipping the badge to `signed-in · <expiry>` — no restart, and the
-   token lives in `<data_dir>/oauth-tokens.json` (0600), never in the config.
+3. The card now shows `you@example.com · xai · signed-out` with **Sign in** —
+   and it opens itself until you are signed in. Clicking it starts xAI's own
+   login: onegw builds the authorization-code + PKCE URL for the public Grok
+   client (`S256` challenge, `state`, `nonce`, `plan=generic`) and opens it,
+   then receives the vendor's redirect on a loopback listener it owns —
+   `http://127.0.0.1:56121/callback`, the address that client registers, which
+   is also what 9router binds. The exchange happens server-side against
+   `https://auth.x.ai/oauth2/token`, the token goes straight into
+   `<data_dir>/oauth-tokens.json` (0600, never the config), and the card flips
+   to `signed-in · <expiry>` on its own: no code to read out of a screen, no
+   restart. The listener exists only while a sign-in is pending.
+   Two ways in when your browser is not on the gateway's host (an SSH forward,
+   a Docker dashboard): paste the callback URL or its `code` into the dialog's
+   **Paste the code back** box (`POST /admin/config/oauth/exchange` finishes the
+   same pending session), or click **Use a device code instead** for the RFC 8628
+   flow the CLI still uses (`?flow=device` on the login call). Set
+   `oauth.callback_port` in `onegw.toml` when something else on the box already
+   holds 56121.
    **Sign out** deletes that token and leaves the config (and the wiring) in
    place: until the next sign-in the account serves with its static `api_key` if
    it has one, and is benched by the upstream `401`/`403` if it does not.

@@ -2,12 +2,21 @@ package server
 
 // Dashboard OAuth sign-in endpoints — the UI twin of the onegw-oauth CLI for
 // [[oauth.accounts]] entries. A Grok / SuperGrok subscription account has no
-// API key to paste: its credential is an RFC 8628 device-flow login, so the
-// dashboard needs to start that flow and show the URL + user code.
+// API key to paste: its credential is an OAuth login, so the dashboard has to
+// start one and follow it. Two dialects, picked by the service profile:
 //
-//	GET  /admin/config/oauth/accounts        — sign-in state of every entry
-//	POST /admin/config/oauth/login?key=K     — start the device flow for K
-//	POST /admin/config/oauth/logout?key=K    — drop K's stored token
+//   - browser (authorization-code + PKCE) — the default wherever the profile
+//     publishes an authorize endpoint (xAI). The operator opens the link, and
+//     the vendor redirects back to a loopback address this process owns; see
+//     admin_oauth_browser.go. No code to type.
+//   - device (RFC 8628) — the fallback for every profile, and the only option
+//     when the browser cannot reach this host (`?flow=device`).
+//
+//	GET    /admin/config/oauth/accounts          — sign-in state of every entry
+//	POST   /admin/config/oauth/login?key=K       — start (or re-offer) K's login
+//	POST   /admin/config/oauth/exchange?key=K    — finish a browser login from a
+//	                                               pasted code/callback URL
+//	POST   /admin/config/oauth/logout?key=K      — drop K's stored token
 //
 // K is the token-store key "provider/account" of a configured entry; it goes
 // in a query parameter because the account part is often an email address
@@ -21,7 +30,7 @@ package server
 // returns the prompt as soon as the authorization server issues it; the
 // dashboard polls `accounts` until the state flips to signed-in. Starting
 // while a login is already pending returns that same prompt instead of a
-// second flow, because xAI rotates device sessions — two live logins for one
+// second flow, because xAI rotates sessions — two live logins for one
 // account knock each other out (README § Grok subscriptions).
 //
 // Pending prompts are process-local: a restart or a reload drops them (finish
@@ -31,6 +40,7 @@ package server
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -40,37 +50,52 @@ import (
 	"onegw/internal/oauth"
 )
 
-// oauthPrompt is the operator-facing half of oauth.DeviceStart: what to open
-// and what to type. The device code itself stays server-side — it is the
-// polling credential, not something to display.
+// oauthPrompt is the operator-facing half of a login: what to open, and for
+// the device dialect what to type. The device code and the PKCE verifier stay
+// server-side — they are the polling/exchange credentials, not something to
+// display.
 type oauthPrompt struct {
+	Mode                    string `json:"mode"` // "browser" | "device"
 	VerificationURL         string `json:"verification_uri"`
 	VerificationURLComplete string `json:"verification_uri_complete,omitempty"`
-	UserCode                string `json:"user_code"`
+	UserCode                string `json:"user_code,omitempty"`  // device only
 	ExpiresAt               string `json:"expires_at,omitempty"` // RFC 3339; "" if the server said nothing
-	Interval                int    `json:"interval,omitempty"`   // poll cadence, seconds
+	Interval                int    `json:"interval,omitempty"`   // poll cadence, seconds; device only
 }
 
-// oauthLogin is one device-flow attempt. `finished` distinguishes a live
+// oauthLogin is one login attempt. `finished` distinguishes a live
 // flow (whose prompt must be re-offered to a second caller) from a terminal
-// one whose error is still worth showing until the next attempt.
+// one whose error is still worth showing until the next attempt. `pkce` is
+// set for a browser flow: the pending verifier, keyed by state.
 type oauthLogin struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	prompt   oauthPrompt
 	finished bool
 	err      string
+	pkce     *oauth.PKCESession
 }
 
-// oauthAdmin is the server's device-flow registry. It lives on the Server
+// oauthAdmin is the server's login registry. It lives on the Server
 // (not the reloadable state) so a SIGHUP mid-login cannot orphan the
-// goroutine that holds the polling credential.
+// goroutine that holds the polling credential, nor the loopback listener
+// awaiting a browser callback.
 type oauthAdmin struct {
 	mu     sync.Mutex
 	active map[string]*oauthLogin // by store key
+
+	// Browser-flow listener: one loopback server shared by every pending
+	// login, opened on demand and closed when the last one settles.
+	states       map[string]string // OAuth state -> store key of the login awaiting it
+	callbackBase string            // "http://127.0.0.1:PORT" of the live listener; "" when closed
+	ln           net.Listener
+	srv          *http.Server
+	idle         *time.Timer // closes the listener when nothing is pending
 }
 
-func newOauthAdmin() *oauthAdmin { return &oauthAdmin{active: map[string]*oauthLogin{}} }
+func newOauthAdmin() *oauthAdmin {
+	return &oauthAdmin{active: map[string]*oauthLogin{}, states: map[string]string{}}
+}
 
 // oauthState is one [[oauth.accounts]] entry as the dashboard sees it.
 type oauthState struct {
@@ -94,6 +119,13 @@ const (
 	oauthPending   = "pending"
 	oauthSignedOut = "signed-out"
 	oauthFailed    = "failed"
+)
+
+// OAuth dialects, in `oauthPrompt.Mode`. Browser is the default wherever the
+// service profile publishes an authorize endpoint; device is the fallback.
+const (
+	oauthModeBrowser = "browser"
+	oauthModeDevice  = "device"
 )
 
 // oauthKeyParam reads and validates the store key of an oauth request.
@@ -129,6 +161,9 @@ func (s *Server) spec(key string) (oauth.AccountSpec, config.OAuthAccount, bool)
 		}
 		if a.Scope != "" {
 			p.Scope = a.Scope
+		}
+		if port := st.cfg.OAuth.CallbackPort; port > 0 {
+			p.CallbackPort = port
 		}
 		return oauth.AccountSpec{Key: key, Provider: p}, a, true
 	}
@@ -220,7 +255,11 @@ func expired(rfc3339 string) bool {
 	return err ***REMOVED*** nil && !time.Now().Before(t)
 }
 
-// handleAdminOAuthLogin starts (or re-offers) the device flow for one account.
+// handleAdminOAuthLogin starts (or re-offers) one account's sign-in. The
+// service profile decides the dialect: browser (authorize URL + loopback
+// callback) where the vendor publishes one, device flow otherwise — and
+// `?flow=device` forces the device dialect on a browser-capable profile, for
+// an operator whose browser cannot reach this host's callback port.
 func (s *Server) handleAdminOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.adminOK(r) {
 		adminUnauthorized(w)
@@ -236,6 +275,7 @@ func (s *Server) handleAdminOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusNotFound, "no OAuth account "+key+" — tick the subscription box on that account in the provider editor and save first")
 		return
 	}
+	browser := spec.Provider.BrowserFlow() && r.URL.Query().Get("flow") != "device"
 
 	s.oa.mu.Lock()
 	if cur := s.oa.active[key]; cur != nil && !cur.finished {
@@ -248,6 +288,27 @@ func (s *Server) handleAdminOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	lg := &oauthLogin{cancel: cancel, done: make(chan struct{})}
 	s.oa.active[key] = lg
 	s.oa.mu.Unlock()
+
+	if browser {
+		// xAI's own login: the operator opens a link and the vendor's redirect
+		// comes back to a loopback port we own — nothing to read out or type.
+		// The authorize URL is built locally, so the response carries it
+		// immediately; a failure to bind the callback port is reported as-is,
+		// and `?flow=device` is the way around it.
+		if err := s.startBrowserLogin(key, spec, lg); err != nil {
+			s.oa.mu.Lock()
+			delete(s.oa.active, key)
+			s.oa.mu.Unlock()
+			cancel()
+			adminError(w, http.StatusServiceUnavailable, "browser sign-in unavailable: "+err.Error())
+			return
+		}
+		s.oa.mu.Lock()
+		p := lg.prompt
+		s.oa.mu.Unlock()
+		writeJSON(w, map[string]any{"key": key, "state": oauthPending, "prompt": p})
+		return
+	}
 
 	go s.runDeviceFlow(ctx, lg, spec)
 
@@ -270,6 +331,19 @@ func (s *Server) handleAdminOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"key": key, "state": state, "prompt": p, "error": errText})
 }
 
+// finishOAuthLogin is what a successful sign-in of either dialect does once
+// the token is in the store: clear any terminal billing verdict that account
+// earned with the OLD credential (otherwise it stays out of rotation until an
+// operator notices the reset button) and tell every dashboard tab.
+func (s *Server) finishOAuthLogin(key string) {
+	if st := s.cur(); st != nil && st.pool != nil {
+		if def, ok := st.pool.Get(providerOf(key)); ok {
+			def.RevalidateByName(accountOf(key))
+		}
+	}
+	s.events.publish("config", `{"oauth":`+jsonString(key)+`,"state":"signed-in"}`)
+}
+
 // runDeviceFlow drives one login to completion: the manager polls the
 // provider, stores the token on success, and the prompt callback publishes
 // what the operator must enter. Called in its own goroutine.
@@ -277,6 +351,7 @@ func (s *Server) runDeviceFlow(ctx context.Context, lg *oauthLogin, spec oauth.A
 	defer close(lg.done)
 	tok, err := s.oauth.Login(ctx, spec, func(ds oauth.DeviceStart) {
 		p := oauthPrompt{
+			Mode:                    oauthModeDevice,
 			VerificationURL:         ds.VerificationURL,
 			VerificationURLComplete: ds.VerificationURLComplete,
 			UserCode:                ds.UserCode,
@@ -300,20 +375,12 @@ func (s *Server) runDeviceFlow(ctx context.Context, lg *oauthLogin, spec oauth.A
 		s.events.publish("config", `{"oauth":`+jsonString(spec.Key)+`,"state":"failed"}`)
 		return
 	}
-	// A re-login replaces the credential that earned a terminal verdict, so
-	// clear it: otherwise the freshly signed-in account stays out of rotation
-	// until an operator notices the reset button.
-	if st := s.cur(); st != nil && st.pool != nil {
-		if def, ok := st.pool.Get(providerOf(spec.Key)); ok {
-			def.RevalidateByName(accountOf(spec.Key))
-		}
-	}
 	expiry := "no expiry known"
 	if !tok.ExpiresAt.IsZero() {
 		expiry = tok.ExpiresAt.Format(time.RFC3339)
 	}
 	log.Printf("admin: oauth login %s signed in (token stored, %s)", spec.Key, expiry)
-	s.events.publish("config", `{"oauth":`+jsonString(spec.Key)+`,"state":"signed-in"}`)
+	s.finishOAuthLogin(spec.Key)
 }
 
 // providerOf / accountOf split a "provider/account" store key. Provider names

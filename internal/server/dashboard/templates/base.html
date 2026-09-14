@@ -97,6 +97,20 @@
     };
     sync();
   })();
+  // Accordions remember their operator. Every <details data-acc="id"> starts
+  // open or closed as the server decided (a provider card opens only when it
+  // still needs something), but once the operator clicks, their choice wins and
+  // survives a reload — same persistence as the theme and the two rails.
+  (function(){
+    var K='ogw-acc:';
+    document.querySelectorAll('details[data-acc]').forEach(function(d){
+      var v=localStorage.getItem(K+d.dataset.acc);
+      if(v!***REMOVED***null) d.open = v***REMOVED***='1';            // before the listener: no write-back
+      d.addEventListener('toggle', function(){
+        localStorage.setItem(K+d.dataset.acc, d.open?'1':'0');
+      });
+    });
+  })();
   // Toast helper: transient feedback for admin actions (auto-dismiss 4s).
   window.ogwToast=function(msg,ok){
     var box=document.getElementById('toasts');

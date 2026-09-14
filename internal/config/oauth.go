@@ -11,6 +11,12 @@ import "fmt"
 // OAuthCfg groups the device-flow accounts: [[oauth.accounts]].
 type OAuthCfg struct {
 	Accounts []OAuthAccount `toml:"accounts"`
+	// CallbackPort overrides the loopback port a browser (PKCE) sign-in binds
+	// for its redirect. 0 = the service profile's registered port (xAI: 56121,
+	// the one the public Grok client and 9router use). Set it only when
+	// something else on the box holds that port — the vendor has to accept the
+	// resulting redirect URI, which is guaranteed only for the registered one.
+	CallbackPort int `toml:"callback_port"`
 }
 
 type OAuthAccount struct {

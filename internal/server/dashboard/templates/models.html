@@ -1,0 +1,169 @@
+{{define "hdr"}}<span>{{len .Rows}} providers · click an id to copy it</span>
+<button class="btn sm" id="fetchall" type="button">↻ Fetch all</button>{{end}}
+{{define "content"}}
+<p class="sub mb-3">An id is <code class="chip">provider/model</code> — the string a CLI puts in its model
+field, and clicking one copies it. <b>Advertised</b> is what onegw.toml lists; an empty list means
+pass-through, where any <code class="chip">provider/anything</code> routes there. <b>Upstream</b> is what
+the provider's own catalog endpoint answered — fetched in the background when this page opens, on
+demand with ↻, and never written to config until you Pin it.</p>
+<div class="pgrid">
+{{range .Rows}}
+{{$n := .Provider}}
+<div class="card pcard{{if .Disabled}} off{{end}}" data-prov="{{$n}}">
+  <div class="ptop">
+    <h3 class="normal-case text-[14px] tracking-[-0.01em] text-fg">{{$n}}</h3>
+    {{if .Disabled}}<span class="pill warn">off</span>{{end}}
+    <span class="pill ml-auto">{{.Kind}}</span>
+    <button class="btn sm" data-fetch="{{$n}}" type="button" title="ask {{$n}} what it serves">↻ Fetch</button>
+    <button class="btn sm" data-save="{{$n}}" type="button" title="write the upstream list into onegw.toml"{{if not .Discovered}} hidden{{end}}>Pin</button>
+  </div>
+  <div class="kv mb-2">
+    <span class="k">advertised</span><span>{{if .Configured}}{{len .Configured}} model{{if gt (len .Configured) 1}}s{{end}}{{else}}<span class="pill">pass-through · any id</span>{{end}}</span>
+    <span class="k">upstream</span><span data-role="meta">{{if .Discovered}}{{len .Discovered}} ids · {{.FetchedAt}}{{else if .Error}}<span class="pill err" title="{{.Error}}">fetch failed</span>{{else}}not fetched yet{{end}}</span>
+  </div>
+  {{if .Configured}}<details class="acc" data-acc="models:{{$n}}"{{if .ShowOpen}} open{{end}}>
+    <summary>{{len .Configured}} advertised — click an id to copy</summary>
+    <div class="mono mt-2 leading-8">{{range .Configured}}<button class="chip copy" data-copy="{{$n}}/{{.}}" type="button" title="copy {{$n}}/{{.}}" aria-label="copy model id {{$n}}/{{.}}">{{$n}}/{{.}}</button> {{end}}</div>
+  </details>{{end}}
+  <details class="acc" data-acc="upstream:{{$n}}"{{if not .Discovered}} hidden{{end}}{{if and .ShowOpen .Discovered}} open{{end}}>
+    <summary data-role="sum">upstream catalog{{if .Discovered}} · {{len .Discovered}} ids — click to copy{{end}}</summary>
+    <div class="mono mt-2 leading-8" data-role="list">{{range .Discovered}}<button class="chip copy" data-copy="{{$n}}/{{.}}" type="button" title="copy {{$n}}/{{.}}">{{$n}}/{{.}}</button> {{end}}</div>
+  </details>
+  <pre class="mono mt-2 text-mut" data-role="res" hidden></pre>
+</div>
+{{else}}
+<div class="tblwrap"><div class="empty">no providers configured — add one under Providers</div></div>
+{{end}}
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+// One card, one POST. Discovery fills the card in place; Pin is the only path
+// that writes config, because an advertised list RESTRICTS routing (empty means
+// pass-through), so it is never a side effect of looking.
+(function(){
+  var cards = {};
+  document.querySelectorAll('[data-prov]').forEach(function(card){
+    var p = card.dataset.prov;
+    cards[p] = card;
+    var list = card.querySelector('[data-role=list]'),
+        box = card.querySelector('[data-role=sum]').parentElement,
+        sum = card.querySelector('[data-role=sum]'),
+        meta = card.querySelector('[data-role=meta]'),
+        res = card.querySelector('[data-role=res]'),
+        fetchBtn = card.querySelector('[data-fetch]'),
+        saveBtn = card.querySelector('[data-save]');
+    var last = [];
+
+    // Chip rows are built with createElement + textContent: a model id is
+    // vendor data, and the copy payload must be exactly the text shown.
+    function render(ids){
+      last = ids || [];
+      list.innerHTML = '';
+      last.forEach(function(id){
+        var b = document.createElement('button');
+        b.className = 'chip copy';
+        b.type = 'button';
+        b.dataset.copy = p + '/' + id;
+        b.title = 'copy ' + p + '/' + id;
+        b.textContent = p + '/' + id;
+        list.appendChild(b);
+        list.appendChild(document.createTextNode(' '));
+      });
+      box.hidden = !last.length;
+      sum.textContent = 'upstream catalog · ' + last.length + ' ids — click to copy';
+      saveBtn.hidden = !last.length;
+    }
+    function say(msg, bad){
+      res.hidden = !msg;
+      res.textContent = msg || '';
+      res.className = 'mono mt-2 ' + (bad ? 'text-err' : 'text-mut');
+    }
+    function stamp(){
+      meta.textContent = last.length ? last.length + ' ids · just now' : meta.textContent;
+    }
+
+    function ask(apply){
+      fetchBtn.disabled = true; fetchBtn.textContent = '…';
+      say(apply ? 'pinning…' : 'asking ' + p + '…');
+      fetch('/admin/config/providers/' + encodeURIComponent(p) + '/models/fetch', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({apply: !!apply})
+      }).then(function(r){
+        return r.json().catch(function(){ return {}; }).then(function(j){ return {ok: r.ok, j: j}; });
+      }).then(function(r2){
+        var msg = (r2.j.error && (r2.j.error.message || r2.j.error)) || ('fetch failed (HTTP ' + (r2.j.status || '?') + ')');
+        if (!r2.ok) { say(msg, true); return; }
+        var ids = r2.j.models || [];
+        render(ids); stamp();
+        say(r2.j.applied ? ids.length + ' ids pinned into onegw.toml' : ids.length + ' ids fetched — Pin to advertise them');
+        if (r2.j.applied) ogwToast(p + ': ' + ids.length + ' models pinned');
+      }).catch(function(e){ say('fetch failed: ' + e.message, true); })
+        .finally(function(){ fetchBtn.disabled = false; fetchBtn.textContent = '↻ Fetch'; });
+    }
+
+    fetchBtn.onclick = function(){ ask(false); };
+    saveBtn.onclick = function(){
+      if (!confirm('Pin ' + last.length + ' upstream ids into ' + p + '’s models list?\n\n'
+        + 'That replaces pass-through: only these ids will route to this provider.')) return;
+      ask(true);
+    };
+  });
+
+  // The background pass the page load kicked off answers a few seconds after
+  // first paint, so refresh whatever is still blank — then stop.
+  var empty = Object.keys(cards).filter(function(p){
+    var c = cards[p];
+    return !c.querySelector('[data-role=list]').children.length && c.querySelector('[data-role=meta]').textContent.indexOf('failed') < 0;
+  });
+  if (empty.length) {
+    var tries = 0;
+    var tick = setInterval(function(){
+      if (++tries > 10) { clearInterval(tick); return; }
+      fetch('/admin/api/v1/models').then(function(r){ return r.ok ? r.json() : []; }).then(function(rows){
+        var settled = true;
+        (rows || []).forEach(function(row){
+          var c = cards[row.provider];
+          if (!c) return;
+          var list = c.querySelector('[data-role=list]');
+          var ids = row.discovered || [];
+          if (!ids.length) { if (row.pending) settled = false; return; }
+          if (list.children.length) return;
+          var sum = c.querySelector('[data-role=sum]');
+          ids.forEach(function(id){
+            var b = document.createElement('button');
+            b.className = 'chip copy'; b.type = 'button';
+            b.dataset.copy = row.provider + '/' + id;
+            b.title = 'copy ' + row.provider + '/' + id;
+            b.textContent = row.provider + '/' + id;
+            list.appendChild(b); list.appendChild(document.createTextNode(' '));
+          });
+          sum.parentElement.hidden = false;
+          sum.textContent = 'upstream catalog · ' + ids.length + ' ids — click to copy';
+          c.querySelector('[data-save]').hidden = false;
+          c.querySelector('[data-role=meta]').textContent = ids.length + ' ids · ' + (row.fetched_at || 'just now');
+        });
+        if (settled) clearInterval(tick);
+      }).catch(function(){ clearInterval(tick); });
+    }, 1500);
+  }
+
+  var all = document.getElementById('fetchall');
+  if (all) all.onclick = function(){
+    all.disabled = true; all.textContent = '…';
+    var btns = Object.keys(cards).map(function(p){ return cards[p].querySelector('[data-fetch]'); });
+    btns.forEach(function(b, i){ setTimeout(function(){ b.click(); }, i * 300); });
+    setTimeout(function(){ all.disabled = false; all.textContent = '↻ Fetch all'; }, btns.length * 300 + 20000);
+  };
+
+  // A pin (anywhere, any tab) is a config change: re-render this list.
+  var es = new EventSource('/admin/events?topics=config');
+  var pending = false;
+  es.addEventListener('config', function(){
+    if (pending) return;
+    pending = true;
+    setTimeout(function(){ location.reload(); }, 600);
+  });
+})();
+</script>
+{{end}}

@@ -93,10 +93,15 @@ type Server struct {
 	reqlog   *requestLog
 	// retainStop closes the daily rollup-prune loop on Close.
 	retainStop chan struct{}
-	// oa holds the dashboard's in-flight OAuth device-flow logins. It sits
-	// on the Server (not the reloadable state) so a config swap mid-login
-	// cannot orphan the goroutine holding the polling credential.
+	// oa holds the dashboard's in-flight OAuth logins (device and browser
+	// dialects). It sits on the Server (not the reloadable state) so a config
+	// swap mid-login cannot orphan the goroutine holding the polling
+	// credential nor the loopback listener awaiting a browser callback.
 	oa *oauthAdmin
+	// models caches each provider's discovered upstream catalog, so the
+	// models page and the providers grid can show what a key actually serves
+	// without re-probing the vendor on every poll.
+	models *modelCache
 	// cfgMu serializes admin config mutations so concurrent PATCH/reload
 	// read-modify-write cycles on the TOML file stay atomic.
 	cfgMu sync.Mutex
@@ -120,7 +125,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), dataDir: dataDir,
 		sessions: newAdminSessions(), logins: newLoginGuard(), events: newSSEHub(), reqlog: newRequestLog(),
-		oa: newOauthAdmin()}
+		oa: newOauthAdmin(), models: newModelCache()}
 	s.m = newGatewayMetrics()
 	s.m.srv = s
 	s.reqlog.next = s.events
@@ -446,6 +451,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/config/oauth/accounts", s.handleAdminOAuthAccounts)
 	mux.HandleFunc("POST /admin/config/oauth/login", s.handleAdminOAuthLogin)
 	mux.HandleFunc("POST /admin/config/oauth/logout", s.handleAdminOAuthLogout)
+	mux.HandleFunc("POST /admin/config/oauth/exchange", s.handleAdminOAuthExchange)
+	mux.HandleFunc("GET /admin/api/v1/models", s.handleAPIModels)
+	mux.HandleFunc("POST /admin/config/providers/{name}/models/fetch", s.handleAdminModelFetch)
 	mux.HandleFunc("PUT /admin/config/combos", s.handleAdminComboEdit)
 	mux.HandleFunc("GET /admin/config/sections", s.handleAdminSectionsGet)
 	mux.HandleFunc("PUT /admin/config/sections", s.handleAdminSectionsPut)

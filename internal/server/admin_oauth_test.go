@@ -10,8 +10,11 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -197,8 +200,9 @@ func waitOAuthState(t *testing.T, h http.Handler, key, want string) {
 }
 
 // TestOAuthSignInFromDashboardEndToEnd walks the whole UI path: a device-flow
-// login started from the endpoint stores the token and the gateway then sends
-// it upstream. Without the token the request would carry the empty static key,
+// login (the forced dialect; xAI's default is the browser flow, covered below)
+// started from the endpoint stores the token and the gateway then sends it
+// upstream. Without the token the request would carry the empty static key,
 // so the recorded bearer is what proves the wiring.
 func TestOAuthSignInFromDashboardEndToEnd(t *testing.T) {
 	idp := &oauthIdP{}
@@ -209,7 +213,7 @@ func TestOAuthSignInFromDashboardEndToEnd(t *testing.T) {
 		t.Fatalf("fresh account state = %q, want signed-out", state)
 	}
 
-	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main&flow=device", "", true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("login: %d %s", w.Code, w.Body.String())
 	}
@@ -256,7 +260,7 @@ func TestOAuthLoginReoffersPendingPrompt(t *testing.T) {
 	idpURL, upstreamURL := idp.start(t)
 	_, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
 
-	first := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	first := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main&flow=device", "", true)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first login: %d %s", first.Code, first.Body.String())
 	}
@@ -265,7 +269,7 @@ func TestOAuthLoginReoffersPendingPrompt(t *testing.T) {
 	}
 
 	// A second click re-offers the prompt: same user code, one device start.
-	second := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	second := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main&flow=device", "", true)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second login: %d %s", second.Code, second.Body.String())
 	}
@@ -300,7 +304,7 @@ func TestOAuthLogoutDeletesStoredToken(t *testing.T) {
 	_, h, path := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
 	before := mustReadFile(t, path)
 
-	adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main&flow=device", "", true)
 	waitOAuthState(t, h, "xai/main", "signed-in")
 
 	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/logout?key=xai/main", "", true)
@@ -375,7 +379,7 @@ func TestProviderEditorWritesAndClearsOAuthEntry(t *testing.T) {
 
 	// The new account is addressable for sign-in right away (its own entry,
 	// not a borrower), which is what makes the UI flow work without a restart.
-	if w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=grokbuild2/ops@example.com", "", true); w.Code != http.StatusOK {
+	if w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=grokbuild2/ops@example.com&flow=device", "", true); w.Code != http.StatusOK {
 		t.Fatalf("login on the new account: %d %s", w.Code, w.Body.String())
 	}
 
@@ -743,4 +747,239 @@ kind = "openai"
 base_url = "` + upstreamURL + `"
 models = ["m1"]
 `
+}
+
+// ---------------------------------------------------------------------------
+// Browser (authorization-code + PKCE) sign-in — the default for xAI
+// ---------------------------------------------------------------------------
+
+// ephemeralCallbackPort binds the loopback listener to :0 instead of xAI's
+// registered 56121, so the suite never fights a real login helper for the port.
+func ephemeralCallbackPort(t *testing.T) {
+	t.Helper()
+	old := browserCallbackPort
+	browserCallbackPort = 0
+	t.Cleanup(func() { browserCallbackPort = old })
+}
+
+// browserPrompt is the login response's operator-facing half.
+type browserPrompt struct {
+	Key    string `json:"key"`
+	State  string `json:"state"`
+	Prompt *struct {
+		Mode      string `json:"mode"`
+		VerifyURL string `json:"verification_uri_complete"`
+		UserCode  string `json:"user_code"`
+	} `json:"prompt"`
+}
+
+// TestOAuthBrowserSignInEndToEnd is the whole point of the xAI revamp: the
+// dashboard hands back a sign-in link, the vendor's redirect lands on our
+// loopback port, and the token that comes out of the exchange is the bearer
+// the gateway sends upstream — with no code for the operator to type.
+func TestOAuthBrowserSignInEndToEnd(t *testing.T) {
+	ephemeralCallbackPort(t)
+	idp := &oauthIdP{}
+	idpURL, upstreamURL := idp.start(t)
+	_, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", w.Code, w.Body.String())
+	}
+	bp := decodeJSON[browserPrompt](t, w.Body.String())
+	if bp.Prompt ***REMOVED*** nil || bp.Prompt.Mode != "browser" {
+		t.Fatalf("xAI must default to the browser dialect: %s", w.Body.String())
+	}
+	if bp.Prompt.UserCode != "" {
+		t.Fatalf("a browser login has no code to type, got %q", bp.Prompt.UserCode)
+	}
+	authURL, err := url.Parse(bp.Prompt.VerifyURL)
+	if err != nil {
+		t.Fatalf("authorize url %q: %v", bp.Prompt.VerifyURL, err)
+	}
+	q := authURL.Query()
+	// The parameters the public Grok client is provisioned for; a missing or
+	// misspelled one is an invalid_request on xAI's side, invisible to us
+	// until an operator stares at a failed login page.
+	for key, want := range map[string]string{
+		"response_type":         "code",
+		"client_id":             "test-client", // the config override wins
+		"scope":                 "api:access",
+		"code_challenge_method": "S256",
+		"plan":                  "generic",
+		"referrer":              "cli-proxy-api",
+	} {
+		if got := q.Get(key); got != want {
+			t.Fatalf("authorize %s = %q, want %q (url %s)", key, got, want, authURL)
+		}
+	}
+	if q.Get("code_challenge") ***REMOVED*** "" || q.Get("nonce") ***REMOVED*** "" || q.Get("state") ***REMOVED*** "" {
+		t.Fatalf("authorize must carry challenge/state/nonce: %s", authURL)
+	}
+	callback, err := url.Parse(q.Get("redirect_uri"))
+	if err != nil || callback.Hostname() != "127.0.0.1" {
+		t.Fatalf("redirect_uri must be a loopback callback, got %q", q.Get("redirect_uri"))
+	}
+
+	// The operator finishes in the browser; we play the browser's last hop.
+	res, err := http.Get(callback.String() + "?code=CODE-LIVE&state=" + url.QueryEscape(q.Get("state")))
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	page, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(page), "Signed in") {
+		t.Fatalf("callback page = %d %s", res.StatusCode, firstLines(string(page), 3))
+	}
+
+	waitOAuthState(t, h, "xai/main", "signed-in")
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"grok-3","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer key-a")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chat through the browser-signed account: %d %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := idp.seen.Load().(string); got != "Bearer at-live-1" {
+		t.Fatalf("upstream saw %q, want the exchanged token", got)
+	}
+}
+
+// TestOAuthCallbackRefusesUnknownState: the loopback port answers anyone on
+// this host who finds it. A code with a state nobody asked for must not be
+// exchanged into somebody's session.
+func TestOAuthCallbackRefusesUnknownState(t *testing.T) {
+	ephemeralCallbackPort(t)
+	idp := &oauthIdP{}
+	idpURL, upstreamURL := idp.start(t)
+	_, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	q := mustParseQuery(t, decodeJSON[browserPrompt](t, w.Body.String()).Prompt.VerifyURL)
+	callback, _ := url.Parse(q.Get("redirect_uri"))
+
+	res, err := http.Get(callback.String() + "?code=attacker-code&state=not-a-real-state")
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode ***REMOVED*** http.StatusOK || !strings.Contains(string(body), "already used or has expired") {
+		t.Fatalf("unknown state must be refused, got %d: %s", res.StatusCode, firstLines(string(body), 3))
+	}
+	if state, _ := oauthStateOf(t, h, "xai/main"); state != "pending" {
+		t.Fatalf("a refused callback must leave the login pending, got %q", state)
+	}
+	// And the real state still works afterwards: the refusal spent nothing.
+	res2, err := http.Get(callback.String() + "?code=CODE-OK&state=" + url.QueryEscape(q.Get("state")))
+	if err != nil {
+		t.Fatalf("second callback: %v", err)
+	}
+	io.Copy(io.Discard, res2.Body)
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("the pending session's own callback = %d, want 200", res2.StatusCode)
+	}
+	waitOAuthState(t, h, "xai/main", "signed-in")
+}
+
+// TestOAuthExchangeEndpointPastedCode is the remote-browser path: the operator
+// finishes at the vendor, gets bounced to a loopback address their machine
+// cannot serve, and pastes the address bar back into the dashboard.
+func TestOAuthExchangeEndpointPastedCode(t *testing.T) {
+	ephemeralCallbackPort(t)
+	idp := &oauthIdP{}
+	idpURL, upstreamURL := idp.start(t)
+	_, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	verify := decodeJSON[browserPrompt](t, w.Body.String()).Prompt.VerifyURL
+
+	// Nothing pending? The endpoint refuses rather than inventing a session.
+	if r := adminCall(t, h, http.MethodPost, "/admin/config/oauth/exchange?key=nope/nope", `{"code":"x"}`, true); r.Code != http.StatusNotFound {
+		t.Fatalf("exchange on an unknown account = %d, want 404", r.Code)
+	}
+	// The whole callback URL is what a browser address bar shows; accept it.
+	pasted := `http://127.0.0.1:56121/callback?code=PASTE-1&state=` + url.QueryEscape(mustParseQuery(t, verify).Get("state"))
+	if r := adminCall(t, h, http.MethodPost, "/admin/config/oauth/exchange?key=xai/main", `{"code":`+strconv.Quote(pasted)+`}`, true); r.Code != http.StatusOK {
+		t.Fatalf("pasted-code exchange: %d %s", r.Code, r.Body.String())
+	}
+	waitOAuthState(t, h, "xai/main", "signed-in")
+
+	// A spent session cannot be exchanged twice.
+	if r := adminCall(t, h, http.MethodPost, "/admin/config/oauth/exchange?key=xai/main", `{"code":"PASTE-2"}`, true); r.Code != http.StatusConflict {
+		t.Fatalf("second exchange of one session = %d, want 409", r.Code)
+	}
+}
+
+// TestOAuthExtractCode covers the paste parser's dialects: a bare code, a
+// query string, a fragment (some vendors bounce with #code=), and junk.
+func TestOAuthExtractCode(t *testing.T) {
+	for in, want := range map[string]string{
+		"abc123": "abc123",
+		"http://127.0.0.1:56121/callback?code=xyz&state=s": "xyz",
+		"http://127.0.0.1/callback#code=frag":              "frag",
+		"  code=trimmed&scope=openid  ":                    "trimmed",
+		"":                                                 "",
+	} {
+		if got := oauthExtractCode(in); got != want {
+			t.Fatalf("oauthExtractCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestOAuthBrowserListenerClosesAfterSignIn proves the loopback port is not
+// left bound once nothing waits on it: a gateway that signed in once must not
+// hold a socket for the rest of its life.
+func TestOAuthBrowserListenerClosesAfterSignIn(t *testing.T) {
+	ephemeralCallbackPort(t)
+	old := browserCallbackIdle
+	browserCallbackIdle = 50 * time.Millisecond
+	t.Cleanup(func() { browserCallbackIdle = old })
+	idp := &oauthIdP{}
+	idpURL, upstreamURL := idp.start(t)
+	srv, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
+	q := mustParseQuery(t, decodeJSON[browserPrompt](t, w.Body.String()).Prompt.VerifyURL)
+	callback, _ := url.Parse(q.Get("redirect_uri"))
+	res, err := http.Get(callback.String() + "?code=CODE-CLOSE&state=" + url.QueryEscape(q.Get("state")))
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	waitOAuthState(t, h, "xai/main", "signed-in")
+
+	// The grace has passed, so the port must refuse a fresh connection.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", callback.Host, 200*time.Millisecond)
+		if err != nil {
+			return // closed: the listener released it
+		}
+		_ = c.Close()
+		_ = srv // the Server handle exists for the process, not the socket
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("loopback callback port %s is still accepting after the idle grace", callback.Host)
+}
+
+func mustParseQuery(t *testing.T, rawurl string) url.Values {
+	t.Helper()
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawurl, err)
+	}
+	return u.Query()
+}
+
+func firstLines(s string, n int) string {
+	parts := strings.Split(strings.TrimSpace(s), "\n")
+	if len(parts) > n {
+		parts = parts[:n]
+	}
+	return strings.Join(parts, "\n")
 }
