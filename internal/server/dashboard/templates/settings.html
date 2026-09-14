@@ -25,6 +25,10 @@
 <pre id="upd-res" class="mono mt-2.5 text-mut">{{if .UpdErr}}last error: {{.UpdErr}}{{end}}{{if .UpdApply}} · last apply: {{.UpdApply}}{{end}}</pre>
 </div>
 
+<div class="card mb-3" id="sections-card"><h3>Configuration sections</h3>
+<p class="sub mb-2">Every file block the gateway reads, shown with its effective value (defaults included). Edits are spliced into <span class="mono">onegw.toml</span>, validated, and hot-reloaded — a value left at its default is removed from the file. Secrets show as dots; leave one untouched to keep it, type to replace.</p>
+<div id="sections">loading…</div></div>
+
 <div class="card mb-3"><h3>Admin password</h3>
 <p class="sub mb-2">Takes effect immediately and signs every session out — including this one. Leave the new password blank to generate a strong one.</p>
 <div class="grid grid-cols-2 gap-3">
@@ -172,6 +176,75 @@
     el.innerHTML = st.outdated ? '<span class="pill warn">update available</span>' : '<span class="pill ok">up to date</span>';
   }
   function reset(){ applyBtn.disabled = false; checkBtn.disabled = false; hint.textContent = ''; }
+})();
+</script>
+<script>
+// Configuration sections: render every editable block from
+// GET /admin/config/sections and PUT one section's changes. Input type is
+// inferred from the value (bool → checkbox, integer → number, else text);
+// durations and strings are plain text. Numeric fields are sent as JSON
+// numbers so the server's kindInt branch sees them correctly.
+(function(){
+  const box = document.getElementById('sections');
+  if (!box) return;
+  const TITLES = {server:'Server [server]', rotation:'Rotation [rotation]', usage:'Usage [usage]', saver:'Token saver [saver]', update:'Update [update]'};
+  const HINTS = {
+    'server.task_routing':'task-aware combo reordering: off|on',
+    'server.idempotency_ttl':'dedup window (Go duration; 0/off disables)',
+    'usage.export_password':'usage-export basic-auth password',
+    'rotation.billing_parole':'billing-refusal re-probe window',
+  };
+  const pretty = k => k.replace(/_/g,' ').replace(/\b\w/g, c => c[0].toUpperCase()+c.slice(1));
+  async function load(){
+    let j;
+    try { const r = await fetch('/admin/config/sections'); if (!r.ok) throw 0; j = await r.json(); }
+    catch(e){ box.textContent = 'could not load config sections'; return; }
+    const S = j.sections || {};
+    box.innerHTML = '';
+    Object.keys(TITLES).forEach(sec => {
+      const fields = S[sec]; if (!fields) return;
+      const wrap = document.createElement('div'); wrap.className = 'mb-4';
+      const h = document.createElement('h4'); h.className = 'text-[12px] uppercase tracking-[0.08em] text-mut mb-2';
+      h.textContent = TITLES[sec]; wrap.appendChild(h);
+      const keys = Object.keys(fields).sort();
+      const inputs = {};
+      keys.forEach(k => {
+        const v = fields[k];
+        const row = document.createElement('div'); row.className = 'field mb-1';
+        const isBool = v === 'true' || v === 'false';
+        const isNum = /^\d+$/.test(v);
+        const id = 'sec-' + sec + '-' + k.replace(/\W/g,'_');
+        let input;
+        if (isBool) { input = document.createElement('input'); input.type='checkbox'; input.checked = v==='true'; }
+        else { input = document.createElement('input'); input.type = isNum ? 'number' : (k.includes('password')?'password':'text'); input.value = v; input.spellcheck=false; }
+        input.id = id;
+        const lab = document.createElement('label'); lab.htmlFor = id;
+        lab.innerHTML = pretty(k.split('.').pop()) + ' <span class="mono text-mut/60">'+k+'</span>' + (HINTS[sec+'.'+k] ? ' <span class="text-mut/60">— '+HINTS[sec+'.'+k]+'</span>' : ' <span class="text-mut/40">('+k+')</span>');
+        row.appendChild(lab); row.appendChild(input); wrap.appendChild(row);
+        inputs[k] = {input, isBool};
+      });
+      const btn = document.createElement('button'); btn.className='btn primary sm'; btn.type='button'; btn.textContent = 'Save '+sec;
+      btn.onclick = async () => {
+        const settings = {};
+        for (const k in inputs) {
+          const {input, isBool} = inputs[k];
+          settings[k] = isBool ? input.checked : (input.type==='number' ? (input.value===''?0:parseInt(input.value,10)) : input.value);
+        }
+        btn.disabled = true; btn.textContent='Saving…';
+        try {
+          const r = await fetch('/admin/config/sections', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({section: sec, settings})});
+          const j2 = await r.json().catch(()=>({}));
+          if (!r.ok) { btn.textContent = j2.error || ('failed ('+r.status+')'); btn.disabled = false; setTimeout(load, 1500); return; }
+          btn.textContent = 'saved ✓';
+          setTimeout(load, 500);
+        } catch(e){ btn.textContent='save failed'; btn.disabled=false; }
+      };
+      const foot = document.createElement('div'); foot.className='flex gap-2 mt-1'; foot.appendChild(btn);
+      wrap.appendChild(foot);
+      box.appendChild(wrap);
+    });
+  }
+  load();
 })();
 </script>
 {{end}}
