@@ -472,6 +472,15 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			lastErr = err
 			cause = err
 			def.Unpin(id) // a failed attempt must not keep its pin
+			if err.StreamCommitted {
+				// The relay already wrote this attempt's status line
+				// (and likely bytes) to the client: a retry or combo
+				// fall-through would append a second response onto the
+				// same stream. Stop; the client sees the relay's own
+				// terminal error event, and proxy() suppresses its
+				// error write because the content type is set.
+				return err
+			}
 			if !(err.Retryable() || err.RegionLocked() || err.Fallbackable) {
 				if err.Status ***REMOVED*** 404 && err.ModelScoped() {
 					// Catalog-level verdict (tokenharbor 2026-09-10:

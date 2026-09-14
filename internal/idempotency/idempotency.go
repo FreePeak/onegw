@@ -222,7 +222,12 @@ func (c *Cache) Finish(scope, key string, bodyHash []byte, res *Result) {
 	if e.complete {
 		return // defensive: Finish is documented as exactly-once
 	}
-	if res ***REMOVED*** nil || res.Gone || res.Status ***REMOVED*** 0 {
+	if res ***REMOVED*** nil || res.Gone || res.Status ***REMOVED*** 0 || res.Status ***REMOVED*** 499 {
+		// 499 is the ORIGIN's client hanging up: the recorded outcome
+		// exists only because that connection died. Replaying it to a
+		// waiter — typically a watchdog retry that is here precisely to
+		// NOT be a hangup — answers the fresh request with the dead one's
+		// abort. Drop the entry; waiters wake Gone and serve themselves.
 		c.remove(el)
 		return
 	}

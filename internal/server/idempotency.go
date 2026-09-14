@@ -2,10 +2,12 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"onegw/internal/idempotency"
 	"onegw/internal/translat"
@@ -43,6 +45,17 @@ func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFun
 			next(w, r) // read failure: the handler answers with its usual 413
 			return
 		}
+		if peekStream(body) {
+			// Streams can never be replayed (the recorder marks them
+			// stream-shaped and a second sighting can only be answered
+			// 409), and coalescing a post-wake client retry onto the
+			// still-"in flight" streaming origin parks the retry until
+			// the origin settles — possibly behind a socket that died in
+			// the suspend. Streams get no dedup at all: every request
+			// runs, and the 409 class of failure cannot happen.
+			next(w, r)
+			return
+		}
 		scope := idempotency.ScopeFor(credentialOf(r))
 		hash := idempotency.BodyHash(body)
 		cache := st.ido
@@ -51,7 +64,14 @@ func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFun
 			decision, res, waiter := cache.Claim(scope, key, hash)
 			switch decision {
 			case idempotency.Wait:
-				got := waiter.Wait(r.Context())
+				// Bound the coalesce by the dedup window, not by the
+				// waiter's own (possibly unbounded) client context: a
+				// wedged origin must not hold the retry past the TTL —
+				// expired entries re-claim on the next pass, and
+				// expired-in-flight origins are dropped to Gone there.
+				wctx, wcancel := boundedWait(r.Context(), st.cfg.IdempotencyTTLDur())
+				got := waiter.Wait(wctx)
+				wcancel()
 				if got ***REMOVED*** nil {
 					// The client's deadline expired while coalescing:
 					// run the handler unrecorded; its upstream call
@@ -85,6 +105,17 @@ func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFun
 			}
 		}
 	}
+}
+
+// boundedWait caps an idempotency coalesce wait at the dedup TTL (plus a
+// beat, so a leader settling right at its TTL boundary still wakes us via
+// its channel first). A zero/negative TTL falls back to the bare parent.
+// Callers must cancel() right after Wait returns.
+func boundedWait(parent context.Context, ttl time.Duration) (context.Context, context.CancelFunc) {
+	if ttl <= 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, ttl+time.Second)
 }
 
 // idempotencyBody reads the request body for hashing, then restores it for
