@@ -56,7 +56,7 @@ rollups, provider & combo editing, theme-aware dark UI. Zero CDN, zero Node.
 
 | | |
 | --- | --- |
-| **[Quick start](#quick-start)** | install in one command · Docker · build from source · first request |
+| **[Quick start](#quick-start)** | install in one command · [Docker / Compose](#one-command-docker--compose) · [configuring a running install](#configured-after-setup-not-rebuilt) · build from source · first request |
 | **[Why onegw](#why-onegw)** | comparison vs. Node/JS gateways |
 | **[Features](#features)** | routing, pools, fault intelligence, savers, OAuth |
 | **[Dashboard](#dashboard)** | what the 9 console pages show |
@@ -88,63 +88,120 @@ existing config's admin password and gateway keys are reused verbatim, and
 while a gateway is already serving, the re-run only swaps the binary and
 leaves the running instance and its config untouched.
 
-### One command (VPS / cloud, Docker)
+### One command (Docker / Compose)
+
+```bash
+./scripts/docker_deploy.sh --compose                           # published on :8080
+./scripts/docker_deploy.sh --compose --port 18080 --loopback   # any port, loopback only
+./scripts/docker_deploy.sh --compose --build                   # image from this tree
+./scripts/docker_deploy.sh --compose --with-search             # + a local SearXNG
+```
+
+One command brings up [`docker-compose.yml`](docker-compose.yml) and owns the five
+things a hand-rolled Compose bring-up gets wrong — each has already cost somebody
+an hour:
+
+- **mints the gateway key once** into the project's `.env` (0600, gitignored) and
+  never rotates it. Compose reads that file for *every* subcommand, so
+  `docker compose ps`, `logs` and `down` keep working afterwards without
+  re-typing a secret — which is why the file has no `${ONEGW_KEYS:?…}` guard: one
+  required variable makes every subcommand fail, teardown included. The key is
+  still mandatory, enforced by the gateway: the image binds `0.0.0.0:8080` and a
+  non-loopback listener with no auth keys is refused at startup
+  (`refusing to serve "0.0.0.0:8080" with no auth keys`) instead of being served
+  as an open proxy.
+- **publishes on a port that actually answers.** 8080 is onegw's own default, so
+  on a machine already running a gateway it is taken — and Docker does not always
+  fail loudly: the container comes up `healthy` while the *host* process keeps
+  answering on `127.0.0.1:8080`, which reads as a wrong dashboard password. A free
+  port is picked instead and recorded in `.env`; an explicit `--port` that is
+  taken fails, naming the process that holds it.
+- **verifies what it deployed** — `/admin/health` on the *published* port,
+  authenticated with the container's own admin password (read back from the data
+  volume, because first boot mints it), plus a cross-check inside the container so
+  "a different process owns this port" is reported as that and not as a failure.
+- **makes the config volume writable.** Docker seeds a fresh named volume from the
+  image, but the copy arrives **root-owned**, so the dashboard's provider editor —
+  which saves with an atomic temp-file + rename in that directory — answers 500
+  `temp file: open /etc/onegw/.onegw-config-*.toml: permission denied` on every
+  in-page save. The stack heals it with a one-shot `config-init` container;
+  `docker run` installs get the same chown pass.
+- **names both volumes `onegw-data` / `onegw-config`** instead of project-prefixing
+  them, so usage history, `oauth-tokens.json`, the minted admin password and every
+  in-page edit survive recreate, `--build`, `--replace` — and moving between
+  Compose and plain `docker run`. The backup commands in
+  [docs/vps-deploy.md § Container installs](docs/vps-deploy.md#container-installs-what-to-back-up-and-how-to-move-it)
+  are the same commands for either install.
+
+Re-running is idempotent, and it is also the update path: `docker compose up -d`
+on its own never refreshes a tag it already has locally, so a host that pulled once
+runs that build forever (`onegw update` is check-only inside a container by design).
+Flags: `--port`, `--loopback`, `--build`, `--with-search`, `--image`, `--name`,
+`--project-dir`, `--replace`, `--publish`, `--data-volume`, `--config-volume`,
+`--env-file`, `--no-pull`, `--no-verify`, `--help`.
+
+Plain `docker compose up -d` is fine once `.env` exists: copy
+[`.env.example`](.env.example), set `ONEGW_KEYS=$(openssl rand -hex 24)`. Without
+it the gateway exits with the open-proxy refusal above and
+`docker compose ps` shows `Restarting` — the reason is in
+`docker compose logs onegw`.
+
+### Configured after setup, not rebuilt
+
+| Change | Where | Applies |
+| --- | --- | --- |
+| providers, combos, models, savers, admin password | the dashboard (`Providers`, `Combos`, `Token Saver`, `Settings`) | live — spliced into `onegw.toml` on the config volume and hot-reloaded |
+| published port, loopback bind, image, container name | `.env`: `ONEGW_HOST_PORT`, `ONEGW_HOST_BIND`, `ONEGW_IMAGE`, `ONEGW_CONTAINER_NAME` | `docker compose up -d` (recreates the container) |
+| gateway client keys | `.env`: `ONEGW_KEYS` (comma-separated) | `docker compose up -d` |
+| upstream provider keys | `.env`: `ONEGW_PROVIDER_<NAME>_KEY` (`_KEY2`…`_KEY9` pool a provider) — or the dashboard | same |
+| a new release | `./scripts/docker_deploy.sh --compose`, or `docker compose pull && docker compose up -d` | recreate; both volumes keep their content |
+| subscription (OAuth) sign-in | `docker exec -it onegw onegw oauth login -provider xai -account <name>` | live — token stored at `/data/oauth-tokens.json` |
+| logs · status · teardown | `docker compose logs -f onegw` · `ps` · `down` | `-v` also drops data+config; `--profile search down` also stops SearXNG (a plain `down` leaves profile services running) |
+
+Misbehaviour worth recognising: `Restarting` in `docker compose ps` is the missing
+`ONEGW_KEYS`; a wrong-password wall on a *healthy* container is a published port
+another process owns (`--port`); a `docker pull` that dies part-way through a blob
+(GHCR has done exactly this) is not fatal — `--build` produces the same image from
+this tree; and a 500 from the Providers page means the config volume went back to
+root ownership — `docker compose up -d --force-recreate config-init`.
+
+### `docker run`, without Compose
 
 ```bash
 ./scripts/docker_deploy.sh                       # deploy or refresh, on :8080
 ONEGW_PROVIDER_OPENROUTER_KEY=sk-... ./scripts/docker_deploy.sh --loopback
 ```
 
-The script owns every step that is easy to get wrong, because each one has bitten
-someone already: it **mints the gateway key once** and stores it in
-`onegw-deploy.env` (0600) so a re-run cannot rotate it out from under wired
-clients; it **creates and chowns the config volume** so the dashboard's provider
-editor can actually save (atomic temp file + rename needs a writable directory);
-it **forwards every `ONEGW_*` variable** you exported (provider keys, admin
-password); it keeps `usage.db`, `oauth-tokens.json` and a generated admin
-password on a named data volume; and it **waits for `/admin/health` to answer
-with the real password**, then prints the dashboard URL, key and credential.
-Running it again is idempotent, and `--replace` recreates the container after
+Same guarantees, one container instead of a project: the gateway key is minted
+once into `onegw-deploy.env` (0600), every `ONEGW_*` variable you exported
+(provider keys, admin password) is forwarded into the container, the config volume
+is created *and chowned*, `usage.db` / `oauth-tokens.json` / the generated admin
+password live on the data volume, and the run waits for `/admin/health` to answer
+with the real password before reporting. `--replace` recreates the container after
 copying the running config into the volume first — so in-page edits survive
 (verified end to end: a two-provider config crosses the migration intact).
-`--loopback`, `--publish`, `--image onegw:local`, `--env-file`, `--data-volume`,
-`--config-volume`, `--no-pull`, `--no-verify`, `--help`.
 
 Prefer the raw commands? The equivalent is:
 
 ```bash
 docker volume create onegw-config            # editable config lives here
 docker run --rm -u 0 --entrypoint chown -v onegw-config:/etc/onegw \
-  ghcr.io/freepeak/onegw:latest -R onegw:onegw
+  ghcr.io/freepeak/onegw:latest -R onegw:onegw     # the seed lands root-owned
 docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
   -e ONEGW_KEYS="$(openssl rand -hex 24)" \
   -v onegw-data:/data -v onegw-config:/etc/onegw \
   ghcr.io/freepeak/onegw:latest
 ```
 
-Runs the non-root image (~40 MB, healthchecked) with usage data persisted in
-the `onegw-data` volume. `ONEGW_KEYS` is required, not defaulted: the image
-binds `0.0.0.0:8080`, and a non-loopback listener with no auth keys is
-refused at startup (`refusing to serve "0.0.0.0:8080" with no auth keys`)
-instead of being served as an open proxy — put a real secret there. The admin
-password is the one credential that *is* generated: it is printed once as
-`FIRST-RUN ADMIN PASSWORD` in `docker logs` and persisted at
+Runs the non-root image (~45 MB, healthchecked, both entry points: `onegw` and
+`onegw-oauth`). The admin password is the one credential that *is* generated: it
+is printed once as `FIRST-RUN ADMIN PASSWORD` in `docker logs` and persisted at
 `/data/admin_password`. Pass provider keys as env, e.g.
-`-e ONEGW_PROVIDER_OPENROUTER_KEY=sk-...`; or mount a config DIRECTORY with
-`-v onegw-config:/etc/onegw`. For a compose setup with
-resource limits, see [`docker-compose.yml`](docker-compose.yml):
-
-```bash
-ONEGW_KEYS=$(openssl rand -hex 24) docker compose up -d
-```
-
-That file pins no credentials on purpose: it **refuses to start** without
-`ONEGW_KEYS` (a gateway key is never generated, and the image's `0.0.0.0` bind
-makes one mandatory), and leaves the admin password unset so first boot mints
-one.
+`-e ONEGW_PROVIDER_OPENROUTER_KEY=sk-...`, or mount a config directory.
 
 Signing a subscription account in from inside the container needs no paths —
-the image ships both entry points and sets `ONEGW_DATA_DIR=/data`:
+the image sets `ONEGW_DATA_DIR=/data`, and the compose file sets
+`container_name: onegw` so the same command works for a Compose install:
 
 ```bash
 docker exec -it onegw onegw oauth list                      # stored accounts
@@ -153,30 +210,29 @@ docker exec -it onegw onegw oauth login \
 ```
 
 The account name must match the `[[providers.accounts]]` name in your config
-(the dashboard's provider editor writes both halves for you).
+(the dashboard's provider editor writes both halves for you). Both forms are
+verified against the published tags: images up to **v0.30.0** ship neither
+`onegw oauth` nor the standalone `onegw-oauth`, and — worse — treated the unknown
+word as "start the gateway", so the documented command quietly bound a SECOND
+gateway on the container's own port via `SO_REUSEPORT` instead of signing anyone
+in. **v0.31.0** ships both entry points and rejects unknown subcommands, so an old
+image is fixed by pulling a newer tag (or `--compose --build`).
 
 **Give `/etc/onegw` a writable directory** — the editor saves straight into the
 config file with an atomic temp-file + rename, so a plain `docker run` used to
 answer 500 `temp file: open /etc/onegw/.onegw-config-*.toml: permission denied`
-until the image chowned that directory to the container user (fixed; rebuild or
-wait for the next tag). A **named volume** is the right way to keep it editable
-*and* durable — Docker seeds it from the image with the correct ownership:
-
-```bash
-docker volume create onegw-config
-docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
-  -e ONEGW_KEYS=... -v onegw-data:/data -v onegw-config:/etc/onegw \
-  ghcr.io/freepeak/onegw:latest
-```
+until the image chowned that directory to the container user. A **named volume**
+is still the right way to keep it editable *and* durable, but seeding is not
+enough: Docker copies the image content into a fresh volume **as root**, so the
+chown pass above (or the `config-init` service in Compose) is what makes in-page
+saves work.
 
 A **directory** mount works too — on a Linux VPS give it to the container's user
 (`chown -R 100:101 ./cfg`), since no share layer translates ownership for you.
 
 A **single-file** mount (`-v $PWD/onegw.toml:/etc/onegw/onegw.toml`) cannot
 support in-page editing, for two independent reasons: the atomic save needs a
-writable directory for its temp file first (images before 2026-09-13 stopped
-right there with `temp file: open /etc/onegw/.onegw-config-*.toml: permission
-denied` — the image now chowns `/etc/onegw`), and even then `rename()` cannot
+writable directory for its temp file first, and even then `rename()` cannot
 replace a bind-mounted file (`device or resource busy`). `:ro` is read-only by
 definition. Keep the file form for a hand-managed config. Without any mount the
 baked config is editable but lives in the container's writable layer and is
@@ -220,9 +276,12 @@ endpoints (`X-Admin-Password`).
 Running in Docker? Self-update is deliberately disabled (the container
 filesystem belongs to the image): the gateway still checks and logs newer
 releases, and `onegw update` prints the host-side commands —
-`docker pull ghcr.io/freepeak/onegw:<tag>` plus recreate
-(`docker compose up -d` for compose). The `/data` volume keeps usage
-history across the recreate.
+`docker compose pull && docker compose up -d` (verified: `up -d` alone never
+refreshes a tag it already has, but it *does* recreate the container once the tag
+resolves to a new image), or one `./scripts/docker_deploy.sh --compose`, which
+pulls, recreates and re-verifies `/admin/health`. Both volumes keep their content
+across the recreate: `usage.db` stays under `/data`, and so do your providers —
+they live on the `/etc/onegw` config volume, not in the image.
 
 Then point any OpenAI-, Anthropic-, or Gemini-compatible client at the
 gateway. Examples with curl:
@@ -559,6 +618,16 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 No upstream credential is needed for the kind (public instances are open);
 only `base_url` is validated. Your SearXNG instance must allow the JSON
 format (`search.format=json`).
+
+Running the gateway in Docker? `docker compose --profile search up -d` (or
+`./scripts/docker_deploy.sh --compose --with-search`) starts a local SearXNG on the
+same network, and its service answers on both `searxng` and the `searx` alias — so
+`base_url = "http://searxng:8080"` works verbatim inside the container.
+`http://127.0.0.1:8888` (the port that profile publishes) is only reachable for a
+gateway running on the HOST: from inside a container that address is the
+container's own loopback, and the search then degrades to the next combo target.
+Verified end to end: `{"model":"search/query"}` through a compose install returns
+live results.
 
 ### Always-thinking models
 
