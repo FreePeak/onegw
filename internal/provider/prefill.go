@@ -1,7 +1,10 @@
 package provider
 
-// Prefill tracking: an EWMA of the pre-first-byte phase (queue + prefill)
-// expressed as input tokens per second, bucketed by REQUEST SIZE.
+// Prefill tracking: an EWMA of the pre-first-byte phase (upstream queue +
+// prefill, from the moment the gateway admitted the attempt) expressed as
+// input tokens per second, bucketed by REQUEST SIZE. The gateway's own
+// max_concurrency wait is excluded on purpose: this number ranks LANES, and a
+// locally saturated pool is a sizing decision, not evidence about the vendor.
 //
 // Why it exists. The decode EWMA (speed.go) measures headers→relay-end, and
 // combo ordering steers on it. Ring evidence 2026-09-11 shows that steering
