@@ -823,6 +823,13 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	// rewrite). sessionKey is the same identity sticky-account pinning
 	// uses; "" (no session header, no key label) skips sticky-key
 	// injection. clientHdr may be nil (headerless tests).
+	// A stream-only upstream must be asked to stream even when the client did not
+	// (Kind.ForcedStream); the aggregation path owns the one-completion reply. Runs before
+	// the cache anchors so markers stay positioned against the final bytes.
+	if !stream && def.Kind.ForcedStream() {
+		upBody = forceStreamFlag(upBody)
+	}
+
 	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak))
 	// X-OneGW-Decision rides the pre-body write: every pre-flight gate
 	// above answers WITHOUT touching w, so the attempt that finally
@@ -1385,6 +1392,31 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 // replay-echo synthesis (synthesizeReasoningEcho): thinking-mode upstreams
 // validate the REPLAYED history, and bodies built from other legs' turns
 // legitimately lack reasoning_content.
+
+// forceStreamFlag rewrites the client's "stream" to true. A stream-only upstream
+// (Kind.ForcedStream) whose wire happens to equal the client's - cline is OpenAI-wire -
+// otherwise receives the client's body verbatim with "stream": false, which the vendor
+// answers inside its {"success":data} envelope: the aggregation path then reads a JSON
+// body as SSE, finds no events, and serves an empty completion. Numbers keep their
+// literal formatting via the same json.Number round-trip normalizeRoles uses.
+func forceStreamFlag(body []byte) []byte {
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body
+	}
+	if v, ok := root["stream"].(bool); ok && v {
+		return body
+	}
+	root["stream"] = true
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	out, err := buildUpstreamBody(upstream, client, body, upstreamModel, def)
 	if err != nil {
