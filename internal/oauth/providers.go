@@ -59,11 +59,22 @@ type Provider struct {
 	// StartTokenURL receives the initiation POST when it differs from
 	// TokenURL (defaults to TokenURL when empty).
 	StartTokenURL string
+
+	// ClineFlow marks the Cline/ClinePass credential dialect: the browser
+	// login carries no PKCE and no client_id, the credential arrives
+	// base64-wrapped in the redirect's `code` (with a camelCase JSON POST as
+	// the fallback), refresh is a JSON grant at ClineRefreshURL rather than a
+	// form post at TokenURL, and the stored bearer is normalized to
+	// `workos:<jwt>`. There is no device flow. See cline.go.
+	ClineFlow bool
+	// ClineRefreshURL is where a ClineFlow refresh is POSTed. A field rather
+	// than a constant so a test can point the whole dialect at its own server.
+	ClineRefreshURL string
 }
 
 // Providers lists the built-in provider names, sorted.
 func Providers() []string {
-	return []string{"kilocode", "xai"}
+	return []string{"cline", "clinepass", "kilocode", "xai"}
 }
 
 // Lookup returns the built-in provider spec by name.
@@ -95,6 +106,28 @@ func Lookup(name string) (Provider, bool) {
 			Name:        "kilocode",
 			TokenURL:    "https://api.kilo.ai/api/device-auth/codes",
 			KiloDialect: true,
+		}, true
+	case "cline", "clinepass":
+		// ClinePass is a plan inside the same account: identical authorize,
+		// token, refresh and chat endpoints, and the same
+		// /api/v1/chat/completions upstream — only the catalog differs (the
+		// `cline-pass/` ids the subscription unlocks). Two profiles exist so a
+		// config can bind them to separate [[providers]] rows, one of which
+		// borrows the other's login via `owner`, mirroring 9router's registry
+		// (providers/registry/cline.js + clinepass.js).
+		return Provider{
+			Name:            name,
+			AuthURL:         clineAuthorizeURL,
+			TokenURL:        clineTokenURL,
+			ClineFlow:       true,
+			ClineRefreshURL: clineRefreshURL,
+			// Callback: cline bounces the browser through WorkOS and back to the
+			// exact callback_url it is handed (measured: any 127.0.0.1/localhost
+			// port and path is accepted), so the shared listener address works
+			// unchanged. The per-login token rides in the path, because `state`
+			// is not echoed.
+			CallbackPort: DefaultCallbackPort,
+			CallbackPath: "/callback",
 		}, true
 	default:
 		return Provider{}, false

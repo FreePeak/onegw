@@ -79,6 +79,10 @@ func NewPKCE(p Provider, redirectURI string) (PKCESession, error) {
 	if !p.BrowserFlow() {
 		return PKCESession{}, fmt.Errorf("%s has no authorization endpoint (device flow only)", p.Name)
 	}
+	if p.ClineFlow {
+		// No challenge to build: the redirect carries the credential itself.
+		return newClineSession(p, redirectURI)
+	}
 	verifier, err := randomB64URL(pkceVerifierBytes)
 	if err != nil {
 		return PKCESession{}, fmt.Errorf("pkce verifier: %w", err)
@@ -121,6 +125,9 @@ func NewPKCE(p Provider, redirectURI string) (PKCESession, error) {
 func (p Provider) ExchangeCode(ctx context.Context, hc *http.Client, code, redirectURI, verifier string) (*Token, error) {
 	if hc == nil {
 		hc = http.DefaultClient
+	}
+	if p.ClineFlow {
+		return p.exchangeCline(ctx, hc, code, redirectURI)
 	}
 	form := url.Values{
 		"grant_type":    {"authorization_code"},

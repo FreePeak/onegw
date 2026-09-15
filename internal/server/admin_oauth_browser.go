@@ -169,6 +169,15 @@ func (s *Server) closeCallback() {
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	state := q.Get("state")
+	if state == "" {
+		// Cline never echoes `state` — it redirects to the exact callback_url
+		// it was given — so its per-login token is the last path segment
+		// (newClineSession). Any profile that does send state still matches
+		// the line above, so this fallback changes nothing for them.
+		if i := strings.LastIndex(r.URL.Path, "/"); i >= 0 && i+1 < len(r.URL.Path) {
+			state = r.URL.Path[i+1:]
+		}
+	}
 	s.oa.mu.Lock()
 	key, known := s.oa.states[state]
 	var lg *oauthLogin

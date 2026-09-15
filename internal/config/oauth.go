@@ -119,7 +119,7 @@ func validateOAuth(c *Config) error {
 // service profile.
 func KnownOAuthService(name string) bool {
 	switch name {
-	case "xai", "kilocode":
+	case "xai", "kilocode", "cline", "clinepass":
 		return true
 	default:
 		return false
