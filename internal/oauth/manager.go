@@ -161,6 +161,9 @@ func (m *Manager) Stop() {
 // endpoints: start, prompt (print URL + code), poll until authorized, then
 // store the token. Used by the CLI and tests.
 func (m *Manager) Login(ctx context.Context, spec AccountSpec, prompt func(DeviceStart)) (*Token, error) {
+	if spec.Provider.ClineFlow {
+		return nil, fmt.Errorf("%s signs in through the browser flow only: start it from the dashboard (Providers → sign in) or run onegw-oauth where the vendor's callback can reach it", spec.Provider.Name)
+	}
 	poller := PollerFor(spec.Provider, m.hc)
 	ds, err := poller.Start(ctx)
 	if err != nil {
@@ -267,6 +270,16 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 	if !ok || old.RefreshToken == "" {
 		return nil, errors.New("no refresh token stored for " + spec.Key)
 	}
+	if spec.Provider.ClineFlow {
+		tok, err := spec.Provider.clineRefresh(ctx, m.hc, old)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.store.Put(spec.Key, *tok); err != nil {
+			return nil, err
+		}
+		return tok, nil
+	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {old.RefreshToken},
@@ -319,6 +332,8 @@ func sameSpec(a, b AccountSpec) bool {
 		a.Provider.Scope != b.Provider.Scope ||
 		a.Provider.ClientID != b.Provider.ClientID ||
 		a.Provider.KiloDialect != b.Provider.KiloDialect ||
+		a.Provider.ClineFlow != b.Provider.ClineFlow ||
+		a.Provider.ClineRefreshURL != b.Provider.ClineRefreshURL ||
 		a.Provider.StartTokenURL != b.Provider.StartTokenURL ||
 		a.Provider.MaxTokenTTL != b.Provider.MaxTokenTTL ||
 		len(a.Provider.Extra) != len(b.Provider.Extra) {
