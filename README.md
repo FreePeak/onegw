@@ -252,6 +252,21 @@ cp onegw.toml.example onegw.toml   # add provider keys
 ./onegw                            # listens on 127.0.0.1:8080 (loopback only)
 ```
 
+### Running: foreground, or detached
+
+```bash
+onegw          # foreground: Ctrl-C stops it, and closing the terminal stops it
+onegw --bg     # detached: new session, log <data_dir>/onegw.log, terminal is free
+```
+
+`--bg` refuses to start when something already answers on the listen address.
+That refusal is the point: the gateway binds with `SO_REUSEPORT` (rolling
+restarts), so a second process can take the SAME port without an error, and the
+kernel then splits new connections between two gateways that each keep their
+own rate-limit windows, usage buffers and OAuth token store — both look
+healthy while neither has the full picture. `onegw update` performs the
+handoff restart properly; `--bg` is for starting the service, not for racing it.
+
 ### Updating
 
 `onegw update` keeps a running gateway current with zero dropped requests:

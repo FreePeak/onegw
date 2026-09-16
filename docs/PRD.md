@@ -2818,6 +2818,21 @@ the issue):
   the bundle, so only foreign images hit this). There is deliberately NO
   TLS-skip fallback in the update client — a release feed that fails
   verification must fail loudly, not silently accept a MITM'd release.
+- **`onegw --bg` (2026-09-16, detached start):** `--bg` re-execs the gateway
+  into a new session (`Setsid`) with stdout/stderr appended to
+  `<data_dir>/onegw.log`, waits until the child answers on the listen address,
+  prints its pid + the stop command, and exits — so closing the terminal no
+  longer takes the proxy down. It **refuses to start when the port already
+  accepts connections**, which is the failure it exists to prevent: SO_REUSEPORT
+  lets a second gateway bind `:8080` happily, after which the kernel splits new
+  connections across two processes with independent rate windows, usage
+  buffers and OAuth token stores — neither crashed, both partially serving. That
+  split-brain was hit in the container on 2026-09-13 (the unknown-command guard
+  in `main.go`) and again on 2026-09-16 when a manual restart raced a second
+  start 43 seconds later — the guard now makes that combination refuse; `go test
+  ./cmd/onegw` pins argv stripping, log-path fallback, the busy-port detector,
+  and that a child which dies at config load reports its log tail rather than
+  failing silently.
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
