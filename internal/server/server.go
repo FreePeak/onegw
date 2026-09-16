@@ -216,8 +216,23 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
+				key := a.APIKey
+				if key == "" {
+					// Inherit the provider-level credential. `api_key =` and
+					// ONEGW_PROVIDER_<NAME>_KEY both land on p.APIKey, which
+					// used to be read ONLY when the config declared no account
+					// rows: a named row with an empty key (the shape an OAuth
+					// account takes before its first sign-in, and the shape a
+					// copied provider block keeps) then sent a bare
+					// `Authorization: Bearer ` and every request died with a
+					// vendor 401 — live 2026-09-16, where the same bearer
+					// worked with no row and 401'd with one. An OAuth resolver
+					// still outranks this value (bearerToken prefers the live
+					// token), so the gap is filled, not shadowed.
+					key = p.APIKey
+				}
 				def.Accounts = append(def.Accounts, provider.Account{
-					Name: a.Name, APIKey: a.APIKey, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM,
+					Name: a.Name, APIKey: key, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM,
 				})
 			}
 		} else {
@@ -234,6 +249,22 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 			return s.subscriptionHeadroom(def.Name, acct)
 		})
 		s.wireOAuthTokens(cfg, def)
+		// Say it once, at load: an account that still resolves no credential
+		// (no row key, no provider-level key, and nothing in
+		// [[oauth.accounts]] to fill it at request time) is otherwise
+		// discovered one doomed upstream call at a time, each answering with
+		// the VENDOR's 401 as if a real key had gone bad. Runs after
+		// wireOAuthTokens, because that is what gives an OAuth account its
+		// resolver. Deliberately a warning, not a Validate error: a
+		// subscription account before its first sign-in is a legitimate state
+		// (subquota skips it), and a config that fails to load bricks the next
+		// restart — the failure mode #99 is about.
+		for i := range def.Accounts {
+			a := &def.Accounts[i]
+			if a.APIKey == "" && a.OAuthToken == nil && kind != provider.KindSearXNG && kind != provider.KindOpenCodeFree {
+				log.Printf("onegw: provider %s account %q has no credential (no api_key, no provider-level key, no [[oauth.accounts]] entry) — requests routed to it carry an empty bearer", def.Name, a.Name)
+			}
+		}
 		pool.Set(def)
 		// Materialize the kind's default catalog onto the config copy so
 		// routing AND every surface that reads cfg.Providers (models list,
@@ -817,6 +848,13 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 		s.m.invalidBody(def.Name, mdl, acctName(acct), err.Error())
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
+	// A stream-only upstream must be asked to stream even when the client did
+	// not (Kind.ForcedStream); the aggregation path owns the one-completion
+	// reply. Runs here, before the cache anchors below, because they are
+	// computed against the final bytes.
+	if !stream && def.Kind.ForcedStream() {
+		upBody = forceStreamFlag(upBody)
+	}
 	// Issue #34: anchor cache markers LAST — after every body mutation
 	// including cross-format translation — so anchors never sit at
 	// pre-normalization offsets (a stale anchor costs a full prefix
@@ -840,6 +878,19 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 				// grok-cli treats 402 the same way). Terminal #80 invalidation
 				// would strand a healthy subscription until manual re-enable.
 				def.Cool(acct, grok402Cooldown)
+			} else if def.Kind == provider.KindCline && apiErr.CreditWall() {
+				// Cline's 402 names a BALANCE, not a dead credential, and the
+				// account keeps serving its free lane right through it: measured
+				// 2026-09-16, `deepseek/deepseek-v4.1-flash` answered
+				// {"code":"insufficient_credits","current_balance":-0.006273}
+				// while `inclusionai/ling-3.0-flash-fin:free` served 200 on the
+				// same bearer minutes apart. Terminal #80 invalidation would
+				// therefore bench the lanes that still work until an operator
+				// notices the dashboard and clicks re-enable — so bench the
+				// model instead (Router.Execute skips the target, siblings and
+				// the account keep serving) and let a top-up recover everything
+				// with no manual step.
+				def.BenchModel(model, 0)
 			} else if def.Invalidate(acct) {
 				// Terminal for this credential (#80): the vendor refused it for
 				// billing reasons, which no amount of waiting fixes. Marking it
@@ -1385,6 +1436,31 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 // replay-echo synthesis (synthesizeReasoningEcho): thinking-mode upstreams
 // validate the REPLAYED history, and bodies built from other legs' turns
 // legitimately lack reasoning_content.
+
+// forceStreamFlag rewrites the client's "stream" to true. A stream-only upstream
+// (Kind.ForcedStream) whose wire happens to equal the client's - cline is OpenAI-wire -
+// otherwise receives the client's body verbatim with "stream": false, which the vendor
+// answers inside its {"success":data} envelope: the aggregation path then reads a JSON
+// body as SSE, finds no events, and serves an empty completion. Numbers keep their
+// literal formatting via the same json.Number round-trip normalizeRoles uses.
+func forceStreamFlag(body []byte) []byte {
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body
+	}
+	if v, ok := root["stream"].(bool); ok && v {
+		return body
+	}
+	root["stream"] = true
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	out, err := buildUpstreamBody(upstream, client, body, upstreamModel, def)
 	if err != nil {

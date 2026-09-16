@@ -338,6 +338,27 @@ func (e *APIError) PaymentRequired() bool {
 		strings.Contains(probe, "insufficient credits")
 }
 
+// CreditWall reports the narrower billing refusal: the vendor states the
+// ACCOUNT'S CREDIT BALANCE is short. Cline's answer, measured 2026-09-16:
+// 402 {"error":{"code":"insufficient_credits","message":"Insufficient balance.
+// Your Cline Credits balance is $-0.01","current_balance":-0.006273,…}}.
+// PaymentRequired is the superset — same HTTP, but a dead key and a spent
+// balance are indistinguishable there, and #80 errs toward terminal. This
+// verdict exists because a balance wall does NOT indict every model an account
+// can reach: cline's ":free" ids keep serving on a negative balance, so
+// benching the account would kill working traffic, while the paid model that
+// just answered is unreachable for every key until credits are added.
+func (e *APIError) CreditWall() bool {
+	if e == nil || e.Status != 402 {
+		return false
+	}
+	probe := strings.ToLower(e.Code + " " + e.Type + " " + e.Message)
+	return strings.Contains(probe, "insufficient_credits") ||
+		strings.Contains(probe, "insufficient credits") ||
+		strings.Contains(probe, "credits balance") ||
+		strings.Contains(probe, "credit balance")
+}
+
 // RegionLocked reports whether the upstream refused this account's
 // credential for a region/availability policy (e.g. OpenCode Go
 // RegionError: the key's workspace has not opted into the China-hosted

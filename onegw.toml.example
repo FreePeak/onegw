@@ -212,6 +212,61 @@ models = ["z-ai/glm-5.3-flash-free", "deepseek/deepseek-v4-flash-free"]
 name = "me"
 api_key = ""                    # fill or use env
 
+# Cline (https://api.cline.bot — the hosted model API behind the Cline IDE
+# extension / CLI, and the aggregator Cline itself uses). Plain OpenAI Chat
+# Completions over SSE; model ids are OpenRouter-style "provider/model", so
+# clients ask for cline/anthropic/claude-sonnet-4-6. kind = "cline" instead of
+# "openai" for exactly one reason: the vendor answers stream:false inside a
+# {"success":true,"data":{...}} envelope (the shape of its account API), which
+# a flat OpenAI client — and onegw's own same-format passthrough — reads as an
+# empty completion. The kind forces stream=true upstream and aggregates the SSE
+# back, so both surfaces get a real completion. base_url defaults to
+# https://api.cline.bot/api; GET /v1/models is a flat list of ~440 ids.
+#
+# Two bearer credentials work against the same endpoint:
+#   1. a dashboard API key — app.cline.bot -> Settings -> API Keys ("sk_..."),
+#      long-lived, no rotation: api_key = or env ONEGW_PROVIDER_CLINE_KEY,
+#      sent bare;
+#   2. the Cline account login, which onegw holds and refreshes for you. Its
+#      access token is accepted ONLY as `Bearer workos:<jwt>` (the prefix is
+#      baked into the stored token, so the generic bearer injection still
+#      works), it lasts about an hour, and refresh is a camelCase JSON POST
+#      {refreshToken, grantType:"refresh_token", clientType:"extension"} to
+#      /api/v1/auth/refresh. Sign in from the dashboard (browser flow: the
+#      credential comes back in the redirect itself) or from a headless host
+#      with `onegw oauth login -provider cline -service cline -account me`
+#      (device flow: WorkOS code, then Cline's register exchange).
+# ClinePass ("cline-pass/glm-5.2", ...) rides this endpoint and credential —
+# the plan decides entitlement (403 ENTITLEMENT_ERROR without a subscription),
+# so it is a separate [[providers]] row borrowing the login via `owner`.
+# Note cline-free/* ids are gated to the Cline app itself (403 "only available
+# via Cline product surfaces", measured) and never appear in the catalog.
+[[providers]]
+name = "cline"
+kind = "cline"
+models = ["anthropic/claude-sonnet-4-6", "minimax/minimax-m2.5"]
+# Cline's usage-log tracking headers (both documented as optional):
+[providers.extra_headers]
+HTTP-Referer = "https://cline.bot"
+X-Title = "onegw"
+[[providers.accounts]]
+name = "me"
+api_key = ""                    # dashboard key, or env ONEGW_PROVIDER_CLINE_KEY
+
+# ClinePass as its own leg, so its usage is accounted separately, borrowing
+# cline's login: no second sign-in and one refresher for both.
+# [[providers]]
+# name = "cline-pass"
+# kind = "cline"
+# models = ["cline-pass/glm-5.2", "cline-pass/kimi-k2.7-code", "cline-pass/deepseek-v4-flash"]
+# [[providers.accounts]]
+# name = "me"
+#
+# [[oauth.accounts]]
+# provider = "cline-pass"
+# account  = "me"
+# owner    = "cline/me"         # reuse the cline login's token pair
+
 # --- Web search (virtual provider) ------------------------------------------
 
 [[providers]]
@@ -227,7 +282,7 @@ timeout = "10s"                # per-search timeout (0 = 10s)
 
 [[combo]]
 name = "search-or-llm"         # fail-open: search down -> falls to the model
-targets = ["search/query", "b-ai/mimo-v2.5"]
+targets = ["search/query", "openrouter/deepseek/deepseek-v3.2"]   # was "b-ai/…", a name no example provider has, so the template refused to load
 
 # --- Combos (ordered fallback) ----------------------------------------------
 
@@ -284,7 +339,7 @@ targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/dee
 # [[oauth.accounts]]
 # provider = "xai"        # [[providers]] name
 # account  = "main"       # [[providers.accounts]] name
-# service  = "xai"        # oauth profile: xai | kilocode (default: provider)
+# service  = "xai"        # oauth profile: xai | kilocode | cline | clinepass
 # # Endpoint overrides for self-hosted IdPs / staging:
 # # device_url / token_url / client_id / scope
 

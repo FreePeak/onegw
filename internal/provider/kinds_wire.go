@@ -17,7 +17,11 @@ import (
 // one completion for non-streaming clients.
 func (k Kind) ForcedStream() bool {
 	switch k {
-	case KindCommandCode, KindOpenAIResponses, KindCursor:
+	case KindCommandCode, KindOpenAIResponses, KindCursor, KindCline:
+		// cline (api.cline.bot, live-probed 2026-09-15/16) answers stream=false inside
+		// `{"data":{...},"success":true}`, which a flat OpenAI client reads as empty. Its
+		// SSE chunks are plain chat.completion.chunk, so streaming is correct on every
+		// surface - and the vendor's own client only ever streams.
 		// Cursor (issue #12 follow-up): both services stream Connect-RPC
 		// frames only; the synthetic OpenAI SSE body doCursor returns is
 		// aggregated for non-streaming clients.

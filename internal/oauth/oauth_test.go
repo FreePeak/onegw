@@ -712,7 +712,7 @@ func TestLookupAndPollerSelection(t *testing.T) {
 	if p, ok := Lookup("xai"); !ok || p.ClientID == "" || p.DeviceCodeURL == "" || p.Scope == "" {
 		t.Fatalf("xai profile incomplete: %+v", p)
 	}
-	if fmt.Sprint(Providers()) != "[kilocode xai]" {
+	if fmt.Sprint(Providers()) != "[cline clinepass kilocode xai]" {
 		t.Fatalf("Providers() = %v", Providers())
 	}
 }

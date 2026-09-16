@@ -45,6 +45,11 @@ const (
 	KindCommandCode     Kind = "commandcode"      // CommandCode NDJSON executor
 	KindOpenAIResponses Kind = "openai-responses" // Grok CLI Responses API
 	KindCursor          Kind = "cursor"           // Cursor protobuf (skeleton: fail-fast)
+	// Cline (api.cline.bot, and its cline-pass plan) speaks plain OpenAI Chat
+	// Completions, but only over SSE: the vendor's non-streaming reply comes back wrapped
+	// in a {success,data} envelope, so the gateway always streams upstream and aggregates
+	// for non-streaming clients. See Kind.ForcedStream.
+	KindCline Kind = "cline"
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
@@ -763,6 +768,8 @@ func (k Kind) DefaultBaseURL() string {
 		return "https://api.commandcode.ai/alpha/generate"
 	case KindSearXNG:
 		return "" // no stock endpoint: base_url is required in config
+	case KindCline:
+		return "https://api.cline.bot/api"
 	default:
 		return "https://api.openai.com"
 	}
@@ -806,6 +813,21 @@ var openCodeFreeModels = []string{
 	"muse-spark-1.3-contributor-free",
 }
 
+// clineModels is 9router's curated Cline catalog
+// (open-sse/providers/registry/cline.js models): the ids a usage-billing account reaches.
+// Cline's live GET /api/v1/models answers ~440 OpenRouter-style ids, so the dashboard
+// Fetch is the real source - this is only the stock fallback that lets a bare
+// [[providers]] kind="cline" entry advertise something. The plan-gated families are
+// deliberately NOT here: cline-pass/* 403s without a subscription, and cline-free/* 403s
+// for every non-product caller ("only available via Cline product surfaces", live
+// 2026-09-16), so neither belongs in a gateway catalog.
+var clineModels = []string{
+	"anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6",
+	"anthropic/claude-opus-4.6", "openai/gpt-5.3-codex", "openai/gpt-5.4",
+	"google/gemini-3.1-pro-preview", "google/gemini-3.1-flash-lite-preview",
+	"kwaipilot/kat-coder-pro",
+}
+
 // DefaultModels returns the stock catalog for kinds with a curated upstream
 // model list; nil = none (the provider advertises only configured models).
 func DefaultModels(k Kind) []string {
@@ -820,6 +842,8 @@ func DefaultModels(k Kind) []string {
 		// entry then advertises a working catalog on /v1/models. Operators
 		// who want the live list keep setting `models`.
 		return []string{"grok-build", "grok-4.5"}
+	case KindCline:
+		return clineModels
 	}
 	return nil
 }

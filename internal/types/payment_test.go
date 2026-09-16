@@ -33,3 +33,33 @@ func TestPaymentRequiredClassification(t *testing.T) {
 		}
 	}
 }
+
+// CreditWall is the subset of the above that names a top-uppable BALANCE. It
+// gates the "bench the model, keep the account" path for providers whose free
+// lane serves through a negative balance, so a false positive there would
+// strand a whole account's worth of working traffic.
+func TestCreditWallClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  *APIError
+		want bool
+	}{
+		// The measured vendor answer, verbatim (api.cline.bot 2026-09-16).
+		{"cline insufficient_credits", &APIError{
+			Status: 402, Code: "insufficient_credits", Type: "upstream_error",
+			Message: "Insufficient balance. Your Cline Credits balance is $-0.01",
+		}, true},
+		{"credit balance wording", &APIError{Status: 402, Message: "your credit balance is too low"}, true},
+		// A 402 with no balance wording stays PaymentRequired-only: the
+		// #80 terminal read is the conservative default there.
+		{"bare 402", &APIError{Status: 402}, false},
+		{"402 key revoked wording", &APIError{Status: 402, Message: "key disabled by policy"}, false},
+		// Same wording, wrong status: 403/429 belong to their own ladders.
+		{"403 credits", &APIError{Status: 403, Code: "insufficient_credits"}, false},
+		{"nil", nil, false},
+	} {
+		if got := tc.err.CreditWall(); got != tc.want {
+			t.Errorf("%s: CreditWall() = %v, want %v (%+v)", tc.name, got, tc.want, tc.err)
+		}
+	}
+}
