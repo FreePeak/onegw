@@ -2818,6 +2818,60 @@ the issue):
   the bundle, so only foreign images hit this). There is deliberately NO
   TLS-skip fallback in the update client — a release feed that fails
   verification must fail loudly, not silently accept a MITM'd release.
+- **Cline provider (`kind = "cline"`, 2026-09-16, #100):** `api.cline.bot` —
+  the hosted model API behind the Cline IDE extension / CLI — speaks plain OpenAI
+  Chat Completions, but ONLY correctly over SSE: a `stream:false` call is answered
+  inside its account-API envelope `{"success":true,"data":{…completion…}}`, which a
+  flat OpenAI client (and onegw's own same-format passthrough) reads as an empty
+  completion. Hence a kind whose only wire behaviour is `ForcedStream`, plus
+  `forceStreamFlag` in `attempt` — a forced-stream kind whose upstream format
+  equals the client's was otherwise sending the client's `stream:false` untouched,
+  so the aggregator read a JSON body as SSE, saw no events, and served `200` with
+  `content: null` and zero usage. This is the first same-format forced-stream kind,
+  which is why the hole survived. Catalog is 9router's curated list
+  (`open-sse/providers/registry/cline.js`); the plan-gated families are excluded on
+  measurement — `cline-pass/*` 403s `ENTITLEMENT_ERROR` without a subscription, and
+  `cline-free/*` 403s "only available via Cline product surfaces" (2026-09-16).
+  Credentials: a dashboard `sk_…` key sent bare, or the account login held by
+  `internal/oauth` — a browser flow with no PKCE whose `code` IS the credential
+  (unpadded base64 JSON + vendor trailer), `state` never echoed (so the login token
+  rides in the callback path), camelCase JSON grants wrapped in `{success,data}`, and
+  the bearer stored pre-prefixed `workos:<jwt>` because the upstream rejects the bare
+  JWT; a WorkOS device flow (the SDK's default, and the headless option) is wired as
+  of #100 with Cline's `/api/v1/auth/register` exchange. Live proof on a scratch
+  data_dir + port: `cline/inclusionai/ling-3.0-flash-fin:free` → 200 `"PONG"`, flat
+  for non-stream, SSE for stream, reasoning echo preserved, usage 26/168; 402 on a
+  paid id benches the MODEL while the free lane keeps serving; `oauth refresh`
+  rotates the access token (Cline re-uses the refresh token). 9router has no forced
+  stream and no envelope handling for cline, so this leg is ahead of the reference.
+  Landed on `origin/master` (the chain the installed binary descends from), not local
+  `master`, whose tree would revert ~6.5k lines of production work.
+
+- **Bare model ids now require an advertiser (2026-09-16, this PR):**
+  `Router.Resolve`'s slash-less fallback was commented "try providers in order that
+  could serve it" and implemented as "return the first enabled provider", so any bare
+  string — typo, stale client config, hallucinated model — was forwarded upstream
+  regardless. Live proof: `totally-not-a-real-model-xyz`, advertised by nobody,
+  resolved to `provider=b-ai` and came back `404 "does not exist (distributor)"`,
+  costing an account slot, an upstream call, and (because the vendor's
+  `model_not_found` feeds `BenchModel`) a spurious per-model lockout on a provider
+  that never had that model. Bare ids now resolve through an index built with
+  `SetModels`: only a provider whose `models` list names the id, config order
+  breaking ties — the live config advertises `deepseek-v4.1-flash` under BOTH
+  opencode and tokenharbor, so order is load-bearing and is now documented.
+  Empty-`models` providers stay pass-through but are tried after the advertisers, a
+  paused provider never swallows an id, and an unadvertised id is a local
+  `404 model_not_found` with no dial. `TestAliasRoutesThroughHandler` asserted the
+  old fall-through while its own comment said the dropped name "must stop
+  resolving"; it now asserts the 404. Found while answering "why is my gateway
+  serving opencode": routing was NOT misrouting — a client asks for the `fast`
+  combo, whose first leg is `opencode/deepseek-v4.1-flash` (~298 req today vs ~1.3k
+  for `free`→b-ai); the nonsense-id probe is what exposed the fallback hole. Ops
+  follow-up on the running box: `[auth] keys = [...]` left every usage row with an
+  empty `api_key`, so per-client attribution was impossible — migrated in place to
+  `[[auth.keys]]` with `name = "client-<fingerprint>"` via hot reload
+  (`reloaded: true`, same key values, no dropped requests).
+
 - onegw runs as a supervised persistent service on 127.0.0.1:8080 with
   autoresume: the supervisor restarts it on abnormal exit (crash, OOM,
   SIGKILL; bounded backoff) — kill-tested live; deliberate stops stay
@@ -2982,3 +3036,12 @@ fall-through path (no output throttle); TTFB spikes (9-50s) reproduce on FRESH d
 connections to the congested b-ai endpoint (429 Concurrency-1200 walls, 23-173s TTFB, 502 HTML
 without the gateway), so upstream congestion — not gateway logic — dominates latency)*
 
+*Last updated: 2026-09-16 (cline provider + OAuth dialect landed from #100 — and
+the PRD entry itself was missing: the release-base port carried code only, so
+this commit restores the convention that a landed change is reflected in status;
+plus `fix/bare-model-advertised-only`: a bare model id no provider advertises is
+now a local 404 instead of being forwarded to the first enabled provider
+(proven live: an invented id reached b-ai and took a vendor 404 + a spurious
+model lockout); the running gateway is v0.39.0 built from 4c15ec08, supervised
+and detached, live config still has no cline provider block, and its client keys
+are now labelled for per-agent attribution)*
