@@ -267,6 +267,16 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 	if !ok || old.RefreshToken ***REMOVED*** "" {
 		return nil, errors.New("no refresh token stored for " + spec.Key)
 	}
+	if spec.Provider.ClineFlow {
+		tok, err := spec.Provider.clineRefresh(ctx, m.hc, old)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.store.Put(spec.Key, *tok); err != nil {
+			return nil, err
+		}
+		return tok, nil
+	}
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {old.RefreshToken},
@@ -319,6 +329,10 @@ func sameSpec(a, b AccountSpec) bool {
 		a.Provider.Scope != b.Provider.Scope ||
 		a.Provider.ClientID != b.Provider.ClientID ||
 		a.Provider.KiloDialect != b.Provider.KiloDialect ||
+		a.Provider.ClineFlow != b.Provider.ClineFlow ||
+		a.Provider.ClineRefreshURL != b.Provider.ClineRefreshURL ||
+		a.Provider.ClineAuthenticateURL != b.Provider.ClineAuthenticateURL ||
+		a.Provider.ClineRegisterURL != b.Provider.ClineRegisterURL ||
 		a.Provider.StartTokenURL != b.Provider.StartTokenURL ||
 		a.Provider.MaxTokenTTL != b.Provider.MaxTokenTTL ||
 		len(a.Provider.Extra) != len(b.Provider.Extra) {

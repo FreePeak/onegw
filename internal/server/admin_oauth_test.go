@@ -548,7 +548,7 @@ func TestProvidersPageRendersOAuthSignIn(t *testing.T) {
 		`id="pf-sq"`,             // subscription_quota editor field
 		`borrows xai/main`,       // borrower row: no button, points at the owner
 		`main · xai · signed-out`,
-		`const SERVICES = ["kilocode","xai"]`,
+		`const SERVICES = ["cline","clinepass","kilocode","xai"]`, // cline lands with the provider
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page missing %q", want)

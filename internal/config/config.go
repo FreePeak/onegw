@@ -555,7 +555,7 @@ func (c *Config) Validate() error {
 		}
 		names["provider:"+p.Name] = true
 		switch p.Kind {
-		case "openai", "anthropic", "gemini", "opencode", "opencode-free":
+		case "openai", "anthropic", "gemini", "opencode", "opencode-free", "cline":
 		case "openai-responses", "commandcode", "cursor":
 		// Custom wire formats (issue #12). cursor is a fail-fast
 		// skeleton: valid here, errors at request time.
