@@ -596,3 +596,70 @@ func TestExecuteStopsAfterStreamCommit(t *testing.T) {
 		t.Fatalf("committed stream must not be retried or fallen through, calls=%d", calls)
 	}
 }
+
+// TestResolveBareModelRequiresAdvertiser is the 2026-09-16 fix: a slash-less
+// model must be served by a provider that ADVERTISES it — not by whichever
+// provider happens to be first in config order. Before this, any bare string
+// (typo, stale client config, hallucinated name) was forwarded upstream to the
+// first enabled provider, which answered with its own 400/404 after burning an
+// account slot and feeding the vendor's model_not_found into that provider's
+// per-model lockout.
+func TestResolveBareModelRequiresAdvertiser(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{Name: "first", Kind: provider.KindOpenAI,
+		Models: []string{"gpt-x"}, Accounts: []provider.Account{{Name: "a", APIKey: "k"}}})
+	p.Set(&provider.Def{Name: "passthru", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "b", APIKey: "k"}}}) // no models = serves anything
+	p.Set(&provider.Def{Name: "second", Kind: provider.KindOpenAI,
+		Models: []string{"other-y"}, Accounts: []provider.Account{{Name: "c", APIKey: "k"}}})
+	r := New(p)
+	r.SetModels([]string{"first/gpt-x", "second/other-y"})
+
+	if res, err := r.Resolve("gpt-x"); err != nil || res.Targets[0].Provider != "first" {
+		t.Fatalf("advertised bare id: %v %v", res, err)
+	}
+	// The bug in one line: "other-y" is only advertised by `second`, and the
+	// old fallback would have answered with `first`.
+	res, err := r.Resolve("other-y")
+	if err != nil || len(res.Targets) != 1 || res.Targets[0].Provider != "second" {
+		t.Fatalf("bare id must go to its advertiser, not the first provider: %+v %v", res, err)
+	}
+	// An id nobody advertises falls to a pass-through provider, in order.
+	if res, err := r.Resolve("anything-else"); err != nil || res.Targets[0].Provider != "passthru" {
+		t.Fatalf("pass-through provider should take an unadvertised id: %+v %v", res, err)
+	}
+	// With the pass-through paused, an unadvertised id is onegw's own 404 and
+	// no upstream dial happens at all.
+	if d, _ := p.Get("passthru"); d != nil {
+		d.Disabled = true
+	}
+	if _, err := r.Resolve("anything-else"); err == nil || err.Status != 404 || err.Type != "model_not_found" {
+		t.Fatalf("unadvertised id with no pass-through must 404 locally: %+v", err)
+	}
+}
+
+// TestResolveBareModelAmbiguousFollowsConfigOrder: two providers advertising
+// the same id (opencode and tokenharbor both list deepseek-v4.1-flash in the
+// live config) resolve to the earlier one, deterministically and documented —
+// the advertiser check must not turn ambiguity into an error.
+func TestResolveBareModelAmbiguousFollowsConfigOrder(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{Name: "a-first", Kind: provider.KindOpenAI,
+		Models: []string{"shared-m"}, Accounts: []provider.Account{{Name: "k1", APIKey: "x"}}})
+	p.Set(&provider.Def{Name: "b-second", Kind: provider.KindOpenAI,
+		Models: []string{"shared-m"}, Accounts: []provider.Account{{Name: "k2", APIKey: "y"}}})
+	r := New(p)
+	r.SetModels([]string{"a-first/shared-m", "b-second/shared-m"})
+	res, err := r.Resolve("shared-m")
+	if err != nil || res.Targets[0].Provider != "a-first" {
+		t.Fatalf("ambiguous bare id: %+v %v", res, err)
+	}
+	// If the earlier advertiser is paused, the later one serves it: a paused
+	// provider must not swallow the id.
+	if d, _ := p.Get("a-first"); d != nil {
+		d.Disabled = true
+	}
+	if res, err := r.Resolve("shared-m"); err != nil || res.Targets[0].Provider != "b-second" {
+		t.Fatalf("paused advertiser must fall through to the next: %+v %v", res, err)
+	}
+}

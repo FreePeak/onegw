@@ -281,15 +281,18 @@ func TestAliasRoutesThroughHandler(t *testing.T) {
 	// Reload with the alias dropped: the name must stop resolving.
 	cfg2 := makeCfg(t, "key-one", "pw-one", false, providerSpec{name: "p1", up: up1.URL, model: "m1"})
 	srv.Reload(cfg2)
-	// After dropping the alias table, "fast" is no longer a named alias:
-	// bare-model pass-through still serves it via the first provider.
+	// The dropped name must NOT resolve any more: no alias, no provider
+	// advertises "fast", so onegw answers its own 404 instead of forwarding an
+	// unknown model to whichever provider happens to sit first in config order
+	// (the pre-fix behaviour, which burned an upstream call on a model that
+	// cannot exist and fed the vendor's 404 into that provider's model lockout).
 	w = do(t, h, func() *http.Request {
 		r := chatReq(t, "fast")
 		r.Header.Set("Authorization", "Bearer key-one")
 		return r
 	}())
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "pong from m1") {
-		t.Fatalf("post-drop alias should fall through as bare model: code=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "model_not_found") {
+		t.Fatalf("post-drop alias must 404 without an upstream attempt: code=%d body=%s", w.Code, w.Body.String())
 	}
 }
 

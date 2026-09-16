@@ -33,9 +33,14 @@ type Combo struct {
 
 // Router resolves model strings and executes calls with fallback.
 type Router struct {
-	mu      sync.RWMutex
-	pool    *provider.Pool
-	models  map[string]directRoute
+	mu     sync.RWMutex
+	pool   *provider.Pool
+	models map[string]directRoute
+
+	// bare indexes the same advertised ids by BARE model → provider names in
+	// config order, so a slash-less model string can be resolved against the
+	// providers that actually serve it. Built with models in SetModels.
+	bare    map[string][]string
 	combos  map[string]*Combo
 	aliases map[string]string
 
@@ -124,14 +129,21 @@ func (r *Router) SetModels(routes []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m := make(map[string]directRoute, len(routes))
+	bare := make(map[string][]string, len(routes))
 	for _, route := range routes {
 		prov, model, ok := strings.Cut(route, "/")
 		if !ok {
 			continue
 		}
 		m[strings.ToLower(route)] = directRoute{provider: prov, model: model}
+		// Keep provider order, one entry per provider: a provider listing the
+		// same id twice must not appear twice in the bare-candidate chain.
+		key := strings.ToLower(model)
+		if last := bare[key]; len(last) == 0 || last[len(last)-1] != prov {
+			bare[key] = append(bare[key], prov)
+		}
 	}
-	r.models = m
+	r.models, r.bare = m, bare
 }
 
 // SetAliases replaces the alias table (alias → "provider/model", combo
@@ -313,16 +325,32 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 		return nil, &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + prov}
 	}
-	// Bare model: try providers in order that could serve it. Disabled
-	// providers (paused via the dashboard toggle) never win this
-	// fallback — a paused provider must not silently absorb passthrough
-	// traffic that an enabled provider could serve.
-	for _, name := range r.pool.Names() {
+	// Bare model: only a provider that ADVERTISES the id may serve it, and
+	// among advertisers the config order decides. Providers with an empty
+	// `models` list are pass-through — they serve anything — so they follow the
+	// advertisers rather than preempt them. Disabled providers (the dashboard
+	// pause toggle) never win, advertised or not: a paused provider must not
+	// silently absorb passthrough traffic an enabled one could serve.
+	//
+	// The loop used to return the FIRST enabled provider whatever the string
+	// said, so a bare id nobody advertises — a typo, a stale client config, a
+	// hallucinated model name — was forwarded upstream anyway: live 2026-09-16,
+	// an invented id reached b-ai and came back 404 "does not exist
+	// (distributor)", burning a pool slot and an upstream call, and (worse)
+	// feeding the vendor's 404 into the per-model lockout of a provider that
+	// never had that model. An id nobody serves is now onegw's own 404, before
+	// any dial — same status and type, so ModelScoped's contract is unchanged.
+	for _, name := range r.bare[strings.ToLower(model)] {
 		if d, ok := r.pool.Get(name); ok && !d.Disabled {
 			return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
 		}
 	}
-	return nil, &types.APIError{Status: 404, Type: "model_not_found", Message: "no provider for model " + model}
+	for _, name := range r.pool.Names() {
+		if d, ok := r.pool.Get(name); ok && !d.Disabled && len(d.Models) == 0 {
+			return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
+		}
+	}
+	return nil, &types.APIError{Status: 404, Type: "model_not_found", Message: "no provider advertises model " + model}
 }
 
 // Request identity rides the context: handlers tag each request with the
