@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -83,6 +84,9 @@ func usage(w io.Writer) {
 
 Usage:
   onegw [-config FILE]                 run the gateway (default 127.0.0.1:8080)
+  onegw --bg                           same, detached: survives the terminal closing
+                                       (log <data_dir>/onegw.log; refuses to start
+                                       if something already listens on the port)
   onegw version                        print the build stamp
   onegw update [--check] [--force] [--yes]
                                        check for, or apply, a release
@@ -96,6 +100,7 @@ ONEGW_KEYS, ONEGW_ADMIN_PASSWORD, ONEGW_PROVIDER_<NAME>_KEY, ONEGW_DATA_DIR.
 
 func runGateway() {
 	cfgPath := flag.String("config", "", "path to onegw.toml (default ./onegw.toml, then $ONEGW_CONFIG)")
+	bg := flag.Bool("bg", false, "detach and keep serving after the terminal closes; stdout/stderr go to <data_dir>/onegw.log")
 	flag.Parse()
 
 	path := *cfgPath
@@ -118,6 +123,25 @@ func runGateway() {
 			fatal("load config: %v", err)
 		}
 	}
+	// --bg: hand the service to a detached child and free this terminal. Runs
+	// before any side effect (password minting, memory tuning, the listener): the
+	// child performs all of it and its output lands in the log file, so a first-run
+	// admin password is still recoverable from there. The path is forwarded only
+	// when the file exists, so the child repeats this function's own "no config
+	// present -> defaults" resolution verbatim.
+	if *bg {
+		// Forward an absolute path only when the file really exists, so the
+		// child repeats this function's own "no config present -> defaults"
+		// resolution instead of failing on a path that vanished.
+		forward := ""
+		if st, serr := os.Stat(path); serr ***REMOVED*** nil && st.Mode().IsRegular() {
+			if abs, aerr := filepath.Abs(path); aerr ***REMOVED*** nil {
+				forward = abs
+			}
+		}
+		os.Exit(startBackground(cfg, forward, os.Args[1:]))
+	}
+
 	// First boot with no admin_password anywhere: mint one, persist it under
 	// the data dir, and print it once (below) so the operator can sign in.
 	if _, pwErr := cfg.GenerateAndStoreAdminPassword(); pwErr != nil {
