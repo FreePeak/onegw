@@ -29,9 +29,9 @@ func TestDeliveredTrackerEWMAAndGates(t *testing.T) {
 		t.Fatalf("gated samples must not appear, got %+v", got)
 	}
 
-	// 10 tokens in 1s -> 10 tok/s delivered, 100ms TTFT.
+	// 10 tokens in 1s -> 10 tok/s delivered, 1 req/s, combined 11, 100ms TTFT.
 	tk.observe("free", 10, time.Second, 100*time.Millisecond, now.Add(time.Minute))
-	// 30 tokens in 1s -> 30 tok/s; EWMA blends at deliveredAlpha (0.25).
+	// 30 tokens in 1s -> 30 tok/s, same 1 req/s; EWMA blends at deliveredAlpha (0.25).
 	tk.observe("free", 30, time.Second, 300*time.Millisecond, now.Add(2*time.Minute))
 	rows := tk.rows()
 	if len(rows) != 1 || rows[0].Model != "free" {
@@ -40,6 +40,16 @@ func TestDeliveredTrackerEWMAAndGates(t *testing.T) {
 	wantTPS := 0.25*30 + 0.75*10
 	if rows[0].TPS < wantTPS-1e-9 || rows[0].TPS > wantTPS+1e-9 {
 		t.Fatalf("TPS=%v, want %v", rows[0].TPS, wantTPS)
+	}
+	// rps is 1/1s = 1 both times: the EWMA of two equal samples is 1.
+	wantRPS := 1.0
+	if rows[0].RPS < wantRPS-1e-9 || rows[0].RPS > wantRPS+1e-9 {
+		t.Fatalf("RPS=%v, want %v", rows[0].RPS, wantRPS)
+	}
+	// combined is tps+rps per sample: 11 then 31 -> 0.25*31 + 0.75*11.
+	wantCombined := 0.25*31 + 0.75*11
+	if rows[0].Combined < wantCombined-1e-9 || rows[0].Combined > wantCombined+1e-9 {
+		t.Fatalf("Combined=%v, want %v", rows[0].Combined, wantCombined)
 	}
 	wantTTFT := 0.25*300 + 0.75*100
 	if rows[0].TTFTMs < wantTTFT-1e-9 || rows[0].TTFTMs > wantTTFT+1e-9 {
@@ -125,5 +135,60 @@ func TestDeliveredFoldedEndToEnd(t *testing.T) {
 	}
 	if e := srv.reqlog.latest(1)[0]; e.E2EMs < 15 {
 		t.Fatalf("e2e_ms=%d, want >= stub sleep 15ms", e.E2EMs)
+	}
+}
+
+// A slow request must drag BOTH the tok/s and the req/s EWMA: a 24-token
+// reply over 4s is 6 tok/s AND 0.25 req/s — the client-throughput view
+// (tps + rps) exists to surface exactly this collapse.
+func TestDeliveredTrackerReqRateAndCombined(t *testing.T) {
+	tk := &deliveredTracker{}
+	now := time.Now()
+	tk.observe("free", 24, 4*time.Second, 500*time.Millisecond, now)
+	rows := tk.rows()
+	if len(rows) != 1 {
+		t.Fatalf("rows=%+v, want one row", rows)
+	}
+	// First sample seeds all three: tps 6, rps 1/4 = 0.25, combined 6.25.
+	if want := 0.25; rows[0].RPS < want-1e-9 || rows[0].RPS > want+1e-9 {
+		t.Fatalf("seeded RPS(4s wall)=%v, want %v", rows[0].RPS, want)
+	}
+	if want := 6.25; rows[0].Combined < want-1e-9 || rows[0].Combined > want+1e-9 {
+		t.Fatalf("seeded Combined=%v, want %v", rows[0].Combined, want)
+	}
+	// A faster second request blends in at deliveredAlpha.
+	tk.observe("free", 25, 5*time.Second, 600*time.Millisecond, now.Add(time.Minute))
+	rows = tk.rows()
+	if len(rows) != 1 {
+		t.Fatalf("rows=%+v, want one row", rows)
+	}
+	wantRPS := 0.25*0.2 + 0.75*0.25
+	if rows[0].RPS < wantRPS-1e-9 || rows[0].RPS > wantRPS+1e-9 {
+		t.Fatalf("RPS=%v, want %v", rows[0].RPS, wantRPS)
+	}
+	wantCombined := 0.25*(5+0.2) + 0.75*(6+0.25)
+	if rows[0].Combined < wantCombined-1e-9 || rows[0].Combined > wantCombined+1e-9 {
+		t.Fatalf("Combined=%v, want %v", rows[0].Combined, wantCombined)
+	}
+}
+
+// A short, fast request carries a burst-y per-request req/s: 4 tokens in
+// 50ms is 80 tok/s and 20 req/s — both fold, and combined is their sum.
+func TestDeliveredTrackerShortWallReqRate(t *testing.T) {
+	tk := &deliveredTracker{}
+	now := time.Now()
+	tk.observe("free", 4, 50*time.Millisecond, 10*time.Millisecond, now)
+	rows := tk.rows()
+	if len(rows) != 1 {
+		t.Fatalf("rows=%+v, want one row", rows)
+	}
+	if want := 80.0; rows[0].TPS < want-1e-9 || rows[0].TPS > want+1e-9 {
+		t.Fatalf("TPS=%v, want %v", rows[0].TPS, want)
+	}
+	if want := 20.0; rows[0].RPS < want-1e-9 || rows[0].RPS > want+1e-9 {
+		t.Fatalf("RPS=%v, want %v", rows[0].RPS, want)
+	}
+	if want := 100.0; rows[0].Combined < want-1e-9 || rows[0].Combined > want+1e-9 {
+		t.Fatalf("Combined=%v, want %v", rows[0].Combined, want)
 	}
 }
