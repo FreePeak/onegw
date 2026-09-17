@@ -67,6 +67,19 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 # cross "/".
 # always_thinking = ["glm-5.3*"]
 # no_thinking   = ["kilo-auto/*"]  # no thinking mode: effort/thinking knobs stripped
+# retry_forever = ["union-alpha"]  # transient 5xx / shared walls / the
+#                                   gateway's own pre-first-byte 504
+#                                   are retried on THIS target until
+#                                   it answers — a combo never falls
+#                                   through to a lesser leg for them.
+#                                   Globs: path.Match, "*" does not cross
+#                                   "/". Use ONLY for a leg whose
+#                                   upstream flaps between long
+#                                   successful calls and cheap
+#                                   refusals, where waiting beats
+#                                   downgrading (live opencode/union-alpha:
+#                                   200s at ~50s ttfb beside 503 "Endpoint
+#                                   is unavailable" after 1.4s).
 # Quota window (issue #7): track usage per provider against a reset window
 # and optionally enforce limits. quota_window = a calendar kind
 # ("daily" | "weekly" | "monthly") or a rolling Go duration ("5h", "48h",
