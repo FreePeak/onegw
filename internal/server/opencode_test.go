@@ -301,3 +301,71 @@ func TestGrokGeminiClientViaResponses(t *testing.T) {
 		t.Fatalf("gemini content wrong: %s", w.Body.String())
 	}
 }
+
+// OpenAI chat client -> Anthropic-only OpenCode model (union-alpha): the
+// gateway translates chat-completions to /v1/messages with x-api-key.
+func TestUnionAlphaOpenAIClientViaAnthropicUpstream(t *testing.T) {
+	var gotPath, gotAuth, gotAPIKey, gotVersion, gotSession, gotBody string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("x-api-key")
+		gotVersion = r.Header.Get("anthropic-version")
+		gotSession = r.Header.Get("X-Opencode-Session")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"union-alpha","stop_reason":"end_turn","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":2}}`))
+	}))
+	defer up.Close()
+
+	cfg := &config.Config{}
+	cfg.Server.DataDir = "memory"
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "gw-key"}}
+	cfg.Providers = []config.ProviderCfg{{
+		Name: "opencode", Kind: "opencode", BaseURL: up.URL,
+		Keys: []string{"oc-k1"}, Models: []string{"union-alpha"},
+	}}
+	cfg.Defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := chatReq(t, "opencode/union-alpha")
+	r.Header.Set("Authorization", "Bearer gw-key")
+	w := do(t, s.Handler(), r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if gotPath != "/v1/messages" {
+		t.Fatalf("path = %q, want /v1/messages", gotPath)
+	}
+	if gotAuth != "" {
+		t.Fatalf("Authorization = %q, want empty", gotAuth)
+	}
+	if gotAPIKey != "oc-k1" || gotVersion != "2023-06-01" {
+		t.Fatalf("x-api-key=%q anthropic-version=%q", gotAPIKey, gotVersion)
+	}
+	if gotSession ***REMOVED*** "" {
+		t.Fatal("missing x-opencode-session")
+	}
+	if !strings.Contains(gotBody, `"max_tokens"`) || strings.Contains(gotBody, `"input"`) {
+		t.Fatalf("upstream body not Anthropic-shaped: %s", gotBody)
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("client got non-OpenAI-shaped body: %v (%s)", err, w.Body.String())
+	}
+	if len(resp.Choices) ***REMOVED*** 0 || resp.Choices[0].Message.Content != "hi" {
+		t.Fatalf("content missing: %s", w.Body.String())
+	}
+}

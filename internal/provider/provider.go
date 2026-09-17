@@ -120,14 +120,34 @@ func ResponsesOnlyModel(model string) bool {
 	return false
 }
 
+// AnthropicOnlyModel reports whether an OpenCode catalog model is served
+// only on the Anthropic Messages wire (/v1/messages) — never on
+// /v1/chat/completions. Currently just union-alpha ("Union Alpha Free" in
+// the OpenCode Zen Go docs, which lists it against the /v1/messages
+// endpoint). Live-probed 2026-09-17 on both tiers and both gateway keys:
+// /v1/chat/completions and /v1/responses answer 500
+// {"type":"error","error":{"type":"error","message":"Internal server
+// error"}}, while /v1/messages with x-api-key + anthropic-version +
+// x-opencode-session answers 200 in the Anthropic shape.
+func AnthropicOnlyModel(model string) bool {
+	return model ***REMOVED*** "union-alpha"
+}
+
 // UpstreamFormat returns the wire format the routed model actually speaks
 // on this provider. KindOpenCode and KindOpenCodeFree vary per model:
-// chat-completions for the open-weight catalog, Responses API for the
-// gpt/grok/muse-spark families (live-verified on BOTH tiers 2026-09-12:
-// muse-spark-1.2/1.3-contributor-free serve keyless on /zen/v1/responses).
+// Anthropic Messages for union-alpha (AnthropicOnlyModel; live-probed
+// 2026-09-17), Responses API for the gpt/grok/muse-spark families
+// (live-verified on BOTH tiers 2026-09-12: muse-spark-1.2/1.3-contributor-free
+// serve keyless on /zen/v1/responses), chat-completions for the open-weight
+// catalog.
 func (d *Def) UpstreamFormat(model string) translat.Format {
-	if (d.Kind ***REMOVED*** KindOpenCode || d.Kind ***REMOVED*** KindOpenCodeFree) && ResponsesOnlyModel(model) {
-		return translat.FmtResponses
+	if d.Kind ***REMOVED*** KindOpenCode || d.Kind ***REMOVED*** KindOpenCodeFree {
+		if AnthropicOnlyModel(model) {
+			return translat.FmtAnthropic
+		}
+		if ResponsesOnlyModel(model) {
+			return translat.FmtResponses
+		}
 	}
 	// Providers whose default wire is chat-completions can still hold ids the
 	// upstream serves only on /v1/responses (xAI's OAuth path: grok-4.5).
@@ -776,9 +796,11 @@ func (k Kind) DefaultBaseURL() string {
 }
 
 // OpenCode Zen Go catalog: the live subscription model list (verified via
-// GET /zen/go/v1/models, 2026-09-08). Chat-capable models route to
-// /v1/chat/completions; the Responses-only families (gpt-*, grok-*,
-// muse-spark-*) route to /v1/responses — see ResponsesOnlyModel.
+// GET /zen/go/v1/models, 2026-09-08; union-alpha added 2026-09-17).
+// Chat-capable models route to /v1/chat/completions; the Responses-only
+// families (gpt-*, grok-*, muse-spark-*) route to /v1/responses — see
+// ResponsesOnlyModel; union-alpha routes to /v1/messages — see
+// AnthropicOnlyModel.
 var openCodeGoModels = []string{
 	"deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro",
 	"glm-5", "glm-5.1", "glm-5.2", "glm-5.3", "glm-5.3-flash",
@@ -791,6 +813,7 @@ var openCodeGoModels = []string{
 	"minimax-m2.5", "minimax-m2.7", "minimax-m3",
 	"muse-spark-1.2-contributor", "muse-spark-1.3-contributor",
 	"omen-alpha",
+	"union-alpha",
 	"qwen3.5-plus", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus",
 	"qwen3.8-flash", "qwen3.8-max",
 }
@@ -2047,12 +2070,17 @@ func (d *Def) Path(op, model string) string {
 	case KindCursor:
 		return "" // skeleton
 	case KindOpenCode, KindOpenCodeFree:
-		// Both tiers route per model: the gpt-*/grok-*/muse-spark*
-		// families live on /v1/responses (ResponsesOnlyModel; the free
-		// tier's muse-spark-*-free included — live-probed 2026-09-12),
-		// everything else on /v1/chat/completions.
+		// Both tiers route per model: union-alpha lives on /v1/messages
+		// (AnthropicOnlyModel; live-probed 2026-09-17), the
+		// gpt-*/grok-*/muse-spark* families live on /v1/responses
+		// (ResponsesOnlyModel; the free tier's muse-spark-*-free
+		// included — live-probed 2026-09-12), everything else on
+		// /v1/chat/completions.
 		if op ***REMOVED*** "models" {
 			return "/v1/models"
+		}
+		if AnthropicOnlyModel(model) {
+			return "/v1/messages"
 		}
 		if ResponsesOnlyModel(model) {
 			return "/v1/responses"
@@ -2167,8 +2195,9 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				// Grok CLI fingerprint (single owner; see setGrokFingerprint).
 				setGrokFingerprint(req.Header, model, true)
 			}
-			// applyAuth is the single credential owner for EVERY kind.
-			applyAuth(req.Header, d.Kind, acct.bearerToken())
+			// applyAuth is the single credential owner for EVERY kind
+			// (including OpenCode's Anthropic-only catalog).
+			applyAuth(req.Header, d.Kind, acct.bearerToken(), model)
 		}
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -2415,7 +2444,7 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 	// — previously this switch used acct.APIKey literally, so an OAuth-only
 	// xAI account sent "Bearer " / "x-api-key: " empty on embeddings,
 	// transcription and speech. Identical headers for static-key accounts.
-	applyAuth(req.Header, d.Kind, acct.bearerToken())
+	applyAuth(req.Header, d.Kind, acct.bearerToken(), "")
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
@@ -2556,7 +2585,7 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		// per-attempt chat ids; see setGrokFingerprint).
 		setGrokFingerprint(req.Header, "", false)
 	}
-	applyAuth(req.Header, d.Kind, acct.bearerToken())
+	applyAuth(req.Header, d.Kind, acct.bearerToken(), "")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, transportErr(ctx, err).Status, err

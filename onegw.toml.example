@@ -166,8 +166,9 @@ models = ["gemini-3-pro", "gemini-3-flash"]
 name = "opencode"
 kind = "opencode"               # OpenCode Zen Go subscription; base_url defaults
                                 # to https://opencode.ai/zen/go
-# models = [...]                # optional; omitted = full live Go catalog (35 models).
-                                # gpt-*/grok-*/muse-spark-* auto-route to /v1/responses.
+# models = [...]                # optional; omitted = full live Go catalog (36 models).
+                                # gpt-*/grok-*/muse-spark-* auto-route to /v1/responses;
+                                # union-alpha auto-routes to /v1/messages (Anthropic).
 # always_thinking = ["glm-5.3*"]
 # no_thinking   = ["kilo-auto/*"]  # no thinking mode: effort/thinking knobs stripped
 # keys = ["...", "..."]         # one account per key — or use accounts:
