@@ -23,14 +23,16 @@ type gatewayMetrics struct {
 	tokens   *metrics.Family // onegw_tokens_total{provider,model,type}
 	errors   *metrics.Family // onegw_request_errors_total{provider,kind}
 
-	inflight   *metrics.Family // onegw_inflight
-	budgetHeld *metrics.Family // onegw_budget_inflight_bytes
-	budgetCap  *metrics.Family // onegw_budget_cap_bytes
-	uptime     *metrics.Family // onegw_uptime_seconds
-	provTPS    *metrics.Family // onegw_provider_tokens_per_second_x100
-	provPreTPS *metrics.Family // onegw_provider_prefill_tokens_per_second_x100
-	clientTPS  *metrics.Family // onegw_client_delivered_tokens_per_second_x100
-	clientTTFT *metrics.Family // onegw_client_tokens_to_first_byte_ms
+	inflight    *metrics.Family // onegw_inflight
+	budgetHeld  *metrics.Family // onegw_budget_inflight_bytes
+	budgetCap   *metrics.Family // onegw_budget_cap_bytes
+	uptime      *metrics.Family // onegw_uptime_seconds
+	provTPS     *metrics.Family // onegw_provider_tokens_per_second_x100
+	provPreTPS  *metrics.Family // onegw_provider_prefill_tokens_per_second_x100
+	clientTPS   *metrics.Family // onegw_client_delivered_tokens_per_second_x100
+	clientTTFT  *metrics.Family // onegw_client_tokens_to_first_byte_ms
+	clientRPS   *metrics.Family // onegw_client_requests_per_second_x100
+	clientThrpt *metrics.Family // onegw_client_combined_throughput_x100
 
 	delivered *deliveredTracker // client-experienced tok/s + TTFT per client model
 }
@@ -43,14 +45,16 @@ func newGatewayMetrics() *gatewayMetrics {
 		tokens:   reg.Counter("onegw_tokens_total", "Tokens by routed provider, model, and type (input, output, cache_read, cache_write, reasoning, saved).", "provider", "model", "type"),
 		errors:   reg.Counter("onegw_request_errors_total", "Failed request paths by provider and kind (upstream_error, budget_saturated, no_route); provider is empty when the request never reached a route.", "provider", "kind"),
 
-		inflight:   reg.Gauge("onegw_inflight", "Requests currently live in the gateway pipeline."),
-		budgetHeld: reg.Gauge("onegw_budget_inflight_bytes", "Bytes currently reserved under the global buffered-memory budget."),
-		budgetCap:  reg.Gauge("onegw_budget_cap_bytes", "Capacity of the global buffered-memory budget in bytes."),
-		uptime:     reg.Gauge("onegw_uptime_seconds", "Seconds since the gateway process started."),
-		provTPS:    reg.Gauge("onegw_provider_tokens_per_second_x100", "Decode-speed EWMA (output tokens/sec) per provider, scaled x100 (int64 registry); refreshed at scrape, absent until the provider served streaming replies.", "provider"),
-		provPreTPS: reg.Gauge("onegw_provider_prefill_tokens_per_second_x100", "Prefill (pre-first-byte) rate EWMA in INPUT tokens/sec per provider+model+size-bucket, scaled x100; refreshed at scrape. Size-aware combo ordering steers large requests on this number: decode speed alone cannot predict a 200K-token request's wall time.", "provider", "model", "bucket"),
-		clientTPS:  reg.Gauge("onegw_client_delivered_tokens_per_second_x100", "Delivered tokens/sec EWMA per CLIENT model (output tokens of the winning attempt over the whole request wall time — failed attempts, rotation and backoff included), scaled x100 (int64 registry); refreshed at scrape, absent until the model served >=4 output tokens.", "model"),
-		clientTTFT: reg.Gauge("onegw_client_tokens_to_first_byte_ms", "First-byte TTFT EWMA in ms per CLIENT model (handler entry -> first upstream byte; failed attempts, rotation and backoff all land in it); refreshed at scrape.", "model"),
+		inflight:    reg.Gauge("onegw_inflight", "Requests currently live in the gateway pipeline."),
+		budgetHeld:  reg.Gauge("onegw_budget_inflight_bytes", "Bytes currently reserved under the global buffered-memory budget."),
+		budgetCap:   reg.Gauge("onegw_budget_cap_bytes", "Capacity of the global buffered-memory budget in bytes."),
+		uptime:      reg.Gauge("onegw_uptime_seconds", "Seconds since the gateway process started."),
+		provTPS:     reg.Gauge("onegw_provider_tokens_per_second_x100", "Decode-speed EWMA (output tokens/sec) per provider, scaled x100 (int64 registry); refreshed at scrape, absent until the provider served streaming replies.", "provider"),
+		provPreTPS:  reg.Gauge("onegw_provider_prefill_tokens_per_second_x100", "Prefill (pre-first-byte) rate EWMA in INPUT tokens/sec per provider+model+size-bucket, scaled x100; refreshed at scrape. Size-aware combo ordering steers large requests on this number: decode speed alone cannot predict a 200K-token request's wall time.", "provider", "model", "bucket"),
+		clientTPS:   reg.Gauge("onegw_client_delivered_tokens_per_second_x100", "Delivered tokens/sec EWMA per CLIENT model (output tokens of the winning attempt over the whole request wall time — failed attempts, rotation and backoff included), scaled x100 (int64 registry); refreshed at scrape, absent until the model served >=4 output tokens.", "model"),
+		clientTTFT:  reg.Gauge("onegw_client_tokens_to_first_byte_ms", "First-byte TTFT EWMA in ms per CLIENT model (handler entry -> first upstream byte; failed attempts, rotation and backoff all land in it); refreshed at scrape.", "model"),
+		clientRPS:   reg.Gauge("onegw_client_requests_per_second_x100", "Requests/sec EWMA per CLIENT model (1/latency per completed request — the reciprocal of one request's wall time), scaled x100 (int64 registry); refreshed at scrape, absent until the model served a request.", "model"),
+		clientThrpt: reg.Gauge("onegw_client_combined_throughput_x100", "Combined client throughput EWMA per CLIENT model (delivered tokens/sec + requests/sec — a heuristic ranking score, not a physical rate), scaled x100 (int64 registry); refreshed at scrape, absent until the model has samples.", "model"),
 
 		delivered: &deliveredTracker{},
 	}
@@ -236,6 +240,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		for _, r := range m.delivered.rows() {
 			m.clientTPS.Set(int64(r.TPS*100), r.Model)
 			m.clientTTFT.Set(int64(r.TTFTMs), r.Model)
+			m.clientRPS.Set(int64(r.RPS*100), r.Model)
+			m.clientThrpt.Set(int64(r.Combined*100), r.Model)
 		}
 	}
 
