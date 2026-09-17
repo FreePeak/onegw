@@ -1,3 +1,23 @@
+*Last updated: 2026-09-17 (OpenRouter's shared-pool 429 benched a healthy key — the nested diagnostic never reached the classifier):*
+`openrouter/stealth/union-alpha` 429s with `{"error":{"message":"Provider returned error","code":429,"metadata":{…}}}`
+— and the metadata is where the cause lives: `raw` = "stealth/union-alpha is temporarily rate-limited upstream. Please
+retry shortly.", `limit_source` = `upstream_provider_shared_pool`. `oaError` decoded only message/type/code, so all three
+decode sites (`DecodeOpenAIError`, `DecodeOpenAIResponse`, `decodeOpenAIStreamEvent`) produced
+`APIError{Status:429, Type:"upstream_error", Code:"429", Message:"Provider returned error"}` — byte-identical to a
+genuine per-key 429 — and `SharedConcurrency()` matched none of OpenRouter's wording. In `Def.Do` that meant
+`shared ***REMOVED*** false`; the burst fallback could not fire either, because the pool holds ONE account (`harvey`) and
+`wallStrike` needs two distinct accounts to prove a shared lane. Result: `rateLimited(acct, 0)` benched the healthy key
+on the 10s→20s→40s ladder for an upstream-side wall that clears in seconds, `Router.Execute` burned its same-target
+retries into the saturated lane instead of falling through, and the dashboard row named no cause. Live probe
+2026-09-17: 3 of 8 calls 429ed with that body (this shape carries **no** `Retry-After` header) while the other five
+answered 200 on the same credential — a shared lane, not a dead key. `oaError` now carries `Metadata{Raw, LimitSource}`
+and a `detail()` fold that appends both to the message at every decode site, and `SharedConcurrency()` recognizes
+`upstream_provider_shared_pool` + "temporarily rate-limited upstream" → the 429 skips the account ladder,
+`Router.Execute` falls through immediately, keys stay warm, and the client gets an honest `Retry-After: 2`. Tests pin
+the fold on all three decode paths, the classification + no-bench on the real captured body, and the fold's additivity
+(a metadata-less error keeps its message verbatim). **Deploy: the running gateway predates this — restart on the new
+binary, then `openrouter/stealth/union-alpha` is safe in a combo's first position.**
+Earlier:)*
 *Last updated: 2026-09-17 (GHCR publish broken since the public repo took over releases — the `docker` job
 denies with `write_package` while the release itself succeeds):*
 The repo moved to `FreePeak/onegw` (public, created 2026-09-17 05:24Z) but the GHCR package

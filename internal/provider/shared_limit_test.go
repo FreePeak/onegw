@@ -214,3 +214,48 @@ func TestAdmissionWall429SkipsLadder(t *testing.T) {
 		t.Fatalf("hits=%d, want 1", atomic.LoadInt32(hits))
 	}
 }
+
+// Live 2026-09-17 (openrouter/stealth/union-alpha, account harvey): the
+// upstream's own provider lane was saturated, not our key. Body as captured:
+// the top-level message says only "Provider returned error" and HTTP 429
+// carried NO Retry-After, so before this classification the 429 read as a
+// per-key wall: rateLimited(acct, 0) benched the single healthy key on the
+// 10s->20s->40s ladder, and because the pool holds ONE account, wallStrike
+// can never prove the lane by burst (it needs a second distinct account).
+// Measured at the time: 3 union-alpha 429s parked the sibling
+// deepseek-v4.1-flash route for ~90s, and a fresh probe the same day
+// answered 200 on five of eight calls — the credential was never at fault.
+const openRouterSharedPoolBody = `{"error":{"message":"Provider returned error","code":429,` +
+	`"metadata":{"raw":"stealth/union-alpha is temporarily rate-limited upstream. Please retry shortly.",` +
+	`"provider_name":"Stealth","is_byok":false,"limit_source":"upstream_provider_shared_pool",` +
+	`"remedy_hint":"Retry shortly, add your own provider key, or route to another provider"}},` +
+	`"user_id":"user_3GyOQIi8AQusXIoE4kZHw8PASUz"}`
+
+func TestOpenRouterSharedPool429SkipsLadder(t *testing.T) {
+	srv, hits := mkErrStub(t, 429, openRouterSharedPoolBody)
+	def := newSingleDef(t, srv, "openrouter")
+	a1 := &def.Accounts[0]
+
+	_, apiErr := def.Do(context.Background(), a1, "stealth/union-alpha", nil, bytes.NewReader([]byte(`{}`)), false)
+	if apiErr ***REMOVED*** nil || apiErr.Status != 429 {
+		t.Fatalf("got %+v, want 429", apiErr)
+	}
+	// The vendor's nested diagnostic must survive decoding — the classifier
+	// and the dashboard both read it out of Message.
+	if !strings.Contains(apiErr.Message, "temporarily rate-limited upstream") ||
+		!strings.Contains(apiErr.Message, "upstream_provider_shared_pool") {
+		t.Fatalf("nested metadata lost in decode: %q", apiErr.Message)
+	}
+	if !apiErr.SharedConcurrency() {
+		t.Fatalf("shared-pool 429 must classify as shared, got %+v", apiErr)
+	}
+	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() || slot.strikes != 0 {
+		t.Fatalf("shared-pool 429 must not bench the account, cooldown=%v strikes=%d", slot.cooldown, slot.strikes)
+	}
+	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a1" {
+		t.Fatalf("pool must keep serving the healthy key, got %+v", got)
+	}
+	if atomic.LoadInt32(hits) != 1 {
+		t.Fatalf("hits=%d, want 1", atomic.LoadInt32(hits))
+	}
+}

@@ -596,7 +596,18 @@ func (e *APIError) SharedConcurrency() bool {
 	return strings.Contains(probe, "concurrency limit") ||
 		modelLimitRe.MatchString(e.Code+" "+e.Message) ||
 		strings.Contains(probe, "backendadmissionrejected") ||
-		strings.Contains(probe, "cold-request admission rejected")
+		strings.Contains(probe, "cold-request admission rejected") ||
+		// OpenRouter's per-PROVIDER lane (live 2026-09-17,
+		// openrouter/stealth/union-alpha): a 429 carrying
+		// limit_source upstream_provider_shared_pool and the vendor's
+		// "temporarily rate-limited upstream" wording. The budget belongs
+		// to the upstream provider's shared pool, not to our key — the
+		// same model served 200s seconds later on the same credential
+		// (measured 3/8 429 while the other five calls answered 200).
+		// Wording only: the translat decoder folds OpenRouter's nested
+		// metadata into Message, so both fragments arrive here.
+		strings.Contains(probe, "upstream_provider_shared_pool") ||
+		strings.Contains(probe, "temporarily rate-limited upstream")
 }
 
 // modelLimitRe matches the Tencent reseller's model-limit wall family —
