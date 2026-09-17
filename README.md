@@ -559,25 +559,49 @@ clean finish.
 
 `kind = "opencode-free"` fronts the keyless public Free tier of the same
 vendor (what OmniRoute exposes as its no-auth `opencode` provider):
-`base_url` defaults to `https://opencode.ai/zen/v1`, no credentials are
-configured or sent (a bare `Bearer` reads as anonymous upstream), and the
-gateway always sends `x-opencode-session` — client value when present, else
-a stable derived id — which is the free tier's only hard requirement. The
-catalog is a small rotating `-free` lineup (`big-pickle`,
-`mimo-v2.5-free`, `nemotron-3-ultra-free`, `muse-spark-*-free`, …; the
-vendor delists ids without notice — delisted models answer 401 `Model X
-is not supported`, so pin `models` to what you've probed). Endpoint
-routing matches the Go tier per model: `muse-spark-*` (the `-free` pair
-included, live-verified) serves on the Responses wire, everything else on
-`/v1/chat/completions` — onegw translates either way. Rate limits are
-IP-scoped and anonymous: upstream 429s (`FreeUsageLimitError`) bench the
-provider like any other, and combos fall through.
+`base_url` defaults to `https://opencode.ai/zen/v1` and no credentials are
+configured (a bare `Bearer` reads as anonymous upstream; sending no
+Authorization header at all is served identically). The catalog is a small
+rotating `-free` lineup — the vendor delists ids without notice, and
+delisted models answer 401 `Model X is not supported`, so pin `models` to
+what you've probed. Endpoint routing matches the Go tier per model:
+`muse-spark-*` (the `-free` pair included) serves on the Responses wire,
+everything else on `/v1/chat/completions` — onegw translates either way.
+Rate limits are IP-scoped and anonymous: upstream 429s
+(`FreeUsageLimitError`) bench the provider like any other, and combos fall
+through.
+
+#### The CLI-identity gate
+
+The tier is no longer open to arbitrary clients. Two headers decide
+whether a request is served or answered `403 FreeTierError` ("OpenCode's
+free tier can only be used from within OpenCode"); onegw sets both for
+this kind, so a configured provider just works:
+
+1. **`User-Agent`** must be the real CLI's shape
+   `opencode/<channel>/<version>/<name>` — a stale version answers `426
+   UpgradeRequired` instead. Any other UA (Go's default, curl, even
+   `opencode-cli/1.0.0`) is refused.
+2. **`x-opencode-session`** must be `ses_` + 12 lowercase hex + 14 base62
+   characters (30 total), the id the opencode binary's factory produces.
+   Every other shape — a 64-char hex id, a 32-char hex derivation, a
+   wrong-length suffix — is refused. onegw forwards a client value only
+   when it already has that shape; otherwise it derives one, stable per
+   account, so prompt caches stay warm.
+
+A sustained burst from one IP trips an IP-scoped `429 FreeUsageLimitError`
+that answers *before* the identity check (a probe burst during the
+2026-09-17 investigation left the whole host 429ing for minutes). Treat
+this leg as best-effort surplus — and note that a 429 here says nothing
+about the header set, so diagnose the gate from a single unthrottled call.
 
 ```toml
 [[providers]]
 name = "opencode-free"
 kind = "opencode-free"          # keyless — no api_key line at all
+models = ["big-pickle", "mimo-v2.5-free", "nemotron-3-ultra-free"]
 ```
+
 
 ### Subscription quota tracking
 

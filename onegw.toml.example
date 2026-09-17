@@ -190,10 +190,13 @@ api_key = ""                    # fill or use env
 
 
 # OpenCode Zen FREE tier — keyless public endpoint (OmniRoute's noauth
-# "opencode"/alias oc provider). No api_key needed: the gateway always
-# sends x-opencode-session (client header or a stable derived id) which is
-# the free tier's only requirement. Rate limits apply upstream; the vendor
-# rotates this lineup (delisted ids answer 401 "Model X is not supported").
+# "opencode"/alias oc provider). No api_key needed. The tier now gates on
+# CLI identity and onegw sets both halves for this kind: the CLI
+# User-Agent (opencode/<channel>/<version>/<name>) and a session id shaped
+# like the real binary's (ses_ + 12 hex + 14 base62). Anything else is
+# answered 403 FreeTierError — see the README's "CLI-identity gate".
+# Rate limits are IP-scoped and anonymous; the vendor rotates this lineup
+# (delisted ids answer 401 "Model X is not supported").
 [[providers]]
 name = "opencode-free"
 kind = "opencode-free"            # base_url defaults to https://opencode.ai/zen/v1
