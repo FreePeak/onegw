@@ -183,6 +183,16 @@ type ProviderCfg struct {
 	// Empty (default) changes nothing: bodies stay byte-identical to today.
 	ResponsesModels []string `toml:"responses_models"`
 
+	// RetryForever lists model globs (path.Match; "*" does not cross "/")
+	// the router must retry on the SAME target until an answer arrives,
+	// never falling through to the next combo leg. Opt-in because it can
+	// hold a request open for as long as the upstream stays unavailable:
+	// it exists for legs whose upstream flaps between long successful
+	// calls and cheap transient 503s (live opencode/union-alpha
+	// 2026-09-15), where falling through to a lesser combo leg is worse
+	// than waiting. Empty (default) = today's bounded MaxAttempts.
+	RetryForever []string `toml:"retry_forever"`
+
 	// DefaultEffort caps the reasoning effort for always-thinking models when
 	// the client sent NO reasoning knob at all ("" = disabled). Measured on
 	// b-ai/glm-5.3-flash 2026-09-11 (same prompt, n=2): unset → vendor default

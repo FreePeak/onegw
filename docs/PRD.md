@@ -1,3 +1,25 @@
+*Last updated: 2026-09-18 (`retry_forever` — a leg that must not be downgraded):*
+The `xdev` combo's single target (`opencode/union-alpha`) alternates long successful calls (~50s ttfb) with
+cheap transient refusals — live `503 "Endpoint is unavailable."` after ~1.4s — and the router treated each one
+as a reason to leave the leg. On a single-target combo that means the request fails outright; on a stack it
+means a silent downgrade to a weaker model. `retry_forever = ["<glob>"]` on a provider block now pins the
+matching models: upstream 5xx, the gateway's own pre-first-byte 504 (`NoSameTargetRetry`), a model-wide
+shared-concurrency wall, a model bench and an all-cooling pool are all *walls to wait out on this target*,
+re-probed in place instead of handing the request to the next combo leg. Wait steps reuse `Backoff`'s tiers
+clamped to `retryForeverMinWait` (200 ms, floors a stale pool "ready" instant so the loop cannot hot-spin) and
+`retryForeverMaxWait` (5 s — the unbounded path would otherwise reach minutes and look like a hang while the
+wall had long since cleared; flat clamp, no jitter — see the `ponytail:` note if many concurrent waiters ever
+probe one leg). `waitCtx` sleeps on the request context and returns `499 client_closed`, so a flagged target
+never keeps probing after its caller hangs up. Hard refusals keep master's contract: a non-retryable,
+non-model-scoped error still returns immediately — no variant of retry clears a refusal the upstream worded as
+terminal, and holding the request open would hide a real answer behind an endless wait. `Resolve` gives a bare
+model name flagged on some provider precedence over the bare-name provider split, so the knob cannot be
+bypassed by inference. Tests (`internal/router/retry_forever_test.go`): rides out 503→504→429 and answers on
+the same leg, surfaces a hard refusal without leaving, waits out a cooling pool and a fully blocked pool
+(ctx cancel), and the unflagged path still falls through bounded. Empty globs are byte-identical to the old
+behaviour. **Not yet in the live config** — add `retry_forever` to the opencode provider block once a binary
+carrying this lands.
+
 *Last updated: 2026-09-17 (GHCR publish broken since the public repo took over releases — the `docker` job
 denies with `write_package` while the release itself succeeds):*
 The repo moved to `FreePeak/onegw` (public, created 2026-09-17 05:24Z) but the GHCR package
@@ -2412,6 +2434,16 @@ Compared against the two reference gateways ( LiteLLM README + docs,
 - Provider kinds: `openai`, `anthropic`, `gemini` — arbitrary upstreams via
   `base_url` override (40+ providers reachable: OpenRouter, GLM, Kimi,
   DeepSeek, Groq, ...). B.AI, GLM, and OpenRouter routes live-verified.
+- `retry_forever = ["<glob>", ...]` (per `[[providers]]` block, `path.Match`
+  syntax): the named models never leave their leg for a *transient* refusal.
+  Upstream 5xx, the gateway's own pre-first-byte 504 budget
+  (`NoSameTargetRetry`) and a model-wide shared-concurrency wall are all
+  waited out on THIS target and re-probed; a model bench is waited out too,
+  and an all-cooling pool blocks until its soonest recovery. Wait steps reuse
+  `Backoff`'s tiers clamped to 200 ms…5 s, and a client hang-up returns 499
+  instead of probing on. Hard refusals (non-retryable, non-model-scoped) still
+  surface immediately — no variant of retry clears them. Off by default
+  (empty globs = today's bounded `MaxAttempts` path, byte-identical).
 
 ### Rotation strategy (OmniRoute deep-dive, 2026-09-11)
 

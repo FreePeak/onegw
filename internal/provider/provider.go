@@ -281,6 +281,18 @@ type Def struct {
 	// chat-completions (xAI/SuperGrok: grok-4.5). Set from ProviderCfg.
 	ResponsesModels []string `toml:"responses_models"`
 
+	// RetryForever lists model globs (path.Match syntax; "*" does not
+	// cross "/") the router must keep retrying on its SAME target until
+	// an answer comes back, never falling through to the next combo leg.
+	// For a leg whose upstream answers 503 "Endpoint is unavailable"
+	// (or parks on a shared wall / a self-inflicted 504 header budget)
+	// between long successful calls (live opencode/union-alpha
+	// 2026-09-15: 200s at ~50s ttfb interleaved with 1.4s 503s), the
+	// combo's real alternatives are thin and a fall-through silently
+	// downgrades the answer. Empty (default) preserves today's bounded
+	// MaxAttempts behavior exactly. Set from ProviderCfg.RetryForever.
+	RetryForever []string `toml:"retry_forever"`
+
 	// CacheProfile opts the provider into upstream prompt-cache anchoring
 	// (issue #34, set from ProviderCfg.CacheProfile): "claude-anchor"
 	// re-anchors Anthropic cache_control breakpoints after normalization,
@@ -472,6 +484,20 @@ func (d *Def) ReasoningEchoModel(model string) bool {
 	defer d.learnedMu.RUnlock()
 	_, ok := d.learnedRE[model]
 	return ok
+}
+
+// RetryForeverModel reports whether the routed upstream model matches one
+// of the provider's retry_forever globs (path.Match syntax): the router
+// stays on this target through transient 5xx, shared/rate walls and its
+// own pre-first-byte budget, instead of falling through to the next combo
+// leg (see Router.Execute).
+func (d *Def) RetryForeverModel(model string) bool {
+	for _, pat := range d.RetryForever {
+		if ok, err := path.Match(pat, model); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // LearnReasoningEcho records model as runtime-discovered echo_reasoning (its
