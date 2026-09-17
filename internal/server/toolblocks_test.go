@@ -17,6 +17,43 @@ type anWireBlock struct {
 	ToolUseID string `json:"tool_use_id"`
 }
 
+// anWireTextBlock is the shape the reported failure names: the upstream reads
+// a block's type before it reports anything missing, so a key-less text block
+// is refused AS "text".
+type anWireTextBlock struct {
+	Type string  `json:"type"`
+	Text *string `json:"text"`
+}
+
+// assertAnWireTextBlocks enforces what the upstream re-checks on an assistant
+// turn: every text block carries a string text, empty or not.
+func assertAnWireTextBlocks(t *testing.T, body []byte) {
+	t.Helper()
+	var wire struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatalf("decode upstream body: %v (%s)", err, body)
+	}
+	for i, m := range wire.Messages {
+		var blocks []anWireTextBlock
+		if json.Unmarshal(m.Content, &blocks) != nil {
+			continue // plain string content
+		}
+		for _, b := range blocks {
+			if b.Type != "text" || m.Role != "assistant" {
+				continue
+			}
+			if b.Text == nil {
+				t.Fatalf("messages[%d]: text block reached the upstream with no string text: %s", i, body)
+			}
+		}
+	}
+}
+
 // anWireBlocks flattens every content block of an Anthropic Messages body.
 func anWireBlocks(t *testing.T, body []byte) []anWireBlock {
 	t.Helper()
@@ -96,6 +133,23 @@ const poisonedAnthropicHistory = `{
   ]
 }`
 
+// keylessAssistantText is the replayed turn measured live 2026-09-17 (gateway
+// ring seq 3404): an assistant text block with no text key at all. The upstream
+// refuses the whole request —
+//
+//	messages[1]: unsupported assistant content block type "text"
+//
+// — and the turn is replayed from the client's transcript on every retry.
+const keylessAssistantText = `{
+  "model": "union-alpha",
+  "max_tokens": 100,
+  "messages": [
+    {"role": "user", "content": "hi"},
+    {"role": "assistant", "content": [{"type": "text"}]},
+    {"role": "user", "content": "keep going"}
+  ]
+}`
+
 // TestPrepareUpstreamBodyNamesPoisonedToolUse is the reported failure end to
 // end: Claude Code on the Anthropic surface replayed a tool_use with an empty
 // name to the Anthropic-wire upstream, and the same-format path forwards those
@@ -118,6 +172,78 @@ func TestPrepareUpstreamBodyNamesPoisonedToolUse(t *testing.T) {
 	// the angle brackets, so match the prose.)
 	if !bytes.Contains(out, []byte("No such tool available")) {
 		t.Fatalf("client tool_result text lost: %s", out)
+	}
+}
+
+// TestPrepareUpstreamBodyCompletesKeylessAssistantText is the second reported
+// failure end to end, same sink: the same-format path forwards the client's
+// bytes verbatim, so the repair has to happen in the body.
+func TestPrepareUpstreamBodyCompletesKeylessAssistantText(t *testing.T) {
+	out, err := prepareUpstreamBody(translat.FmtAnthropic, translat.FmtAnthropic,
+		[]byte(keylessAssistantText), "union-alpha", nil)
+	if err != nil {
+		t.Fatalf("prepareUpstreamBody: %v", err)
+	}
+	assertAnWireTextBlocks(t, out)
+	// The block is completed in place, never dropped: an assistant turn with
+	// no content at all is refused by the same upstream.
+	if !bytes.Contains(out, []byte(`{"text":"","type":"text"}`)) {
+		t.Fatalf("key-less text block not completed in place: %s", out)
+	}
+	if bytes.Contains(out, []byte(`"content":[]`)) {
+		t.Fatalf("assistant turn lost its content: %s", out)
+	}
+}
+
+// TestPrepareUpstreamBodyCompletesEmptyAssistantTurnCrossFormat covers the
+// encoder sink: an OpenAI assistant turn whose content is "" or null encodes
+// as the same key-less block (anBlock.Text is omitempty), measured live
+// 2026-09-17 through the gateway as the identical 400.
+func TestPrepareUpstreamBodyCompletesEmptyAssistantTurnCrossFormat(t *testing.T) {
+	for _, resp := range []string{`""`, `null`} {
+		body := []byte(`{"model":"opencode/union-alpha","max_tokens":16,"messages":[` +
+			`{"role":"user","content":"hi"},` +
+			`{"role":"assistant","content":` + resp + `},` +
+			`{"role":"user","content":"x"}]}`)
+		out, err := prepareUpstreamBody(translat.FmtAnthropic, translat.FmtOpenAI, body, "union-alpha", nil)
+		if err != nil {
+			t.Fatalf("content=%s: %v", resp, err)
+		}
+		assertAnWireTextBlocks(t, out)
+	}
+}
+
+// TestPrepareUpstreamBodyReplacesNonStringAssistantText: the upstream refuses a
+// text block whose text is not a string just as it refuses a missing key, so a
+// null/number text takes the same repair.
+func TestPrepareUpstreamBodyReplacesNonStringAssistantText(t *testing.T) {
+	for _, resp := range []string{`null`, `123`, `{"a":1}`} {
+		body := []byte(`{"model":"union-alpha","max_tokens":16,"messages":[` +
+			`{"role":"user","content":"hi"},` +
+			`{"role":"assistant","content":[{"type":"text","text":` + resp + `}]},` +
+			`{"role":"user","content":"x"}]}`)
+		out, err := prepareUpstreamBody(translat.FmtAnthropic, translat.FmtAnthropic, body, "union-alpha", nil)
+		if err != nil {
+			t.Fatalf("text=%s: %v", resp, err)
+		}
+		assertAnWireTextBlocks(t, out)
+	}
+}
+
+// TestPrepareUpstreamBodyLeavesUserTextBlockAlone pins the scope: the user role
+// carries a differently-worded refusal and no live report, and a trailing
+// "system-reminder" turn must not be rewritten on speculation.
+func TestPrepareUpstreamBodyLeavesUserTextBlockAlone(t *testing.T) {
+	in := `{"model":"union-alpha","max_tokens":16,"messages":[` +
+		`{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":[{"type":"text","text":"ok"}]},` +
+		`{"role":"user","content":[{"type":"text"}]}]}`
+	out, err := prepareUpstreamBody(translat.FmtAnthropic, translat.FmtAnthropic, []byte(in), "union-alpha", nil)
+	if err != nil {
+		t.Fatalf("prepareUpstreamBody: %v", err)
+	}
+	if string(out) != in {
+		t.Fatalf("a user-side key-less text block must be forwarded verbatim, got %s", out)
 	}
 }
 
@@ -157,6 +283,30 @@ func TestPrepareUpstreamBodyFillsMissingToolUseID(t *testing.T) {
 	}
 }
 
+// TestNormalizeToolBlocksCompletesTextOnly covers the text repair without the
+// tool traffic the probe is built around: a text-only body must still be
+// repaired when it reaches the pass.
+func TestNormalizeToolBlocksCompletesTextOnly(t *testing.T) {
+	in := `{"model":"m","max_tokens":9,"messages":[{"role":"assistant","content":[{"type":"text"}]}]}`
+	out := normalizeToolBlocks([]byte(in))
+	assertAnWireTextBlocks(t, out)
+	if !bytes.Contains(out, []byte(`"text":""`)) {
+		t.Fatalf("key-less text block not completed: %s", out)
+	}
+}
+
+// TestNormalizeToolBlocksLeavesEmptyStringTextAlone: an empty string is
+// accepted by the upstream, so rewriting it would cost the provider's prompt
+// cache on every turn for a history that is already fine.
+func TestNormalizeToolBlocksLeavesEmptyStringTextAlone(t *testing.T) {
+	in := `{"model":"m","max_tokens":9,"messages":[
+		{"role":"assistant","content":[{"type":"text","text":""}]},
+		{"role":"assistant","content":[{"type":"text","text":"hi"}]}]}`
+	if out := normalizeToolBlocks([]byte(in)); string(out) != in {
+		t.Fatalf("an accepted empty text must stay byte-identical, got %s", out)
+	}
+}
+
 // TestNormalizeToolBlocksLeavesShapedHistoryAlone pins the cache-stability half
 // of the contract, exactly as the tool-root and tool-pair passes do: a history
 // the upstream already accepts must come back byte-identical, or the repair
@@ -169,6 +319,10 @@ func TestNormalizeToolBlocksLeavesShapedHistoryAlone(t *testing.T) {
 			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"a"}]}]}`,
 		"no tool traffic":     `{"model":"m","messages":[{"role":"user","content":"hi"}]}`,
 		"name copy in a text": `{"model":"m","messages":[{"role":"user","content":"the \"name\":\"\" key was empty"}]}`,
+		"empty assistant text (accepted as-is)": `{"model":"m","messages":[
+			{"role":"assistant","content":[{"type":"text","text":""}]}]}`,
+		"user key-less text (not this repair's scope)": `{"model":"m","messages":[
+			{"role":"user","content":[{"type":"text"}]}]}`,
 	}
 	for name, body := range shaped {
 		out := normalizeToolBlocks([]byte(body))
@@ -176,10 +330,10 @@ func TestNormalizeToolBlocksLeavesShapedHistoryAlone(t *testing.T) {
 			t.Errorf("%s: accepted shape must stay byte-identical, got %s", name, out)
 		}
 	}
-	// A body with no tool_use anywhere short-circuits on the substring probe:
-	// same slice back, never re-marshalled.
+	// A body matching neither repair's literal short-circuits on the substring
+	// probe: same slice back, never re-marshalled.
 	plain := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
 	if out := normalizeToolBlocks(plain); &out[0] != &plain[0] {
-		t.Error("tool-less body must be returned unchanged, not re-marshalled")
+		t.Error("probe-less body must be returned unchanged, not re-marshalled")
 	}
 }
