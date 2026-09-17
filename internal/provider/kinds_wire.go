@@ -67,3 +67,19 @@ func setGrokFingerprint(h http.Header, model string, chat bool) {
 		h.Set("x-grok-model-override", model)
 	}
 }
+
+// setOpenCodeFreeFingerprint applies the ONLY header set the OpenCode Zen
+// free tier serves: the CLI User-Agent plus a shaped session id (see
+// openCodeCLIUserAgent / openCodeCLISessionRe). Single owner for BOTH the
+// chat POST and the /v1/models GET, so the two can never drift apart — a
+// request that carries one without the other is answered 403 FreeTierError
+// exactly like a non-CLI client (live-probed 2026-09-17).
+//
+// Deliberately does NOT touch Authorization: applyAuth still emits the bare
+// "Bearer " scheme there, which this tier reads as anonymous. Sending no
+// Authorization header at all is also accepted, but the empty-scheme shape
+// is what the previous working contract used, so it stays.
+func setOpenCodeFreeFingerprint(h http.Header, clientSession, account string) {
+	h.Set("User-Agent", openCodeCLIUserAgent)
+	h.Set(OpenCodeSessionHeader, openCodeFreeSession(clientSession, account))
+}
