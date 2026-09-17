@@ -177,3 +177,25 @@ jobs:
             VERSION=${{ needs.version.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Verify the image is actually pullable
+        # `build-push-action` reports success once the manifest is written, which
+        # is not the same as the tags being readable: a package this repo cannot
+        # write to fails at push (write_package), and a package whose linkage is
+        # wrong can accept a push and still 404 the tag. Both left `latest`
+        # silently stuck ~3 releases behind master, so resolve the tag just
+        # published as an anonymous client would — this is the check that fails
+        # the job instead of shipping a stale image.
+        run: |
+          set -euo pipefail
+          tag="${{ needs.version.outputs.tag }}"
+          token="$(curl -fsS "https://ghcr.io/token?scope=repository:freepeak/onegw:pull&service=ghcr.io" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+          for ref in "$tag" latest; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $token" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json' \
+              "https://ghcr.io/v2/freepeak/onegw/manifests/$ref")"
+            echo "ghcr.io/freepeak/onegw:$ref -> HTTP $code"
+            [ "$code" = 200 ] || \
+              { echo "::error::ghcr.io/freepeak/onegw:$ref is not pullable ($code) — the package is not linked to this repo (Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write). See docs/PRD.md."; exit 1; }
+          done

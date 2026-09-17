@@ -1,3 +1,27 @@
+*Last updated: 2026-09-17 (GHCR publish broken since the public repo took over releases — the `docker` job
+denies with `write_package` while the release itself succeeds):*
+The repo moved to `FreePeak/onegw` (public, created 2026-09-17 05:24Z) but the GHCR package
+`freepeak/onegw` was created by — and is still linked to — the OLD repo `FreePeak/onegw-private`. A
+`GITHUB_TOKEN` push is authorised per package, not per org: `packages: write` on the workflow plus the
+org/repo default of "read and write" is NOT enough, so since 05:53Z every run lands the tag, the four
+binaries and the GitHub release, and the `docker` job alone dies on `failed to push
+ghcr.io/freepeak/onegw:latest: denied: permission_denied: write_package`. Three releases lost that way
+(v0.40.3, v0.41.0, v0.41.1) — the job's config is not at fault. Measured: `onegw-private` run 35178048843
+pushed `v0.40.2` at 03:24Z (image `created=2026-09-17T03:25:53Z`) and nothing has been published since;
+`latest` and `v0.40.2` resolve to the SAME digest `sha256:2d2be48…`, so the documented
+`docker pull ghcr.io/freepeak/onegw:latest` serves exactly the v0.40.2 gateway — three releases behind
+master — while `/releases/latest` (the surface `onegw update` reads) reports v0.41.1. The two channels
+disagree and nothing fails loudly: `scripts/docker_deploy.sh` falls back to the host's existing copy when
+a pull errors, so a stale `latest` still deploys "successfully". Anonymous manifest GETs pin the cause as
+linkage, not visibility — `latest` and `v0.40.2` are 200, `v0.40.3`/`v0.41.x` are 404 (missing images),
+and issue #47's PRIVATE finding is stale.
+Fix (owner-gated, no code): package `onegw` → Settings → "Manage Actions access" → add repository
+`FreePeak/onegw` with **Write** (leave `onegw-private` listed; both may publish). Then re-run the failed
+`release` workflow — only the `docker` job fails, and it re-pushes both tags for the tag the run already
+created, so no new release is cut. Retire `onegw-private`'s release workflow once the grant is in, so the
+two repos cannot race on the same tags. A `write:packages` PAT does not fix it: it moves the same
+owner-gated step from the package page into repo secrets without repairing the package↔repo link.
+Earlier:)*
 *Last updated: 2026-09-17 (opencode `union-alpha` routed to the Anthropic Messages wire — the seq-11728 500):*
 OpenCode Zen Go serves `union-alpha` ("Union Alpha Free", the Anthropic-backed id) **only** on
 `/v1/messages`. The gateway's opencode kind defaulted every non-Responses id to `/v1/chat/completions`, so
