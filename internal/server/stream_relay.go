@@ -315,6 +315,83 @@ func spliceModelValue(prefix []byte, sc streamScan, upModel string) []byte {
 	return append(out, prefix[sc.modelQuoteEnd+1:]...)
 }
 
+// textBlockWithoutString reports whether the visible bytes hold a text block
+// whose "text" is not a JSON string: absent (`{"type":"text"}`), null, a number
+// or an object. The upstream refuses an assistant turn carrying one, naming the
+// block by its type — "unsupported assistant content block type \"text\"" (live
+// gateway seq 3404) — and normalizeToolBlocks completes it on the buffered
+// path, which the raw relay bypasses entirely. A text block WITH a string value
+// is accepted, so a body made only of those keeps the fast path.
+//
+// ponytail: like hasDeveloperRole this is a literal scan over the visible
+// prefix. String content that quotes the pattern, and a text key sitting behind
+// a nested object such as cache_control, fall back to the buffered path — a
+// cost, never a wrong relay. A block beyond the peek window goes undetected and
+// is relayed raw, where the upstream 400 makes the client retry into the
+// buffered path that repairs it.
+func textBlockWithoutString(visible []byte) bool {
+	i := 0
+	for {
+		next := bytes.Index(visible[i:], []byte(`"type"`))
+		if next < 0 {
+			return false
+		}
+		i += next + len(`"type"`)
+		j := skipJSONSpace(visible, i)
+		if j >= len(visible) || visible[j] != ':' {
+			continue // a string value that merely says "type"
+		}
+		j = skipJSONSpace(visible, j+1)
+		if !bytes.HasPrefix(visible[j:], []byte(`"text"`)) {
+			continue // some other block type
+		}
+		// "text" here is the block's type value; the keys that follow it, up
+		// to the block's closing brace, are the block's own. A brace right
+		// after the value is the key-less block itself.
+		rest := visible[j+len(`"text"`):]
+		end := bytes.IndexByte(rest, '}')
+		if end < 0 {
+			continue // truncated: leave the verdict to the buffered path
+		}
+		if !blockHasStringText(rest[:end]) {
+			return true
+		}
+	}
+}
+
+// blockHasStringText reports whether one content block's remaining bytes give
+// "text" a JSON string value. Any other value, or no "text" key at all, is what
+// the upstream refuses.
+func blockHasStringText(block []byte) bool {
+	i := 0
+	for {
+		next := bytes.Index(block[i:], []byte(`"text"`))
+		if next < 0 {
+			return false
+		}
+		i += next + len(`"text"`)
+		j := skipJSONSpace(block, i)
+		if j >= len(block) || block[j] != ':' {
+			continue // a string value quoting "text"
+		}
+		j = skipJSONSpace(block, j+1)
+		return j < len(block) && block[j] ***REMOVED*** '"'
+	}
+}
+
+// skipJSONSpace returns the index of the first byte at or after i that is not
+// JSON-ignorable whitespace.
+func skipJSONSpace(b []byte, i int) int {
+	for i < len(b) && isJSONSpace(b[i]) {
+		i++
+	}
+	return i
+}
+
+func isJSONSpace(c byte) bool {
+	return c ***REMOVED*** ' ' || c ***REMOVED*** '\t' || c ***REMOVED*** '\n' || c ***REMOVED*** '\r'
+}
+
 // countingReader counts bytes read through it.
 type countingReader struct {
 	r io.Reader
@@ -481,8 +558,15 @@ func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 			// prepareUpstreamBody runs only on the buffered path — an
 			// ineligibility. Over-matching a string that merely quotes
 			// the empty name only costs the fast path.
+			// textBlockWithoutString is the same for the key-less text block
+			// (live 400 "unsupported assistant content block type \"text\"",
+			// gateway seq 3404). It is narrower than normalizeToolBlocks'
+			// probe on purpose: a text block WITH its text is accepted and
+			// must not cost every Anthropic body its fast path, so only the
+			// string-less form matches.
 			if hasDeveloperRole(prefix[i:]) || bytes.Contains(prefix[i:], []byte(`"reasoning"`)) ||
-				bytes.Contains(prefix[i:], []byte(`"name":""`)) {
+				bytes.Contains(prefix[i:], []byte(`"name":""`)) ||
+				textBlockWithoutString(prefix[i:]) {
 				sc.ineligible = true
 			}
 			after, ok := skipJSONValue(prefix, i)

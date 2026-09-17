@@ -171,6 +171,100 @@ func TestStreamRelayNamelessToolUseStaysBuffered(t *testing.T) {
 	}
 }
 
+// TestStreamRelayKeylessAssistantTextStaysBuffered: the same-format leak of the
+// key-less text block. The raw relay is byte-verbatim, and prepareUpstreamBody's
+// repair only runs on the buffered path, so a body carrying `{"type":"text"}`
+// must not ride the fast path (live 400 "unsupported assistant content block
+// type \"text\"", gateway seq 3404).
+func TestStreamRelayKeylessAssistantTextStaysBuffered(t *testing.T) {
+	up, cap := captureStub()
+	defer up.Close()
+	cfg := streamCfg(t, false, nil, providerSpec{name: "p1", up: up.URL, model: "m1"})
+	cfg.Providers[0].Kind = "anthropic" // /v1/messages client ***REMOVED*** same format
+	_, h := newStreamServer(t, cfg)
+	in := []byte(`{"model":"p1/m1","max_tokens":16,"stream":true,"messages":[` +
+		`{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":[{"type":"text"}]},` +
+		`{"role":"user","content":"go on"}]}`)
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(in))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("x-api-key", "sk-test-key")
+	r.Header.Set("anthropic-version", "2023-06-01")
+	w := do(t, h, r)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	body, chunked, _ := cap.snapshot()
+	if chunked {
+		t.Fatal("key-less text body must stay buffered (completed there, not relayed raw)")
+	}
+	if bytes.Contains(body, []byte(`{"type":"text"}`)) {
+		t.Fatalf("key-less text block reached the upstream: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"text":""`)) {
+		t.Fatalf("key-less text block not completed: %s", body)
+	}
+}
+
+// TestStreamRelayTextWithTextKeepsFastPath: the probe must not cost every
+// Anthropic body its fast path. This shape is what the gateway's own encoder
+// emits for a plain text part, so it is the common body — the repair only earns
+// a decode when a block's text is actually missing.
+func TestStreamRelayTextWithTextKeepsFastPath(t *testing.T) {
+	up, observed := captureStub()
+	cfg := streamCfg(t, false, nil, providerSpec{name: "p1", up: up.URL, model: "m1"})
+	cfg.Providers[0].Kind = "anthropic"
+	_, h := newStreamServer(t, cfg)
+	in := []byte(`{"model":"p1/m1","max_tokens":16,"stream":true,"messages":[` +
+		`{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":[{"type":"text","text":"hello"}]},` +
+		`{"role":"user","content":"go on"}]}`)
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(in))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("x-api-key", "sk-test-key")
+	r.Header.Set("anthropic-version", "2023-06-01")
+	w := do(t, h, r)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	_, chunked, _ := observed.snapshot()
+	if !chunked {
+		t.Fatal("a well-formed text body must keep the raw relay fast path")
+	}
+}
+
+// TestTextBlockWithoutStringProbe pins the scan: it tolerates JSON whitespace
+// and block key order, fires on every text-less assistant-block shape the live
+// probes refused, and never fires on a text block that HAS its text.
+func TestTextBlockWithoutStringProbe(t *testing.T) {
+	valueless := []string{
+		`{"content":[{"type":"text"}]}`,
+		`{"content":[ { "type" : "text" } ]}`,
+		"{\"content\":[{\n  \"type\": \"text\"\n}]}",
+		`{"content":[{"text":null,"type":"text"}]}`,
+		`{"content":[{"type":"text","text":null}]}`,
+		`{"content":[{"type":"text","text":123}]}`,
+		`{"content":[{"type":"text","text":{"a":1}}]}`,
+	}
+	for _, in := range valueless {
+		if !textBlockWithoutString([]byte(in)) {
+			t.Errorf("%s: text-less block not detected", in)
+		}
+	}
+	shaped := []string{
+		`{"content":[{"type":"text","text":"hi"}]}`,
+		`{"content":[{"type":"text","text":""}]}`,
+		`{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash"}]}`,
+		`{"content":[{"type":"thinking","thinking":"x"}]}`,
+		`{"content":[{"type":"text","text":"the \"type\": \"text\" key"}]}`,
+	}
+	for _, in := range shaped {
+		if textBlockWithoutString([]byte(in)) {
+			t.Errorf("%s: probe fired on an accepted block", in)
+		}
+	}
+}
+
 func TestStreamRelayUpstreamSeesChunked(t *testing.T) {
 	up, cap := captureStub()
 	defer up.Close()
