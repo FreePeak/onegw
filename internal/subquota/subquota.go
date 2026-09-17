@@ -834,10 +834,67 @@ func parseGrokCli(token string, body []byte, status int) ([]Window, string, stri
 	}
 	used, ok := grokPercent(raw)
 	if !ok {
-		return nil, plan, "Grok billing response did not contain valid quota data."
+		// The same URL serves a SECOND shape whenever the server ignores
+		// ?format=credits (live 2026-09-17: identical request, both bodies
+		// observed minutes apart) — the monthly envelope, keyed by a
+		// {val} wrapper with no percent anywhere. Used/cap is the same
+		// arithmetic the commandcode dialect uses, so a 0/0 account
+		// (nothing granted) reads drained instead of "no quota data".
+		used, ok = grokLegacyPercent(body)
+		if !ok {
+			return nil, plan, "Grok billing response did not contain valid quota data."
+		}
+		return []Window{{Name: "Monthly pool", Used: used}}, plan, ""
 	}
 	windows := []Window{{Name: grokPeriodName(grokString(data.Config.CurrentPeriod.Type)), Resets: grokReset(data.Config.CurrentPeriod.End), Used: used}}
 	return windows, plan, ""
+}
+
+// grokLegacyPercent reads the monthly envelope the same endpoint falls back
+// to: {"config":{"monthlyLimit":{"val":N},"used":{"val":M}}} — both wrapped
+// in protobuf-JSON {val} or plain numbers, like every other field xAI
+// serves. monthlyLimit 0 means xAI grants no included allotment on this
+// plan, so the account is drained (100 %), never "unlimited"; a positive
+// limit yields the floored spend percent.
+func grokLegacyPercent(body []byte) (int, bool) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var data struct {
+		Config struct {
+			MonthlyLimit any `json:"monthlyLimit"`
+			Used         any `json:"used"`
+		} `json:"config"`
+	}
+	if dec.Decode(&data) != nil {
+		return 0, false
+	}
+	limit, ok := grokPercent(grokUnwrapVal(data.Config.MonthlyLimit))
+	if !ok {
+		return 0, false
+	}
+	if limit == 0 {
+		return 100, true
+	}
+	used, ok := grokPercent(grokUnwrapVal(data.Config.Used))
+	if !ok {
+		return 0, false
+	}
+	if used > limit {
+		used = limit
+	}
+	return used * 100 / limit, true
+}
+
+// grokUnwrapVal peels protobuf-JSON's {"val":N} wrapper; a bare scalar is
+// returned as-is so grokPercent's type switch sees what it expects.
+func grokUnwrapVal(v any) any {
+	if m, ok := v.(map[string]any); ok {
+		if inner, found := m["val"]; found {
+			return inner
+		}
+		return nil
+	}
+	return v
 }
 
 // grokPercent reads a vendor percent as a NUMBER or a numeric STRING and
