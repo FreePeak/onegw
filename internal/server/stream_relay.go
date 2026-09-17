@@ -452,6 +452,23 @@ func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 				return bail()
 			}
 			i = after
+		case "tools":
+			// Tool-root normalization (normalizeToolRoots) needs the
+			// full body when a tool's parameters root carries an
+			// anyOf/oneOf: strict validators (xai) reject an untyped
+			// branch, and this raw path bypasses prepareUpstreamBody
+			// entirely. The literals also match a NESTED union (which
+			// needs no fix) and a schema merely quoting them —
+			// over-matching only costs the fast path, never
+			// correctness.
+			if bytes.Contains(prefix[i:], []byte(`"anyOf"`)) || bytes.Contains(prefix[i:], []byte(`"oneOf"`)) {
+				sc.ineligible = true
+			}
+			after, ok := skipJSONValue(prefix, i)
+			if !ok {
+				return bail()
+			}
+			i = after
 		case "messages":
 			// normalizeRoles triggers: a role:"developer" entry, or any
 			// assistant "reasoning" echo key (the same-format rename needs

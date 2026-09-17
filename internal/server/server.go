@@ -1461,12 +1461,23 @@ func forceStreamFlag(body []byte) []byte {
 	return out
 }
 
+// prepareUpstreamBody returns the body to send upstream. Same format →
+// verbatim (with the model field rewritten to the routed upstream model);
+// different format → full translate via the unified model. def (may be nil
+// in tests) carries thinking-knob adaptation and reasoning-echo synthesis
+// for the routed model. OpenAI-dialect outputs additionally get the
+// replay-echo synthesis (synthesizeReasoningEcho): thinking-mode upstreams
+// validate the REPLAYED history, and bodies built from other legs' turns
+// legitimately lack reasoning_content — and the tool-root normalization
+// (normalizeToolRoots): strict validators (xai) reject a tool whose parameters
+// root is an anyOf/oneOf with an untyped branch.
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	out, err := buildUpstreamBody(upstream, client, body, upstreamModel, def)
 	if err != nil {
 		return nil, err
 	}
 	if upstream ***REMOVED*** translat.FmtOpenAI {
+		out = normalizeToolRoots(out)
 		out = synthesizeReasoningEcho(out, upstreamModel, def)
 	}
 	return out, nil
