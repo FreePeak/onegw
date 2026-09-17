@@ -595,7 +595,7 @@ windows — used percent and reset time — on the Quota page and
 | `zai` | `https://api.z.ai/api/monitor/usage/quota/limit` | session (5h), weekly (credits or tokens, % + plan level) |
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
 | `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`) | 5-hour + weekly USD windows (used/cap), monthly credits pool (spend vs pool total); plan label from subscriptions |
-| `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim |
+| `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim. When the same URL ignores `?format=credits` and answers the **monthly envelope** instead (`monthlyLimit`/`used`, no percent), the used/cap pool shows as "Monthly pool" rather than a probe error |
 
 An account whose vendor-reported window is **fully consumed** parks until
 the vendor's stated reset (capped at one poll cycle so an early reset or a
