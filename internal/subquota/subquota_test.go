@@ -385,6 +385,51 @@ func TestParseGrokCliErrors(t *testing.T) {
 	}
 }
 
+// TestParseGrokCliLegacyMonthlyEnvelope is the regression for the live
+// 2026-09-17 report ("Grok billing response did not contain valid quota
+// data."): the SAME url answered the monthly envelope instead of the
+// credits one — a real body captured that morning, verbatim modulo the
+// history tail — and the credits-only parser refused it, so the row showed
+// a probe error instead of a percent. Both shapes must land a window.
+func TestParseGrokCliLegacyMonthlyEnvelope(t *testing.T) {
+	// xAI grants nothing on this plan: 0/0 must read drained (parkable), not
+	// "unlimited" and not a parse failure.
+	drained, _, err := parseGrokCli(grokTestJWT("1"), []byte(
+		`{"config":{"monthlyLimit":{"val":0},"used":{"val":0},"onDemandCap":{"val":0},`+
+			`"billingPeriodStart":"2026-09-01T00:00:00+00:00",`+
+			`"billingPeriodEnd":"2026-10-01T00:00:00+00:00","history":[]}}`), 200)
+	if err != "" {
+		t.Fatalf("legacy envelope rejected: %s", err)
+	}
+	if drained[0].Name != "Monthly pool" || drained[0].Used != 100 {
+		t.Fatalf("0/0 legacy envelope = %+v, want a drained Monthly pool", drained[0])
+	}
+	// A plan that DOES grant an allotment gets the floored spend percent,
+	// and the {val} wrapper is peeled on both fields.
+	spent, _, err := parseGrokCli(grokTestJWT("1"), []byte(
+		`{"config":{"monthlyLimit":{"val":50},"used":{"val":20}}}`), 200)
+	if err != "" {
+		t.Fatalf("legacy envelope rejected: %s", err)
+	}
+	if spent[0].Used != 40 {
+		t.Fatalf("20/50 legacy envelope = %d%%, want 40%%", spent[0].Used)
+	}
+	// Over-limit usage clamps to the cap instead of overflowing 100.
+	over, _, err := parseGrokCli(grokTestJWT("1"), []byte(
+		`{"config":{"monthlyLimit":{"val":10},"used":{"val":25}}}`), 200)
+	if err != "" {
+		t.Fatalf("legacy envelope rejected: %s", err)
+	}
+	if over[0].Used != 100 {
+		t.Fatalf("25/10 legacy envelope = %d%%, want 100%%", over[0].Used)
+	}
+	// Neither shape: still an error, so a genuinely unknown body is visible
+	// rather than silently shown as 0 %.
+	if _, _, err := parseGrokCli(grokTestJWT("1"), []byte(`{"config":{"productUsage":[]}}`), 200); err ***REMOVED*** "" {
+		t.Fatal("a body with neither envelope must still fail")
+	}
+}
+
 func TestProbeGrokCliEndToEnd(t *testing.T) {
 	// The billing probe must carry the client-mode fingerprint the endpoint
 	// keys on, and the snapshot must be parkable from the vendor's percent.
