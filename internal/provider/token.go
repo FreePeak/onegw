@@ -58,8 +58,17 @@ func (a *Account) bearerToken() string {
 	return a.APIKey
 }
 
-// applyAuth sets the upstream credential headers for kind k.
-func applyAuth(h http.Header, k Kind, tok string) {
+// applyAuth sets the upstream credential headers for kind k. model is the
+// routed id ("" when the call is not model-scoped, e.g. FetchModels):
+// OpenCode's Anthropic-only catalog (union-alpha) authenticates like
+// Anthropic even though the kind is still opencode.
+func applyAuth(h http.Header, k Kind, tok, model string) {
+	if AnthropicOnlyModel(model) && (k == KindOpenCode || k == KindOpenCodeFree) {
+		h.Del("Authorization")
+		h.Set("x-api-key", tok)
+		h.Set("anthropic-version", "2023-06-01")
+		return
+	}
 	switch k {
 	case KindAnthropic:
 		h.Set("x-api-key", tok)

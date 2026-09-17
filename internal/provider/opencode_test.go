@@ -88,11 +88,12 @@ func TestDoOpencodeClientSessionForwarded(t *testing.T) {
 
 func TestDefaultModelsOpenCode(t *testing.T) {
 	m := DefaultModels(KindOpenCode)
-	if len(m) != 35 {
-		t.Fatalf("catalog = %d models, want the live 35", len(m))
+	if len(m) != 36 {
+		t.Fatalf("catalog = %d models, want the live 36", len(m))
 	}
-	// Responses-only families are advertised and routed to /v1/responses.
-	for _, id := range []string{"grok-4.5", "grok-4.6", "gpt-5.6-luna", "muse-spark-1.3-contributor"} {
+	// Responses-only families are advertised and routed to /v1/responses;
+	// union-alpha is advertised and routed to /v1/messages.
+	for _, id := range []string{"grok-4.5", "grok-4.6", "gpt-5.6-luna", "muse-spark-1.3-contributor", "union-alpha"} {
 		if !slices.Contains(m, id) {
 			t.Fatalf("catalog missing %s", id)
 		}
@@ -109,12 +110,16 @@ func TestResponsesOnlyRouting(t *testing.T) {
 		"grok-4.6":                   translat.FmtResponses,
 		"gpt-5.6-luna":               translat.FmtResponses,
 		"muse-spark-1.3-contributor": translat.FmtResponses,
+		"union-alpha":                translat.FmtAnthropic,
 		"mimo-v2.5":                  translat.FmtOpenAI,
 		"deepseek-v4-flash":          translat.FmtOpenAI,
 	} {
 		if got := def.UpstreamFormat(model); got != wantFmt {
 			t.Fatalf("UpstreamFormat(%s) = %s, want %s", model, got, wantFmt)
 		}
+	}
+	if got := def.Path("chat", "union-alpha"); got != "/v1/messages" {
+		t.Fatalf("union-alpha path = %s", got)
 	}
 	if got := def.Path("chat", "grok-4.5"); got != "/v1/responses" {
 		t.Fatalf("grok path = %s", got)
@@ -155,5 +160,43 @@ func TestDoOpencodeResponsesPath(t *testing.T) {
 	}
 	if res.Format != translat.FmtResponses {
 		t.Fatalf("CallResult.Format = %s, want responses", res.Format)
+	}
+}
+
+// union-alpha must hit /v1/messages with Anthropic auth (x-api-key) plus
+// the OpenCode session header — Bearer on that path is 401 Missing API key.
+func TestDoOpencodeUnionAlphaAnthropicPath(t *testing.T) {
+	var gotPath, gotAuth, gotAPIKey, gotVersion, gotSession string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("x-api-key")
+		gotVersion = r.Header.Get("anthropic-version")
+		gotSession = r.Header.Get("X-Opencode-Session")
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	def := &Def{Name: "opencode", Kind: KindOpenCode, BaseURL: srv.URL, Accounts: []Account{{Name: "k1", APIKey: "oc"}}}
+	res, apiErr := def.Do(t.Context(), &def.Accounts[0], "union-alpha", nil, bytes.NewReader([]byte(`{"model":"union-alpha","max_tokens":16,"messages":[]}`)), false)
+	if apiErr != nil {
+		t.Fatalf("Do failed: %+v", apiErr)
+	}
+	defer res.Resp.Body.Close()
+	if gotPath != "/v1/messages" {
+		t.Fatalf("path = %q, want /v1/messages", gotPath)
+	}
+	if gotAuth != "" {
+		t.Fatalf("Authorization = %q, want empty (Anthropic uses x-api-key)", gotAuth)
+	}
+	if gotAPIKey != "oc" || gotVersion != "2023-06-01" {
+		t.Fatalf("x-api-key=%q anthropic-version=%q", gotAPIKey, gotVersion)
+	}
+	if !strings.HasPrefix(gotSession, "ses_") {
+		t.Fatalf("session=%q, want derived ses_", gotSession)
+	}
+	if res.Format != translat.FmtAnthropic {
+		t.Fatalf("CallResult.Format = %s, want anthropic", res.Format)
 	}
 }
