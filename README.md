@@ -1152,6 +1152,10 @@ For a remote/personal-server deployment — hardened systemd unit, zero-drop
 deploy script, TLS proxy setup, SQLite backup, and 429 guardrails — see
 [docs/vps-deploy.md](docs/vps-deploy.md).
 
+The **xdev-server** flavor (OpenCode Zen Go + Free, Docker) is
+[docs/xdev-server-docker.md](docs/xdev-server-docker.md) and
+`./scripts/deploy_xdev_server.sh`.
+
 ### Ownership: who is running what
 
 The gateway records itself at startup — pid, listen address, start time,

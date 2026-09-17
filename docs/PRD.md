@@ -1,3 +1,23 @@
+*Last updated: 2026-09-17 (xdev-server Docker flavor — the LAN gateway for xdev clients):*
+The gateway now has a second deployment shape that does not touch the image or `docker-compose.yml`: an
+overlay (`docker-compose.xdev-server.yml`) bind-mounts `docker/xdev-server.toml` — a **secret-free** config
+(`api_key = ""`; the key rides `ONEGW_PROVIDER_OPENCODE_KEY` from the gitignored compose `.env`, 0600) — and
+`scripts/deploy_xdev_server.sh` rsyncs both to a host named with `--host` (nothing is baked in), mints
+`ONEGW_KEYS`/admin password **once**, and composes up. Live on the LAN gateway: health `healthy`,
+`GET /v1/models` 15 ids, `free` streaming 200, no-key request **401**. The combo order is the load-bearing
+decision. Zen **Free** (`kind = opencode-free`) is still catalogued upstream (`GET /zen/v1/models` lists
+`big-pickle` + the `*-free` family) but chat answers **403 FreeTierError** — *"OpenCode's free tier can only be
+used from within OpenCode"* — for every client identity tried (`opencode/1.0.0`, `desktop`, `cli`, bare curl).
+That 403 is **not** in the router's `Fallbackable` set, so a combo leading with `opencode-free` **fails closed**
+instead of advancing. The free provider therefore stays declared (its ids remain on `/v1/models` and a vendor
+thaw needs no config edit) but is **not** a combo target; `free` and `xdev` front the Go subscription — the real
+capacity, live-probed 200 for `deepseek-v4.1-flash`, `qwen3.8-flash`, `glm-5.3-flash`, `mimo-v2.5`,
+`omen-alpha`, `hy3`. Tests: `internal/config/xdev_server_test.go` loads the shipped toml through the real
+`Load` and pins the combo order — a typo there is a failed first boot, not a test failure. **Ceiling: the
+overlay bind-mounts the toml read-only, so dashboard in-page config saves do not persist — edit the file and
+recreate, or drop the overlay. Reach is loopback-or-LAN over plain HTTP; there is no TLS proxy on this host
+yet.**
+
 *Last updated: 2026-09-17 (opencode `union-alpha` routed to the Anthropic Messages wire — the seq-11728 500):*
 OpenCode Zen Go serves `union-alpha` ("Union Alpha Free", the Anthropic-backed id) **only** on
 `/v1/messages`. The gateway's opencode kind defaulted every non-Responses id to `/v1/chat/completions`, so

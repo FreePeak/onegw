@@ -1,0 +1,60 @@
+# xdev-server — onegw config for a self-hosted Docker gateway.
+#
+# No secrets in this file. Clients authenticate with ONEGW_KEYS (compose .env).
+# OpenCode Zen Go is ONEGW_PROVIDER_OPENCODE_KEY.
+# OpenCode Zen Free is keyless (kind opencode-free); as of 2026-09-17 the
+# vendor 403s "only from within OpenCode" and that 403 is NOT combo
+# fallbackable, so a combo leading with it fails closed. Keep the free kind
+# declared (ids stay on /v1/models) without making it a combo target.
+#
+# Mounted read-only over the image default:
+#   docker compose -f docker-compose.yml -f docker-compose.xdev-server.yml up -d
+# See docs/xdev-server-docker.md.
+
+[server]
+listen = "0.0.0.0:8080"
+data_dir = "/data"
+admin_password = ""
+response_header_timeout = "120s"
+# Container mem_limit is 256m; keep the byte budget under that.
+buffered_budget_bytes = 104857600
+
+[update]
+auto = false
+check_interval = "24h"
+repo = "FreePeak/onegw"
+
+[saver]
+enabled = true
+
+# OpenCode Zen Go subscription. Key from env, not this file.
+[[providers]]
+name = "opencode"
+kind = "opencode"
+subscription_quota = "opencode-go"
+always_thinking = ["glm-5.3*"]
+echo_reasoning = ["deepseek-v4.1-flash"]
+# Live-probed 200s on zen/go/v1 (2026-09-17).
+models = ["deepseek-v4.1-flash", "qwen3.8-flash", "glm-5.3-flash", "mimo-v2.5", "omen-alpha", "hy3"]
+[[providers.accounts]]
+name = "primary"
+api_key = "" # ONEGW_PROVIDER_OPENCODE_KEY
+
+# OpenCode Zen FREE (keyless). Catalog is the kind default (big-pickle + *-free).
+[[providers]]
+name = "opencode-free"
+kind = "opencode-free"
+
+# Default alias xdev clients ask for. Zen Free is listed as a provider
+# (catalog ids on /v1/models) but is NOT a combo target: live 2026-09-17
+# chat is 403 FreeTierError and that 403 is not combo-fallbackable, so
+# putting it first made `free` fail closed. Capacity is the Go subscription.
+[[combo]]
+name = "free"
+strategy = "order"
+targets = ["opencode/deepseek-v4.1-flash", "opencode/qwen3.8-flash"]
+
+[[combo]]
+name = "xdev"
+strategy = "order"
+targets = ["opencode/deepseek-v4.1-flash"]
