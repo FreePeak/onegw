@@ -58,17 +58,19 @@ const (
 
 // deliveredSample is one client model's smoothed view.
 type deliveredSample struct {
-	tps, ttftMs float64 // delivered tok/s EWMA; first-byte TTFT EWMA (ms)
-	n           int64
-	last        time.Time
+	tps, rps, combined, ttftMs float64 // delivered tok/s, req/s, combined and TTFT EWMAs
+	n                          int64
+	last                       time.Time
 }
 
 // DeliveredRow is one client model's snapshot for /metrics and dashboards.
 type DeliveredRow struct {
-	Model   string
-	TPS     float64 // delivered tokens/sec EWMA
-	TTFTMs  float64 // first-byte latency EWMA (ms)
-	Samples int64
+	Model    string
+	TPS      float64 // delivered tokens/sec EWMA
+	RPS      float64 // requests/sec EWMA (1/wall per completed request)
+	Combined float64 // TPS + RPS
+	TTFTMs   float64 // first-byte latency EWMA (ms)
+	Samples  int64
 }
 
 // deliveredTracker holds per-client-model delivered samples.
@@ -99,12 +101,17 @@ func (t *deliveredTracker) observe(model string, out int64, wall, ttft time.Dura
 		s = &deliveredSample{}
 		t.m[model] = s
 	}
-	v := float64(out) / wall.Seconds()
+	ws := wall.Seconds()
+	v := float64(out) / ws
+	r := 1 / ws // one completed request per its wall: req/s
+	c := v + r
 	tf := float64(ttft.Milliseconds())
 	if s.n == 0 || now.Sub(s.last) > deliveredStale {
-		s.tps, s.ttftMs = v, tf
+		s.tps, s.rps, s.combined, s.ttftMs = v, r, c, tf
 	} else {
 		s.tps = deliveredAlpha*v + (1-deliveredAlpha)*s.tps
+		s.rps = deliveredAlpha*r + (1-deliveredAlpha)*s.rps
+		s.combined = deliveredAlpha*c + (1-deliveredAlpha)*s.combined
 		s.ttftMs = deliveredAlpha*tf + (1-deliveredAlpha)*s.ttftMs
 	}
 	s.n++
@@ -124,7 +131,7 @@ func (t *deliveredTracker) rows() []DeliveredRow {
 		if s.n == 0 {
 			continue
 		}
-		out = append(out, DeliveredRow{Model: m, TPS: s.tps, TTFTMs: s.ttftMs, Samples: s.n})
+		out = append(out, DeliveredRow{Model: m, TPS: s.tps, RPS: s.rps, Combined: s.combined, TTFTMs: s.ttftMs, Samples: s.n})
 	}
 	return out
 }
