@@ -1719,11 +1719,29 @@ func flattenReasoningDetails(v any) string {
 }
 
 // coerceEffort maps reasoning_effort values onto the enum an
-// always-thinking upstream accepts (GLM, error 1210 family: only
-// low|high|max). "none"/"minimal"/"medium" become "low"; "xhigh" (client
-// ladders above high) becomes "max"; any unrecognized value falls back to
-// "high" — always accepted, capability-preserving, and deterministic.
-func coerceEffort(effort string) string {
+// always-thinking upstream accepts. The GLM family (error 1210: only
+// low|high|max) is the default: "none"/"minimal"/"medium" become "low";
+// "xhigh" is this server's name for a client ladder above high and maps
+// onto GLM's "max"; any unrecognized value falls back to "high" — always
+// accepted, capability-preserving, and deterministic.
+//
+// Models whose upstream takes the EXTENDED ladder (translat.AcceptXHigh:
+// muse-spark, gpt-5.6) reject "max" with a 400, so there "xhigh" is left
+// alone and "max" clamps DOWN to "xhigh" — their ceiling. Clamping down
+// (never up) matches the encoder's rule.
+func coerceEffort(effort, model string) string {
+	if translat.AcceptXHigh(model) {
+		switch effort {
+		case "none", "minimal", "medium":
+			return "low"
+		case "low", "high", "xhigh":
+			return effort
+		case "max":
+			return "xhigh"
+		default:
+			return "high"
+		}
+	}
 	switch effort {
 	case "none", "minimal", "medium":
 		return "low"
@@ -1790,10 +1808,12 @@ func noThinkingConflict400(e *types.APIError) bool {
 // are stripped outright, because the upstream rejects any value at all.
 // Same discipline otherwise, adapted to the unified model:
 //   - u.ReasoningEffort is coerced when the client set it: none|minimal|
-//     medium → low, xhigh → max, unrecognized → high. When the client set
-//     NOTHING and the provider configures default_effort, that value is
-//     applied — the upstream would otherwise fall back to its own default
-//     (GLM: max). Providers that set no default_effort keep the
+//     medium → low, xhigh → max, unrecognized → high — except on the
+//     extended-ladder models (translat.AcceptXHigh), where xhigh survives
+//     and max clamps down to it. When the client set NOTHING and the
+//     provider configures default_effort, that value is applied — the
+//     upstream would otherwise fall back to its own default (GLM: max).
+//     Providers that set no default_effort keep the
 //     never-invent-a-knob rule.
 //   - u.Thinking (budget-based, decodes only from an explicit Anthropic
 //     thinking:enabled) is dropped for always-thinking upstreams: the GLM
@@ -1816,7 +1836,7 @@ func adaptThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provi
 		return
 	}
 	if u.ReasoningEffort != "" {
-		u.ReasoningEffort = coerceEffort(u.ReasoningEffort)
+		u.ReasoningEffort = coerceEffort(u.ReasoningEffort, upstreamModel)
 	} else if eff := def.DefaultEffortFor(upstreamModel); eff != "" {
 		// The client asked for nothing; the upstream would fall back to its
 		// own default (GLM: max). Apply the provider's measured-cheaper
@@ -1864,7 +1884,7 @@ func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
 	} else {
 		if v, ok := root["reasoning_effort"]; ok {
 			if s, ok := v.(string); ok {
-				if c := coerceEffort(s); c != s {
+				if c := coerceEffort(s, model); c != s {
 					root["reasoning_effort"] = c
 					changed = true
 				}

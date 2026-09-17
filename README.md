@@ -700,12 +700,22 @@ and reject disable-thinking knobs: `reasoning_effort` must be
 such models per provider with `always_thinking = ["glm-5.3*"]` (globs use
 `path.Match`; `*` does not cross `/`). Requests routed to a matching model
 are rewritten instead of forwarded: `reasoning_effort`
-`""/none/minimal/medium` → `low` (`high`/`xhigh`/`max` pass through), and
-disable-thinking knobs are dropped so the upstream default (thinking on)
-applies. The same rewriting is applied to cross-format requests before
-translation (e.g. an Anthropic-surface client routed to a matching model —
-the request is coerced upfront instead of burning the first combo target
-on a 400).
+`""/none/minimal/medium` → `low`, `high`/`max` pass through, and a client
+`xhigh` (the ladder above `high`) maps onto the upstream's ceiling — GLM
+takes only `low|high|max`, so `xhigh` → `max`. Disable-thinking knobs are
+dropped so the upstream default (thinking on) applies. The same rewriting
+is applied to cross-format requests before translation (e.g. an
+Anthropic-surface client routed to a matching model — the request is
+coerced upfront instead of burning the first combo target on a 400).
+
+The ceiling is per model, not universal. OpenCode Zen's `muse-spark-*`
+and `gpt-5.6-*` families accept the extended ladder and reject `max` (live
+probes 2026-09-18: `muse-spark-1.3-contributor` answers 200 to
+`reasoning.effort=xhigh`, 400 `invalid parameters` to `max`; `grok-4.5`
+rejects every effort, `grok-4.6` rejects `max`). For those models `xhigh`
+reaches the wire verbatim and `max` clamps *down* to `xhigh` — clamping
+never goes up. See `translat.AcceptXHigh` for the list; models outside it
+keep the GLM behaviour above.
 
 ### No-thinking models
 

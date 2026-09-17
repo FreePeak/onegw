@@ -104,38 +104,50 @@ func TestEncodeResponsesRequestToolFlow(t *testing.T) {
 func TestEncodeResponsesRequestReasoning(t *testing.T) {
 	// reasoning.effort is forwarded verbatim for values the Responses API
 	// accepts; ""/none omit the knob entirely; max clamps down (never up);
-	// a budget-derived effort never overrides an explicit one.
+	// a budget-derived effort never overrides an explicit one. The ladder
+	// above high is per-model: grok's enum tops out at high, the
+	// extended-ladder family (muse-spark, gpt-5.6) takes xhigh and 400s on
+	// max (see AcceptXHigh).
 	cases := []struct {
-		effort string
-		want   string // "" = no reasoning object
+		model, effort, want string // want "" = no reasoning object
 	}{
-		{"", ""},
-		{"none", ""},
-		{"minimal", "minimal"},
-		{"low", "low"},
-		{"high", "high"},
-		{"max", "high"},
+		{"grok-4.6", "", ""},
+		{"grok-4.6", "none", ""},
+		{"grok-4.6", "minimal", "minimal"},
+		{"grok-4.6", "low", "low"},
+		{"grok-4.6", "high", "high"},
+		{"grok-4.6", "xhigh", "high"},
+		{"grok-4.6", "max", "high"},
+
+		{"muse-spark-1.3-contributor", "xhigh", "xhigh"}, // verbatim, not clamped
+		{"muse-spark-1.3-contributor", "max", "xhigh"},   // clamps down to the family ceiling
+		{"muse-spark-1.3-contributor", "high", "high"},
+		{"muse-spark-1.3-contributor", "none", ""},
+		{"gpt-5.6-luna", "xhigh", "xhigh"},
 	}
 	for _, c := range cases {
-		u := &types.ChatRequest{Model: "grok-4.6", ReasoningEffort: c.effort,
-			Messages: []types.Message{{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "x"}}}}}
-		body, err := EncodeResponsesRequest(u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var req rsRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			t.Fatal(err)
-		}
-		got := ""
-		if req.Reasoning != nil {
-			got = req.Reasoning.Effort
-		}
-		if got != c.want {
-			t.Fatalf("effort %q -> %q, want %q", c.effort, got, c.want)
-		}
+		t.Run(c.model+"/"+c.effort, func(t *testing.T) {
+			u := &types.ChatRequest{Model: c.model, ReasoningEffort: c.effort,
+				Messages: []types.Message{{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "x"}}}}}
+			body, err := EncodeResponsesRequest(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var req rsRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if req.Reasoning != nil {
+				got = req.Reasoning.Effort
+			}
+			if got != c.want {
+				t.Fatalf("effort %q -> %q, want %q", c.effort, got, c.want)
+			}
+		})
 	}
-	// Budget alone (no explicit effort) fills the gap.
+	// The budget-derived effort is not part of the extended ladder: a
+	// budget alone still derives a maximal-overlap value, unclamped.
 	u := &types.ChatRequest{Model: "grok-4.6",
 		Thinking: &types.ThinkingCfg{BudgetTokens: 32768},
 		Messages: []types.Message{{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "x"}}}}}

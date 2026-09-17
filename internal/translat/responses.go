@@ -167,6 +167,24 @@ func decodeRSContent(raw json.RawMessage) []types.Part {
 	return parts
 }
 
+// AcceptXHigh reports whether the routed model's upstream Responses
+// endpoint takes the extended effort ladder — reasoning.effort=xhigh —
+// and rejects max. Live-probed 2026-09-18 on the OpenCode Zen Go gateway
+// (/zen/go/v1/responses): muse-spark-1.3-contributor and -1.2-contributor
+// answer 200 for xhigh and 400 invalid-parameters for max; gpt-5.6-luna
+// answers 200 for both; grok-4.5 400s on every effort and grok-4.6 400s on
+// max. grok stays out of this list deliberately — it is unroutable from
+// the onegw surfaces in use, so a xhigh pass-through there cannot be
+// verified end to end.
+// ponytail: hardcoded prefixes, not a config knob; promote to a per-provider
+// ladder glob beside always_thinking if a third dialect appears. Routing
+// grok through here is deliberately out of scope: grok reaches this encoder
+// only via the unreachable FmtResponses client surface or the opencode/routed
+// grok ids the live config never selects for xhigh.
+func AcceptXHigh(model string) bool {
+	return strings.HasPrefix(model, "muse-spark") || strings.HasPrefix(model, "gpt-5.6")
+}
+
 // EncodeResponsesRequest renders the unified request as a Responses body.
 // Assistant thinking is NOT echoed back (Responses reasoning items are
 // upstream-internal); tool flow uses function_call / function_call_output
@@ -189,7 +207,14 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 	// entirely (knobs are never invented). Budget-derived effort only
 	// fills a gap: an explicit effort is never overridden.
 	if eff := u.ReasoningEffort; eff != "" && eff != "none" {
-		if eff ***REMOVED*** "max" || eff ***REMOVED*** "xhigh" {
+		// The extended ladder above high is per-model (AcceptXHigh):
+		// everywhere else max|xhigh clamp down to high (grok 400s on max).
+		if AcceptXHigh(u.Model) {
+			if eff ***REMOVED*** "max" {
+				eff = "xhigh" // clamp down to this family's ceiling, never up
+			}
+			req.Reasoning = &rsReasoning{Effort: eff, Summary: "auto"}
+		} else if eff ***REMOVED*** "max" || eff ***REMOVED*** "xhigh" {
 			req.Reasoning = &rsReasoning{Effort: "high", Summary: "auto"}
 		} else {
 			req.Reasoning = &rsReasoning{Effort: eff, Summary: "auto"}
