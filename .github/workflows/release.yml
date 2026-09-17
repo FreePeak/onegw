@@ -181,20 +181,27 @@ jobs:
         # `build-push-action` reports success once the manifest is written, which
         # is not the same as the tags being readable: a package this repo cannot
         # write to fails at push (write_package), and a package whose linkage is
-        # wrong can accept a push and still 404 the tag. Both left `latest`
-        # silently stuck ~3 releases behind master, so resolve the tag just
-        # published as an anonymous client would — this is the check that fails
-        # the job instead of shipping a stale image.
+        # wrong can accept a push and still 404 the tag. Resolve both tags from
+        # the registry as an anonymous client would — that is what fails the job
+        # instead of shipping an image nobody can pull.
         run: |
           set -euo pipefail
           tag="${{ needs.version.outputs.tag }}"
           token="$(curl -fsS "https://ghcr.io/token?scope=repository:freepeak/onegw:pull&service=ghcr.io" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+          # One retry per ref: GHCR has failed a blob fetch mid-pull while the rest
+          # of the manifest resolved fine, so a single flaky response is not proof
+          # the image is unreachable.
           for ref in "$tag" latest; do
-            code="$(curl -s -o /dev/null -w '%{http_code}' \
-              -H "Authorization: Bearer $token" \
-              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json' \
-              "https://ghcr.io/v2/freepeak/onegw/manifests/$ref")"
+            code=""
+            for _ in 1 2; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' \
+                -H "Authorization: Bearer $token" \
+                -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json' \
+                "https://ghcr.io/v2/freepeak/onegw/manifests/$ref")"
+              [ "$code" = 200 ] && break
+              sleep 5
+            done
             echo "ghcr.io/freepeak/onegw:$ref -> HTTP $code"
             [ "$code" = 200 ] || \
               { echo "::error::ghcr.io/freepeak/onegw:$ref is not pullable ($code) — the package is not linked to this repo (Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write). See docs/PRD.md."; exit 1; }
