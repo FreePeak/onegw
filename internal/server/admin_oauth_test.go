@@ -546,6 +546,7 @@ func TestProvidersPageRendersOAuthSignIn(t *testing.T) {
 		`id="oauth-code"`,        // where the code is shown
 		`id="pf-rmodels"`,        // responses_models editor field
 		`id="pf-sq"`,             // subscription_quota editor field
+		`id="pf-su"`,             // subscription_user editor field (agentrouter)
 		`borrows xai/main`,       // borrower row: no button, points at the owner
 		`main · xai · signed-out`,
 		`const SERVICES = ["cline","clinepass","kilocode","xai"]`, // cline lands with the provider

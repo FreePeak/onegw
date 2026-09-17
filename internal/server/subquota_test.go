@@ -466,3 +466,76 @@ func TestSubscriptionQuotaCursorDialect(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestSubscriptionQuotaFreebuffAndAgentRouterDialects proves the two newer
+// dialects are wired end to end through the SERVER, not just in the parser:
+// subscriptions.targets must carry subscription_user to agentrouter's
+// New-Api-User header, and the freebuff probe must be a POST to codebuff's
+// session endpoint (the shared bearer GET would 401 there).
+func TestSubscriptionQuotaFreebuffAndAgentRouterDialects(t *testing.T) {
+	var mu sync.Mutex
+	var fbMethod, fbBody, fbKey, arUser, arAuth string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/freebuff/session"):
+			fbMethod, fbBody, fbKey = r.Method, string(body), r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"status":"active","accessTier":"limited",
+				"freebucks":{"balance":10,"daily":{"limit":25,"spent":15,"remaining":10,
+				  "resetAt":"2026-09-17T07:00:00.000Z"}},
+				"rateLimit":{"model":"deepseek/deepseek-v4-flash","limit":6,"recentCount":1,"poolLabel":"Daily"}}`))
+		default:
+			arUser, arAuth = r.Header.Get("New-Api-User"), r.Header.Get("Authorization")
+			_, _ = w.Write([]byte(`{"data":{"quota":750000},"success":true}`))
+		}
+		mu.Unlock()
+	}))
+	defer stub.Close()
+
+	cfg := &config.Config{}
+	cfg.Server.DataDir = "memory"
+	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test-gw"}}
+	cfg.Providers = []config.ProviderCfg{
+		{Name: "fb", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1", APIKey: "fb-token",
+			Models: []string{"fb/m"}, SubscriptionQuota: "freebuff", SubscriptionURL: stub.URL + "/freebuff/session"},
+		{Name: "ar", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1", APIKey: "sat-token",
+			Models: []string{"ar/m"}, SubscriptionQuota: "agentrouter", SubscriptionURL: stub.URL + "/api/user/self",
+			SubscriptionUser: "14823"},
+	}
+	cfg.Defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config invalid (both dialects must validate): %v", err)
+	}
+	// The user id is meaningless without its dialect, so the config layer
+	// rejects it rather than shipping a probe that can only 401.
+	cfg.Providers[0].SubscriptionUser = "14823"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "subscription_user") {
+		t.Fatalf("subscription_user outside agentrouter must fail validation, got %v", err)
+	}
+	cfg.Providers[0].SubscriptionUser = ""
+
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	defer srv.Close()
+	waitSubSnapshots(t, srv, 2)
+
+	w := do(t, srv.Handler(), adminReq(t, "/admin/api/v1/subscription"))
+	body := w.Body.String()
+	for _, want := range []string{`"plan":"freebuff limited"`, `"Wallet ($1.50 left)"`, `"AgentRouter"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("subscription API missing %s: %d %s", want, w.Code, body)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if fbMethod != http.MethodPost || fbBody != "{}" || fbKey != "Bearer fb-token" {
+		t.Fatalf("freebuff probe = %s body=%q auth=%q", fbMethod, fbBody, fbKey)
+	}
+	if arUser != "14823" || arAuth != "Bearer sat-token" {
+		t.Fatalf("agentrouter probe headers: New-Api-User=%q auth=%q", arUser, arAuth)
+	}
+}

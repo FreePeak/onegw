@@ -50,11 +50,12 @@ func subTargets(cfg *config.Config) []subquota.Target {
 				continue // no credential of any kind: nothing to probe
 			}
 			out = append(out, subquota.Target{
-				Provider: p.Name,
-				AcctName: a.Name,
-				AcctKey:  a.APIKey,
-				Dialect:  p.SubscriptionQuota,
-				URL:      p.SubscriptionURL,
+				Provider:    p.Name,
+				AcctName:    a.Name,
+				AcctKey:     a.APIKey,
+				Dialect:     p.SubscriptionQuota,
+				ConsoleUser: p.SubscriptionUser,
+				URL:         p.SubscriptionURL,
 			})
 		}
 	}

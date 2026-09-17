@@ -174,11 +174,12 @@ func TestProviderEditValidationRejectsAndLeavesFileUntouched(t *testing.T) {
 	before := mustReadFile(t, path)
 
 	cases := map[string]string{
-		"unknown kind":     `{"name":"px","kind":"nope","api_key":"sk-x"}`,
-		"missing name":     `{"name":"","kind":"openai","api_key":"sk-x"}`,
-		"no credentials":   `{"name":"p3","kind":"openai","base_url":"http://x.local"}`,
-		"invalid sticky":   `{"name":"p3","kind":"openai","api_key":"sk-x","sticky":"banana"}`,
-		"quota w/o window": `{"name":"p1","kind":"openai","api_key":"sk-test-p1-secret","quota_limit_tokens":5}`,
+		"unknown kind":         `{"name":"px","kind":"nope","api_key":"sk-x"}`,
+		"missing name":         `{"name":"","kind":"openai","api_key":"sk-x"}`,
+		"no credentials":       `{"name":"p3","kind":"openai","base_url":"http://x.local"}`,
+		"invalid sticky":       `{"name":"p3","kind":"openai","api_key":"sk-x","sticky":"banana"}`,
+		"quota w/o window":     `{"name":"p1","kind":"openai","api_key":"sk-test-p1-secret","quota_limit_tokens":5}`,
+		"user w/o agentrouter": `{"name":"p3","kind":"openai","api_key":"sk-x","subscription_user":"14823"}`,
 	}
 	for name, body := range cases {
 		w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true)
@@ -192,6 +193,45 @@ func TestProviderEditValidationRejectsAndLeavesFileUntouched(t *testing.T) {
 	// The live config never changed either.
 	if got := providerViews(srv.cur()); len(got) != 1 {
 		t.Fatalf("live providers changed after rejections: %d", len(got))
+	}
+}
+
+// TestProviderEditSubscriptionUserRoundTrip: the agentrouter New-API user id
+// is an editor-managed scalar like subscription_quota — written, prefilled
+// back through the JSON view, and REMOVED when the edit clears it (an empty
+// value must not leave the id behind on a provider that no longer needs it).
+func TestProviderEditSubscriptionUserRoundTrip(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, editTestToml)
+
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"p2","kind":"openai","api_key":"sk-p2","subscription_quota":"agentrouter","subscription_user":"14823"}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT p2: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	for _, want := range []string{`subscription_quota = "agentrouter"`, `subscription_user = "14823"`} {
+		if !strings.Contains(file, want) {
+			t.Fatalf("file missing %q:\n%s", want, file)
+		}
+	}
+	// The editor reads it back (the PREFILL JSON the Providers page embeds),
+	// so a reload+edit cannot silently drop it.
+	page := do(t, h, adminCfgReq(http.MethodGet, "/admin/ui/providers", nil, true))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `"subscription_user":"14823"`) {
+		t.Fatalf("editor prefill lost subscription_user: %d %s", page.Code, page.Body.String())
+	}
+
+	// Clearing it removes the line instead of writing an empty one.
+	w = adminCall(t, h, http.MethodPut, "/admin/config/providers",
+		`{"name":"p2","kind":"openai","api_key":"sk-p2","subscription_quota":"agentrouter"}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT p2 clear: %d %s", w.Code, w.Body.String())
+	}
+	if file = mustReadFile(t, path); strings.Contains(file, "subscription_user") {
+		t.Fatalf("cleared subscription_user survived:\n%s", file)
+	}
+	if got := srv.cur().cfg.Providers; got[len(got)-1].SubscriptionUser != "" {
+		t.Fatalf("live config still carries the cleared user id: %+v", got[len(got)-1])
 	}
 }
 

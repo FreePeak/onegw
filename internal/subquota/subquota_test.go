@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -555,6 +556,12 @@ func TestDefaultURLPerDialect(t *testing.T) {
 	if DefaultURL(CommandCode) != "https://api.commandcode.ai" {
 		t.Fatal("commandcode default URL drifted from the OmniRoute-verified base")
 	}
+	if DefaultURL(Freebuff) != "https://www.codebuff.com/api/v1/freebuff/session" {
+		t.Fatal("freebuff default URL drifted from OmniRoute's validateFreebuffProvider endpoint")
+	}
+	if DefaultURL(AgentRouter) != "https://agentrouter.org/api/user/self" {
+		t.Fatal("agentrouter default URL drifted from OmniRoute's agentrouterQuotaFetcher endpoint")
+	}
 	if DefaultURL("nope") != "" || ValidDialect("nope") {
 		t.Fatal("unknown dialect must have no URL and be invalid")
 	}
@@ -918,5 +925,259 @@ func TestProbeCursorEndToEnd(t *testing.T) {
 	}
 	if snaps[0].Plan != "pro" || len(snaps[0].Windows) != 2 || snaps[0].Windows[0].Used != 100 {
 		t.Fatalf("snapshot = %+v", snaps[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// freebuff (codebuff.com free-tier session API)
+//
+// MUTATION CHECK for the parser's floor: make parseFreebuff ROUND the daily
+// pool percent instead of truncating it and TestParseFreebuffWindows reads
+// 100 (24/25 rounds up) — a pool with one freebuck left would then park the
+// account every poll cycle, and that test goes red. Restore the truncation
+// and it is green again.
+// ---------------------------------------------------------------------------
+
+// freebuffSessionBody is the live shape (2026-09-16) with the daily pool
+// spent=24/limit=25 and the probed model's own admission count at 1/6.
+const freebuffSessionBody = `{
+  "status":"active","accessTier":"limited","instanceId":"d997df40-7d44-4aff-960f-867db62bfb24",
+  "model":"deepseek/deepseek-v4-flash","remainingMs":3600000,"countryCode":"VN",
+  "freebucks":{"balance":1,"daily":{"limit":25,"spent":24,"remaining":1,
+    "resetAt":"2026-09-17T07:00:00.000Z","resetTimeZone":"America/Los_Angeles"},"wallet":{"balance":0}},
+  "rateLimit":{"model":"deepseek/deepseek-v4-flash","limit":6,"recentCount":1,
+    "poolLabel":"Daily","resetAt":"2026-09-17T07:00:00.000Z"}}`
+
+func TestParseFreebuffWindows(t *testing.T) {
+	windows, plan, err := parseFreebuff([]byte(freebuffSessionBody), http.StatusOK)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "freebuff limited" {
+		t.Fatalf("plan = %q, want the access tier", plan)
+	}
+	if len(windows) != 2 {
+		t.Fatalf("want 2 windows, got %d: %+v", len(windows), windows)
+	}
+	// 24/25 is 96% — floored, never rounded to 100, or a pool with one
+	// freebuck left would park the account every poll cycle.
+	if windows[0].Name != "Freebucks (1 left)" || windows[0].Used != 96 {
+		t.Fatalf("freebucks window = %+v", windows[0])
+	}
+	if windows[0].Resets == nil || windows[0].Resets.UTC().Format(time.RFC3339) != "2026-09-17T07:00:00Z" {
+		t.Fatalf("freebucks reset = %v", windows[0].Resets)
+	}
+	if windows[1].Name != "Sessions deepseek/deepseek-v4-flash (Daily)" || windows[1].Used != 16 {
+		t.Fatalf("sessions window = %+v", windows[1])
+	}
+	if windows[0].exhausted() || windows[1].exhausted() {
+		t.Fatal("a pool with headroom must not be exhausted")
+	}
+}
+
+func TestParseFreebuffDrainedPoolParks(t *testing.T) {
+	body := strings.Replace(freebuffSessionBody,
+		`"limit":25,"spent":24,"remaining":1`, `"limit":25,"spent":25,"remaining":0`, 1)
+	windows, _, err := parseFreebuff([]byte(body), http.StatusOK)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if windows[0].Name != "Freebucks (0 left)" || windows[0].Used != 100 || !windows[0].exhausted() {
+		t.Fatalf("drained daily pool must read 100%% and park: %+v", windows[0])
+	}
+}
+
+func TestParseFreebuffErrors(t *testing.T) {
+	// 409 = the account already holds a live session: as usable as a fresh
+	// one (OmniRoute's rule), so it must NOT be an error.
+	windows, _, err := parseFreebuff([]byte(`{"status":"active","rateLimit":{"limit":6,"recentCount":2}}`), http.StatusConflict)
+	if err != "" || len(windows) != 1 || windows[0].Used != 33 {
+		t.Fatalf("409 must be a usable account: windows=%+v err=%q", windows, err)
+	}
+	if _, _, err := parseFreebuff([]byte(`{"error":"unauthorized"}`), http.StatusUnauthorized); !strings.Contains(err, "invalid or expired") {
+		t.Fatalf("401 error = %q", err)
+	}
+	if _, _, err := parseFreebuff([]byte(`{}`), http.StatusForbidden); err == "" {
+		t.Fatal("403 must be an error")
+	}
+	if _, _, err := parseFreebuff([]byte(`{}`), http.StatusBadGateway); !strings.Contains(err, "502") {
+		t.Fatalf("unexpected-status error = %q", err)
+	}
+	if _, _, err := parseFreebuff([]byte(`not json`), http.StatusOK); !strings.Contains(err, "not valid JSON") {
+		t.Fatalf("garbage error = %q", err)
+	}
+	if _, _, err := parseFreebuff([]byte(`{"status":"active"}`), http.StatusOK); !strings.Contains(err, "no quota windows") {
+		t.Fatalf("no-windows error = %q", err)
+	}
+}
+
+func TestProbeFreebuffEndToEnd(t *testing.T) {
+	// The probe is a POST carrying the token, the model header and the
+	// codebuff User-Agent; a drained pool parks the account.
+	var method, auth, model, ua, body string
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, auth, model, ua = r.Method, r.Header.Get("Authorization"), r.Header.Get("x-freebuff-model"), r.Header.Get("User-Agent")
+		if raw, err := io.ReadAll(r.Body); err == nil {
+			body = string(raw)
+		}
+		_, _ = w.Write([]byte(freebuffSessionBody))
+	}))
+	defer fs.Close()
+
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "freebuff", AcctName: "me", AcctKey: "tok-123",
+		Dialect: Freebuff, URL: fs.URL}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	// One poll happens at construction; wait for the snapshot to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if all := tr.All(); len(all) == 1 && all[0].Err != "" {
+			t.Fatalf("probe failed: %+v", all[0])
+		} else if len(all) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("freebuff probe never recorded a snapshot")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if method != http.MethodPost || auth != "Bearer tok-123" {
+		t.Fatalf("probe request = %s %s auth=%q", method, fs.URL, auth)
+	}
+	if model != freebuffModel || !strings.HasPrefix(ua, "codebuff/") {
+		t.Fatalf("model header = %q, UA = %q", model, ua)
+	}
+	if strings.TrimSpace(body) != "{}" {
+		t.Fatalf("probe body = %q, want an empty JSON object", body)
+	}
+	if len(parked) != 0 {
+		t.Fatal("a pool with headroom parked the account")
+	}
+	snaps := tr.All()
+	if snaps[0].Plan != "freebuff limited" || len(snaps[0].Windows) != 2 {
+		t.Fatalf("snapshot = %+v", snaps[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// agentrouter (New-API console balance API)
+// ---------------------------------------------------------------------------
+
+func TestParseAgentRouterBalance(t *testing.T) {
+	// 250000 New-API units = $0.50 (quotaPerUnit = 500000/$1), the
+	// OmniRoute shapes exactly.
+	windows, plan, err := parseAgentRouter([]byte(`{"data":{"quota":250000},"success":true}`), http.StatusOK)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "AgentRouter" || len(windows) != 1 {
+		t.Fatalf("plan=%q windows=%+v", plan, windows)
+	}
+	if windows[0].Name != "Wallet ($0.50 left)" || windows[0].Used != 0 {
+		t.Fatalf("wallet window = %+v", windows[0])
+	}
+	if windows[0].exhausted() {
+		t.Fatal("a wallet with balance must not be exhausted")
+	}
+
+	// A drained wallet is the one exhausted state this endpoint reports.
+	windows, _, err = parseAgentRouter([]byte(`{"data":{"quota":0}}`), http.StatusOK)
+	if err != "" || len(windows) != 1 || windows[0].Used != 100 || !windows[0].exhausted() {
+		t.Fatalf("zero balance = %+v err=%q", windows, err)
+	}
+	if windows[0].Name != "Wallet ($0.00 left)" {
+		t.Fatalf("zero-balance window name = %q", windows[0].Name)
+	}
+}
+
+func TestParseAgentRouterErrors(t *testing.T) {
+	// New-API answers a failed auth with 200 + success:false (live probe
+	// 2026-09-16: {"message":"无权进行此操作，access token 无效","success":false}),
+	// so the envelope has to be a failure too.
+	_, _, err := parseAgentRouter([]byte(`{"message":"无权进行此操作，access token 无效","success":false}`), http.StatusOK)
+	if !strings.Contains(err, "console auth failed") || !strings.Contains(err, "access token") {
+		t.Fatalf("success:false error = %q", err)
+	}
+	if _, _, err := parseAgentRouter([]byte(`{"success":false}`), http.StatusOK); !strings.Contains(err, "is wrong") {
+		t.Fatalf("message-less failure error = %q", err)
+	}
+	if _, _, err := parseAgentRouter([]byte(`{}`), http.StatusUnauthorized); !strings.Contains(err, "System Access Token") {
+		t.Fatalf("401 error = %q", err)
+	}
+	if _, _, err := parseAgentRouter([]byte(`{}`), http.StatusForbidden); err == "" {
+		t.Fatal("403 must be an error")
+	}
+	if _, _, err := parseAgentRouter([]byte(`{}`), http.StatusTeapot); !strings.Contains(err, "418") {
+		t.Fatalf("unexpected-status error = %q", err)
+	}
+	if _, _, err := parseAgentRouter([]byte(`nope`), http.StatusOK); !strings.Contains(err, "not valid JSON") {
+		t.Fatalf("garbage error = %q", err)
+	}
+	if _, _, err := parseAgentRouter([]byte(`{"success":true,"data":{}}`), http.StatusOK); !strings.Contains(err, "no quota field") {
+		t.Fatalf("missing-quota error = %q", err)
+	}
+}
+
+func TestProbeAgentRouterEndToEnd(t *testing.T) {
+	// The console API needs BOTH credentials: the System Access Token as
+	// the bearer and the New-API user id in New-Api-User.
+	var auth, userHeader string
+	as := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth, userHeader = r.Header.Get("Authorization"), r.Header.Get("New-Api-User")
+		_, _ = w.Write([]byte(`{"data":{"quota":750000},"success":true}`))
+	}))
+	defer as.Close()
+
+	tr := NewAt([]Target{{Provider: "agentrouter", AcctName: "me", AcctKey: "sat-token",
+		Dialect: AgentRouter, ConsoleUser: "14823", URL: as.URL}}, nil, nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if all := tr.All(); len(all) == 1 && (all[0].Err != "" || len(all[0].Windows) > 0) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("agentrouter probe never recorded a snapshot")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if auth != "Bearer sat-token" || userHeader != "14823" {
+		t.Fatalf("probe headers: auth=%q New-Api-User=%q", auth, userHeader)
+	}
+	snaps := tr.All()
+	if snaps[0].Err != "" || snaps[0].Windows[0].Name != "Wallet ($1.50 left)" {
+		t.Fatalf("snapshot = %+v", snaps[0])
+	}
+}
+
+func TestProbeAgentRouterWithoutConsoleUserFailsActionably(t *testing.T) {
+	// No New-API user id = nothing to probe: the snapshot carries the fix
+	// instead of an opaque 401, and no upstream call is made.
+	hit := false
+	as := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+	}))
+	defer as.Close()
+
+	tr := NewAt([]Target{{Provider: "agentrouter", AcctName: "me", AcctKey: "sat-token",
+		Dialect: AgentRouter, URL: as.URL}}, nil, nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if all := tr.All(); len(all) == 1 && all[0].Err != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("missing console user never produced a probe error")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	snaps := tr.All()
+	if !strings.Contains(snaps[0].Err, "subscription_user") {
+		t.Fatalf("error must name the missing setting: %q", snaps[0].Err)
+	}
+	if hit {
+		t.Fatal("probe made an upstream call with no user id")
 	}
 }

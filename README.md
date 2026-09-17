@@ -596,6 +596,9 @@ windows — used percent and reset time — on the Quota page and
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
 | `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`) | 5-hour + weekly USD windows (used/cap), monthly credits pool (spend vs pool total); plan label from subscriptions |
 | `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim |
+| `cursor` | `https://cursor.com/api/usage` (the account's own dashboard session JWT) | monthly request pool (`numRequests`/`maxRequestUsage`); an uncapped lane is tracked, never parked |
+| `freebuff` | `https://www.codebuff.com/api/v1/freebuff/session` (POST) | daily freebucks pool (spent/limit, % + reset) plus the probed model's own admission count; plan label from `accessTier` |
+| `agentrouter` | `https://agentrouter.org/api/user/self` (New-API console — **not** the routing key, see below) | wallet balance in USD; a drained wallet (quota 0) is the one exhausted state |
 
 An account whose vendor-reported window is **fully consumed** parks until
 the vendor's stated reset (capped at one poll cycle so an early reset or a
@@ -603,6 +606,29 @@ probe hiccup self-heals): the pool skips it and combos fall through instead
 of burning doomed upstream attempts. Probes are strictly fail-open — a
 vendor outage never benches a healthy account; the Quota page just shows
 the last-known state plus the probe error.
+
+Two dialects authenticate with the account's `api_key`, so nothing extra is
+needed: `freebuff` takes the Codebuff CLI's auth token (the `authToken` in
+`~/.config/manicode/credentials.json`). `agentrouter` is the exception —
+its quota API is the **console** New-API deployment, which wants the console
+System Access Token instead of the routing `sk-…` key, plus the console
+account's numeric user id:
+
+```toml
+[[providers]]
+name = "agentrouter-quota"
+kind = "openai"
+base_url = "https://agentrouter.org/v1"
+api_key = "<console System Access Token>"   # NOT the routing sk- key
+subscription_quota = "agentrouter"
+subscription_user = "14823"                 # the number in the console URL
+```
+
+`subscription_user` is only valid with `subscription_quota = "agentrouter"`
+(validation rejects it elsewhere), and an agentrouter provider without it
+reports a probe error naming the setting instead of a bare 401 — the
+routing key can never be used here, so if one provider must both route and
+report, declare a second provider carrying the console credentials as above.
 
 ```toml
 [[providers]]

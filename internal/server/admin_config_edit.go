@@ -77,14 +77,18 @@ type providerEditReq struct {
 	ResponsesModels []string `json:"responses_models"`
 	// SubscriptionQuota selects the upstream-reported quota profile
 	// ("grok-cli" for a SuperGrok pool, "opencode-go", "zai", "zai-cn",
-	// "commandcode"); "" = local counters only.
-	SubscriptionQuota string     `json:"subscription_quota"`
-	MaxConc           int        `json:"max_concurrency"`
-	Sticky            string     `json:"sticky"`
-	QuotaWindow       string     `json:"quota_window"`
-	QuotaLimitTokens  int64      `json:"quota_limit_tokens"`
-	QuotaLimitReqs    int64      `json:"quota_limit_requests"`
-	Accounts          []acctEdit `json:"accounts"`
+	// "commandcode", "cursor", "freebuff", "agentrouter"); "" = local
+	// counters only.
+	SubscriptionQuota string `json:"subscription_quota"`
+	// SubscriptionUser is the console-side user id agentrouter's New-API
+	// balance API needs in New-Api-User, alongside the console token.
+	SubscriptionUser string     `json:"subscription_user"`
+	MaxConc          int        `json:"max_concurrency"`
+	Sticky           string     `json:"sticky"`
+	QuotaWindow      string     `json:"quota_window"`
+	QuotaLimitTokens int64      `json:"quota_limit_tokens"`
+	QuotaLimitReqs   int64      `json:"quota_limit_requests"`
+	Accounts         []acctEdit `json:"accounts"`
 }
 
 type comboEditReq struct {
@@ -331,9 +335,9 @@ func blockName(lines []string, b tomlBlock) (string, bool) {
 
 // spliceProvider adds or updates one [[providers]] block in place.
 // Update rewrites only the editor-managed keys (name, kind, base_url,
-// api_key, models, responses_models, subscription_quota, max_concurrency,
-// sticky, quota_*) and the [[providers.accounts]] sub-tables; every other
-// line of the block — extra_headers, always_thinking, session_header,
+// api_key, models, responses_models, subscription_quota, subscription_user,
+// max_concurrency, sticky, quota_*) and the [[providers.accounts]] sub-tables;
+// every other line of the block — extra_headers, always_thinking, session_header,
 // passthrough, comments — is preserved byte-for-byte. Empty api_key fields
 // carry over the existing key for the same account name.
 //
@@ -520,6 +524,11 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 		block = upsertScalar(block, "responses_models", "responses_models = "+renderStringArray(req.ResponsesModels))
 	} else {
 		block = removeScalar(block, "responses_models")
+	}
+	if req.SubscriptionUser != "" {
+		block = upsertScalar(block, "subscription_user", tsv("subscription_user", req.SubscriptionUser))
+	} else {
+		block = removeScalar(block, "subscription_user")
 	}
 	if req.SubscriptionQuota != "" {
 		block = upsertScalar(block, "subscription_quota", tsv("subscription_quota", req.SubscriptionQuota))
@@ -810,6 +819,9 @@ func renderProviderBlock(req providerEditReq) []string {
 	}
 	if req.SubscriptionQuota != "" {
 		block = append(block, tsv("subscription_quota", req.SubscriptionQuota))
+	}
+	if req.SubscriptionUser != "" {
+		block = append(block, tsv("subscription_user", req.SubscriptionUser))
 	}
 	if req.MaxConc > 0 {
 		block = append(block, "max_concurrency = "+strconv.Itoa(req.MaxConc))

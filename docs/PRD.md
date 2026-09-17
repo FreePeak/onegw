@@ -1,3 +1,40 @@
+*Last updated: 2026-09-17 (two upstream-check dialects ported from OmniRoute: `freebuff` + `agentrouter`):*
+
+onegw had no key-validation surface at all, but it already had the whole upstream-probe machine —
+`internal/subquota` polls one vendor usage endpoint per (provider, account) once a minute, renders it on the
+Quota page and `GET /admin/api/v1/subscription`, and parks an account whose window the vendor reports
+exhausted. Both checks are therefore implemented as two new subquota DIALECTS (`subquota.go: probeFreebuff` /
+`probeAgentRouter`, registered in the one place `Dialects()` that `config.Validate` quotes): no new route, no
+new package, no new dependency, and parking/fail-open/dashboard behaviour is inherited rather than reimplemented.
+
+`freebuff` polls codebuff.com's free-tier session endpoint (`POST https://www.codebuff.com/api/v1/freebuff/session`,
+the URL OmniRoute's `validateFreebuffProvider` and its executor both hit) with the Codebuff CLI's own auth token
+as the bearer. It is the only dialect that is a POST with a body and a codebuff User-Agent, so it could not ride
+the shared bearer GET helper. Valid is 200 OR 409 — 409 means the account already holds a live session, which
+OmniRoute treats as usable, and the parser accepts it for the same reason. Two windows are surfaced: the daily
+freebucks pool (`spent`/`limit`, the currency free sessions are charged in) and the probed model's own daily
+admission count (`recentCount`/`limit`); the plan label is the `accessTier` ("freebuff limited"). Percentages
+floor at 96 for 24/25, so a pool with one freebuck left can never fabricate a drained-pool park.
+
+`agentrouter` is a New-API console deployment, and its quota API is the CONSOLE API — `GET /api/user/self`
+with the console System Access Token as the bearer AND the console account's numeric id in a `New-Api-User`
+header. The routing `sk-…` key can never authenticate it, so the id needed a config field: `subscription_user`
+on the provider, threaded through the editor (`providerEditReq`/`providerEditView`, the pf-su input, the save
+and the prefill), and validation rejects it without `subscription_quota = "agentrouter"`. A missing id is
+reported as a probe error naming the setting instead of an opaque 401, and a provider that must both route and
+report is documented as two provider blocks (console credentials in the quota one). The wallet's balance
+(`data.quota` / 500000 units per dollar) is the window; `quota <= 0` is the one exhausted state, because New-API
+reports no grant total to divide by — OmniRoute derives the same boolean-ish 0/100 %. Live probes (2026-09-16)
+also showed a rejected token answers HTTP 200 `{"message":"…access token 无效","success":false}`, so the parser
+checks the envelope, not just the status code.
+
+Verified: two dialect parsers with the live response shapes (incl. 409-valid, drained-pool 100 %, and
+`success:false` rejection), probe-level httptest e2e asserting the exact method/body/headers each vendor needs,
+a server-level e2e proving both dialects validate, reach the tracker and carry the credentials end to end, a
+provider-edit round trip for `subscription_user` (written, prefilled, removed when cleared, rejected without
+agentrouter), and a mutation check: neutering the probe's `ConsoleUser` threading turns the server e2e red.
+README dialect table + credential note, onegw.toml.example and the Quota page's empty-state hint updated.
+
 *Deployed: 73f6954 (cursor usage-summary dialect) via scripts/deploy.sh --binary /tmp/onegw-cs zero-drop at 23:06 local (pid 27586, single listener, old 45275 drained). Authenticated /admin/health 200; real completion through `free` 200. Config: mnhatlinh.doan@gmail.com cursor credential swapped to the browser web-type session token (exp 2026-11-13) — first poll 23:08:55 shows auth0-user plan "enterprise" included-usage 12% reset Oct-1, mnhatlinh plan "free" 5% reset Oct-3 03:51Z, both matching cursor.com's own meters, no probe errors. Stable path ~/.local/bin/onegw re-pointed to the same bytes. Earlier:*
 *Last updated: 2026-09-14 (cursor dialect now reads `/api/usage-summary` — the old `/api/usage` was blind to the grok account): the per-model `/api/usage` buckets returned all-zero/`maxRequestUsage:null` for the personal (grok-linked) account, which the poller rendered as "uncapped 0%" while cursor.com's own dashboard showed ~5% of included usage consumed — the meter simply does not live in those buckets. `usage-summary` carries the real state in one call: `totalPercentUsed`/`apiPercentUsed` are exactly the dashboard's display-message percentages (4.5→"5%", 12.35→"12%", verified with both accounts' own session cookies), and `billingCycleEnd` is the vendor's own reset instant (replacing the old startOfMonth + AddDate month-anchor guess that could read up to 3 days off). New windows: "included usage" + "included API usage" (0-100 percent, so the existing exhausted-≥100 parking works unchanged); plan label = `membershipType` ("free"/"enterprise"); `isUnlimited` keeps the tracked-only-never-parked rule; `teamUsage` is ignored (per-user meters ride in `individualUsage.plan` even for team members — live-verified). Auth is now cookie-only (no `?user=` append). IMPORTANT: `usage-summary` requires a BROWSER-type session JWT — the CLI/agent keychain token 401s there (measured 2026-09-14), so the `mnhatlinh.doan@gmail.com` account's credential was swapped to a browser session export (exp 2026-11-02). Tests rewritten against both live account shapes (`TestParseCursorSummaryMeters`, `TestParseCursorTeamMemberMeters`). Earlier:*
 *Last updated: 2026-09-14 (config live: cursor subquota enabled; `free` ladder restored to v7): `subscription_quota = "cursor"` added to the cursor provider block (valid now that the running binary is 8404904/v0.37.0 — e92368d's dialect); `PUT /admin/config/reload` -> {reloaded:true, providers:9}; first poller cycle 22:33 fetched both cursor accounts via cursor.com/api/usage with the accounts' own session JWTs — auth0-user "1000 req/mo" gpt-4 monthly used=25, the CLI account "uncapped" (tracked only, never parked per the #79 rule). Issue #96 closed with this evidence. The same reload restored `free` to the v7 single leg ["b-ai/qwen3.8-flash"]: a 21:28 edit had re-added kilocode/tokenrouter/commandcode/glm/hy3 legs, contradicting the file's own v7 standing-order comment ("free is b-ai only, permanently"); the 17:49 verified state is served again (GET /admin/api/v1/combos). `dev`/`fast` untouched. Earlier:*

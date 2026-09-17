@@ -1057,6 +1057,7 @@ type providerEditView struct {
 	Models            []string       `json:"models,omitempty"`
 	ResponsesModels   []string       `json:"responses_models,omitempty"`
 	SubscriptionQuota string         `json:"subscription_quota,omitempty"`
+	SubscriptionUser  string         `json:"subscription_user,omitempty"`
 	MaxConc           int            `json:"max_concurrency,omitempty"`
 	Sticky            string         `json:"sticky,omitempty"`
 	QuotaWindow       string         `json:"quota_window,omitempty"`
@@ -1082,7 +1083,8 @@ func providerEditViews(st *state) []providerEditView {
 		v := providerEditView{
 			Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL, Models: p.Models,
 			ResponsesModels: p.ResponsesModels, SubscriptionQuota: p.SubscriptionQuota,
-			MaxConc: p.MaxConc, Sticky: p.Sticky, QuotaWindow: p.QuotaWindow,
+			SubscriptionUser: p.SubscriptionUser,
+			MaxConc:          p.MaxConc, Sticky: p.Sticky, QuotaWindow: p.QuotaWindow,
 			QuotaTokens: p.QuotaLimitTokens, QuotaReqs: p.QuotaLimitRequests,
 		}
 		oauth := map[string]config.OAuthAccount{}

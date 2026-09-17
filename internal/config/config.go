@@ -244,18 +244,36 @@ type ProviderCfg struct {
 	// subscription quota tracking (issue #79, ported from 9router's
 	// usage services and OmniRoute's quota preflight): "" (off) |
 	// "opencode-go" | "zai" | "zai-cn" | "commandcode" | "grok-cli" |
-	// "cursor". The gateway probes the vendor's own usage endpoint per
-	// account and parks accounts whose windows the vendor reports
-	// exhausted. cursor reads the browser dashboard's session-cookie summary
-	// API (cursor.com/api/usage-summary) with the account's own BROWSER
-	// session JWT, so it needs no extra credential (a CLI/agent token 401s
-	// on this endpoint); an account on an uncapped lane reports no
-	// cap and is tracked only, never parked. For commandcode,
-	// SubscriptionURL overrides the API BASE (https://api.commandcode.ai)
-	// — the probe appends /alpha paths. Other dialects: SubscriptionURL
-	// overrides the full endpoint (self-hosted mirrors, tests).
+	// "cursor" | "freebuff" | "agentrouter". The gateway probes the
+	// vendor's own usage endpoint per account and parks accounts whose
+	// windows the vendor reports exhausted. cursor reads the browser
+	// dashboard's session-cookie summary API (cursor.com/api/usage-summary)
+	// with the account's own BROWSER session JWT, so it needs no extra
+	// credential (a CLI/agent token 401s on this endpoint); an account on
+	// an uncapped lane reports no cap and is tracked only, never parked.
+	// For commandcode, SubscriptionURL overrides the API BASE
+	// (https://api.commandcode.ai) — the probe appends /alpha paths.
+	// Other dialects: SubscriptionURL overrides the full endpoint
+	// (self-hosted mirrors, tests).
+	//
+	// freebuff probes codebuff.com's free-tier session endpoint (the site
+	// is freebuff.com) with the account's own auth token; it parks on a
+	// drained daily freebucks pool like every other dialect.
+	//
+	// agentrouter authenticates its CONSOLE API (a New-API deployment,
+	// /api/user/self) with the console System Access Token — not the
+	// routing sk- key — AND that console account's numeric user id, which
+	// SubscriptionUser carries. Set the account's api_key to the console
+	// token and subscription_user to the id.
 	SubscriptionQuota string `toml:"subscription_quota"`
 	SubscriptionURL   string `toml:"subscription_url"`
+
+	// SubscriptionUser is the console-side user id a dialect needs in
+	// addition to the bearer token. Only agentrouter uses it today: New-API
+	// wants a New-Api-User header carrying the console account's numeric
+	// id. Provider-wide rather than per-account — it identifies the
+	// console account the quota belongs to, which the token already does.
+	SubscriptionUser string `toml:"subscription_user"`
 	// Rotation overrides the global [rotation] policy for this provider
 	// (#84), field-by-field; empty fields inherit.
 	Rotation RotationCfg `toml:"rotation"`
@@ -609,6 +627,10 @@ func (c *Config) Validate() error {
 		if p.SubscriptionQuota != "" && !subquota.ValidDialect(p.SubscriptionQuota) {
 			return fmt.Errorf("provider %s unknown subscription_quota %q (want %s)",
 				p.Name, p.SubscriptionQuota, strings.Join(subquota.Dialects(), ", "))
+		}
+		if p.SubscriptionUser != "" && p.SubscriptionQuota != subquota.AgentRouter {
+			return fmt.Errorf("provider %s sets subscription_user without subscription_quota = %q (it is that dialect's New-API user id)",
+				p.Name, subquota.AgentRouter)
 		}
 		if err := validateRotation(p.Rotation, "provider "+p.Name+" rotation"); err != nil {
 			return err

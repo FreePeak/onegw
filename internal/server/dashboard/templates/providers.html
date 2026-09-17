@@ -138,7 +138,7 @@
       <div class="field">
         <label for="pf-sq">subscription quota <span class="text-mut/60">(upstream-reported)</span></label>
         <input id="pf-sq" name="subscription_quota" list="pf-sq-opts" type="text"
-               autocomplete="off" placeholder="off | grok-cli | opencode-go | zai | cursor | commandcode">
+               autocomplete="off" placeholder="off | grok-cli | opencode-go | zai | cursor | commandcode | freebuff | agentrouter">
         <datalist id="pf-sq-opts">
           <option value=""></option>
           <option value="grok-cli"></option>
@@ -147,7 +147,15 @@
           <option value="zai-cn"></option>
           <option value="cursor"></option>
           <option value="commandcode"></option>
+          <option value="freebuff"></option>
+          <option value="agentrouter"></option>
         </datalist>
+      </div>
+      <div class="field">
+        <label for="pf-su">subscription user <span class="text-mut/60">(New-API user id — agentrouter's console quota only)</span></label>
+        <input id="pf-su" name="subscription_user" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. 14823">
+        <small class="text-mut">The number in agentrouter.org's console URL; pairs with the console
+          System Access Token in this provider's api key field. Leave blank for every other dialect.</small>
       </div>
     </div>
     </details>
@@ -347,6 +355,7 @@ const PRESETS = {{.Presets}}||[];
     document.getElementById('pf-models').value = (p.models || []).join('\n');
     document.getElementById('pf-rmodels').value = (p.responses_models || []).join('\n');
     document.getElementById('pf-sq').value = p.subscription_quota || '';
+    document.getElementById('pf-su').value = p.subscription_user || '';
     document.getElementById('pf-conc').value = p.max_concurrency || '';
     document.getElementById('pf-sticky').value = p.sticky || '';
     document.getElementById('pf-qw').value = p.quota_window || '';
@@ -387,6 +396,7 @@ const PRESETS = {{.Presets}}||[];
     document.getElementById('pf-models').value = (d.models || []).join('\n');
     document.getElementById('pf-rmodels').value = (d.responses_models || []).join('\n');
     setSel(document.getElementById('pf-sq'), d.subscription_quota || '');
+    document.getElementById('pf-su').value = d.subscription_user || '';
     accts.innerHTML = '';
     const row = acctRow(null);
     if (d.oauth_service) setSel(row.querySelector('.a-oauth'), d.oauth_service);
@@ -401,6 +411,7 @@ const PRESETS = {{.Presets}}||[];
     const doc = {
       kind: body.kind, base_url: body.base_url, models: body.models,
       responses_models: body.responses_models, subscription_quota: body.subscription_quota,
+      subscription_user: body.subscription_user,
     };
     const oauthRow = (body.accounts || []).find(a => a.oauth);
     if (oauthRow) doc.oauth_service = oauthRow.oauth;
@@ -528,6 +539,7 @@ const PRESETS = {{.Presets}}||[];
       models: document.getElementById('pf-models').value.split('\n').map(s => s.trim()).filter(Boolean),
       responses_models: document.getElementById('pf-rmodels').value.split('\n').map(s => s.trim()).filter(Boolean),
       subscription_quota: document.getElementById('pf-sq').value.trim(),
+      subscription_user: document.getElementById('pf-su').value.trim(),
       max_concurrency: parseInt(document.getElementById('pf-conc').value, 10) || 0,
       sticky: document.getElementById('pf-sticky').value.trim(),
       quota_window: document.getElementById('pf-qw').value,
