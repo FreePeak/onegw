@@ -732,6 +732,29 @@ type oaError struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
 	Code    any    `json:"code"`
+	// OpenRouter nests the real cause one level down (live 2026-09-17,
+	// openrouter/stealth/union-alpha): the top-level message is the constant
+	// "Provider returned error" while metadata carries the vendor's own
+	// words and the lane that gated it. detail() folds both into Message so
+	// every consumer — SharedConcurrency(), RateWindow(), the console log —
+	// reads the actual diagnostic instead of the placeholder.
+	Metadata struct {
+		Raw         string `json:"raw"`
+		LimitSource string `json:"limit_source"`
+	} `json:"metadata,omitempty"`
+}
+
+// detail is Message plus whatever the vendor nested in metadata (see the
+// field doc above). Falls back to Message alone when an upstream nests
+// nothing, so every other vendor's decoding is unchanged.
+func (e oaError) detail() string {
+	if e.Metadata.Raw == "" {
+		return e.Message
+	}
+	if e.Metadata.LimitSource == "" {
+		return e.Message + " (" + e.Metadata.Raw + ")"
+	}
+	return e.Message + " (" + e.Metadata.Raw + "; limit_source " + e.Metadata.LimitSource + ")"
 }
 
 // DecodeOpenAIResponse converts an OpenAI completion response to unified.
@@ -742,10 +765,10 @@ func DecodeOpenAIResponse(body []byte) (*types.ChatResponse, error) {
 	}
 	if r.Error != nil {
 		return nil, NormalizeInStreamError(&types.APIError{
-			Status:  statusFromOAErr(r.Error.Code, r.Error.Type, r.Error.Message),
+			Status:  statusFromOAErr(r.Error.Code, r.Error.Type, r.Error.detail()),
 			Type:    orDefault(r.Error.Type, "upstream_error"),
 			Code:    errCodeString(r.Error.Code),
-			Message: r.Error.Message,
+			Message: r.Error.detail(),
 		})
 	}
 	out := &types.ChatResponse{ID: r.ID, Model: r.Model}
@@ -905,7 +928,7 @@ func DecodeOpenAIError(body []byte, status int) *types.APIError {
 	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message == "" {
 		return &types.APIError{Status: status, Type: "upstream_error", Message: strings.TrimSpace(string(body))}
 	}
-	return &types.APIError{Status: status, Type: orDefault(e.Error.Type, "upstream_error"), Code: errCodeString(e.Error.Code), Message: e.Error.Message}
+	return &types.APIError{Status: status, Type: orDefault(e.Error.Type, "upstream_error"), Code: errCodeString(e.Error.Code), Message: e.Error.detail()}
 }
 
 // EncodeError renders a unified error in the wire format expected by the

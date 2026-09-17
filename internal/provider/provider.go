@@ -62,6 +62,66 @@ const OpenCodeSessionHeader = "X-Opencode-Session"
 // mirroring the OpenCode gateway's own limit.
 const maxOpenCodeSessionLen = 256
 
+// openCodeCLISessionHex/-B62 describe the ONLY session-id shape the Zen free
+// tier's edge accepts: "ses_" + 12 lowercase hex chars + 14 base62 chars (30
+// chars). That is the real opencode binary's id factory — it encodes
+// `unixMilli<<12 | counter` complemented into the 12 hex chars (a descending
+// HexFlake), then appends 14 random base62 — and the upstream verifies the
+// SHAPE, not the timestamp: a random-but-shaped prefix serves fine, while
+// every off-shape id answers 403 FreeTierError (live-probed 2026-09-17 on the
+// public endpoint, CLI User-Agent attached):
+//
+//	ses_<30 hex>                    403   (34-char hex id)
+//	ses_<64 hex>                    403   (68 chars, hex-only)
+//	ses_<12 hex><0/8/18/24/52 b62>  403   (16/24/34/40/68 chars)
+//	ses_<12 hex><14 b62>            200   (30 chars — the CLI shape)
+const (
+	openCodeCLISessionHex = 12
+	openCodeCLISessionB62 = 14
+)
+
+// openCodeCLISessionRe is the acceptance shape (see above). Client-supplied
+// ids are matched against it rather than forwarded on trust: a shape the
+// upstream rejects would 403 the whole request, so an off-shape client value
+// falls back to the derived id.
+var openCodeCLISessionRe = regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$`)
+
+// openCodeCLIUserAgent is the User-Agent the real opencode CLI sends
+// (`opencode/${channel}/${version}/${name}`; captured from opencode 2.0.5).
+// It is the SECOND half of the free tier's gate, and load-bearing: with a
+// valid session shape and any other UA — Go's default, curl, even
+// "opencode-cli/1.0.0" — the endpoint answers 403 FreeTierError "OpenCode's
+// free tier can only be used from within OpenCode" (live-probed
+// 2026-09-17, alternating both UAs against one session id in the same
+// second). The version segment is gated too: "opencode/latest/1.0.0/cli"
+// answers 426 UpgradeRequired, so this constant must track a recent release.
+//
+// A whole-host 429 answers BEFORE this gate (see the README), so a burst of
+// probes can mask the contract: verify from a single unthrottled call.
+const openCodeCLIUserAgent = "opencode/latest/2.0.5/cli"
+
+// base62Alphabet is the suffix alphabet of the CLI session shape.
+const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+// openCodeFreeSession returns the session id for a keyless free-tier call.
+// The client's own id is forwarded when it already has the shape the
+// upstream accepts; otherwise (absent, or any shape that would 403) a stable
+// per-account id is derived in that shape, so the same account keeps one
+// upstream session and its prompt caches stay warm. Never returns "".
+func openCodeFreeSession(clientVal, account string) string {
+	if s := strings.TrimSpace(clientVal); openCodeCLISessionRe.MatchString(s) {
+		return s
+	}
+	sum := sha256.Sum256([]byte("opencode-free\x00" + account))
+	var b strings.Builder
+	b.WriteString("ses_")
+	b.WriteString(hex.EncodeToString(sum[:openCodeCLISessionHex/2]))
+	for i := 0; i < openCodeCLISessionB62; i++ {
+		b.WriteByte(base62Alphabet[int(sum[openCodeCLISessionHex/2+i])%len(base62Alphabet)])
+	}
+	return b.String()
+}
+
 // perKeySession derives the stable opaque id for one credential: the same
 // key always maps to the same id (upstream prompt caches stay warm),
 // different keys differ, and the salt keeps ids unrelated across
@@ -846,12 +906,14 @@ var openCodeGoModels = []string{
 
 // openCodeFreeModels is the keyless catalog of the OpenCode Zen FREE tier
 // (https://opencode.ai/zen/v1), mirrored from OmniRoute's noauth "opencode"
-// registry and re-probed live 2026-09-12. The upstream rotates this lineup
-// without notice (delisted ids answer 401 "Model X is not supported"), so
-// configs that want the current upstream list should set `models`
-// explicitly. Every entry here returned a keyless 200 in that probe; the
-// muse-spark-*-free pair serves on the Responses wire
-// (/zen/v1/responses), which Path/UpstreamFormat route per model.
+// registry. The upstream rotates this lineup without notice — delisted ids
+// answer 401 "Model X is not supported" — so configs that want the current
+// upstream list should set `models` explicitly. Re-probed 2026-09-17 with
+// the CLI fingerprint in place: the five non-muse ids below answered 200,
+// while the muse-spark-*-free pair (which served in the 2026-09-12 probe)
+// answered 500. The pair stays in the catalog — a 500 is the vendor's own
+// upstream fault, not a delisting, and their Responses-wire routing
+// (/zen/v1/responses) is pinned by test.
 var openCodeFreeModels = []string{
 	"big-pickle",
 	"mimo-v2.5-free",
@@ -2203,11 +2265,10 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// resolves OAuth tokens).
 			switch d.Kind {
 			case KindOpenCodeFree:
-				// Free tier: no credential → session id derived from the
-				// account NAME (stable, per-account; there is no apiKey).
-				// applyAuth below emits "Authorization: Bearer " which the
-				// free tier treats as anonymous (verified live 2026-09-12).
-				req.Header.Set(OpenCodeSessionHeader, opencodeSession(clientHeader(clientHdr, OpenCodeSessionHeader), acct.Name))
+				// Free tier: keyless, so the session id derives from the
+				// account NAME, and the CLI User-Agent is mandatory — the
+				// edge 403s every other UA (see openCodeCLIUserAgent).
+				setOpenCodeFreeFingerprint(req.Header, clientHeader(clientHdr, OpenCodeSessionHeader), acct.Name)
 			case KindAnthropic:
 				req.Header.Set("anthropic-version", "2023-06-01")
 			case KindOpenCode:
@@ -2598,7 +2659,9 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 	case KindAnthropic:
 		req.Header.Set("anthropic-version", "2023-06-01")
 	case KindOpenCodeFree:
-		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.Name))
+		// Same fingerprint as the chat path (single owner); the models GET
+		// has no client to forward a session from.
+		setOpenCodeFreeFingerprint(req.Header, "", acct.Name)
 	case KindOpenCode:
 		req.Header.Set(OpenCodeSessionHeader, opencodeSession("", acct.bearerToken()))
 	case KindCommandCode:
