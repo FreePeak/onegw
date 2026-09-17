@@ -17,7 +17,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"onegw/internal/config"
 )
 
 // keysFixture is one config that exercises every row shape the credential
@@ -106,6 +110,10 @@ func TestKeysPageRenders(t *testing.T) {
 // the subscription row that has no key to show.
 func TestKeysGetListsEveryCredential(t *testing.T) {
 	_, h, _ := newTestServerFromFile(t, keysFixture("http://p1.invalid"))
+	// Plaintext keys must not sit in a proxy or browser cache.
+	if w := adminCall(t, h, http.MethodGet, "/admin/config/keys", "", true); w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", w.Header().Get("Cache-Control"))
+	}
 	got := getJSON[struct {
 		Keys      []clientKeyView   `json:"keys"`
 		Providers []providerKeyView `json:"providers"`
@@ -395,4 +403,93 @@ func TestProviderCardsCollapseUnlessTheyNeedAttention(t *testing.T) {
 	if !strings.Contains(body, "sign sub in") {
 		t.Fatalf("the attention pill is missing:\n%s", body)
 	}
+}
+
+// TestAutoDiscoveryBacksOffADeadUpstream is the page-load cost guard: a
+// refresh must record the failure it saw, because autoDiscoverModels only
+// stops re-probing a dead provider while the cached verdict says it failed.
+// Without the cache entry every poll, page load and refresh hammered the
+// upstream again.
+func TestAutoDiscoveryBacksOffADeadUpstream(t *testing.T) {
+	var hits int64
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key"}}`))
+	}))
+	defer up.Close()
+	_, h, _ := newTestServerFromFile(t, keysFixture(up.URL))
+
+	refresh := func() {
+		t.Helper()
+		if w := adminCall(t, h, http.MethodGet, "/admin/api/v1/models?refresh=1", "", true); w.Code != http.StatusOK {
+			t.Fatalf("refresh: %d %s", w.Code, w.Body.String())
+		}
+	}
+	// The probe is asynchronous; wait for the failure to land in the cache.
+	refresh()
+	deadline := time.Now().Add(10 * time.Second)
+	for atomic.LoadInt64(&hits) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the auto-discovery probe never reached the dead upstream")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond) // let the probe finish writing its verdict
+	first := atomic.LoadInt64(&hits)
+
+	// Inside the back-off window, further refreshes must not re-probe. p1 is
+	// the only provider pointing at this server.
+	for i := 0; i < 3; i++ {
+		refresh()
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got := atomic.LoadInt64(&hits); got != first {
+		t.Fatalf("dead upstream probed %d more time(s) during the back-off (hits %d → %d)", got-first, first, got)
+	}
+
+	// And the row still explains itself rather than reading like "no models".
+	rows := getJSON[[]modelRowView](t, h, "/admin/api/v1/models")
+	for _, r := range rows {
+		if r.Provider == "p1" && !strings.Contains(r.Error, "401") {
+			t.Fatalf("p1 row error = %q, want the cached 401 reason", r.Error)
+		}
+	}
+}
+
+// TestKeysPageMarksEnvOverriddenKeys: ONEGW_KEYS replaces the file's keys on
+// every load, so a "remove" button for one of them edits a file that no longer
+// holds it. The row must say so instead.
+func TestKeysPageMarksEnvOverriddenKeys(t *testing.T) {
+	srv, h, path := newTestServerFromFile(t, keysFixture("http://p1.invalid"))
+	t.Setenv("ONEGW_KEYS", "env-k1,env-k2")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload with ONEGW_KEYS: %v", err)
+	}
+	srv.Reload(cfg) // what SIGHUP does with the override in the environment
+
+	got := getJSON[struct {
+		Keys []clientKeyView `json:"keys"`
+	}](t, h, "/admin/config/keys")
+	if len(got.Keys) != 2 || !got.Keys[0].Shadow || !got.Keys[1].Shadow {
+		t.Fatalf("keys from ONEGW_KEYS must be marked shadow = %+v", got.Keys)
+	}
+	if got.Keys[0].Key != "env-k1" {
+		t.Fatalf("client keys = %+v, want the env override", got.Keys)
+	}
+	// The page's remove button is behind the same flag, so the affordance the
+	// operator sees is driven by what the endpoint just said.
+	if !strings.Contains(keysPageHTML(t, h), "k.shadow") {
+		t.Fatal("the keys page no longer gates its remove affordance on the shadow flag")
+	}
+}
+
+func keysPageHTML(t *testing.T, h http.Handler) string {
+	t.Helper()
+	w := adminCall(t, h, http.MethodGet, "/admin/ui/keys", "", true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("keys page: %d %s", w.Code, w.Body.String())
+	}
+	return w.Body.String()
 }

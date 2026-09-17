@@ -370,11 +370,18 @@ type Config struct {
 	Update   UpdateCfg   `toml:"update"`
 	// adminPwConfigured: the operator chose the admin password (config key,
 	// env, or a stored <data_dir>/admin_password); adminPwGenerated: this
-	// process minted and persisted it on first boot. Both unexported, so the
-	// TOML codec never sees them. See adminpw.go.
+	// process minted and persisted it on first boot. keysFromEnv: ONEGW_KEYS
+	// replaced the file's keys wholesale, so they are not editable in TOML.
+	// All unexported, so the TOML codec never sees them. See adminpw.go.
 	adminPwConfigured bool
 	adminPwGenerated  bool
+	keysFromEnv       bool
 }
+
+// KeysFromEnv reports that the effective client keys came from ONEGW_KEYS,
+// not the config file: the dashboard must not offer to remove them (a file
+// edit cannot).
+func (c *Config) KeysFromEnv() bool { return c != nil && c.keysFromEnv }
 
 // Defaults fills zero values with production-safe defaults.
 func (c *Config) Defaults() {
@@ -460,6 +467,8 @@ func (c *Config) Defaults() {
 	if keys := os.Getenv("ONEGW_KEYS"); keys != "" {
 		// Env override replaces the file's keys entirely, as before.
 		c.Auth.Raw = nil
+		c.Auth.KeyList = nil
+		c.keysFromEnv = true
 		for _, k := range strings.Split(keys, ",") {
 			if k = strings.TrimSpace(k); k != "" {
 				c.Auth.KeyList = append(c.Auth.KeyList, AuthKey{Key: k})

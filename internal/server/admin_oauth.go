@@ -88,6 +88,7 @@ type oauthAdmin struct {
 	// login, opened on demand and closed when the last one settles.
 	states       map[string]string // OAuth state -> store key of the login awaiting it
 	callbackBase string            // "http://127.0.0.1:PORT" of the live listener; "" when closed
+	boundPort    int               // port the live listener actually bound (0 when closed)
 	ln           net.Listener
 	srv          *http.Server
 	idle         *time.Timer // closes the listener when nothing is pending

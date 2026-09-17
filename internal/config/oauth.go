@@ -68,8 +68,13 @@ func (c *Config) OAuthAccounts() []OAuthAccount {
 
 // validateOAuth checks the [[oauth.accounts]] section: provider references
 // must resolve, service profiles must be known, borrowed owners must be
-// declared accounts, and no duplicate accounts.
+// declared accounts, and no duplicate accounts. It also range-checks the
+// loopback port a browser sign-in binds: a bad one would only surface as a
+// page-load failure long after the config was written.
 func validateOAuth(c *Config) error {
+	if p := c.OAuth.CallbackPort; p != 0 && (p < 1 || p > 65535) {
+		return fmt.Errorf("oauth.callback_port %d is not a TCP port (1..65535; omit it for the profile's registered port)", p)
+	}
 	provNames := map[string]bool{}
 	for _, p := range c.Providers {
 		provNames[p.Name] = true

@@ -333,6 +333,10 @@ func (s *Server) probeProvider(name string) {
 			err = "the upstream returned no models"
 		}
 		d.Error = err
+		// Cache the failure like handleAdminModelFetch does: autoDiscoverModels
+		// backs off a dead upstream for 5 minutes, and it can only see that if
+		// the verdict is stored. Without this every page load re-probed.
+		s.models.put(name, d)
 		log.Printf("admin: model discovery for %s failed: %s", name, err)
 		return
 	}

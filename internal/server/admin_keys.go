@@ -29,13 +29,16 @@ import (
 	"onegw/internal/config"
 )
 
-// clientKeyView is one gateway auth key.
+// clientKeyView is one gateway auth key. Shadow marks a key that came from
+// ONEGW_KEYS: the dashboard shows it read-only, because the env override is
+// re-applied on every load and no file edit can remove it (keys.html).
 type clientKeyView struct {
 	Key    string   `json:"key"`
 	Name   string   `json:"name,omitempty"`
 	RPM    int      `json:"rpm,omitempty"`
 	TPM    int      `json:"tpm,omitempty"`
 	Models []string `json:"models,omitempty"`
+	Shadow bool     `json:"shadow,omitempty"`
 }
 
 // providerKeyView is one upstream credential row.
@@ -65,11 +68,12 @@ type keyRowRef struct {
 
 // clientKeyViews lists the gateway's own auth keys in the clear.
 func clientKeyViews(st *state) []clientKeyView {
+	shadow := st.cfg.KeysFromEnv()
 	out := make([]clientKeyView, 0, len(st.cfg.Auth.KeyList))
 	for i := range st.cfg.Auth.KeyList {
 		k := &st.cfg.Auth.KeyList[i]
 		out = append(out, clientKeyView{
-			Key: k.Key, Name: k.Name, RPM: k.RPM, TPM: k.TPM, Models: k.Models,
+			Key: k.Key, Name: k.Name, RPM: k.RPM, TPM: k.TPM, Models: k.Models, Shadow: shadow,
 		})
 	}
 	return out
