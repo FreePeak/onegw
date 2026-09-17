@@ -109,6 +109,32 @@ func TestStreamRelayByteFaithful(t *testing.T) {
 	}
 }
 
+// TestStreamRelayToolRootStaysBuffered: a tool whose parameters root carries a
+// union must not ride the raw relay, which bypasses prepareUpstreamBody — the
+// live xai 400 (root anyOf with an untyped branch) would otherwise reach the
+// upstream unfixed. The buffered path is what types the branches.
+func TestStreamRelayToolRootStaysBuffered(t *testing.T) {
+	up, cap := captureStub()
+	defer up.Close()
+	_, h := newStreamServer(t, streamCfg(t, false, nil, providerSpec{name: "p1", up: up.URL, model: "m1"}))
+
+	in := toolBody(t, askSchema)
+	in = bytes.Replace(in, []byte(`"model":"xai/grok-4.6"`), []byte(`"model":"p1/m1"`), 1)
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(in))
+	r.Header.Set("Content-Type", "application/json")
+	w := do(t, h, authReq(r))
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	body, chunked, _ := cap.snapshot()
+	if chunked {
+		t.Fatal("tool-root-union body must stay buffered (typed there, not relayed raw)")
+	}
+	if got := rootUnionBranches(t, body); len(got) != 2 || got[0] != "object" || got[1] != "object" {
+		t.Fatalf("upstream tool branches must be object-typed, got %q: %s", got, body)
+	}
+}
+
 func TestStreamRelayUpstreamSeesChunked(t *testing.T) {
 	up, cap := captureStub()
 	defer up.Close()
