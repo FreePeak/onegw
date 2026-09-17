@@ -37,3 +37,27 @@ func TestSharedConcurrencyLeavesPerKey429Alone(t *testing.T) {
 		t.Fatal("only 429/503 walls classify as shared")
 	}
 }
+
+// Live 2026-09-17 (openrouter/stealth/union-alpha, account harvey):
+// OpenRouter fronts a Stealth provider whose shared pool was saturated — its
+// 429 names the lane (metadata.limit_source upstream_provider_shared_pool)
+// and says the model is "temporarily rate-limited upstream", while the same
+// credential served 200 on five of eight calls in the same minutes. Only the
+// wording reaches this classifier: translat folds OpenRouter's nested
+// metadata into Message (pinned by
+// TestOpenRouterNestedMetadataSurvivesDecode in internal/translat).
+func TestSharedConcurrencyMatchesOpenRouterSharedPool(t *testing.T) {
+	const folded = "Provider returned error (stealth/union-alpha is temporarily rate-limited upstream. " +
+		"Please retry shortly.; limit_source upstream_provider_shared_pool)"
+	if !(&APIError{Status: 429, Type: "upstream_error", Code: "429", Message: folded}).SharedConcurrency() {
+		t.Fatalf("OpenRouter shared-pool 429 must classify as shared: %q", folded)
+	}
+	// The budget belongs to the upstream provider's pool, and the pool holds
+	// ONE account here, so wallStrike's burst proof can never fire — the
+	// wording is the only signal. Guard the other direction too: OpenRouter's
+	// per-KEY daily free-models limit must keep the ladder.
+	if (&APIError{Status: 429, Type: "upstream_error",
+		Message: "Rate limit exceeded: free-models-per-day"}).SharedConcurrency() {
+		t.Fatal("per-key daily free-models limit must keep the account ladder")
+	}
+}

@@ -93,8 +93,8 @@ func decodeOpenAIStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 	if c.Error != nil {
 		return []StreamEvent{{
 			Kind: EvError,
-			Err: NormalizeInStreamError(&types.APIError{Status: statusFromOAErr(c.Error.Code, c.Error.Type, c.Error.Message),
-				Type: orDefault(c.Error.Type, "upstream_error"), Code: errCodeString(c.Error.Code), Message: c.Error.Message}),
+			Err: NormalizeInStreamError(&types.APIError{Status: statusFromOAErr(c.Error.Code, c.Error.Type, c.Error.detail()),
+				Type: orDefault(c.Error.Type, "upstream_error"), Code: errCodeString(c.Error.Code), Message: c.Error.detail()}),
 		}}, nil
 	}
 	var out []StreamEvent
