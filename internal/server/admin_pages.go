@@ -1412,6 +1412,10 @@ func (s *Server) toolsPage(w http.ResponseWriter, r *http.Request) {
 		"{\n  \"provider\": {\n    \"onegw\": {\n      \"npm\": \"@ai-sdk/openai-compatible\",\n"+
 			"      \"name\": \"onegw\",\n      \"options\": {\n        \"baseURL\": \""+base+"/v1\",\n"+
 			"        \"apiKey\": \"{env:ONEGW_KEY}\"\n      },\n      \"models\": {\"dev\": {\"name\": \"Dev (combo)\"}}\n    }\n  }\n}")
+	add("opencode-free", "opencode-free (keyless public tier)",
+		"{\n  \"provider\": {\n    \"onegw\": {\n      \"npm\": \"@ai-sdk/openai-compatible\",\n"+
+			"      \"name\": \"onegw\",\n      \"options\": {\n        \"baseURL\": \""+base+"/v1\",\n"+
+			"        \"apiKey\": \"\"\n      },\n      \"models\": {\"dev\": {\"name\": \"Dev (free combo)\"}}\n    }\n  }\n}")
 
 	add("grok", "grok (OpenAI-compatible surface)",
 		"export GROK_API_KEY=$ONEGW_KEY\n"+
