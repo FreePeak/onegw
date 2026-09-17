@@ -1,0 +1,15 @@
+# Overlay for the xdev-server gateway host. Bind-mounts the secret-free
+# gateway config over the image default. Keys stay in .env (ONEGW_KEYS,
+# ONEGW_PROVIDER_OPENCODE_KEY). Dashboard in-page saves cannot replace a
+# bind-mounted file — edit docker/xdev-server.toml and recreate, or drop
+# this overlay.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.xdev-server.yml up -d
+#   ./scripts/deploy_xdev_server.sh
+
+name: onegw
+
+services:
+  onegw:
+    volumes:
+      - ./docker/xdev-server.toml:/etc/onegw/onegw.toml:ro
