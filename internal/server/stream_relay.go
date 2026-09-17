@@ -475,7 +475,14 @@ func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 			// the full body). The literal `"reasoning"` also matches
 			// string content and a trailing "reasoning_effort" — over-
 			// matching only costs the fast path, never correctness.
-			if hasDeveloperRole(prefix[i:]) || bytes.Contains(prefix[i:], []byte(`"reasoning"`)) {
+			// The literal `"name":""` is the same-format sibling of the
+			// tool-block repair: a body carrying a nameless tool_use is
+			// both a repair trigger (normalizeToolBlocks) and — since
+			// prepareUpstreamBody runs only on the buffered path — an
+			// ineligibility. Over-matching a string that merely quotes
+			// the empty name only costs the fast path.
+			if hasDeveloperRole(prefix[i:]) || bytes.Contains(prefix[i:], []byte(`"reasoning"`)) ||
+				bytes.Contains(prefix[i:], []byte(`"name":""`)) {
 				sc.ineligible = true
 			}
 			after, ok := skipJSONValue(prefix, i)

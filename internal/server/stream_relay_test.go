@@ -135,6 +135,42 @@ func TestStreamRelayToolRootStaysBuffered(t *testing.T) {
 	}
 }
 
+// TestStreamRelayNamelessToolUseStaysBuffered: the same-format leak of the
+// poisoned tool_use. A Claude-Code body replayed to an Anthropic-wire target
+// takes the same-format branch, which is byte-verbatim — prepareUpstreamBody's
+// repair only runs on the buffered path, so the raw relay must not carry a
+// `"name":""` block upstream (live 400 "tool_use blocks require string
+// \"id\" and \"name\"", gateway seq 1086).
+func TestStreamRelayNamelessToolUseStaysBuffered(t *testing.T) {
+	up, cap := captureStub()
+	defer up.Close()
+	cfg := streamCfg(t, false, nil, providerSpec{name: "p1", up: up.URL, model: "m1"})
+	cfg.Providers[0].Kind = "anthropic" // /v1/messages client == same format
+	_, h := newStreamServer(t, cfg)
+	in := []byte(`{"model":"p1/m1","max_tokens":16,"stream":true,"messages":[` +
+		`{"role":"user","content":"hi"},` +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"","input":{}}]},` +
+		`{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":"x"}]}]}`)
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(in))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("x-api-key", "sk-test-key")
+	r.Header.Set("anthropic-version", "2023-06-01")
+	w := do(t, h, r)
+	if w.Code != 200 {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	body, chunked, _ := cap.snapshot()
+	if chunked {
+		t.Fatal("nameless tool_use body must stay buffered (repaired there, not relayed raw)")
+	}
+	if bytes.Contains(body, []byte(`"name":""`)) {
+		t.Fatalf("empty tool_use name reached the upstream: %s", body)
+	}
+	if !bytes.Contains(body, []byte(unknownToolName)) {
+		t.Fatalf("nameless tool_use not repaired: %s", body)
+	}
+}
+
 func TestStreamRelayUpstreamSeesChunked(t *testing.T) {
 	up, cap := captureStub()
 	defer up.Close()

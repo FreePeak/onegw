@@ -1470,15 +1470,20 @@ func forceStreamFlag(body []byte) []byte {
 // validate the REPLAYED history, and bodies built from other legs' turns
 // legitimately lack reasoning_content — and the tool-root normalization
 // (normalizeToolRoots): strict validators (xai) reject a tool whose parameters
-// root is an anyOf/oneOf with an untyped branch.
+// root is an anyOf/oneOf with an untyped branch. Anthropic-dialect outputs get
+// the tool-block repair (normalizeToolBlocks): that wire rejects a replayed
+// tool_use with an empty id or name.
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	out, err := buildUpstreamBody(upstream, client, body, upstreamModel, def)
 	if err != nil {
 		return nil, err
 	}
-	if upstream == translat.FmtOpenAI {
+	switch upstream {
+	case translat.FmtOpenAI:
 		out = normalizeToolRoots(out)
 		out = synthesizeReasoningEcho(out, upstreamModel, def)
+	case translat.FmtAnthropic:
+		out = normalizeToolBlocks(out)
 	}
 	return out, nil
 }
