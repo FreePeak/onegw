@@ -697,3 +697,49 @@ func TestProviderEditLegacyAPIKeyConverted(t *testing.T) {
 		t.Fatalf("reloaded lp accounts: %+v (provider APIKey %q)", lp.Accounts, lp.APIKey)
 	}
 }
+
+// An opencode-free provider renders on the dashboard: the kind is a valid
+// editor choice (no stray 400 on save) and the providers page carries its
+// option. Regression: the kind existed in config/provider but the dashboard
+// template listed only "opencode", so a keyless free-tier provider could be
+// saved in TOML yet never created from the UI.
+func TestProviderEditOpenCodeFreeKind(t *testing.T) {
+	_, h, path := newTestServerFromFile(t, editTestToml)
+
+	body := `{"name":"ocfree","kind":"opencode-free","models":["big-pickle"]}`
+	w := adminCall(t, h, http.MethodPut, "/admin/config/providers", body, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT opencode-free: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	for _, want := range []string{`name = "ocfree"`, `kind = "opencode-free"`, `models = ["big-pickle"]`} {
+		if !strings.Contains(file, want) {
+			t.Fatalf("file missing %q after opencode-free add:\n%s", want, file)
+		}
+	}
+	if strings.Contains(file, "api_key") && strings.Contains(file, "ocfree") {
+		lines := strings.Split(file, "\n")
+		inBlock, sawKey := false, false
+		for _, l := range lines {
+			if strings.Contains(l, `name = "ocfree"`) {
+				inBlock = true
+			} else if strings.HasPrefix(strings.TrimSpace(l), "[[providers]]") && inBlock {
+				break
+			}
+			if inBlock && strings.Contains(l, "api_key") {
+				sawKey = true
+			}
+		}
+		if sawKey {
+			t.Fatalf("opencode-free block must stay keyless:\n%s", file)
+		}
+	}
+
+	w = adminCall(t, h, http.MethodGet, "/admin/ui/providers", "", true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("providers page: %d %s", w.Code, w.Body.String())
+	}
+	if page := w.Body.String(); !strings.Contains(page, `<option value="opencode-free">opencode-free</option>`) {
+		t.Fatalf("providers page missing the opencode-free kind option")
+	}
+}
