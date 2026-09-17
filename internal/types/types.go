@@ -58,8 +58,10 @@ type ChatRequest struct {
 	// Reasoning controls. Effort is a free-form string (OpenAI dialect:
 	// none|minimal|low|medium|high|max; xhigh is a client ladder above
 	// high). Always-thinking upstreams like GLM accept only low|high|max —
-	// the server coerces (see provider AlwaysThinking). Budget is
-	// explicit thinking-token budget. Exactly one may be set.
+	// the server coerces (see provider AlwaysThinking); models whose
+	// upstream takes the extended ladder keep xhigh and clamp max down to
+	// it (see translat.AcceptXHigh). Budget is explicit thinking-token
+	// budget. Exactly one may be set.
 	ReasoningEffort string       `json:"reasoning_effort,omitempty"`
 	Thinking        *ThinkingCfg `json:"thinking,omitempty"`
 

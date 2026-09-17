@@ -47,15 +47,34 @@ func TestAlwaysThinkingModel(t *testing.T) {
 }
 
 func TestCoerceEffort(t *testing.T) {
-	for in, want := range map[string]string{
-		"none": "low", "minimal": "low", "medium": "low",
-		"xhigh": "max", // client ladders above high map onto GLM's max
-		"low":   "low", "high": "high", "max": "max",
-		"ultra": "high", // unrecognized values land on the accepted middle
-	} {
-		if got := coerceEffort(in); got != want {
-			t.Errorf("coerceEffort(%q) = %q, want %q", in, got, want)
-		}
+	// The GLM dialect (default): a client ladder above high maps onto GLM's
+	// max. The extended-ladder models reject max, so there xhigh survives
+	// and max clamps down to it.
+	cases := []struct {
+		model, in, want string
+	}{
+		{"glm-5.3-flash", "none", "low"},
+		{"glm-5.3-flash", "minimal", "low"},
+		{"glm-5.3-flash", "medium", "low"},
+		{"glm-5.3-flash", "xhigh", "max"}, // client ladders above high map onto GLM's max
+		{"glm-5.3-flash", "low", "low"},
+		{"glm-5.3-flash", "high", "high"},
+		{"glm-5.3-flash", "max", "max"},
+		{"glm-5.3-flash", "ultra", "high"}, // unrecognized values land on the accepted middle
+
+		{"muse-spark-1.3-contributor", "xhigh", "xhigh"}, // upstream accepts xhigh, so keep it
+		{"muse-spark-1.3-contributor", "max", "xhigh"},   // ...and clamps max down, never up
+		{"muse-spark-1.3-contributor", "medium", "low"},
+		{"muse-spark-1.3-contributor", "high", "high"},
+		{"muse-spark-1.3-contributor", "ultra", "high"},
+		{"gpt-5.6-luna", "xhigh", "xhigh"},
+	}
+	for _, c := range cases {
+		t.Run(c.model+"/"+c.in, func(t *testing.T) {
+			if got := coerceEffort(c.in, c.model); got != c.want {
+				t.Errorf("coerceEffort(%q, %q) = %q, want %q", c.in, c.model, got, c.want)
+			}
+		})
 	}
 }
 
@@ -231,6 +250,49 @@ func TestPrepareUpstreamBodyCrossFormatAlwaysThinking(t *testing.T) {
 		if got, _ := r["effort"].(string); got != "medium" {
 			t.Errorf("non-listed model effort = %q, want medium passthrough (def %v, body %s)", got, d, out)
 		}
+	}
+
+	// Extended-ladder always-thinking models (muse-spark, live-probed
+	// 2026-09-18): the upstream takes reasoning.effort=xhigh and 400s on
+	// max, so a client xhigh must survive the cross-format coercion+encode
+	// round trip and max must clamp DOWN to xhigh.
+	ext := &provider.Def{AlwaysThinking: []string{"muse-spark*"}}
+	for in, want := range map[string]string{
+		"none": "low", "minimal": "low", "medium": "low",
+		"high": "high", "xhigh": "xhigh", "max": "xhigh",
+	} {
+		body := []byte(`{"model":"m","reasoning_effort":"` + in + `","messages":[]}`)
+		out, err := prepareUpstreamBody(translat.FmtResponses, translat.FmtOpenAI, body, "muse-spark-1.3-contributor", ext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(out, &m); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		r, _ := m["reasoning"].(map[string]any)
+		if got, _ := r["effort"].(string); got != want {
+			t.Errorf("muse-spark effort %q → reasoning.effort = %q, want %q (body %s)", in, got, want, out)
+		}
+	}
+
+	// The production shape: no client knob + default_effort=xhigh on an
+	// extended-ladder model. The injected default must reach the wire
+	// unclamped — this is exactly what the pre-fix encoder flattened to
+	// "high", silently downgrading every xdev request.
+	withDefault := &provider.Def{AlwaysThinking: []string{"muse-spark*"}, DefaultEffort: "xhigh"}
+	out, err = prepareUpstreamBody(translat.FmtResponses, translat.FmtOpenAI,
+		[]byte(`{"model":"m","messages":[]}`), "muse-spark-1.3-contributor", withDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	r, _ := m["reasoning"].(map[string]any)
+	if got, _ := r["effort"].(string); got != "xhigh" {
+		t.Errorf("injected default_effort = %q, want xhigh (body %s)", got, out)
 	}
 }
 
