@@ -313,6 +313,17 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 		return nil, &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + prov}
 	}
+	// A model the operator marked retry_forever on some provider takes
+	// precedence over the bare-model provider split below: the knob is a
+	// direct instruction to stay on that leg, and probing a different
+	// provider for the bare name would silently bypass it.
+	for _, name := range r.pool.Names() {
+		d, ok := r.pool.Get(name)
+		if !ok || d.Disabled || !d.RetryForeverModel(model) {
+			continue
+		}
+		return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
+	}
 	// Bare model: try providers in order that could serve it. Disabled
 	// providers (paused via the dashboard toggle) never win this
 	// fallback — a paused provider must not silently absorb passthrough
@@ -411,6 +422,13 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			lastErr = &types.APIError{Status: 503, Type: "provider_disabled", Message: "provider " + t.Provider + " is disabled"}
 			continue
 		}
+		// retry_forever target (ProviderCfg.RetryForever globs): transient
+		// 5xx, shared/rate walls and this gateway's own pre-first-byte
+		// budget are all retried on THIS target until an answer arrives —
+		// a combo never falls through to a lesser leg for them. Empty
+		// globs (the default) leave the bounded MaxAttempts path below
+		// byte-identical.
+		retryForever := def.RetryForeverModel(t.Model)
 		if benched, ready := def.ModelBenched(t.Model); benched {
 			// Per-model lockout (BenchModel): Do benched this
 			// (provider, model) pair after a model-scoped upstream
@@ -422,11 +440,22 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			// surfaces an honest 503 whose Retry-After names the bench
 			// expiry (mirrors the disabled-provider contract above and
 			// DefaultPoolEmptyError's recovery hint).
-			lastErr = &types.APIError{Status: 503, Type: "provider_model_benched",
-				RetryAfter: strconv.FormatInt(int64(time.Until(ready).Seconds())+1, 10),
-				Message: fmt.Sprintf("provider %s: model %s benched until %s",
-					t.Provider, t.Model, ready.Format(time.RFC3339))}
-			continue
+			if retryForever {
+				// A retry_forever target waits the bench out instead of
+				// skipping the leg: the bench is itself a consequence of
+				// the retried classes (the 3-strike header-timeout storm
+				// park), so skipping here would silently downgrade the
+				// very requests this knob protects.
+				if werr := waitCtx(ctx, time.Until(ready)); werr != nil {
+					return werr
+				}
+			} else {
+				lastErr = &types.APIError{Status: 503, Type: "provider_model_benched",
+					RetryAfter: strconv.FormatInt(int64(time.Until(ready).Seconds())+1, 10),
+					Message: fmt.Sprintf("provider %s: model %s benched until %s",
+						t.Provider, t.Model, ready.Format(time.RFC3339))}
+				continue
+			}
 		}
 		benched := 0 // gated 403s rotated this target (each benches one account)
 		// cause remembers why this target's pool drained: the last real
@@ -437,8 +466,22 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		// status and Retry-After (the #48 contract tests pin them); only
 		// the MESSAGE names the actual last upstream cause.
 		var cause *types.APIError
-		for attempt := 0; attempt < max(1, r.MaxAttempts) || benched > 0; {
+		// refusal marks the iteration that ended this leg for good (see the
+		// dispatch below); read by the post-loop retry_forever check.
+		var refusal bool
+		for attempt := 0; retryForever || attempt < max(1, r.MaxAttempts) || benched > 0; {
 			acct, poolReady := def.NextAccount(id)
+			if acct ***REMOVED*** nil && retryForever {
+				// Whole pool cooling/benched (upstream 429s, gated 403s):
+				// for a retry_forever target this is a wall to wait out,
+				// not a reason to fall through. poolReady is the pool's own
+				// soonest recovery; waitCtx floors the sleep so a stale
+				// instant cannot hot-spin the loop.
+				if werr := waitCtx(ctx, time.Until(poolReady)); werr != nil {
+					return werr
+				}
+				continue
+			}
 			if acct ***REMOVED*** nil {
 				// Whole account pool cooling from upstream 429s or
 				// premium-gating 403s: an upstream call now is a doomed
@@ -481,7 +524,14 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// error write because the content type is set.
 				return err
 			}
-			if !(err.Retryable() || err.RegionLocked() || err.Fallbackable) {
+			// A hard refusal that is none of the verdicts below ends THIS
+			// leg and falls through to the next combo target; a direct
+			// route surfaces it unchanged. retry_forever does NOT override
+			// that: no variant of retry clears a refusal the upstream
+			// worded as terminal, and holding the request open would hide a
+			// real answer behind an endless wait.
+			refusal = !(err.Retryable() || err.RegionLocked() || err.Fallbackable)
+			if refusal {
 				if err.Status ***REMOVED*** 404 && err.ModelScoped() {
 					// Catalog-level verdict (tokenharbor 2026-09-10:
 					// deepseek-v4.1-flash left their live catalog mid-day —
@@ -530,6 +580,10 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 					// target) still surfaces the 400 honestly.
 					break
 				}
+				// A hard refusal that is none of the three verdicts above
+				// is terminal for this request: every combo leg shares the
+				// same body, so a sibling target re-discovers the same
+				// verdict. Surface it unchanged (master behaviour).
 				return err
 			}
 			if err.Fallbackable && err.Status ***REMOVED*** 403 {
@@ -549,6 +603,20 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				case <-ctx.Done():
 					return &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
 				default:
+				}
+				continue
+			}
+			if retryForever {
+				// The two classes that normally END a target early: the
+				// gateway's own pre-first-byte 504 budget (the upstream is
+				// slow, not broken) and the upstream's model-wide
+				// concurrency wall (which clears on its own). For a
+				// retry_forever target both are walls to wait out on THIS
+				// leg — spend one clamped step, probe the same target
+				// again, and never downgrade to a lesser combo leg.
+				attempt++
+				if werr := waitCtx(ctx, retryWait(attempt, err)); werr != nil {
+					return werr
 				}
 				continue
 			}
@@ -582,11 +650,29 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// through to the next combo target via MaxAttempts.
 				continue
 			}
+			// A retry_forever target's wait is clamped to seconds scale
+			// (attempt grows without bound on that path); every other
+			// target keeps Backoff's own tiers byte-identical.
+			d := Backoff(attempt-1, err)
+			if retryForever {
+				d = retryWait(attempt-1, err)
+			}
 			select {
 			case <-ctx.Done():
 				return &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
-			case <-time.After(Backoff(attempt-1, err)):
+			case <-time.After(d):
 			}
+		}
+		// A retry_forever target only leaves its loop for the answer, a
+		// client hang-up, or a terminal refusal — never because one of the
+		// retried classes drove it to the next combo leg. `refusal` is the
+		// one predicate that licenses a break; anything else here means the
+		// loop broke out with a combo leg still waiting to serve, which is
+		// exactly the silent downgrade this knob exists to prevent. Fail
+		// loudly rather than hand back a lesser leg's answer.
+		if retryForever && res.IsCombo && lastErr != nil && !refusal {
+			panic("retry_forever target " + t.Provider + "/" + t.Model +
+				" left its leg without a terminal refusal: " + lastErr.Error())
 		}
 	}
 	if lastErr ***REMOVED*** nil {
@@ -633,6 +719,47 @@ func Backoff(attempt int, err *types.APIError) time.Duration {
 		return time.Duration(attempt+1) * 250 * time.Millisecond
 	}
 	return time.Duration(attempt+1) * 100 * time.Millisecond
+}
+
+// retryForeverMinWait floors every wait on the retry_forever path: a stale
+// pool "ready" instant (or a zero duration) must not hot-spin the loop.
+// 200ms sits far below the upstream's own 1.4s 503-refusal floor, so it
+// costs nothing when the wall is real and bounds the spin when it is not.
+const retryForeverMinWait = 200 * time.Millisecond
+
+// retryForeverMaxWait clamps the exponential Backoff step for a target that
+// retries without a retry budget: attempt grows without bound there, and the
+// SharedConcurrency tier is (n+1)s — minutes after a few hundred refusals,
+// which would look like a hang to the client while the wall had long since
+// cleared.
+// ponytail: flat clamp, no jitter. Add per-class caps/jitter only if such a
+// target is ever probed by many concurrent waiters at once (thundering herd).
+const retryForeverMaxWait = 5 * time.Second
+
+// retryWait returns the retry_forever backoff step: Backoff's tiers, clamped
+// to seconds scale so an unbounded loop keeps probing.
+func retryWait(attempt int, err *types.APIError) time.Duration {
+	if d := Backoff(attempt, err); d < retryForeverMaxWait {
+		return d
+	}
+	return retryForeverMaxWait
+}
+
+// waitCtx sleeps d on the request context, flooring d at retryForeverMinWait,
+// and reports client_closed when the client hangs up first — a retry_forever
+// target must not keep probing after its caller is gone.
+func waitCtx(ctx context.Context, d time.Duration) *types.APIError {
+	if d < retryForeverMinWait {
+		d = retryForeverMinWait
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return &types.APIError{Status: 499, Type: "client_closed", Message: ctx.Err().Error()}
+	case <-t.C:
+		return nil
+	}
 }
 
 // ---------------------------------------------------------------------------
