@@ -49,7 +49,8 @@ const (
 	// Completions, but only over SSE: the vendor's non-streaming reply comes back wrapped
 	// in a {success,data} envelope, so the gateway always streams upstream and aggregates
 	// for non-streaming clients. See Kind.ForcedStream.
-	KindCline Kind = "cline"
+	KindCline       Kind = "cline"           // Cline API (SSE-only OpenAI wire)
+	KindSystemOne   Kind = "systemone"       // TypeSafe Jev model (POST /v1/systemone, same wire on both sides)
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
@@ -240,6 +241,8 @@ func (k Kind) Format() translat.Format {
 		return translat.FmtCommandCode
 	case KindOpenAIResponses:
 		return translat.FmtOpenAIResponses
+	case KindSystemOne:
+		return translat.FmtSystemOne
 	// KindCursor + KindSearXNG intentionally fall through to OpenAI:
 	// cursor's doCursor (cursor.go) returns a synthetic OpenAI SSE stream
 	// decoded from the upstream's Connect-RPC protobuf, and searxng's
@@ -876,6 +879,8 @@ func (k Kind) DefaultBaseURL() string {
 		return "" // no stock endpoint: base_url is required in config
 	case KindCline:
 		return "https://api.cline.bot/api"
+	case KindSystemOne:
+		return "" // no stock endpoint: base_url is required in config
 	default:
 		return "https://api.openai.com"
 	}
@@ -2168,6 +2173,8 @@ func (d *Def) Path(op, model string) string {
 			return "/v1/models"
 		}
 		return "" // base_url IS the /alpha/generate endpoint
+	case KindSystemOne:
+		return "/v1/systemone" // TypeSafe Jev endpoint
 	case KindCursor:
 		return "" // skeleton
 	case KindOpenCode, KindOpenCodeFree:
@@ -2256,6 +2263,11 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		// right service's wire format and answers with a synthetic OpenAI
 		// stream (see cursor.go).
 		return d.doCursor(ctx, acct, model, body)
+	case KindSystemOne:
+		// TypeSafe Jev endpoint: same OpenAI Chat Completions wire
+		// on both sides (POST /v1/systemone), so the body is forwarded
+		// verbatim and the response passed through unchanged.
+		return d.doSystemOne(ctx, acct, model, body, stream)
 	case KindGemini:
 		// Non-streaming: :generateContent; streaming: :streamGenerateContent?alt=sse
 		method := "generateContent"
