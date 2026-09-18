@@ -22,6 +22,21 @@ func TestSharedConcurrencyMatchesModelTPMWall(t *testing.T) {
 	}
 }
 
+// OpenCode Zen free tier answers every over-budget call with a bare
+// 429 "Rate limit exceeded" (live 2026-09-18 seq 7416: no Retry-After,
+// no window, no "concurrency limit"/"TPM limit" wording) that is
+// IP-scoped — the README calls it FreeUsageLimitError. Every keyless
+// account from the same gateway IP hits the same wall, so rotating
+// accounts is pointless and the per-key ladder only burns the pool.
+func TestSharedConcurrencyFreeTier429(t *testing.T) {
+	if !(&APIError{Status: 429, Type: "FreeUsageLimitError", Message: "Rate limit exceeded. Please try again later."}).SharedConcurrency() {
+		t.Fatal("FreeUsageLimitError must classify as shared")
+	}
+	if !(&APIError{Status: 429, Message: "free usage limit exceeded"}).SharedConcurrency() {
+		t.Fatal("free usage limit wording must classify as shared")
+	}
+}
+
 // Guard against over-reach: a plain per-key 429 keeps the account ladder.
 func TestSharedConcurrencyLeavesPerKey429Alone(t *testing.T) {
 	for _, body := range []string{
