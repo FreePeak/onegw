@@ -332,46 +332,51 @@ func diffLines(a, b string) string {
 var _ = os.Getenv // keep os import if unused after refactors
 
 // PATCH /admin/config/providers/{name}/disabled — the grid's quick
-// on/off toggle. Behavior observed by consumers: the on-disk block gains
-// (true) or loses (false) exactly a `disabled` key, everything else in
-// the block survives byte-for-byte, and the live pool reconfigures.
+// on/off toggle. A disable comments out the whole [[providers]] block;
+// an enable finds the matching #[[providers]] block and uncomments it.
 func TestProviderDisabledTogglePersistsAndReloads(t *testing.T) {
 	srv, h, path := newTestServerFromFile(t, editTestToml)
+	before := mustReadFile(t, path)
 
-	// toggle OFF
+	// toggle OFF: whole block is commented out
 	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":true}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PATCH disable: %d %s", w.Code, w.Body.String())
 	}
 	file := mustReadFile(t, path)
-	if !strings.Contains(file, "disabled = true") {
-		t.Fatalf("file missing disabled = true:\n%s", file)
+	// The whole p1 block (and its nested tables) must be commented out.
+	if !strings.Contains(file, "#[[providers]]") {
+		t.Fatalf("file missing #[[providers]]:\n%s", file)
 	}
+	// Comments and keys inside the block are still there (just commented with #).
+	// Note: lines that already start with "#" get a second "#" prefix → "##".
 	for _, keep := range []string{
-		"# p1 comment that must survive an update",
-		`"X-Custom" = "keep-me"`,
-		"rpm = 6",
-		`api_key = "sk-test-p1-secret"`,
+		"## p1 comment that must survive an update",
+		`#extra_headers = { "X-Custom" = "keep-me" }`, // the X-Custom line is inside this
+		"#rpm = 6",
+		`#api_key = "sk-test-p1-secret"`,
 	} {
 		if !strings.Contains(file, keep) {
 			t.Fatalf("disable toggle dropped %q:\n%s", keep, file)
 		}
 	}
-	if st := srv.cur().cfg.Providers[0]; !st.Disabled {
-		t.Fatalf("live config not disabled after toggle: %+v", st)
+	// After disable, providers should be empty (config.Load skips # blocks).
+	if len(srv.cur().cfg.Providers) != 0 {
+		t.Fatalf("live config should have 0 providers after toggle: %+v", srv.cur().cfg.Providers)
 	}
 
-	// toggle back ON: the key is removed again (enabled = default, explicit)
+	// toggle back ON: block is uncommented, file restored byte-for-byte
 	w = adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":false}`, true)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PATCH enable: %d %s", w.Code, w.Body.String())
 	}
 	file = mustReadFile(t, path)
-	if strings.Contains(file, "disabled") {
-		t.Fatalf("enable toggle left a disabled key behind:\n%s", file)
+	if got := mustReadFile(t, path); got != before {
+		t.Fatalf("toggle round trip not byte-exact:\n%s", diffLines(before, got))
 	}
-	if st := srv.cur().cfg.Providers[0]; st.Disabled {
-		t.Fatalf("live config still disabled after re-enable: %+v", st)
+	st := srv.cur().cfg.Providers
+	if len(st) != 1 || st[0].Name != "p1" {
+		t.Fatalf("live config should have p1 back after re-enable: %+v", st)
 	}
 }
 
@@ -396,9 +401,10 @@ func TestProviderDisabledToggleUnauthorized(t *testing.T) {
 }
 
 // A paused provider stops being advertised: its model ids (and any
-// searxng canonical id) vanish from /v1/models, while combos and aliases
-// stay listed (a combo still resolves — it just falls through its
-// disabled legs).
+// searxng canonical id) vanish from /v1/models. The combo that
+// referenced it is commented out too (a combo cannot reference a
+// provider that is commented out — config.Load rejects that), so
+// neither the provider nor the combo is advertised.
 func TestDisabledProviderNotAdvertised(t *testing.T) {
 	srv, h, _ := newTestServerFromFile(t, editTestToml)
 	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":true}`, true)
@@ -414,11 +420,13 @@ func TestDisabledProviderNotAdvertised(t *testing.T) {
 	if strings.Contains(w.Body.String(), `"p1/m1"`) {
 		t.Fatalf("disabled provider still advertised: %s", w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"c1"`) {
-		t.Fatalf("combo must stay advertised: %s", w.Body.String())
+	if strings.Contains(w.Body.String(), `"c1"`) {
+		t.Fatalf("combo referencing disabled provider still advertised: %s", w.Body.String())
 	}
-	if st := srv.cur().cfg.Providers[0]; !st.Disabled {
-		t.Fatalf("live config not disabled: %+v", st)
+	// The disabled provider is gone from the live config entirely (the
+	// block is commented out — config.Load skips it).
+	if st := srv.cur().cfg.Providers; len(st) != 0 {
+		t.Fatalf("live config should have no providers after disable: %+v", st)
 	}
 }
 
@@ -548,33 +556,45 @@ func TestProviderEditStrandedKeysRehoisted(t *testing.T) {
 	}
 }
 
-// The on/off toggle on a block that owns a nested table: exactly one
-// `disabled` key appears in that block only, and toggling back restores
+// The on/off toggle on a block that owns a nested table: the whole
+// ph block is commented out on disable (no disabled key — the
+// provider is simply offline), and toggling back restores
 // the file byte-for-byte.
 func TestProviderDisabledToggleNestedRoundTrip(t *testing.T) {
 	srv, h, path := newTestServerFromFile(t, editNestedToml)
 	before := mustReadFile(t, path)
 
+	// toggle OFF: whole ph block is commented out
 	if w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/ph/disabled", `{"disabled":true}`, true); w.Code != http.StatusOK {
 		t.Fatalf("PATCH disable: %d %s", w.Code, w.Body.String())
 	}
 	file := mustReadFile(t, path)
-	if got := strings.Count(file, "disabled = true"); got != 1 {
-		t.Fatalf("disabled lines = %d, want 1:\n%s", got, file)
+	// The ph block (and its nested tables) must be commented out.
+	if !strings.Contains(file, "#[[providers]]") {
+		t.Fatalf("file missing #[[providers]]:\n%s", file)
 	}
-	st := srv.cur().cfg.Providers
-	if !st[0].Disabled {
-		t.Fatalf("ph not disabled after toggle: %+v", st[0])
+	// After disable, ph is gone but ps remains.
+	if len(srv.cur().cfg.Providers) != 1 {
+		t.Fatalf("live config should have 1 provider after toggle: %+v", srv.cur().cfg.Providers)
 	}
-	if st[1].Disabled {
-		t.Fatalf("toggle leaked into ps: %+v", st[1])
+	if srv.cur().cfg.Providers[0].Name != "ps" {
+		t.Fatalf("expected ps to remain, got: %+v", srv.cur().cfg.Providers[0])
 	}
 
+	// toggle back ON: block is uncommented, file restored byte-for-byte
 	if w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/ph/disabled", `{"disabled":false}`, true); w.Code != http.StatusOK {
 		t.Fatalf("PATCH enable: %d %s", w.Code, w.Body.String())
 	}
 	if got := mustReadFile(t, path); got != before {
 		t.Fatalf("toggle round trip not byte-exact:\n%s", diffLines(before, got))
+	}
+	// After re-enable: both ph and ps are back.
+	st := srv.cur().cfg.Providers
+	if len(st) != 2 {
+		t.Fatalf("live config should have 2 providers after re-enable: %+v", st)
+	}
+	if st[0].Name != "ph" || st[1].Name != "ps" {
+		t.Fatalf("providers after re-enable should be ph, ps: %+v", st)
 	}
 }
 
