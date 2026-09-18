@@ -521,7 +521,7 @@ env overrides:
 | `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup and on every config reload — the soft heap limit follows the buffered budget (90 MiB with the default 48 MiB, budget + 25% headroom above that; GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
-providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-free" | "searxng" | "openai-responses"`, optional
+providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-free" | "searxng" | "openai-responses" | "systemone"`, optional
 `base_url`, models, multiple `[[providers.accounts]]` or the `keys = [...]`
 multi-key shortcut), combos, server limits, saver and usage settings.
 `data_dir = "memory"` disables persistence.
@@ -1169,6 +1169,7 @@ xAI's token carries no Cursor entitlement.
 | OpenAI | `POST /v1/chat/completions`, `POST /v1/completions` | openai (passthrough), anthropic, gemini |
 | Anthropic | `POST /v1/messages`, `POST /anthropic/v1/messages` | anthropic (passthrough), openai, gemini |
 | Gemini | `POST /v1beta/models/{model}:generateContent[?alt=sse]` | gemini (passthrough), openai, anthropic |
+| OpenAI | `POST /v1/systemone` | systemone |
 | — | `GET /v1/models` | Config-defined model + combo list |
 | — | `GET /admin` | Dashboard (multi-page admin console; `/` redirects there) |
 | — | `GET /admin/health`, `GET /admin/usage` | Admin (password-protected) |
