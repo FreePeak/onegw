@@ -1,4 +1,4 @@
-*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring):*
+*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring; TypeSafe Jev provider (systemone Kind, POST /v1/systemone) merged to master):*
 Cursor's AgentService and ChatService are Connect-RPC endpoints with no model-listing RPC — `ListModels`,
 `GetModels`, and `GetCatalog` all return 404 when hit against both `agent.api5.cursor.sh` and `api2.cursor.sh`
 (probed live 2026-09-15). `FetchModels` therefore GETed the bare host with no path, `parseModelIDs` found no
@@ -2772,6 +2772,17 @@ the issue):
   grok cli configs (pi `models.json` is the proven pattern).
 
 ## Current status (post-M5)
+- **TypeSafe Jev provider (systemone) merged to master** (2026-09-18, head
+  `57909f8`): `KindSystemOne` provider kind + `POST /v1/systemone` route
+  + `FmtSystemOne` wire format + `doSystemOne` executor, all pushed to
+  `origin/master`. Same OpenAI Chat Completions wire on both sides — the
+  gateway forwards the client body verbatim and passes the upstream
+  `{model, answers, usage}` response through unchanged. Config:
+  `[[providers]] name = "typesafe" kind = "systemone" base_url = ...`
+  with `api_key` or `ONEGW_PROVIDER_TYPESAFE_KEY`. Docs updated:
+  `onegw.toml.example`, `docs/ARCHITECTURE.md` surfaces table,
+  `README.md` provider list. See
+  `../agentloop/docs/JEV-INTEGRATION.md` for the full integration guide.
 - **Upstream pre-first-byte timeouts on massive prefills — RCA + fix**
   (2026-09-08 evening, branch `fix/upstream-header-timeout`): the b-ai
   glm-5.3-flash dashboard showed recurring
