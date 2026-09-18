@@ -36,11 +36,26 @@ admin_password = ""            # unset + no ONEGW_ADMIN_PASSWORD: first boot
 [saver]
 enabled = true
 
-# No providers configured: the gateway boots and serves the dashboard until
-# you add providers via a mounted config or env. Define providers like:
-# [[providers]]
-# name = "openrouter"
-# kind = "openai"
-# base_url = "https://openrouter.ai/api"
-# models = ["openai/gpt-5.5"]
-# See onegw.toml.example for the full reference.
+# Preconfigured: OpenCode Zen FREE tier, keyless public endpoint (the
+# OmniRoute "noauth opencode" provider; base_url defaults to
+# https://opencode.ai/zen/v1). No api_key or accounts — the gateway
+# always sends the x-opencode-session header the free tier requires.
+# The upstream rotates this lineup without notice (delisted ids
+# answer 401 "Model X is not supported"), so pin `models` to what
+# you have probed.
+# NOTE 2026-09-19: the free tier currently requires CLI identity —
+# a bare HTTP client gets FreeTierError 403 "can only be used from
+# within OpenCode". Kept configured on purpose so it starts serving
+# the moment the tier loosens; until then a combo listing it falls
+# through to the next leg.
+[[providers]]
+name = "opencode-free"
+kind = "opencode-free"
+models = ["big-pickle", "mimo-v2.5-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "ling-3.0-flash-fin-free", "muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free"]
+
+# Preconfigured combo: the keyless free tier is the only baked-in
+# upstream (keyed providers come from the dashboard), so this is
+# what the image serves out of the box.
+[[combo]]
+name = "free"
+targets = ["opencode-free/big-pickle"]
