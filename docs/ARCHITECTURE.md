@@ -70,6 +70,7 @@ N×M).
 | OpenAI | `POST /v1/chat/completions` | openai (passthrough), anthropic, gemini |
 | Anthropic | `POST /v1/messages`, `POST /anthropic/v1/messages` | anthropic (passthrough), openai, gemini |
 | Gemini | `POST /v1beta/models/{m}:generateContent[?alt=sse]` | gemini (passthrough), openai, anthropic |
+| OpenAI | `POST /v1/systemone` | systemone |
 | OpenAI | `GET /v1/models` | config-defined model + combo list |
 
 ## Config reference
