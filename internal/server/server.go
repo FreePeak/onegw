@@ -1627,26 +1627,30 @@ func normalizeRoles(body []byte) ([]byte, error) {
 	return out, nil
 }
 
-// reasoningEchoPlaceholder fills assistant turns that have no reasoning
-// field at all when the routed upstream demands the replay echo. Short on
-// purpose: one per cross-leg turn, and the wording was live-verified
-// accepted by Console Go's validator on 2026-09-11 (the full 1671-message
-// failing body served 200 with every missing turn filled by exactly this
-// string).
+// reasoningEchoPlaceholder fills ONE assistant turn — the most recent one
+// preceding a trailing tool result — when the routed upstream demands the
+// replay echo. Short on purpose: the wording was live-verified accepted by
+// Console Go's validator on 2026-09-11 (the full 1671-message failing body
+// served 200 with this string). Earlier turns keep their real reasoning,
+// so the model never sees a wall of these (issue #351).
 const reasoningEchoPlaceholder = "(context elided)"
 
-// synthesizeReasoningEcho fills missing reasoning_content on assistant
-// turns for providers whose upstream validates the REPLAYED history in
-// thinking mode (def.ReasoningEchoModel). The proven trigger shape
-// (opencode/deepseek-v4.1-flash, seq 2666, three-way bisect 2026-09-11):
-// the request ends on a TOOL RESULT — a pending tool-loop continuation —
-// and ANY assistant turn in the history lacks the echo. A trailing user
-// turn disables the validation upstream, so bodies are left byte-identical
-// there (cache-stable for the common turn shape). normalizeRoles runs
-// BEFORE this: aliases (reasoning, reasoning_text) are already renamed, so
-// a present reasoning_content is the complete contract; an empty one or a
-// present-but-unusable reasoning_details still counts as missing.
-// Returns body unchanged unless something was filled.
+// synthesizeReasoningEcho fills missing reasoning_content on the
+// current assistant turn only, so upstreams that validate the
+// echoed history (DeepSeek tool-loop, 400 on any gap) see real
+// reasoning instead of a synthetic placeholder. The proven
+// contract (opencode/deepseek-v4.1-flash, seq 2666, 2026-09-11):
+// the request ends on a tool result — a pending tool-loop
+// continuation — and the upstream reads reasoning_content on the
+// *last* assistant turn of the body. Echoing that turn alone
+// satisfies the check without stamping "(context elided)" across
+// the whole history and teaching the model to stop reasoning
+// (issue #351: filler/placeholder cascade on 2026-09-17 — 22.6%
+// of all assistant turns, 26 consecutive thinking-less turns).
+// normalizeRoles runs BEFORE this and copies the stable "reasoning"
+// alias into reasoning_content, so xdev buildRequest's reasoning
+// replay is covered; plain OpenAI upstreams ignore unknown message
+// keys, leaving their wire byte-identical.
 func synthesizeReasoningEcho(body []byte, model string, def *provider.Def) []byte {
 	if def == nil || !def.ReasoningEchoModel(model) {
 		return body
@@ -1665,32 +1669,35 @@ func synthesizeReasoningEcho(body []byte, model string, def *provider.Def) []byt
 	if !ok || last["role"] != "tool" {
 		return body // not a tool-loop continuation; no echo validation upstream
 	}
-	changed := false
-	for _, mv := range msgs {
-		m, ok := mv.(map[string]any)
+	// Echo the most recent assistant turn preceding the tool result.
+	// Earlier turns are left intact: they carried real reasoning when
+	// the model produced them (buildRequest replays stored thinking
+	// under the stable "reasoning" alias for thinking-aware routes),
+	// and stamping them with the placeholder only propagates the loop.
+	for i := len(msgs) - 2; i >= 0; i-- {
+		m, ok := msgs[i].(map[string]any)
 		if !ok || m["role"] != "assistant" {
 			continue
 		}
-		if s, _ := m["reasoning_content"].(string); s != "" {
-			continue
+		// Already has an echo — the turn above carried it (real or
+		// synthesized last time). Stop: everything earlier is a
+		// turn the model answered with reasoning we want to keep.
+		if _, hasAlias := m["reasoning_content"]; hasAlias {
+			return body
+		}
+		if _, hasAlias := m["reasoning"]; hasAlias {
+			return body
 		}
 		m["reasoning_content"] = reasoningEchoPlaceholder
-		changed = true
+		out, err := json.Marshal(root)
+		if err != nil {
+			return body
+		}
+		return out
 	}
-	if !changed {
-		return body
-	}
-	out, err := json.Marshal(root)
-	if err != nil {
-		return body
-	}
-	return out
+	return body
 }
 
-// flattenReasoningDetails joins the readable entries of an AI-SDK-style
-// reasoning_details array ([{type:"reasoning.text","text":"..."}, ...])
-// into one echo string; "" when the array carries nothing usable. Field
-// precedence text > content > summary mirrors translat.reasoningEcho.
 func flattenReasoningDetails(v any) string {
 	arr, ok := v.([]any)
 	if !ok {
