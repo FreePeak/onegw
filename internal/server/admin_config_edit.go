@@ -174,7 +174,7 @@ func (s *Server) handleAdminProviderDisabled(w http.ResponseWriter, r *http.Requ
 	defer s.cfgMu.Unlock()
 
 	if _, err := s.patchConfigFile(func(lines []string) ([]string, error) {
-		return spliceProviderDisabled(lines, name, req.Disabled)
+		return spliceProviderComment(lines, name, req.Disabled)
 	}); err != nil {
 		editFailed(w, err)
 		return
@@ -832,32 +832,6 @@ func renderProviderBlock(req providerEditReq) []string {
 	return block
 }
 
-// spliceProviderDisabled flips the `disabled` key of one existing
-// [[providers]] block (true = upsert, false = remove so the default
-// enabled state is explicit). Every other line of the block — comments,
-// keys, nested accounts — is preserved byte-for-byte. The edited config
-// is round-trip validated by the caller's patchConfigFile before the
-// atomic write.
-func spliceProviderDisabled(lines []string, name string, disabled bool) ([]string, error) {
-	for _, b := range scanBlocks(lines, "[[providers]]") {
-		n, ok := blockName(lines, b)
-		if !ok || n != name {
-			continue
-		}
-		edited := cloneLines(lines[b.start:b.end])
-		if disabled {
-			edited = upsertScalar(edited, "disabled", "disabled = true")
-		} else {
-			edited = removeScalar(edited, "disabled")
-		}
-		candidate := append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...)
-		if err := validateLines(candidate); err != nil {
-			return nil, err
-		}
-		return append(cloneLines(lines[:b.start]), append(edited, lines[b.end:]...)...), nil
-	}
-	return nil, fmt.Errorf("provider %s not found in config", name)
-}
 
 // ---------------------------------------------------------------------------
 // Combo splice
