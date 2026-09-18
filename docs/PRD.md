@@ -9,7 +9,7 @@ served real turns fine. `DefaultModels(KindCursor)` now advertises the ids prove
 from 2026-09-13, so it maps to `default`), `cursor/default`, the IDE's `composer-2.5`/`composer-2` family
 (served on ChatService), and `gpt-5.2`/`gpt-5.5`/`gpt-5.6`/`claude-sonnet-4.5` (live-proven turn ids, PRD
 12fd081). `FetchModels` short-circuits for `KindCursor` and returns the same ids in the plain
-`{"models":[...]}` shape that `parseModelIDs` reads, so the discovery probe succeeds for a working account.
+`{"models":[...]}` shape that `parseModelIDs` reads. `fetchProviderModels` handles the no-account case for Cursor by routing through `FetchModels` directly — a 0-account Cursor def is a success, not "no models in the response" (the account itself serves real turns).
 Operators who want the live list set `models` explicitly — the upstream rotates these ids without notice,
 exactly like OpenCode Zen. Tests: `TestNewKindsFormatAndDefaults` pins the 8 ids. **Not yet deployed.**
 

@@ -341,10 +341,31 @@ func (s *Server) probeProvider(name string) {
 
 // fetchProviderModels asks a live provider def for its catalog, trying each
 // account until one answers. Providers are frequently multi-account with only
-// some keys entitled to the listing endpoint.
+// some keys entitled to the listing endpoint. Cursor is the exception: its
+// listing RPCs (ListModels/GetModels/GetCatalog) are stubs returning 404, so
+// FetchModels short-circuits with a curated catalog and no accounts to try.
+// A 200 with a non-empty body from a 0-account def is a success in that case
+// (treating it as "no models in the response" surfaces "no models in the
+// response" for an otherwise working account — the account serves real turns).
 func fetchProviderModels(ctx context.Context, def *provider.Def) ([]string, string) {
 	accts := def.Accounts
 	if len(accts) == 0 {
+		if def.Kind == provider.KindCursor {
+			// Cursor has no upstream model-listing RPC (ListModels/GetModels/GetCatalog
+			// all 404); FetchModels short-circuits with a curated catalog and no
+			// accounts to try. A 200 with a non-empty body is a success in that case.
+			body, status, err := def.FetchModels(ctx, &provider.Account{Name: "default"})
+			if err != nil {
+				return nil, "default: " + err.Error()
+			}
+			if status >= 400 {
+				return nil, fmt.Sprintf("default: HTTP %d %s", status, snippet(body))
+			}
+			if ids := parseModelIDs(def.Kind, body); len(ids) > 0 {
+				return ids, ""
+			}
+			return nil, "default: no models in the response"
+		}
 		return nil, "provider has no account to probe"
 	}
 	var lastErr string
