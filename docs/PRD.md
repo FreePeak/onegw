@@ -1,4 +1,4 @@
-*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring):*
+*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring; TypeSafe Jev provider (systemone Kind, POST /v1/systemone) merged to master):*
 Cursor's AgentService and ChatService are Connect-RPC endpoints with no model-listing RPC — `ListModels`,
 `GetModels`, and `GetCatalog` all return 404 when hit against both `agent.api5.cursor.sh` and `api2.cursor.sh`
 (probed live 2026-09-15). `FetchModels` therefore GETed the bare host with no path, `parseModelIDs` found no
