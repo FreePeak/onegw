@@ -499,7 +499,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/usage/export", s.handleUsageExport)
 	mux.HandleFunc("POST /admin/usage/import", s.handleUsageImport)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.withIdempotency(translat.FmtAnthropic, s.handleAnthropic))
-	mux.HandleFunc("POST /v1beta/models/", s.handleGemini)
+	mux.HandleFunc("POST /v1/systemone", s.withIdempotency(translat.FmtSystemOne, s.handleSystemOne))
 	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfEmbeddings) })
 	mux.HandleFunc("POST /v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfTranscriptions) })
 	mux.HandleFunc("POST /v1/audio/speech", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfSpeech) })
@@ -538,6 +538,9 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, r *http.Request) {
 	s.proxy(w, r, translat.FmtAnthropic)
 }
 
+func (s *Server) handleSystemOne(w http.ResponseWriter, r *http.Request) {
+	s.proxy(w, r, translat.FmtSystemOne)
+}
 func (s *Server) handleGemini(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1beta/models/")
 	model, method, ok := strings.Cut(rest, ":")
