@@ -758,3 +758,25 @@ func TestRetentionPrunesOldRollups(t *testing.T) {
 		t.Fatal("prune deleted today's rows too")
 	}
 }
+
+// TestProvidersPageHidesModelsWhenDisabled: the model list of a provider is
+// auto-hidden while the provider is toggled off; an enabled provider still
+// advertises its models.
+func TestProvidersPageHidesModelsWhenDisabled(t *testing.T) {
+	extra := "\n[[providers]]\nname = \"p2\"\nkind = \"openai\"\nbase_url = \"http://127.0.0.1:2\"\napi_key = \"sk-p2\"\nmodels = [\"m3\"]\ndisabled = true\n"
+	srv, h := newAdminSrv(t, extra)
+	_ = srv
+	w := do(t, h, adminReq(t, "/admin/ui/providers"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("providers page: %d", w.Code)
+	}
+	page := w.Body.String()
+	// Enabled p1 from the base fixture must still advertise its models.
+	if !strings.Contains(page, `data-copy="p1/m1"`) {
+		t.Fatalf("enabled p1 must advertise models:\n%s", page)
+	}
+	// Disabled p2 must NOT advertise its models, even though it has them.
+	if strings.Contains(page, `data-copy="p2/m3"`) {
+		t.Fatalf("disabled p2 must hide its models:\n%s", page)
+	}
+}
