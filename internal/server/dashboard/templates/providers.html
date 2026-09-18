@@ -37,9 +37,11 @@
     {{else}}<button class="btn sm primary" data-signin="{{.Key}}" type="button">{{if eq .State "pending"}}Continue sign-in{{else}}Sign in{{end}}</button>{{end}}
     {{end}}
   </span></div>{{end}}
+  {{if not .Disabled}}
   {{if .Models}}<details class="acc" data-acc="models:{{.Name}}"><summary>{{len .Models}} advertised models · copy an id</summary>
   <div class="mono mt-2 leading-8">{{$n := .Name}}{{range .Models}}<button class="chip copy" data-copy="{{$n}}/{{.}}" type="button" title="copy model id {{$n}}/{{.}}" aria-label="copy model id {{$n}}/{{.}}">{{$n}}/{{.}}</button> {{end}}</div></details>
   {{else}}<div class="kv mb-2"><span class="k">models</span><span><a href="/admin/ui/models">fetch from upstream →</a></span></div>{{end}}
+  {{end}}
 </details>
 {{else}}
 <div class="tblwrap"><div class="empty">no providers configured — add one with the button above</div></div>
