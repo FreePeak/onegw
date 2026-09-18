@@ -592,7 +592,19 @@ func (e *APIError) SharedConcurrency() bool {
 	if e.Status != 429 {
 		return false
 	}
-	probe := strings.ToLower(e.Code + " " + e.Message)
+	probe := strings.ToLower(e.Code + " " + e.Message + " " + e.Type)
+	// OpenCode Zen free tier answers every over-budget call with a bare
+	// 429 "Rate limit exceeded" (live 2026-09-18 seq 7416: no Retry-After,
+	// no window, no "concurrency limit"/"TPM limit" wording) that is
+	// IP-scoped — the README calls it FreeUsageLimitError. Every keyless
+	// account from the same gateway IP hits the same wall, so rotating
+	// accounts is pointless and the per-key ladder only burns the pool.
+	// Treat it like the model-wide walls: fall through to the next combo
+	// leg immediately and give the client a short backoff.
+	if strings.Contains(probe, "freeusagelimiterror") ||
+		strings.Contains(probe, "free usage limit") {
+		return true
+	}
 	return strings.Contains(probe, "concurrency limit") ||
 		modelLimitRe.MatchString(e.Code+" "+e.Message) ||
 		strings.Contains(probe, "backendadmissionrejected") ||
