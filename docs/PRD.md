@@ -1,3 +1,18 @@
+*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring):*
+Cursor's AgentService and ChatService are Connect-RPC endpoints with no model-listing RPC — `ListModels`,
+`GetModels`, and `GetCatalog` all return 404 when hit against both `agent.api5.cursor.sh` and `api2.cursor.sh`
+(probed live 2026-09-15). `FetchModels` therefore GETed the bare host with no path, `parseModelIDs` found no
+JSON catalog it knows, and the admin model page surfaced
+`mnhatlinh.doan@gmail.com: no models in the response` for an otherwise working account — the account itself
+served real turns fine. `DefaultModels(KindCursor)` now advertises the ids proven to route through the gateway:
+`cursor/auto` (the AgentService lane — sending it verbatim ends a turn with zero content, the PRD's own finding
+from 2026-09-13, so it maps to `default`), `cursor/default`, the IDE's `composer-2.5`/`composer-2` family
+(served on ChatService), and `gpt-5.2`/`gpt-5.5`/`gpt-5.6`/`claude-sonnet-4.5` (live-proven turn ids, PRD
+12fd081). `FetchModels` short-circuits for `KindCursor` and returns the same ids in the plain
+`{"models":[...]}` shape that `parseModelIDs` reads, so the discovery probe succeeds for a working account.
+Operators who want the live list set `models` explicitly — the upstream rotates these ids without notice,
+exactly like OpenCode Zen. Tests: `TestNewKindsFormatAndDefaults` pins the 8 ids. **Not yet deployed.**
+
 *Last updated: 2026-09-18 (`retry_forever` — a leg that must not be downgraded):*
 The `xdev` combo's single target (`opencode/union-alpha`) alternates long successful calls (~50s ttfb) with
 cheap transient refusals — live `503 "Endpoint is unavailable."` after ~1.4s — and the router treated each one

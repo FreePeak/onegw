@@ -953,6 +953,19 @@ func DefaultModels(k Kind) []string {
 		// entry then advertises a working catalog on /v1/models. Operators
 		// who want the live list keep setting `models`.
 		return []string{"grok-build", "grok-4.5"}
+	case KindCursor:
+		// Cursor has no upstream model-listing RPC — ListModels,
+		// GetModels, GetCatalog all 404 when hit against both
+		// cursor hosts (probed live 2026-09-15). Advertise the
+		// ids proven to route: cursor/auto (AgentService lane —
+		// ends a turn with zero content if sent verbatim),
+		// cursor/default, the composer family (ChatService),
+		// and gpt-5.2 (live-proven, PRD 12fd081). Operators
+		// wanting the live list set `models` explicitly —
+		// upstream rotates these ids without notice, exactly
+		// like OpenCode Zen.
+		return []string{"cursor/auto", "cursor/default", "composer-2.5",
+			"composer-2", "gpt-5.2", "gpt-5.5", "gpt-5.6", "claude-sonnet-4.5"}
 	case KindCline:
 		return clineModels
 	}
@@ -2647,6 +2660,20 @@ func decodeUpstreamError(kind Kind, body []byte, status int) *types.APIError {
 // FetchModels lists upstream models in OpenAI `/v1/models` shape (best
 // effort; used by the /v1/models surface for kinds that support it).
 func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, error) {
+	if d.Kind ***REMOVED*** KindCursor {
+		// Cursor's AgentService/ChatService expose no model-listing
+		// RPC — ListModels, GetModels, GetCatalog all 404 when hit
+		// against both agent.api5.cursor.sh and api2.cursor.sh
+		// (probed live 2026-09-15). Returning a 200 with the curated
+		// catalog keeps the dashboard honest: the probe reports the
+		// curated ids as "discovered" rather than an error for a
+		// working account. parseModelIDs reads the plain
+		// `{"models":[...]}` shape, which is the only one this
+		// helper emits.
+		return []byte(`{"models":["cursor/auto","cursor/default",
+			"composer-2.5","composer-2","gpt-5.2","gpt-5.5",
+			"gpt-5.6","claude-sonnet-4.5"]}`), 200, nil
+	}
 	base := d.Base(acct)
 	url := joinURL(base, d.Path("models", ""))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

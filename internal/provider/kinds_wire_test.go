@@ -43,6 +43,19 @@ func TestNewKindsFormatAndDefaults(t *testing.T) {
 	if got := DefaultModels(KindOpenAIResponses); len(got) != 2 || got[0] != "grok-build" || got[1] != "grok-4.5" {
 		t.Errorf("DefaultModels(openai-responses) = %v, want [grok-build grok-4.5]", got)
 	}
+	// Cursor has no upstream model-listing RPC (both cursor hosts
+	// return 404 on every listing method, probed live 2026-09-15),
+	// so DefaultModels ships the ids proven to route through the
+	// gateway: the AgentService lane (default), the IDE's composer
+	// family (ChatService), and gpt-5.2 (the live-proven turn,
+	// PRD 12fd081).
+	if got := DefaultModels(KindCursor); len(got) != 8 ||
+		got[0] != "cursor/auto" || got[1] != "cursor/default" ||
+		got[2] != "composer-2.5" || got[3] != "composer-2" ||
+		got[4] != "gpt-5.2" || got[5] != "gpt-5.5" ||
+		got[6] != "gpt-5.6" || got[7] != "claude-sonnet-4.5" {
+		t.Errorf("DefaultModels(cursor) = %v", got)
+	}
 }
 
 // joinURL must produce the exact upstream endpoints for both base_url
