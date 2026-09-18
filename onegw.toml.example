@@ -173,7 +173,18 @@ models = ["claude-sonnet-4-5", "claude-haiku-4-5"]
 [[providers]]
 name = "gemini"
 kind = "gemini"
-models = ["gemini-3-pro", "gemini-3-flash"]
+
+# TypeSafe Jev model — POST /v1/systemone, same OpenAI wire on both sides.
+# Agentloop selects it via tier combo; onegw routes per step.
+[[providers]]
+name = "typesafe"
+kind = "systemone"
+base_url = "https://api.typesafe.ai"          # VERIFY from spec
+# api_key = "" or env ONEGW_PROVIDER_TYPESAFE_KEY
+
+[[providers.accounts]]
+name = "default"
+api_key = ""                                  # fill or use env
 
 [[providers]]
 name = "opencode"
