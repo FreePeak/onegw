@@ -107,22 +107,29 @@ func updateViaAdmin(ctx context.Context, cfg *config.Config, inf owner.Info, che
 		fmt.Fprintf(os.Stderr, "onegw update: gateway at %s: %v\n", inf.Listen, err)
 		return 1
 	}
+	// Ask the running gateway for a FRESH release probe before believing its
+	// status, on every path. The service re-checks on [update] check_interval
+	// (24 h default), so a release published after the last check is invisible
+	// here: measured 2026-09-16, v0.40.0 shipped at 06:44Z while a gateway
+	// that booted at 02:57Z still answered "latest release v0.39.0 — already
+	// up to date" an hour later, and `--check` — which used to print the
+	// cached struct as-is — agreed, long enough to look like CI had
+	// republished stale assets.
+	//
+	// A gateway too old for the endpoint answers 404, which fetchStatus maps to
+	// the empty status the staging fallback below already handles, so a failed
+	// probe is non-fatal: it just leaves the cached status standing.
+	if perr := postCheck(ctx, url, pw); perr == nil {
+		fresh, ferr := fetchStatus(ctx, url, pw)
+		if ferr != nil {
+			fmt.Fprintf(os.Stderr, "onegw update: gateway at %s: %v\n", inf.Listen, ferr)
+			return 1
+		}
+		st = fresh
+	}
 	if check {
 		printStatus(st)
 		return 0
-	}
-	if st.Latest == "" && st.Current != "" {
-		// The gateway has not checked recently (interval off): ask IT to
-		// check with its own repo/env, then re-read the status.
-		if err := postCheck(ctx, url, pw); err != nil {
-			fmt.Fprintf(os.Stderr, "onegw update: gateway check: %v\n", err)
-			return 1
-		}
-		st, err = fetchStatus(ctx, url, pw)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "onegw update: gateway at %s: %v\n", inf.Listen, err)
-			return 1
-		}
 	}
 	if st.Latest == "" || st.Current == "" {
 		// Old gateway without the update endpoint (404 → empty status):
