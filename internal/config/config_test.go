@@ -73,6 +73,31 @@ func TestResponseHeaderTimeoutDur(t *testing.T) {
 	}
 }
 
+// oauth.callback_port is the loopback port a browser sign-in binds; a value
+// outside the TCP range (or a negative one) would only surface as a 503 when
+// someone clicked Sign in, long after the config was written.
+func TestValidateOAuthCallbackPort(t *testing.T) {
+	cases := []struct {
+		port    int
+		wantErr bool
+	}{
+		{0, false}, // unset: the profile's registered port
+		{56121, false},
+		{65535, false},
+		{-1, true},
+		{65536, true},
+	}
+	for _, c := range cases {
+		cfg := &Config{OAuth: OAuthCfg{CallbackPort: c.port}}
+		if err := cfg.Validate(); (err != nil) != c.wantErr {
+			t.Errorf("callback_port %d: err = %v, wantErr %v", c.port, err, c.wantErr)
+		}
+	}
+}
+
+// The 2026-09-08 502 storm included gateway-side pre-first-byte aborts: the
+// fixed 60s header timeout is too tight for massive thinking-model prefills.
+// The knob must parse, and fall back to 60s when empty or invalid.
 func TestValidateComboStrategy(t *testing.T) {
 	ok := []string{"", "order", "fastest", "size-aware"}
 	for _, s := range ok {

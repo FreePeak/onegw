@@ -762,6 +762,15 @@ func ephemeralCallbackPort(t *testing.T) {
 	t.Cleanup(func() { browserCallbackPort = old })
 }
 
+// shortCallbackIdle shrinks the listener's post-login grace so a test can watch
+// the port go away instead of sleeping for the production minute.
+func shortCallbackIdle(t *testing.T) {
+	t.Helper()
+	old := browserCallbackIdle
+	browserCallbackIdle = 50 * time.Millisecond
+	t.Cleanup(func() { browserCallbackIdle = old })
+}
+
 // browserPrompt is the login response's operator-facing half.
 type browserPrompt struct {
 	Key    string `json:"key"`
@@ -890,9 +899,10 @@ func TestOAuthCallbackRefusesUnknownState(t *testing.T) {
 // cannot serve, and pastes the address bar back into the dashboard.
 func TestOAuthExchangeEndpointPastedCode(t *testing.T) {
 	ephemeralCallbackPort(t)
+	shortCallbackIdle(t)
 	idp := &oauthIdP{}
 	idpURL, upstreamURL := idp.start(t)
-	_, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
+	srv, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))
 
 	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=xai/main", "", true)
 	verify := decodeJSON[browserPrompt](t, w.Body.String()).Prompt.VerifyURL
@@ -907,6 +917,29 @@ func TestOAuthExchangeEndpointPastedCode(t *testing.T) {
 		t.Fatalf("pasted-code exchange: %d %s", r.Code, r.Body.String())
 	}
 	waitOAuthState(t, h, "xai/main", "signed-in")
+
+	// A pasted code settles the login like the loopback path does: the spent
+	// state must be gone (it can never route another callback) and nothing may
+	// keep the loopback port bound for the rest of the process's life.
+	srv.oa.mu.Lock()
+	left := len(srv.oa.states)
+	srv.oa.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("pasted-code sign-in left %d routing state(s) behind", left)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		srv.oa.mu.Lock()
+		bound := srv.oa.callbackBase
+		srv.oa.mu.Unlock()
+		if bound == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("loopback listener %s still bound after a pasted-code sign-in", bound)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	// A spent session cannot be exchanged twice.
 	if r := adminCall(t, h, http.MethodPost, "/admin/config/oauth/exchange?key=xai/main", `{"code":"PASTE-2"}`, true); r.Code != http.StatusConflict {
@@ -935,9 +968,7 @@ func TestOAuthExtractCode(t *testing.T) {
 // hold a socket for the rest of its life.
 func TestOAuthBrowserListenerClosesAfterSignIn(t *testing.T) {
 	ephemeralCallbackPort(t)
-	old := browserCallbackIdle
-	browserCallbackIdle = 50 * time.Millisecond
-	t.Cleanup(func() { browserCallbackIdle = old })
+	shortCallbackIdle(t)
 	idp := &oauthIdP{}
 	idpURL, upstreamURL := idp.start(t)
 	srv, h, _ := newTestServerFromFile(t, oauthFixture(idpURL, upstreamURL))

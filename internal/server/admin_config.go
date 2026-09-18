@@ -253,17 +253,19 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+
 	// The provider-row rebuild reads the config the caller was looking at, so
-	// snapshot it before the file is touched.
+	// snapshot it while the file is held: a reload must not slip between the
+	// read and the splice, or the rebuild would write rows from a config the
+	// edit does not belong to.
 	var snapshot []config.ProviderCfg
 	var oauthAccounts []config.OAuthAccount
 	if st := s.cur(); st != nil {
 		snapshot = st.cfg.Providers
 		oauthAccounts = st.cfg.OAuthAccounts()
 	}
-
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
 
 	var keys []string
 	var added, removed int
@@ -312,6 +314,9 @@ func (s *Server) handleAdminKeysGet(w http.ResponseWriter, r *http.Request) {
 		adminUnauthorized(w)
 		return
 	}
+	// Plaintext credentials: keep them out of every intermediate cache, the
+	// way the other secret-bearing responses in this package do.
+	w.Header().Set("Cache-Control", "no-store")
 	out := map[string]any{"keys": []clientKeyView{}, "providers": []providerKeyView{}}
 	if st := s.cur(); st != nil {
 		out["keys"] = clientKeyViews(st)

@@ -50,17 +50,22 @@ const (
 var (
 	browserCallbackIdle = 60 * time.Second
 
-	// browserCallbackPort is the loopback port to bind. A var, not a const, so
-	// tests bind :0 and read their ephemeral port back out of the prompt.
-	browserCallbackPort = oauth.DefaultCallbackPort
+	// browserCallbackPort is a suite hook overriding the loopback port every
+	// browser login binds: >= 0 wins (0 binds an ephemeral port), the sentinel
+	// -1 leaves the choice to the session — oauth.callback_port when set, else
+	// the profile's registered port.
+	browserCallbackPort = callbackPortFromSession
 )
+
+// callbackPortFromSession is browserCallbackPort's "let the session decide".
+const callbackPortFromSession = -1
 
 // startBrowserLogin prepares one browser login: bind the callback listener,
 // build the PKCE challenge against its address, and register the pending
 // session under its state. The caller has already installed lg in the
 // registry and holds no lock.
 func (s *Server) startBrowserLogin(key string, spec oauth.AccountSpec, lg *oauthLogin) error {
-	base, err := s.ensureCallbackListener()
+	base, err := s.ensureCallbackListener(spec.Provider.CallbackPort)
 	if err != nil {
 		return err
 	}
@@ -95,26 +100,36 @@ func (s *Server) expireBrowserLogin(ctx context.Context, cancel context.CancelFu
 		lg.finished = true
 		lg.err = "browser sign-in timed out — start it again, or paste the code"
 		close(lg.done)
-		if lg.pkce != nil {
-			delete(s.oa.states, lg.pkce.State)
-		}
+		s.browserLoginSettledLocked(lg)
 	}
-	empty := len(s.oa.states) == 0
 	s.oa.mu.Unlock()
-	if empty {
-		s.closeCallback()
-	}
 }
 
-// ensureCallbackListener binds the shared loopback listener, or returns the
-// address of the one already running.
-func (s *Server) ensureCallbackListener() (string, error) {
+// ensureCallbackListener binds the shared loopback listener for the port this
+// login's redirect URI names — the vendor only guarantees the URI it registered
+// — or returns the address of the live listener when it already owns that port.
+func (s *Server) ensureCallbackListener(port int) (string, error) {
+	want := port
+	if browserCallbackPort >= 0 {
+		want = browserCallbackPort // suite hook
+	}
+	if want < 0 {
+		want = oauth.DefaultCallbackPort
+	}
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
-	if s.oa.callbackBase != "" {
+	if s.oa.callbackBase != "" && (want == 0 || want == s.oa.boundPort) {
 		return s.oa.callbackBase, nil
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", browserCallbackPort))
+	if s.oa.srv != nil {
+		// A config reload moved oauth.callback_port under a live listener: the
+		// address it advertises is no longer the one this login must use, so
+		// release it (force: a login still pending on the old port keeps the
+		// paste-the-code fallback) before binding the new one.
+		log.Printf("admin: oauth callback port moved to %d; rebinding", want)
+		s.closeCallbackLocked(true)
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", want))
 	if err != nil {
 		// Port taken (another login helper on this box, or an explicit
 		// oauth.callback_port that collides): fall back to an ephemeral
@@ -125,7 +140,7 @@ func (s *Server) ensureCallbackListener() (string, error) {
 			return "", fmt.Errorf("bind loopback callback: %w", err)
 		}
 		log.Printf("admin: oauth callback port %d busy (%v); using %s instead — the vendor may reject an unregistered redirect_uri",
-			browserCallbackPort, err, ln.Addr())
+			want, err, ln.Addr())
 	}
 	srv := &http.Server{
 		Handler:           http.HandlerFunc(s.handleOAuthCallback),
@@ -133,6 +148,7 @@ func (s *Server) ensureCallbackListener() (string, error) {
 	}
 	s.oa.srv, s.oa.ln = srv, ln
 	s.oa.callbackBase = "http://" + ln.Addr().String()
+	s.oa.boundPort = ln.Addr().(*net.TCPAddr).Port
 	if s.oa.idle != nil {
 		s.oa.idle.Stop()
 		s.oa.idle = nil
@@ -150,16 +166,44 @@ func (s *Server) ensureCallbackListener() (string, error) {
 func (s *Server) closeCallback() {
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
-	if len(s.oa.states) > 0 || s.oa.srv == nil {
+	s.closeCallbackLocked(false)
+}
+
+// closeCallbackLocked is closeCallback with s.oa.mu already held. Unless force
+// is set it refuses while a login still waits on the listener — a pending
+// browser login is about to be answered on that exact port.
+func (s *Server) closeCallbackLocked(force bool) {
+	if s.oa.srv == nil || (!force && len(s.oa.states) > 0) {
 		return
 	}
 	srv, ln := s.oa.srv, s.oa.ln
-	s.oa.srv, s.oa.ln, s.oa.callbackBase = nil, nil, ""
+	s.oa.srv, s.oa.ln, s.oa.callbackBase, s.oa.boundPort = nil, nil, "", 0
+	if s.oa.idle != nil {
+		s.oa.idle.Stop()
+		s.oa.idle = nil
+	}
 	go func() {
 		_ = srv.Close()
 		_ = ln.Close()
 	}()
 	log.Printf("admin: oauth callback listener closed")
+}
+
+// browserLoginSettledLocked drops a settled login's routing key — a spent state
+// must never route another callback, and it must not keep the listener alive —
+// then arms the idle release once nothing waits on the port. Called with
+// s.oa.mu held.
+func (s *Server) browserLoginSettledLocked(lg *oauthLogin) {
+	if lg != nil && lg.pkce != nil {
+		delete(s.oa.states, lg.pkce.State)
+	}
+	if len(s.oa.states) > 0 || s.oa.srv == nil {
+		return
+	}
+	if s.oa.idle != nil {
+		s.oa.idle.Stop()
+	}
+	s.oa.idle = time.AfterFunc(browserCallbackIdle, s.closeCallback)
 }
 
 // handleOAuthCallback is the loopback redirect target: it exchanges the code
@@ -242,6 +286,7 @@ func (s *Server) exchangeBrowserCode(ctx context.Context, key string, lg *oauthL
 		lg.err = ""
 		close(lg.done)
 	}
+	s.browserLoginSettledLocked(lg)
 	if lg.cancel != nil {
 		lg.cancel()
 	}
@@ -259,16 +304,13 @@ func (s *Server) failBrowserLogin(key string, lg *oauthLogin, msg string) {
 		lg.finished = true
 		lg.err = msg
 		close(lg.done)
-		if lg.pkce != nil {
-			delete(s.oa.states, lg.pkce.State)
-		}
+		s.browserLoginSettledLocked(lg)
 	}
 	if lg.cancel != nil {
 		lg.cancel()
 	}
 	s.oa.mu.Unlock()
 	s.events.publish("config", `{"oauth":`+jsonString(key)+`,"state":"failed"}`)
-	s.closeCallback()
 }
 
 // handleAdminOAuthExchange finishes a browser login from a code the operator
