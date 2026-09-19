@@ -95,7 +95,9 @@ func TestAccountRunSuccessDoesNotEndRun(t *testing.T) {
 		Account{Name: "a", APIKey: "ka"},
 		Account{Name: "b", APIKey: "kb"},
 	)
-	for range 20 { pick() }
+	for range 20 {
+		pick()
+	}
 	for range 20 {
 		if got := pick(); got != "b" {
 			t.Fatalf("got %s want b after run completes", got)
@@ -124,7 +126,9 @@ func TestAccountRunFailureOnSiblingDoesNotEndRun(t *testing.T) {
 		Account{Name: "a", APIKey: "ka"},
 		Account{Name: "b", APIKey: "kb"},
 	)
-	for range 5 { pick() }
+	for range 5 {
+		pick()
+	}
 	p.endRunFor(&Account{Name: "b", APIKey: "kb"})
 	for range 15 {
 		if got := pick(); got != "a" {
@@ -138,7 +142,9 @@ func TestAccountRunEndsWhenItsAccountCools(t *testing.T) {
 		Account{Name: "a", APIKey: "ka"},
 		Account{Name: "b", APIKey: "kb"},
 	)
-	for range 5 { pick() }
+	for range 5 {
+		pick()
+	}
 	p.mu.Lock()
 	p.accts[0].cooldown = p.now().Add(time.Hour)
 	p.mu.Unlock()
