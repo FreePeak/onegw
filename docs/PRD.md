@@ -1,3 +1,58 @@
+*Last updated: 2026-09-19 (release CI: the version job recomputed the same tag forever — fixed; the `docker` job is still owner-blocked at GHCR):*
+Three separate failures were stacked on the `release` workflow, and only one of them was
+a workflow bug.
+
+**1. The version never advanced (fixed, PRs #115/#116).** Every push since 2026-09-18 logged
+`next tag: v0.43.5 (patch)` — the same value on six consecutive runs — because the `version`
+job based the bump on `git describe --tags --abbrev=0`, which only walks ANCESTORS. On
+2026-09-18 `master` was reset off the line those tags were cut on (`git reflog show master`:
+`reset: moving to ee9d0ef`, then `reset: moving to HEAD~1`), so `v0.43.5` and `v0.44.0`
+stopped being reachable and `git describe` silently fell back to `v0.43.4`. The calc then
+re-derived an already-released number, the `Push tag` step no-oped by design (that is what
+#109/#113/#114 made it do), and only the `release` job failed, on
+`a release with the same tag name already exists: v0.43.5`. The bug was that `git describe`
+does not error in this situation — it answers with an older tag — so the run looked like
+progress while the tag never moved. Fix: base the version on the highest tag that exists
+anywhere (`git tag -l 'v[0-9]*' --sort=-v:refname`), plus a loop that skips any tag that
+already exists so the release job can never be handed a duplicate. Verified by extracting
+the `calc` block and running it verbatim: before `v0.43.5`, after `v0.44.1`. The bootstrap
+case (no tags) still yields `v0.1.0`.
+
+**2. Master had lost shipped work, which is what made the tags orphaned (fixed, PR #115).**
+The same reset dropped the systemone provider and its README/ARCHITECTURE docs — code that
+`v0.44.0` had already published — so `internal/provider/systemone.go`, the `KindSystemOne`
+cases, the `POST /v1/systemone` route and the `systemone` config-validation case were absent
+from `master`. Restored by cherry-picking the two commits, plus a gofmt pass. This is why
+the numbering fix and the restore are separate PRs: the restore makes the next release a
+true superset of `v0.44.0` again, the numbering fix is workflow-only, and the two touch
+disjoint files so they merge in either order.
+
+**3. The `docker` job is still red — owner-gated, no code fix exists (open).** Still
+`denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`, unchanged by
+both PRs. The GHCR package is linked to the OLD repo `FreePeak/onegw-private`, and a
+`GITHUB_TOKEN` push is authorised per package, not per org, so `packages: write` plus the
+org/repo default of "read and write" is not enough. This cannot be fixed from CI or from the
+API: `PUT /orgs/FreePeak/packages/container/onegw/actions/access` returns 404 even with an
+`admin:org` token, and a `write:packages` PAT only relocates the same owner-gated step. It
+needs the Settings UI — **package `onegw` → Manage Actions access → add `FreePeak/onegw` with
+Write** — after which re-running the failed `release` run re-pushes both tags without cutting
+a new release. Meanwhile `latest` still resolves to the `v0.40.2` digest while
+`/releases/latest` reports the real tag, so `docker pull …:latest` silently serves a stale
+gateway.
+
+Measured after the merge (run 35454996241, `master` @ `d7348e3`): `version` computed
+`v0.45.0 (minor)`, all four `assets` jobs went green and the `release` job published
+`v0.45.0` with its 5 assets and tag pointing at the merged `master` commit; `docker` alone
+still failed at push. Note the run that landed between the two merges (35454976218) still
+failed its `release` job on `already exists: v0.44.0` — correct behaviour, since it ran the
+old calc and re-derived a released tag; the numbering fix is what removes that.
+
+Also observed while verifying, PRE-EXISTING on `master` and out of scope here: `go test
+./internal/...` is not green — `TestSubscriptionQuotaCursorDialect` fails and
+`TestCursorKindEndToEnd` hangs to the 10-minute panic. Both reproduce on a clean
+`origin/master` worktree. No CI job runs `go test` (the `assets` job only builds), so neither
+blocks the release workflow.
+
 *Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring):*
 Cursor's AgentService and ChatService are Connect-RPC endpoints with no model-listing RPC — `ListModels`,
 `GetModels`, and `GetCatalog` all return 404 when hit against both `agent.api5.cursor.sh` and `api2.cursor.sh`
