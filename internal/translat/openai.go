@@ -29,7 +29,7 @@ const (
 	FmtCommandCode     Format = "commandcode"           // CommandCode /alpha/generate NDJSON
 	FmtOpenAIResponses Format = "openai-responses-grok" // Grok CLI Responses API (distinct from opencode FmtResponses)
 	FmtCursor          Format = "cursor"                // Cursor protobuf (skeleton)
-	FmtSystemOne     Format = "systemone"               // TypeSafe Jev model (POST /v1/systemone, same wire on both sides)
+	FmtSystemOne       Format = "systemone"             // TypeSafe Jev model (POST /v1/systemone, same wire on both sides)
 )
 
 // ---------------------------------------------------------------------------
