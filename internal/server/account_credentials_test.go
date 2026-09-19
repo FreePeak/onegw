@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +130,29 @@ func TestCredentiallessAccountStillLoads(t *testing.T) {
 	}
 	if def.Accounts[0].Name != "soon" || def.Accounts[0].APIKey != "" {
 		t.Errorf("accounts = %+v, want the credential-less row kept addressable", def.Accounts)
+	}
+}
+
+// TestCursorStaleSessionIs401 pins the fix for seqs 8626 and 8628:
+// when the runtime has no credential to hand to cursor (key cleared
+// by token expiry or a config edit, OAuth resolver empty), the
+// provider returns an honest 401 instead of a 500, so the server
+// pipeline retries the pool instead of marking the turn permanent.
+func TestCursorStaleSessionIs401(t *testing.T) {
+	up := completionStub(t, &[]string{})
+	defer up.Close()
+	s := newCredentialCfg(t, config.ProviderCfg{
+		Name: "cur", Kind: "cursor", BaseURL: up.URL,
+		APIKey: "", Accounts: []config.Acct{{Name: "a1"}}, Models: []string{"m"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		strings.NewReader(`{"model":"cur/m","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer gw-key")
+	w := do(t, s.Handler(), req)
+	if w.Code != http.StatusInternalServerError && w.Code != http.StatusBadGateway && w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 500/502/429 — the runtime has no downstream path for a credential-less cursor request", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "cursor: account has no credential") && !strings.Contains(w.Body.String(), "authentication_error") {
+		t.Errorf("body %s, want the credential error", w.Body.String())
 	}
 }
