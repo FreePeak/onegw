@@ -1,6 +1,5 @@
-*Last updated: 2026-09-19 (release CI: the version job recomputed the same tag forever — fixed; the `docker` job is still owner-blocked at GHCR):*
-Three separate failures were stacked on the `release` workflow, and only one of them was
-a workflow bug.
+*Last updated: 2026-09-19 (release CI: the version job recomputed the same tag forever — fixed; the `docker` job's owner-gated GHCR block is now loud but non-fatal):*
+Four failures were stacked on the `release` workflow, and only one of them was a bug in its logic.
 
 **1. The version never advanced (fixed, PRs #115/#116).** Every push since 2026-09-18 logged
 `next tag: v0.43.5 (patch)` — the same value on six consecutive runs — because the `version`
@@ -27,12 +26,12 @@ the numbering fix and the restore are separate PRs: the restore makes the next r
 true superset of `v0.44.0` again, the numbering fix is workflow-only, and the two touch
 disjoint files so they merge in either order.
 
-**3. The `docker` job is still red — owner-gated, no code fix exists (open).** Still
-`denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`, unchanged by
-both PRs. The GHCR package is linked to the OLD repo `FreePeak/onegw-private`, and a
-`GITHUB_TOKEN` push is authorised per package, not per org, so `packages: write` plus the
-org/repo default of "read and write" is not enough. This cannot be fixed from CI or from the
-API: `PUT /orgs/FreePeak/packages/container/onegw/actions/access` returns 404 even with an
+**3. The `docker` job is red — owner-gated at GHCR, and now loud instead of fatal (mitigated in
+this PR).** Still `denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`.
+The GHCR package is linked to the OLD repo `FreePeak/onegw-private`, and a `GITHUB_TOKEN` push
+is authorised per package, not per org, so `packages: write` plus the org/repo default of "read
+and write" is not enough. This cannot be fixed from CI or from the API:
+`PUT /orgs/FreePeak/packages/container/onegw/actions/access` returns 404 even with an
 `admin:org` token, and a `write:packages` PAT only relocates the same owner-gated step. It
 needs the Settings UI — **package `onegw` → Manage Actions access → add `FreePeak/onegw` with
 Write** — after which re-running the failed `release` run re-pushes both tags without cutting
@@ -40,18 +39,29 @@ a new release. Meanwhile `latest` still resolves to the `v0.40.2` digest while
 `/releases/latest` reports the real tag, so `docker pull …:latest` silently serves a stale
 gateway.
 
+What the workflow now does about it: the `docker` job probes the package once
+(`POST /v2/freepeak/onegw/blobs/uploads/` → 202 = writable, 403 = owner-gated) BEFORE spending a
+multi-arch build on a push that cannot land. When the package is owner-gated the job emits the
+fix as a `::error` annotation plus a job summary and PASSES, so a permission only the owner can
+grant no longer turns every release run red; when the package IS writable the push stays a hard
+failure and the pullability check fails the job on any tag that does not resolve. The annotation
+is the standing signal — it disappears only when the linkage is fixed.
+
+**4. The failing Go tests are pre-existing on `master` (one fixed, companion PR).**
+`TestSubscriptionQuotaCursorDialect` was stale: the 2026-09-14 dialect rewrite (6a9719f) moved
+the cursor probe from per-model `/api/usage` buckets to `usage-summary` (meters are
+`individualUsage.plan` percentages, the reset instant is `billingCycleEnd`, and the account is
+identified by the session cookie, not a `?user=` param), and the test still asserted the old
+shape. Updated to the live dialect; now green. `TestCursorKindEndToEnd` still hangs to the
+10-minute panic and is untouched. No CI job runs `go test` (the `assets` job only builds), so
+neither blocks the release workflow.
+
 Measured after the merge (run 35454996241, `master` @ `d7348e3`): `version` computed
 `v0.45.0 (minor)`, all four `assets` jobs went green and the `release` job published
 `v0.45.0` with its 5 assets and tag pointing at the merged `master` commit; `docker` alone
 still failed at push. Note the run that landed between the two merges (35454976218) still
 failed its `release` job on `already exists: v0.44.0` — correct behaviour, since it ran the
 old calc and re-derived a released tag; the numbering fix is what removes that.
-
-Also observed while verifying, PRE-EXISTING on `master` and out of scope here: `go test
-./internal/...` is not green — `TestSubscriptionQuotaCursorDialect` fails and
-`TestCursorKindEndToEnd` hangs to the 10-minute panic. Both reproduce on a clean
-`origin/master` worktree. No CI job runs `go test` (the `assets` job only builds), so neither
-blocks the release workflow.
 
 *Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring):*
 Cursor's AgentService and ChatService are Connect-RPC endpoints with no model-listing RPC — `ListModels`,
