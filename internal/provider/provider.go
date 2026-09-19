@@ -590,6 +590,8 @@ func (d *Def) LearnReasoningEcho(model string) bool {
 // burst walls) — promoting them to knobs would let a misconfiguration undo an
 // RCA, and onegw has no multi-tenant operator to serve.
 type RotationPolicy struct {
+	AccountRunMin int
+	AccountRunMax int
 	CoolBase      time.Duration // 429 ladder start (default coolBase)
 	CoolCap       time.Duration // 429 ladder ceiling (default coolCap)
 	FlapThreshold int           // consecutive edge faults before opening (default flapThreshold)
@@ -1273,6 +1275,10 @@ type accountPool struct {
 	// resolve to the package defaults via the ladderBase/flapTrip family.
 	policy RotationPolicy
 
+	runs   int
+	served int
+	runMax int
+
 	// Selection (#81) picks among the OPEN slots: "" = the shipped
 	// behavior (fastest decode speed, round-robin among equals), or one of
 	// "p2c", "least-used", "strict-random", "random". pickN and headroom
@@ -1341,7 +1347,7 @@ func newAccountPool(accts []Account, sticky time.Duration, sharedRPM int) *accou
 	if len(accts) ***REMOVED*** 0 {
 		accts = []Account{{Name: "default"}}
 	}
-	p := &accountPool{ttl: sticky, now: time.Now, pickN: rand.IntN}
+	p := &accountPool{ttl: sticky, now: time.Now, pickN: rand.IntN, runs: -1}
 	if sharedRPM > 0 {
 		p.shared = newTokenBucket(sharedRPM)
 	}
@@ -1372,6 +1378,47 @@ func newAccountPool(accts []Account, sticky time.Duration, sharedRPM int) *accou
 // target or answers pool-empty (breaker-open or cooling) with the honest
 // Retry-After, rather than burning a ~1s upstream attempt that digs the
 // provider's fault state deeper.
+func (p *accountPool) runActive() bool { return p.policy.AccountRunMax > 0 }
+func (p *accountPool) nextRun() int {
+	lo, hi := p.policy.AccountRunMin, p.policy.AccountRunMax
+	if lo < 1 {
+		lo = 1
+	}
+	if hi < lo {
+		hi = lo
+	}
+	if lo ***REMOVED*** hi {
+		return lo
+	}
+	return lo + p.pickN(hi-lo+1)
+}
+func (p *accountPool) startRun(chosen, n int) {
+	p.runs = chosen
+	p.served = 1
+	p.runMax = p.nextRun()
+	p.rr = (uint64(chosen) + 1) % uint64(n)
+}
+func (p *accountPool) endRun() {
+	if p.runs >= 0 {
+		p.rr = (uint64(p.runs) + 1) % uint64(len(p.accts))
+	}
+	p.runs, p.served, p.runMax = -1, 0, 0
+}
+func (p *accountPool) endRunFor(a *Account) {
+	if !p.runActive() || p.runs < 0 {
+		return
+	}
+	for i := range p.accts {
+		if p.accts[i].acct.Name != a.Name || p.accts[i].acct.APIKey != a.APIKey {
+			continue
+		}
+		if i ***REMOVED*** p.runs {
+			p.endRun()
+		}
+		return
+	}
+}
+
 func (p *accountPool) next(id string) (*Account, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1386,6 +1433,34 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	}
 	n := len(p.accts)
 	start := int(p.rr)
+	running := -1
+	if p.runActive() {
+		if p.runs >= 0 && p.runs < n && p.served < p.runMax {
+			if ok, _ := p.available(&p.accts[p.runs], now); ok {
+				running = p.runs
+			} else {
+				p.endRun()
+			}
+		}
+		if p.runs >= 0 && p.served >= p.runMax {
+			p.endRun()
+		}
+		if p.runs < 0 {
+			start = int(p.rr)
+			if ok, _ := p.available(&p.accts[start], now); ok {
+				running = start
+			}
+		}
+	}
+	if running >= 0 {
+		if p.runs < 0 {
+			p.startRun(running, n)
+		} else {
+			p.served++
+		}
+		p.grant(&p.accts[running], now)
+		return &p.accts[running].acct, time.Time{}
+	}
 	// keepPin: the pinned account is up but already serving another call.
 	// This pick spreads (occupied slots lose the least-busy comparison
 	// below) while the warm-pin claim itself survives — dropping it here
@@ -1704,6 +1779,9 @@ func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
 			}
 		}
 	}
+	if p.runActive() {
+		p.endRunFor(a)
+	}
 }
 
 // wallSight is one burst-wall data point: a wording-less 429 from acct at
@@ -1797,6 +1875,9 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 				s.cooldown = t
 				s.benchedAt = now
 			}
+		}
+		if p.runActive() {
+			p.endRunFor(a)
 		}
 	}
 }
