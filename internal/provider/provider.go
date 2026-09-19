@@ -49,8 +49,8 @@ const (
 	// Completions, but only over SSE: the vendor's non-streaming reply comes back wrapped
 	// in a {success,data} envelope, so the gateway always streams upstream and aggregates
 	// for non-streaming clients. See Kind.ForcedStream.
-	KindCline       Kind = "cline"           // Cline API (SSE-only OpenAI wire)
-	KindSystemOne   Kind = "systemone"       // TypeSafe Jev model (POST /v1/systemone, same wire on both sides)
+	KindCline     Kind = "cline"     // Cline API (SSE-only OpenAI wire)
+	KindSystemOne Kind = "systemone" // TypeSafe Jev model (POST /v1/systemone, same wire on both sides)
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
