@@ -385,17 +385,21 @@ func TestSubscriptionQuotaCursorDialect(t *testing.T) {
 		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
 		return head + "." + payload + ".sig"
 	}
-	usage := func(used, cap int) string {
-		return `{"gpt-4":{"numRequests":` + strconv.Itoa(used) + `,"maxRequestUsage":` + strconv.Itoa(cap) +
-			`},"startOfMonth":"2026-09-01T00:00:00.000Z"}`
+	// The cursor dialect reads usage-summary (live 2026-09-14), not the
+	// per-model /api/usage buckets: the meters are individualUsage.plan's
+	// percentages, and the reset instant is the vendor's billingCycleEnd.
+	usage := func(used int) string {
+		return `{"billingCycleStart":"2026-09-01T00:00:00.000Z","billingCycleEnd":"2026-10-01T00:00:00.000Z",
+			"membershipType":"free","limitType":"user","isUnlimited":false,
+			"individualUsage":{"plan":{"enabled":true,"totalPercentUsed":` + strconv.Itoa(used) +
+			`,"apiPercentUsed":0}}}`
 	}
 	cs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Query().Get("user") {
-		case "user_01SPENT":
-			_, _ = w.Write([]byte(usage(1000, 1000))) // pool fully consumed
-		default:
-			_, _ = w.Write([]byte(usage(10, 1000)))
+		if !strings.Contains(r.Header.Get("Cookie"), "user_01SPENT") {
+			_, _ = w.Write([]byte(usage(10))) // 10% of the monthly pool
+			return
 		}
+		_, _ = w.Write([]byte(usage(100))) // pool fully consumed
 	}))
 	defer cs.Close()
 
@@ -423,11 +427,12 @@ func TestSubscriptionQuotaCursorDialect(t *testing.T) {
 	waitSubSnapshots(t, srv, 2)
 
 	w := do(t, srv.Handler(), adminReq(t, "/admin/api/v1/subscription"))
-	if body := w.Body.String(); !strings.Contains(body, `"plan":"1000 req/mo"`) || !strings.Contains(body, `"used":100`) {
+	// The rewritten cursor dialect reports the usage-summary meters (a plan
+	// name and percentages), not the old per-model request counts.
+	if body := w.Body.String(); !strings.Contains(body, `"plan":"free"`) || !strings.Contains(body, `"used":10`) {
 		t.Fatalf("subscription API missing the cursor pool: %d %s", w.Code, body)
 	}
 
-	// The parked marker belongs to the spent account only.
 	page := do(t, srv.Handler(), adminReq(t, "/admin/ui/quota"))
 	if page.Code != http.StatusOK {
 		t.Fatalf("quota page: %d %s", page.Code, page.Body.String())
@@ -436,8 +441,16 @@ func TestSubscriptionQuotaCursorDialect(t *testing.T) {
 	if !strings.Contains(html, ">cursor<") {
 		t.Fatalf("quota page lost the cursor row: %s", html)
 	}
-	if n := strings.Count(html, ">parked<"); n != 1 {
-		t.Fatalf("parked marker count = %d, want exactly the spent account: %s", n, html)
+	// The cursor dialect renders one row per METER (included usage +
+	// included API usage), so the spent account carries the parked pill on
+	// each of its rows while the healthy account carries none.
+	if !strings.Contains(html, `>spent <span class="pill err"`) {
+		t.Fatalf("spent account is not marked parked: %s", html)
+	}
+	for _, line := range strings.Split(html, "\n") {
+		if strings.Contains(line, ">parked<") && !strings.Contains(line, ">spent <") {
+			t.Fatalf("parked pill on a non-spent row: %s", strings.TrimSpace(line))
+		}
 	}
 	if !strings.Contains(html, "exhausted") {
 		t.Fatal("exhausted pill missing for the spent window")
