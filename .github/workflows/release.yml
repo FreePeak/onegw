@@ -95,11 +95,14 @@ jobs:
       - name: Push tag
         if: steps.calc.outputs.tag != ''
         run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
           if git tag "${{ steps.calc.outputs.tag }}" 2>/dev/null; then
-            echo "tag ${{ steps.calc.outputs.tag }} already exists - reusing it"
+            echo "tag ${{ steps.calc.outputs.tag }} already exists locally - reusing it"
           else
             git tag "${{ steps.calc.outputs.tag }}"
-            git push origin "${{ steps.calc.outputs.tag }}"
+            git push origin "${{ steps.calc.outputs.tag }}" 2>/dev/null || \
+              { echo "tag ${{ steps.calc.outputs.tag }} already exists on remote - reusing it"; git tag -d "${{ steps.calc.outputs.tag }}" || true; }
           fi
 
   assets:
