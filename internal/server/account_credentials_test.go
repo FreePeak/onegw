@@ -133,11 +133,10 @@ func TestCredentiallessAccountStillLoads(t *testing.T) {
 	}
 }
 
-// TestCursorStaleSessionIs401 pins the fix for seqs 8626 and 8628:
-// when the runtime has no credential to hand to cursor (key cleared
-// by token expiry or a config edit, OAuth resolver empty), the
-// provider returns an honest 401 instead of a 500, so the server
-// pipeline retries the pool instead of marking the turn permanent.
+// TestCursorStaleSessionIs401 pins the fix for seq 8626/8628:
+// when the runtime has no credential to hand to cursor, cursor returns
+// an honest 401 authentication_error, the server cools the account,
+// and the router retries the pool instead of marking the turn permanent.
 func TestCursorStaleSessionIs401(t *testing.T) {
 	up := completionStub(t, &[]string{})
 	defer up.Close()
