@@ -26,8 +26,8 @@ the numbering fix and the restore are separate PRs: the restore makes the next r
 true superset of `v0.44.0` again, the numbering fix is workflow-only, and the two touch
 disjoint files so they merge in either order.
 
-**3. The `docker` job is red — owner-gated at GHCR, and now loud instead of fatal (mitigated in
-this PR).** Still `denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`.
+**3. The `docker` job is red — owner-gated at GHCR, and now loud instead of fatal (mitigated,
+PR #118).** Still `denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`.
 The GHCR package is linked to the OLD repo `FreePeak/onegw-private`, and a `GITHUB_TOKEN` push
 is authorised per package, not per org, so `packages: write` plus the org/repo default of "read
 and write" is not enough. This cannot be fixed from CI or from the API:
@@ -45,9 +45,12 @@ multi-arch build on a push that cannot land. When the package is owner-gated the
 fix as a `::error` annotation plus a job summary and PASSES, so a permission only the owner can
 grant no longer turns every release run red; when the package IS writable the push stays a hard
 failure and the pullability check fails the job on any tag that does not resolve. The annotation
-is the standing signal — it disappears only when the linkage is fixed.
+is the standing signal — it disappears only when the linkage is fixed. Proven on a real runner
+(run 35457529136): the probe logged `HTTP 403` and skipped the build, the verify step passed on
+a missing `v0.45.0` tag, and the job carried the `docker image NOT published` failure
+annotation without failing.
 
-**4. The failing Go tests are pre-existing on `master` (one fixed, companion PR).**
+**4. The failing Go tests are pre-existing on `master` (one fixed, PR #119).**
 `TestSubscriptionQuotaCursorDialect` was stale: the 2026-09-14 dialect rewrite (6a9719f) moved
 the cursor probe from per-model `/api/usage` buckets to `usage-summary` (meters are
 `individualUsage.plan` percentages, the reset instant is `billingCycleEnd`, and the account is
