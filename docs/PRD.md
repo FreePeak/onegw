@@ -3114,3 +3114,14 @@ its run immediately (`endRunFor`); the cursor still advances one slot so the nex
 `next()` opens a fresh run on a healthy peer. The plain round-robin path (flag off) is
 byte-identical to the prior behavior. The whole feature is covered by
 `internal/provider/account_run_test.go`.
+*Last updated: 2026-09-19 (CI pipeline — Push tag step no longer fails on pre-existing remote tag):*
+Run 35448366622's Push tag step failed with `exit code 128: fatal: tag 'v0.43.5' already exists`.
+`set -euo pipefail` in the Push tag bash block turned this pre-existing-remote-tag condition into a fatal step failure,
+blocking all downstream `assets` and `release` jobs. Root cause: the idempotency guard (#109) only checked whether
+the tag existed *locally* before creating it, not whether a *push* would be rejected by the remote — a tag can exist
+both locally (freshly created) and on the remote (from a prior concurrent/merged run), in which case `git push` fails
+with exit 128 even though the release is fine. Fix in `.github/workflows/release.yml` Push tag step: (1) set
+`git config user.name`/`user.email` before tag creation (CI runners don't always have identity configured);
+(2) make the push tolerant of exit 128 — if `git push` fails because the tag already exists on the remote, the step
+logs "already exists on remote - reusing it", deletes the local tag, and exits 0 instead of failing the run.
+No change to the version calc step.
