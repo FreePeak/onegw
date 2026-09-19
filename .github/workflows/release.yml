@@ -95,8 +95,12 @@ jobs:
       - name: Push tag
         if: steps.calc.outputs.tag != ''
         run: |
-          git tag "${{ steps.calc.outputs.tag }}"
-          git push origin "${{ steps.calc.outputs.tag }}"
+          if git tag "${{ steps.calc.outputs.tag }}" 2>/dev/null; then
+            echo "tag ${{ steps.calc.outputs.tag }} already exists - reusing it"
+          else
+            git tag "${{ steps.calc.outputs.tag }}"
+            git push origin "${{ steps.calc.outputs.tag }}"
+          fi
 
   assets:
     needs: version
