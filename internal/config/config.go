@@ -125,6 +125,9 @@ type UsageCfg struct {
 type ProviderCfg struct {
 	Name     string   `toml:"name"`
 	Kind     string   `toml:"kind"` // openai | anthropic | gemini | opencode | opencode-free | searxng | openai-responses | commandcode | cursor
+	// EvalStrategy is the T3 verdict driver for this provider
+	// ("jev-eval" activates it; "" = off). Only systemone Kind uses it.
+	EvalStrategy string `toml:"eval_strategy"`
 	BaseURL  string   `toml:"base_url"`
 	APIKey   string   `toml:"api_key"` // convenience for single-account
 	Keys     []string `toml:"keys"`    // multi-key accounts, one account per key
@@ -146,6 +149,10 @@ type ProviderCfg struct {
 	// the entry stays in the file so a toggle back on is instant.
 	Disabled    bool              `toml:"disabled"`
 	ExtraHeader map[string]string `toml:"extra_headers"`
+	// EvalCfgs is per-combo evaluator legs (T3): combo name -> list of legs,
+	// each leg a list of authored questions forwarded verbatim to
+	// /v1/systemone. nil = no evaluator legs.
+	EvalCfgs map[string][][]string `toml:"eval_cfgs"`
 	// AlwaysThinking lists model globs (path.Match; "*" does not cross
 	// "/") that reason unconditionally upstream and reject
 	// disable-thinking knobs; see README.
@@ -504,6 +511,40 @@ func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
 // is enabled. Anything other than "on" (case-insensitive) is off.
 func (c *Config) TaskRoutingOn() bool {
 	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) == "on"
+}
+
+// EvalStrategy reports the T3 verdict strategy from the config.
+// "jev-eval" activates verdict-driven combo reorder; "" (off)
+// leaves routing byte-identical to pre-T3.
+func (c *Config) EvalStrategy() string {
+	for _, p := range c.Providers {
+		if strings.ToLower(p.Kind) == "systemone" {
+			return strings.ToLower(strings.TrimSpace(p.EvalStrategy))
+		}
+	}
+	return ""
+}
+
+// EvalCfgs returns per-combo evaluator legs (T3). nil/off
+// leaves routing byte-identical to pre-T3.
+func (c *Config) EvalCfgs() map[string][][]string {
+	cfgs := make(map[string][][]string)
+	for _, p := range c.Providers {
+		if strings.ToLower(p.Kind) != "systemone" {
+			continue
+		}
+		for name, legs := range p.EvalCfgs {
+			var qs [][]string
+			for _, leg := range legs {
+				qs = append(qs, leg)
+			}
+			cfgs[name] = qs
+		}
+	}
+	if len(cfgs) == 0 {
+		return nil
+	}
+	return cfgs
 }
 
 // IdempotencyTTLDur parses [server] idempotency_ttl; 0 means the feature

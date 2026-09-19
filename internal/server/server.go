@@ -310,6 +310,17 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	}
 	rt.SetCombos(combos)
 	rt.SetTaskRouting(cfg.TaskRoutingOn())
+	// T3 (verdict-driven reorder): eval config from the
+	// systemone provider block; nil/off leaves routing byte-identical.
+	evalCfgs := make(map[string]*provider.EvalCfg)
+	for name, legs := range cfg.EvalCfgs() {
+		var qs []string
+		for _, leg := range legs {
+			qs = append(qs, leg...)
+		}
+		evalCfgs[name] = &provider.EvalCfg{Questions: qs}
+	}
+	rt.SetEvalConfig(evalCfgs, cfg.EvalStrategy())
 	// Size-aware (prefill) ordering decision rows: recorded whenever the
 	// reorder actually changes a combo's chain, independent of task routing.
 	rt.SpeedLog = func(model, detail string) {
@@ -610,6 +621,10 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
+	// Verdict-driven combo reorder (T3): tag the exec context
+	// with the raw request body so ApplyEval can call
+	// TypeSafe's /v1/systemone with client state.
+	execCtx = router.WithEvalBody(execCtx, body)
 	attempts := 0
 	execErr := st.router.Execute(execCtx, res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		attempts++

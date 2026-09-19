@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 
@@ -69,3 +70,49 @@ func (d *Def) doSystemOne(ctx context.Context, acct *Account, model string, body
 	}
 	return &CallResult{Resp: resp, Format: translat.FmtSystemOne, Acct: acct}, nil
 }
+
+// EvalCfg is one evaluator leg inside a combo: TypeSafe's
+// /v1/systemone endpoint answers these POSTs with a
+// {score|choice|noul} verdict that the router turns into a
+// combo reorder (strategy = "jev-eval"). Optional fields fall
+// back to sensible defaults.
+type EvalCfg struct {
+	// Questions are authored systemone POST bodies forwarded
+	// verbatim as the verdict request's state. At least one
+	// required — an empty leg is skipped.
+	Questions []string
+	// ChoiceTargets maps a ChoiceVerdict.Option value to the
+	// combo target it promotes to the front. Router-owned;
+	// not typed here (avoid provider→router import cycle).
+	ChoiceTargets map[string]string
+}
+
+// EvalResponse is what TypeSafe returns: score/choice/noul
+// are mutually exclusive — a verdict is exactly one of
+// {score, choice, noul}. An empty body carries no verdict.
+type EvalResponse struct {
+	Model  string          `json:"model"`
+	Score  *ScoreVerdict   `json:"score,omitempty"`
+	Choice *ChoiceVerdict  `json:"choice,omitempty"`
+	Noul   *NoulVerdict    `json:"noul,omitempty"`
+	Usage  json.RawMessage `json:"usage,omitempty"`
+}
+
+// ScoreVerdict is a numeric level verdict: the position on
+// TypeSafe's severity spectrum the request scored at. Lower
+// positions are safer models — combo reorder promotes the
+// target matching the verdict's level first.
+type ScoreVerdict struct {
+	Level int `json:"level"`
+}
+
+// ChoiceVerdict names a specific option TypeSafe prefers;
+// matched (case-insensitive, trimmed) against the evaluator's
+// ChoiceTargets to pick a combo target by name.
+type ChoiceVerdict struct {
+	Option string `json:"option"`
+}
+
+// NoulVerdict means TypeSafe had no opinion: the combo keeps
+// its configured order.
+type NoulVerdict struct{}

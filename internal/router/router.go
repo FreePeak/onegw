@@ -3,12 +3,16 @@
 package router
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"net/http"
 
 	"onegw/internal/provider"
 	"onegw/internal/types"
@@ -62,6 +66,8 @@ type Router struct {
 	// builds a fresh Router on every reload, so plain fields set once
 	// before serving are race-free). Default off = byte-identical
 	// routing; TaskLog nil = silent.
+	evals        map[string]*provider.EvalCfg
+	evalStrategy string
 	taskRoutingOn bool
 	TaskLog       func(model, detail string)
 
@@ -167,6 +173,13 @@ func (r *Router) SetTaskRouting(on bool) {
 	r.mu.Lock()
 	r.taskRoutingOn = on
 	r.mu.Unlock()
+}
+
+func (r *Router) SetEvalConfig(evals map[string]*provider.EvalCfg, strategy string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.evals = evals
+	r.evalStrategy = strategy
 }
 
 // KnownModel reports whether model is a name the current route tables can
@@ -387,6 +400,11 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 	// routing is on and the caller tagged request signals; the full
 	// fallback chain is preserved — only the order changes.
 	r.applyTaskRouting(ctx, res)
+	if r.evalStrategy == "jev-eval" {
+		if body, ok := EvalBodyFrom(ctx); ok && len(body) > 0 && res.IsCombo && r.evals != nil {
+			r.applyEval(ctx, res, body)
+		}
+	}
 	// Throughput steering (combo strategy = "fastest"): a stable re-sort of
 	// the targets by the leg that is expected to finish THIS request first;
 	// legs with no data for the request's size keep the configured order and
@@ -699,6 +717,144 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		}
 	}
 	return lastErr
+}
+
+
+// ---------------------------------------------------------------------------
+// Verdict-driven combo reorder (T3) — provider calls
+// ---------------------------------------------------------------------------
+
+// applyEval runs a verdict-driven reorder (T3): it calls
+// TypeSafe's own /v1/systemone endpoint with the client body
+// as state and the combo's authored questions, then reorders
+// res.Targets per the {score|choice|noul} verdict. Off when
+// T3 is disabled or no eval body present. No request is ever
+// dropped — an empty/4xx/unparseable verdict is a noul
+// (keep configured order).
+func (r *Router) applyEval(ctx context.Context, res *Resolution, body []byte) {
+	ev, ok := r.evals[res.Combo]
+	if !ok || ev == nil || len(ev.Questions) == 0 {
+		return
+	}
+	verdict, ok := r.callEval(ctx, res.Targets, body)
+	if !ok || verdict == nil {
+		return
+	}
+	r.applyVerdict(res, verdict)
+}
+
+// callEval sends the verdict request to the first systemone
+// evaluator leg in targets (keyless: Bearer via extra_headers,
+// operator key). Returns nil (ok=false) on any failure — a noul.
+func (r *Router) callEval(ctx context.Context, targets []Target, body []byte) (*provider.EvalResponse, bool) {
+	for _, t := range targets {
+		def, ok := r.pool.Get(t.Provider)
+		if !ok {
+			continue
+		}
+		// First target with any keyless (APIKey == "") account
+		// wins. Systemone Kind is the evaluator provider (T3).
+		hasKeyless := false
+		for _, acct := range def.Accounts {
+			if acct.APIKey == "" {
+				hasKeyless = true
+				break
+			}
+		}
+		if !hasKeyless {
+			continue
+		}
+		for _, acct := range def.Accounts {
+			if acct.APIKey == "" { // keyless evaluator leg
+				return r.doSystemOneEval(ctx, def, t.Model, body)
+			}
+		}
+	}
+	return nil, false
+}
+
+// doSystemOneEval POSTs body to TypeSafe's /v1/systemone and
+// decodes the {model, score|choice|noul} response. Auth is the
+// Bearer scheme (keyless = operator key); ExtraHeaders are
+// forwarded verbatim. Returns nil (ok=false) on any failure —
+// a noul.
+func (r *Router) doSystemOneEval(ctx context.Context, def *provider.Def, model string, body []byte) (*provider.EvalResponse, bool) {
+	url := def.Base(nil) + def.Path("chat", model)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	// Bearer scheme: keyless evaluator defs carry the operator key
+	// in extra_headers; forward those verbatim.
+	for k, v := range def.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return nil, false // noul on any upstream error
+	}
+	var er provider.EvalResponse
+	if err := json.Unmarshal(raw, &er); err != nil || (er.Score == nil && er.Choice == nil && er.Noul == nil) {
+		return nil, false // noul on unparseable/empty
+	}
+	return &er, true
+}
+
+// applyVerdict reorders res.Targets per the TypeSafe verdict.
+func (r *Router) applyVerdict(res *Resolution, v *provider.EvalResponse) {
+	switch {
+	case v.Score != nil:
+		// Level L maps to taskTargetPower[L]; promote the closest-
+		// power target to the front (see task.go for the tiers).
+		var tp int
+		switch {
+		case v.Score.Level >= 4:
+			tp = 120 // critical
+		case v.Score.Level >= 3:
+			tp = 95 // heavy
+		case v.Score.Level >= 2:
+			tp = 65 // standard
+		default:
+			tp = 35 // light
+		}
+		best := 0
+		bestDist := int(^uint(0) >> 1)
+		for i, t := range res.Targets {
+			def, ok := r.pool.Get(t.Provider)
+			if !ok { continue }
+			if tier, ok := def.Tier(t.Model); ok {
+				d := tier.Power - tp
+				if d < 0 { d = -d }
+				if d < bestDist { bestDist = d; best = i }
+			}
+		}
+		if best > 0 {
+			tmp := res.Targets[0]
+			res.Targets[0] = res.Targets[best]
+			res.Targets[best] = tmp
+		}
+	case v.Choice != nil:
+		opt := strings.ToLower(strings.TrimSpace(v.Choice.Option))
+		for i, t := range res.Targets {
+			if strings.ToLower(t.Provider) == opt || strings.ToLower(t.Model) == opt {
+				if i > 0 {
+					tmp := res.Targets[0]
+					res.Targets[0] = res.Targets[i]
+					res.Targets[i] = tmp
+				}
+				return
+			}
+		}
+	case v.Noul != nil:
+		// no-op: configured order stands
+	}
 }
 
 // Caller executes one attempt against a provider/account. Decoupled so the
