@@ -904,6 +904,18 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 				s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
 			}
 			apiErr.Fallbackable = true
+		} else if apiErr.Status == 401 && apiErr.Type == "authentication_error" {
+			// Stale credential at request time (cursor returns this
+			// when the account row has no key; the runtime can clear
+			// a static key when the stored token expires). Cool the
+			// account a window so the pool stops hammering it and
+			// rotates to the next account — a credential fix is
+			// per-account, not per-model, so benching the model
+			// would strand the still-working lanes.
+			log.Printf("server: account %s/%s has no credential — cooling one window; re-export the session token or reload to recover",
+				def.Name, acctName(acct))
+			def.Cool(acct, grok402Cooldown)
+			apiErr.Fallbackable = true
 		} else if alwaysThinking400(apiErr) {
 			// Runtime self-healing for providers whose config lacks the
 			// always_thinking globs (a combo can mix models with different
