@@ -3105,7 +3105,6 @@ fall-through path (no output throttle); TTFB spikes (9-50s) reproduce on FRESH d
 connections to the congested b-ai endpoint (429 Concurrency-1200 walls, 23-173s TTFB, 502 HTML
 without the gateway), so upstream congestion — not gateway logic — dominates latency)*
 
-
 *Last updated: 2026-09-19 (account run / batched rotation):*
 `RotationPolicy` gained `AccountRunMin`/`AccountRunMax` (request-count range for a single
 account run). When set, `next()` opens a run on a chosen slot and keeps returning that same
