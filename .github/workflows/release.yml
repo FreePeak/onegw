@@ -179,14 +179,48 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Probe whether this repo may write the package
+        id: writable
+        # A GITHUB_TOKEN push is authorised PER PACKAGE, not per repo. The
+        # package ghcr.io/freepeak/onegw was created by the OLD repo
+        # FreePeak/onegw-private, so this repo's push is rejected with
+        # write_package no matter what `permissions:` or the org default say,
+        # and no API can re-link it. One upload-session probe (202 = this repo
+        # may write, 403 = owner-gated) tells the two apart up front: it stops a
+        # multi-arch build being spent on a push that provably cannot land, and
+        # it lets the push itself stay a hard failure on the writable path.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tok="$(curl -fsS -u "${GITHUB_ACTOR}:${GITHUB_TOKEN}" \
+            "https://ghcr.io/token?scope=repository:freepeak/onegw:push,pull&service=ghcr.io" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $tok" \
+            "https://ghcr.io/v2/freepeak/onegw/blobs/uploads/")"
+          echo "GHCR push probe for freepeak/onegw: HTTP $code"
+          if [ "$code" = 202 ]; then
+            echo "writable=true" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = 403 ]; then
+            echo "writable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::unexpected GHCR push-probe response $code"; exit 1
+          fi
+
       - uses: docker/setup-qemu-action@v3
+        if: steps.writable.outputs.writable == 'true'
       - uses: docker/setup-buildx-action@v3
+        if: steps.writable.outputs.writable == 'true'
       - uses: docker/login-action@v3
+        if: steps.writable.outputs.writable == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - uses: docker/build-push-action@v6
+        if: steps.writable.outputs.writable == 'true'
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -198,13 +232,21 @@ jobs:
             VERSION=${{ needs.version.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
       - name: Verify the image is actually pullable
         # `build-push-action` reports success once the manifest is written, which
         # is not the same as the tags being readable: a package this repo cannot
         # write to fails at push (write_package), and a package whose linkage is
         # wrong can accept a push and still 404 the tag. Resolve both tags from
         # the registry as an anonymous client would — that is what fails the job
-        # instead of shipping an image nobody can pull.
+        # instead of shipping an image nobody can pull. When the package is
+        # owner-gated there was nothing to publish, so the missing tags become an
+        # annotation plus a job summary rather than a red job: a permission only
+        # the owner can grant must not block a release. Every other failure —
+        # including a package we CAN write to whose tag is not pullable — still
+        # fails the job.
+        env:
+          WRITABLE: ${{ steps.writable.outputs.writable }}
         run: |
           set -euo pipefail
           tag="${{ needs.version.outputs.tag }}"
@@ -213,6 +255,7 @@ jobs:
           # One retry per ref: GHCR has failed a blob fetch mid-pull while the rest
           # of the manifest resolved fine, so a single flaky response is not proof
           # the image is unreachable.
+          missing=""
           for ref in "$tag" latest; do
             code=""
             for _ in 1 2; do
@@ -220,10 +263,39 @@ jobs:
                 -H "Authorization: Bearer $token" \
                 -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json' \
                 "https://ghcr.io/v2/freepeak/onegw/manifests/$ref")"
-              [ "$code" = 200 ] && break
+              if [ "$code" = 200 ]; then break; fi
               sleep 5
             done
             echo "ghcr.io/freepeak/onegw:$ref -> HTTP $code"
-            [ "$code" = 200 ] || \
-              { echo "::error::ghcr.io/freepeak/onegw:$ref is not pullable ($code) — the package is not linked to this repo (Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write). See docs/PRD.md."; exit 1; }
+            if [ "$code" != 200 ]; then
+              if [ "${WRITABLE:-false}" = true ]; then
+                # We CAN write the package, so a tag the registry will not
+                # resolve is a real publishing bug, not the owner-gated block.
+                echo "::error::ghcr.io/freepeak/onegw:$ref is not pullable ($code) although this repo may push to the package — the push reported success but the tag is not readable. See docs/PRD.md."
+                exit 1
+              fi
+              missing="$missing $ref"
+            fi
           done
+          # Not writable + nothing missing = the tags are already published (a
+          # previous run, or the old repo): nothing to report, just pass.
+          if [ "${WRITABLE:-false}" != true ] && [ -n "$missing" ]; then
+            {
+              echo "### docker image NOT published — owner-gated GHCR package"
+              echo
+              echo "\`ghcr.io/freepeak/onegw\` was not published (missing:${missing})."
+              echo "The tag, the four binaries and the GitHub release were published normally."
+              echo
+              echo "A \`GITHUB_TOKEN\` push is authorised per PACKAGE: \`freepeak/onegw\` was"
+              echo "created by the old repo \`FreePeak/onegw-private\`, so \`packages: write\` and"
+              echo "the org default of \"read and write\" are not enough, and no API can re-link it."
+              echo "This job passes deliberately, so a permission only the owner can grant cannot"
+              echo "block a release; the annotation stays until the linkage is fixed."
+              echo
+              echo "**Fix (owner, Settings UI only):** package \`onegw\` → Settings → Manage"
+              echo "Actions access → add \`FreePeak/onegw\` with **Write**, then re-run this"
+              echo "workflow — it re-pushes both tags for the tag this run already created."
+              echo "See \`docs/PRD.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=docker image NOT published::ghcr.io/freepeak/onegw was not published (missing:${missing}) — the package is linked to FreePeak/onegw-private. Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write, then re-run this workflow. See docs/PRD.md."
+          fi
