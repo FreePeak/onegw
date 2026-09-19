@@ -21,11 +21,14 @@ package provider
 // close the pipe (END_STREAM). ChatService stays a one-shot POST (9router
 // makeHttp2Request shape).
 //
-// Route selection (cursorUsesChatService): tool schemas or "-thinking"
-// model ids → ChatService (tools path); everything else → AgentService
-// (text path; system content folded into the user turn by
-// EncodeCursorAgentRequest — a non-empty system prompt in the run request
-// kills the turn upstream, live-verified 3/3 probes).
+// Route selection (cursorUsesChatService): tool schemas, "-thinking" model
+// ids, or the IDE's composer family (composer-2.5, composer-2) → ChatService
+// (tools path); everything else → AgentService (text path; system content
+// folded into the user turn by EncodeCursorAgentRequest — a non-empty
+// system prompt in the run request kills the turn upstream, live-verified
+// 3/3 probes). The composer family must ride ChatService: sending them
+// to the AgentService ends the turn with zero content (502 "cursor:
+// empty response"), observed live.
 //
 // Response shape: translat.CursorSSEStream decodes frames and re-emits a
 // synthetic OpenAI chat.completion.chunk SSE stream (the SearXNG pattern),
@@ -53,11 +56,16 @@ import (
 var cursorTLSOverride *tls.Config
 
 // cursorUsesChatService reports whether this request must ride the
-// ChatService (tools) path: any OpenAI tool schema, or a "-thinking" model
+// ChatService (tools) path: any OpenAI tool schema, a "-thinking" model
 // id (thinking-bearing ids route to the tool-capable service, matching
-// 9router's registry behavior).
+// 9router's registry behavior), or the IDE's composer family
+// (composer-2.5, composer-2 — ChatService models; sending them to the
+// AgentService ends the turn with zero content, observed live).
 func cursorUsesChatService(model string, body []byte) bool {
 	if strings.Contains(model, "-thinking") {
+		return true
+	}
+	if strings.HasPrefix(model, "composer-") {
 		return true
 	}
 	return bytes.Contains(body, []byte(`"tools"`)) && bytes.Contains(body, []byte(`"function"`))
@@ -226,7 +234,7 @@ func (d *Def) cursorUpstream(ctx context.Context, url, token string, reqBody []b
 	return out, resp.Body, nil
 }
 
-// cursorMachineID resolves the machine id: the operator pin via
+// cursorMachineID resolves the machine id: the operator pins via
 // extra_headers x-cursor-machine-id (recommended: the account's real
 // storage.serviceMachineId), else "" (translat derives one from the token).
 func (d *Def) cursorMachineID() string {
