@@ -83,7 +83,16 @@ func (d *Def) doCursor(ctx context.Context, acct *Account, model string, body io
 	}
 	token := acct.bearerToken()
 	if token == "" {
-		return nil, &types.APIError{Status: 500, Type: "internal", Message: "cursor: account has no credential"}
+		// Stale session: the account row exists but its APIKey
+		// was cleared (oauth-tokens.json expired out, or a config
+		// edit dropped the static key) — surface it as an honest
+		// 401 so the server pipeline retries the pool instead of
+		// burning a 500 on a credential that is not coming back
+		// until re-export. (cursor.go was the only kind failing
+		// fast here; every other kind already hits the upstream
+		// with the empty bearer and lets the vendor answer.)
+		return nil, &types.APIError{Status: 401, Type: "authentication_error",
+			Message: "cursor: account has no credential — re-export the cursor session token"}
 	}
 	u, perr := translat.DecodeOpenAIRequest(raw)
 	if perr != nil {
