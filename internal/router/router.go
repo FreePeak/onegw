@@ -524,6 +524,21 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// error write because the content type is set.
 				return err
 			}
+			if err.CorruptStream && !retryForever {
+				// Corrupt upstream stream (translat.CorruptGuard; live
+				// 2026-09-20 free lane): the vendor's own decoder spliced
+				// invalid UTF-8 into its JSON, so every client downstream
+				// renders mojibake. The guard withheld the stream head, so
+				// this attempt committed NOTHING and the pair is already
+				// benched — and a broken decoder is broken for every
+				// account of this provider, so a same-target retry only
+				// re-burns the leg. Fall through to the next combo target;
+				// a direct route has no sibling and surfaces the 502.
+				// retry_forever keeps its contract (it waits a leg out
+				// instead of downgrading, benches included).
+				refusal = true // this leg is done: see the post-loop guard
+				break
+			}
 			// A hard refusal that is none of the verdicts below ends THIS
 			// leg and falls through to the next combo target; a direct
 			// route surfaces it unchanged. retry_forever does NOT override

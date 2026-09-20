@@ -1,3 +1,24 @@
+*Last updated: 2026-09-20 (corrupt upstream streams: a vendor that splices invalid UTF-8 into its SSE JSON is now failed over at the gateway before the client sees a byte; this branch also repairs the tree-wide `==` redaction damage):*
+The `free` lane served raw invalid UTF-8 INSIDE its SSE JSON strings — 4 thinking blocks across 711
+xdev sessions render as mojibake, the "weird characters" a thinking box shows. The vendor's own
+decode emits the garbage (the live leg resolves `kilocode/kilo-auto/free` -> openrouter -> Novita ->
+`inclusionai/ling-3.0-flash-vl:free`, and the vendor counts the junk as output: 122 reasoning tokens
+for a 288-char block), so it is generated, not leaked. Every JSON decoder downstream substitutes
+U+FFFD silently, so no decoded-text check can tell a corrupt wire from a model that emitted U+FFFD
+of its own: the verdict has to be byte-level. `translat.CorruptGuard` validates the raw wire —
+carrying an incomplete trailing rune into the next read so a character split across TCP chunks is
+not junk — and on a failover-capable buffered attempt holds the stream head, so the verdict lands
+BEFORE `w.WriteHeader`: `relayResponse` benches the leg and `Router.Execute` falls through to the
+next combo target, exactly like any other refusal. A released stream is never aborted (the client is
+already reading it), `hold == 0` keeps the fast path and single-target routes scan-only,
+`retry_forever` keeps its no-downgrade contract, and `textResponse` excludes gzip/binary bodies.
+
+This branch also repairs the redaction damage that made the tree uncompilable: a pass had replaced
+`==` with a 13-char marker in 236 files (215 Go) — `go build` failed repo-wide with
+`undefined: REMOVED`. The repair is lossless: after replacing the marker with `==`, the tree is
+byte-identical to its pre-redaction twin (local `94f9f4f`) apart from the docs-only
+`FREE-MODELS-PLAN.md` this chain carries.
+
 *Last updated: 2026-09-19 (release CI: the version job recomputed the same tag forever — fixed; the `docker` job's owner-gated GHCR block is now loud but non-fatal):*
 Four failures were stacked on the `release` workflow, and only one of them was a bug in its logic.
 
@@ -2840,6 +2861,32 @@ the issue):
   grok cli configs (pi `models.json` is the proven pattern).
 
 ## Current status (post-M5)
+- **Corrupt upstream streams — byte-level detection + pre-commit failover**
+  (2026-09-20, branch `fix/corrupt-stream-failover`, issue #125): the `free`
+  lane (kilocode -> openrouter -> Novita, `inclusionai/ling-3.0-flash-vl:free`)
+  emitted raw invalid UTF-8 inside its SSE JSON strings; 4 thinking blocks
+  across 711 xdev sessions carry U+FFFD as a result. Fix: the new
+  `translat.CorruptGuard` wraps the relay source and validates the raw wire,
+  carrying an incomplete trailing rune so a chunk-split character is not junk,
+  and holds the head of a failover-capable buffered attempt so the verdict
+  lands before `w.WriteHeader`. `relayResponse` benches the leg and
+  `Router.Execute` falls through the combo on the new `CorruptStream` verdict;
+  a direct route surfaces the 502 untouched, and a late post-release verdict
+  is recorded for metrics only — a stream the client is already reading is
+  never aborted. `hold == 0` keeps the fast path and single-target routes
+  scan-only, `retry_forever` is excluded so its no-downgrade contract holds,
+  and `textResponse` excludes gzip/binary bodies. Coverage ceiling: junk that
+  is VALID UTF-8 (a model emitting U+FFFD of its own) stays `LoopBreaker`'s
+  job. Tests: `internal/translat/corrupt_test.go` (failover on reasoning junk,
+  empty-content prefix keeps holding, post-release verdict is not
+  failover-capable, chunk-split rune survives, scan-only mode records without
+  failing over, an error delivered with the last bytes is propagated).
+  End-to-end on a throwaway port (fake junk upstream + a healthy sibling): the
+  unmodified build relays 92,893 bytes that contain invalid UTF-8 at byte 174;
+  the fixed build logs one `upstream_stream_corrupt` row for the junk leg
+  (`502`, same byte offset), answers the healthy leg instead — 1,416 bytes of
+  valid UTF-8 carrying `hello from good leg` — and leaves non-stream traffic
+  byte-identical.
 - **Upstream pre-first-byte timeouts on massive prefills — RCA + fix**
   (2026-09-08 evening, branch `fix/upstream-header-timeout`): the b-ai
   glm-5.3-flash dashboard showed recurring

@@ -603,6 +603,9 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		writeErr(w, translat.FmtGemini, rerr)
 		return
 	}
+	// A sibling target exists: a failure found before the first client byte
+	// can still be served (corrupt-stream guard's hold window).
+	d.failover = res.IsCombo && len(res.Targets) > 1
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
@@ -681,6 +684,9 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		writeErr(w, clientFmt, rerr)
 		return
 	}
+	// A sibling target exists: a failure found before the first client byte
+	// can still be served (corrupt-stream guard's hold window).
+	d.failover = res.IsCombo && len(res.Targets) > 1
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
@@ -973,6 +979,30 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 // speed anyone actually decoded at.
 const speedFloor = 200 * time.Millisecond
 
+// corruptHoldBytes is the head window the corrupt-stream guard withholds
+// before the first byte reaches a failover-capable client. Sized from the
+// live incident: the vendor packed ~330B of SSE per event and its first
+// invalid byte landed 13KB-26KB into the response (event ~40-70 of a
+// 130-token reply), so the window has to clear the worst case to keep the
+// verdict pre-commit. Cost on a healthy lane: a reasoning-only head shows
+// nothing for its first ~100 events (~1-4s) before the hold releases, while
+// a lane that emits content or a tool call releases at that first token.
+const corruptHoldBytes = 32 << 10
+
+// textResponse reports whether an upstream response body is text this
+// gateway may validate as UTF-8. A binary surface (audio, image passthrough)
+// and a pre-compressed body are not a model's decode: every one of their
+// bytes would read as corrupt.
+func textResponse(resp *http.Response) bool {
+	switch enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); enc {
+	case "", "identity":
+	default:
+		return false
+	}
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	return ct == "" || strings.Contains(ct, "json") || strings.Contains(ct, "event-stream")
+}
+
 // relayResponse delivers an upstream response to the client: the buffered
 // cross-format path for non-streaming format mismatches, otherwise the
 // sniffed/translated pipe. Usage is recorded, TPM and quota observed. It
@@ -1091,6 +1121,40 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		_, _ = w.Write(out)
 		rec = cr.Usage
 	} else {
+		var src io.Reader = newIdleBreak(res.Resp.Body, res.Resp.Body)
+		if len(head) > 0 {
+			// Re-attach the inspected head so no events are lost.
+			src = io.MultiReader(bytes.NewReader(head), src)
+		}
+		// Corrupt-stream guard (2026-09-20): hold the head of a
+		// failover-capable attempt until the guard has a verdict, so a
+		// vendor that splices invalid UTF-8 into its JSON (translat.
+		// CorruptGuard) is failed over BEFORE the first client byte
+		// instead of poisoning a stream the client is already reading.
+		// Scoped to text bodies: a binary or pre-compressed body is not a
+		// model's decode and every one of them would read as corrupt.
+		canFailOver := false
+		if d := deliveryFrom(ctx); d != nil && d.failover {
+			canFailOver = true
+		}
+		var guard *translat.CorruptGuard
+		if textResponse(res.Resp) {
+			hold := 0
+			if canFailOver {
+				hold = corruptHoldBytes
+			}
+			guard = translat.NewCorruptGuard(src, hold)
+			src = guard
+			if herr := guard.Prefetch(); herr != nil {
+				// Nothing written yet: discard the attempt, bench the leg
+				// and let Router.Execute fall through to the next combo
+				// target. The body cap never applied — no byte of the
+				// corrupt stream is relayed.
+				def.BenchModel(model, 0)
+				s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
+				return herr
+			}
+		}
 		h := w.Header()
 		if stream {
 			h.Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -1109,11 +1173,6 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 		flush()
 
-		var src io.Reader = newIdleBreak(res.Resp.Body, res.Resp.Body)
-		if len(head) > 0 {
-			// Re-attach the inspected head so no events are lost.
-			src = io.MultiReader(bytes.NewReader(head), src)
-		}
 		if upstreamFmt == clientFmt {
 			sn := usage.NewSniffer(src, 0)
 			_, cerr := io.Copy(flushWriter{w, flush}, sn)
@@ -1170,6 +1229,20 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				return herr
 			}
 			rec = u
+		}
+		if guard != nil {
+			if j := guard.Junk(); j != nil {
+				// Late verdict: the junk bytes are already on the wire, so
+				// this attempt cannot be replaced. Bench the leg for the
+				// requests that follow (only where a sibling target can
+				// serve them), record it for the dashboard, and leave this
+				// stream alone — aborting would truncate a stream the
+				// client is mid-read on.
+				if canFailOver {
+					def.BenchModel(model, 0)
+				}
+				s.m.upstreamErr(def.Name, model, acctName(res.Acct), j)
+			}
 		}
 	}
 	rec.UpstreamFormat = string(upstreamFmt)

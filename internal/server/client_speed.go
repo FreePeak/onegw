@@ -28,6 +28,12 @@ import (
 type delivery struct {
 	start time.Time
 	model string
+	// failover records that the resolved route has a sibling target, so a
+	// failure found before the first client byte can be replaced by
+	// Router.Execute's fall-through. Set once the route is known; read by
+	// the relay's corrupt-stream guard, which only withholds a stream head
+	// when a retry can actually serve the request (see corruptHoldBytes).
+	failover bool
 }
 
 type deliveryKey struct{}

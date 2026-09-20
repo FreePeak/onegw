@@ -237,6 +237,19 @@ type APIError struct {
 	// append a SECOND response onto the same stream. Router.Execute stops
 	// the loop when set. Never serialized.
 	StreamCommitted bool `json:"-"`
+
+	// CorruptStream marks an upstream response whose BYTE stream is not
+	// UTF-8: the vendor's own decoder splices invalid bytes into its SSE
+	// JSON strings (live 2026-09-20, the free lane's
+	// ling-3.0-flash-vl leg), so every JSON decode downstream silently
+	// turns them into U+FFFD and the client renders mojibake. The relay
+	// detects it before committing anything (translat.CorruptGuard), so
+	// Router.Execute treats it as this target's failure and falls through
+	// to the next combo target instead of surfacing it; a direct route
+	// has no sibling to serve and answers the 502. StreamCommitted stays
+	// false: no byte of the discarded attempt reached the client. Never
+	// serialized.
+	CorruptStream bool `json:"-"`
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).
