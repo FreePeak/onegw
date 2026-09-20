@@ -56,12 +56,13 @@ import (
 // credential: non-empty writes/keeps the matching [[oauth.accounts]] entry,
 // empty on update removes that entry and leaves the static key in charge.
 type acctEdit struct {
-	Name    string `json:"name"`
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
-	Weight  int    `json:"weight"`
-	RPM     int    `json:"rpm"`
-	OAuth   string `json:"oauth"`
+	Name           string `json:"name"`
+	APIKey         string `json:"api_key"`
+	DashboardToken string `json:"dashboard_token"` // cursor only: WorkosCursorSessionToken cookie for usage-summary probe
+	BaseURL        string `json:"base_url"`
+	Weight         int    `json:"weight"`
+	RPM            int    `json:"rpm"`
+	OAuth          string `json:"oauth"`
 }
 
 type providerEditReq struct {
@@ -575,12 +576,17 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 			// re-rendered from the request, so anything not carried over is
 			// DELETED from the file. Per-account base_url and weight are live
 			// (server.go copies both into provider.Account).
+			// dashboard_token is live for cursor accounts: it carries the
+			// browser session for the usage-summary probe.
 			if known {
 				if a.BaseURL == "" {
 					a.BaseURL = o.BaseURL
 				}
 				if a.Weight == 0 {
 					a.Weight = o.Weight
+				}
+				if a.DashboardToken == "" && o.DashboardToken != "" {
+					a.DashboardToken = o.DashboardToken
 				}
 			}
 			block = append(block, renderAccountTable(a, key)...)
@@ -776,6 +782,9 @@ func renderAccountTable(a acctEdit, key string) []string {
 	out := []string{"[[providers.accounts]]", tsv("name", a.Name)}
 	if key != "" {
 		out = append(out, tsv("api_key", key))
+	}
+	if a.DashboardToken != "" {
+		out = append(out, tsv("dashboard_token", a.DashboardToken))
 	}
 	if a.BaseURL != "" {
 		out = append(out, tsv("base_url", a.BaseURL))

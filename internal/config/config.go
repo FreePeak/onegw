@@ -260,7 +260,10 @@ type ProviderCfg struct {
 	// API (cursor.com/api/usage-summary) with the account's own BROWSER
 	// session JWT, so it needs no extra credential (a CLI/agent token 401s
 	// on this endpoint); an account on an uncapped lane reports no
-	// cap and is tracked only, never parked. For commandcode,
+	// cap and is tracked only, never parked. The account's
+	// dashboard_token (WorkosCursorSessionToken cookie value) is
+	// used for the quota probe; api_key remains the upstream Bearer
+	// token (e.g. cursorAuth/accessToken from state.vscdb). For commandcode,
 	// SubscriptionURL overrides the API BASE (https://api.commandcode.ai)
 	// — the probe appends /alpha paths. Other dialects: SubscriptionURL
 	// overrides the full endpoint (self-hosted mirrors, tests).
@@ -313,6 +316,16 @@ type RotationCfg struct {
 type Acct struct {
 	Name    string `toml:"name"`
 	APIKey  string `toml:"api_key"`
+	// DashboardToken is a browser session token (the
+	// WorkosCursorSessionToken cookie value) used ONLY for
+	// cursor's cursor.com/api/usage-summary quota probe. It
+	// differs from api_key: the upstream API accepts any valid
+	// Cursor token, but the usage-summary endpoint rejects
+	// CLI/agent keychain tokens (401). Leave empty for non-cursor
+	// providers; for cursor, set this to the browser-exported
+	// session and leave api_key as the upstream token
+	// (e.g. cursorAuth/accessToken from state.vscdb).
+	DashboardToken string `toml:"dashboard_token"`
 	BaseURL string `toml:"base_url"`
 	Weight  int    `toml:"weight"`
 	// RPM proactively caps upstream attempts per minute for this account
