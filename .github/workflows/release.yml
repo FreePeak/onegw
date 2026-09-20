@@ -298,4 +298,7 @@ jobs:
               echo "See \`docs/PRD.md\`."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error title=docker image NOT published::ghcr.io/freepeak/onegw was not published (missing:${missing}) — the package is linked to FreePeak/onegw-private. Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write, then re-run this workflow. See docs/PRD.md."
+          else
+            [ "$code" = 200 ] || \
+              { echo "::error::ghcr.io/freepeak/onegw:$ref is not pullable ($code) — the package is not linked to this repo (Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write). See docs/PRD.md."; exit 1; }
           fi
