@@ -479,3 +479,87 @@ func TestSubscriptionQuotaCursorDialect(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestSubTargetsCursorDashboardToken verifies that when a cursor
+// account has dashboard_token set, subTargets uses it as AcctKey
+// for the quota probe while api_key is kept for the upstream Bearer.
+func TestSubTargetsCursorDashboardToken(t *testing.T) {
+	upstreamJWT := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhdXRoMHx1c2VyXzAxSzdCV1NZNkJLUEszQVJYRlBEQ1FHSFM1IiwidHlwZSI6InNlc3Npb24ifQ.sig"
+	dashboardJWT := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJncm9rfHVzZXJfMDFNMUpQOFM0TUFORDlDUVpDQVRDV1JCWDAiLCJ0eXBlIjoid2ViIn0.sig"
+
+	cfg := &config.Config{}
+	cfg.Providers = []config.ProviderCfg{{
+		Name: "cursor", Kind: "cursor",
+		SubscriptionQuota: "cursor",
+		Accounts: []config.Acct{
+			{
+				Name:            "svc",
+				APIKey:          upstreamJWT,          // for upstream Bearer
+				DashboardToken:  dashboardJWT,          // for quota probe
+			},
+		},
+	}}
+
+	targets := subTargets(cfg)
+	if len(targets) != 1 {
+		t.Fatalf("got %d targets, want 1", len(targets))
+	}
+	if targets[0].Provider != "cursor" || targets[0].AcctName != "svc" {
+		t.Fatalf("target = %s/%s, want cursor/svc", targets[0].Provider, targets[0].AcctName)
+	}
+	if targets[0].AcctKey != dashboardJWT {
+		t.Fatalf("AcctKey = %q (len %d), want dashboard token (len %d)", targets[0].AcctKey, len(targets[0].AcctKey), len(dashboardJWT))
+	}
+	if targets[0].Dialect != "cursor" {
+		t.Fatalf("Dialect = %q, want cursor", targets[0].Dialect)
+	}
+}
+
+// TestSubTargetsCursorNoDashboardToken falls back to api_key
+// when dashboard_token is empty (backward compat).
+func TestSubTargetsCursorNoDashboardToken(t *testing.T) {
+	jwt := func(sub string) string {
+		head := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
+		return head + "." + payload + ".sig"
+	}
+
+	cfg := &config.Config{}
+	cfg.Providers = []config.ProviderCfg{{
+		Name: "cursor", Kind: "cursor",
+		SubscriptionQuota: "cursor",
+		Accounts: []config.Acct{
+			{Name: "legacy", APIKey: jwt("auth0|user_legacy")},
+		},
+	}}
+
+	targets := subTargets(cfg)
+	if len(targets) != 1 {
+		t.Fatalf("got %d targets, want 1", len(targets))
+	}
+	if targets[0].AcctKey != cfg.Providers[0].Accounts[0].APIKey {
+		t.Fatalf("AcctKey = %q, want api_key %q", targets[0].AcctKey, cfg.Providers[0].Accounts[0].APIKey)
+	}
+}
+
+// TestSubTargetsNonCursorUnchanged verifies that non-cursor
+// providers still use api_key as AcctKey regardless of
+// dashboard_token.
+func TestSubTargetsNonCursorUnchanged(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Providers = []config.ProviderCfg{{
+		Name: "grok-cli", Kind: "openai-responses",
+		SubscriptionQuota: "grok-cli",
+		Accounts: []config.Acct{
+			{Name: "acc", APIKey: "sk-noncursor", DashboardToken: "should-be-ignored"},
+		},
+	}}
+
+	targets := subTargets(cfg)
+	if len(targets) != 1 {
+		t.Fatalf("got %d targets, want 1", len(targets))
+	}
+	if targets[0].AcctKey != "sk-noncursor" {
+		t.Fatalf("AcctKey = %q, want sk-noncursor", targets[0].AcctKey)
+	}
+}

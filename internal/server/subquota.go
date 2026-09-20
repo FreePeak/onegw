@@ -46,13 +46,19 @@ func subTargets(cfg *config.Config) []subquota.Target {
 			accounts = []config.Acct{{Name: "default", APIKey: p.APIKey}}
 		}
 		for _, a := range accounts {
-			if a.APIKey ***REMOVED*** "" && !oauthAcct[p.Name+"/"+a.Name] {
+			if a.APIKey == "" && a.DashboardToken == "" && !oauthAcct[p.Name+"/"+a.Name] {
 				continue // no credential of any kind: nothing to probe
+			}
+			acctKey := a.APIKey
+			if p.SubscriptionQuota == subquota.Cursor && a.DashboardToken != "" {
+				// cursor's usage-summary endpoint requires a browser
+				// session cookie, not the upstream Bearer token.
+				acctKey = a.DashboardToken
 			}
 			out = append(out, subquota.Target{
 				Provider: p.Name,
 				AcctName: a.Name,
-				AcctKey:  a.APIKey,
+				AcctKey:  acctKey,
 				Dialect:  p.SubscriptionQuota,
 				URL:      p.SubscriptionURL,
 			})
