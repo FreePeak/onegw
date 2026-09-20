@@ -57,25 +57,25 @@ func TestValidateTaskRoutingAndTiers(t *testing.T) {
 
 	bad := base()
 	bad.Server.TaskRouting = "maybe"
-	if err := bad.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "task_routing") {
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "task_routing") {
 		t.Fatalf("task_routing \"maybe\" must fail: %v", err)
 	}
 
 	badTier := base()
 	badTier.Providers[0].Tiers[0].Power = 200
-	if err := badTier.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "power") {
+	if err := badTier.Validate(); err == nil || !strings.Contains(err.Error(), "power") {
 		t.Fatalf("tier power 200 must fail: %v", err)
 	}
 
 	noModel := base()
 	noModel.Providers[0].Tiers[0].Model = ""
-	if err := noModel.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "missing model") {
+	if err := noModel.Validate(); err == nil || !strings.Contains(err.Error(), "missing model") {
 		t.Fatalf("tier without model must fail: %v", err)
 	}
 
 	negCtx := base()
 	negCtx.Providers[0].Tiers[0].Context = -1
-	if err := negCtx.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "context/max_out") {
+	if err := negCtx.Validate(); err == nil || !strings.Contains(err.Error(), "context/max_out") {
 		t.Fatalf("negative context must fail: %v", err)
 	}
 }

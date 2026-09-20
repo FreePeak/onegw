@@ -40,13 +40,13 @@ func subTargets(cfg *config.Config) []subquota.Target {
 			continue
 		}
 		accounts := p.Accounts
-		if len(accounts) ***REMOVED*** 0 && p.APIKey != "" {
+		if len(accounts) == 0 && p.APIKey != "" {
 			// Single api_key providers build one "default" account (same
 			// convention as Def building).
 			accounts = []config.Acct{{Name: "default", APIKey: p.APIKey}}
 		}
 		for _, a := range accounts {
-			if a.APIKey ***REMOVED*** "" && !oauthAcct[p.Name+"/"+a.Name] {
+			if a.APIKey == "" && !oauthAcct[p.Name+"/"+a.Name] {
 				continue // no credential of any kind: nothing to probe
 			}
 			out = append(out, subquota.Target{
@@ -66,7 +66,7 @@ func subTargets(cfg *config.Config) []subquota.Target {
 // (TokenProvider), so the config-time key may already be stale.
 func (s *Server) liveSubKey(provider, acctName string) string {
 	st := s.cur()
-	if st ***REMOVED*** nil || st.pool ***REMOVED*** nil {
+	if st == nil || st.pool == nil {
 		return ""
 	}
 	def, ok := st.pool.Get(provider)
@@ -75,7 +75,7 @@ func (s *Server) liveSubKey(provider, acctName string) string {
 	}
 	for i := range def.Accounts {
 		a := &def.Accounts[i]
-		if a.Name ***REMOVED*** acctName && a.HasOAuthToken() {
+		if a.Name == acctName && a.HasOAuthToken() {
 			if tok := a.OAuthToken.Token(); tok != "" {
 				return tok
 			}
@@ -91,7 +91,7 @@ func (s *Server) liveSubKey(provider, acctName string) string {
 // self-heals without a manual un-park.
 func (s *Server) parkExhaustedSubscription(tgt subquota.Target, until time.Time) {
 	st := s.cur()
-	if st ***REMOVED*** nil || st.pool ***REMOVED*** nil {
+	if st == nil || st.pool == nil {
 		return
 	}
 	def, ok := st.pool.Get(tgt.Provider)
@@ -105,7 +105,7 @@ func (s *Server) parkExhaustedSubscription(tgt subquota.Target, until time.Time)
 	for i := range def.Accounts {
 		// Match by account name only: the slot's own stored key always
 		// matches itself inside pool.cool, and OAuth slots rotate keys.
-		if a := &def.Accounts[i]; a.Name ***REMOVED*** tgt.AcctName {
+		if a := &def.Accounts[i]; a.Name == tgt.AcctName {
 			def.Cool(a, d)
 			return
 		}
@@ -129,7 +129,7 @@ func (s *Server) handleAPISubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accounts := s.subscriptionSnapshots()
-	if accounts ***REMOVED*** nil {
+	if accounts == nil {
 		accounts = []subquota.Snapshot{}
 	}
 	writeJSON(w, map[string]any{"accounts": accounts})
@@ -163,7 +163,7 @@ func (s *Server) subViews() []subRowView {
 	now := time.Now()
 	for _, snap := range s.subscriptionSnapshots() {
 		acct := snap.Account
-		if acct ***REMOVED*** "" {
+		if acct == "" {
 			acct = "default"
 		}
 		row := subRowView{

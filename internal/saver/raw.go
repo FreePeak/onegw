@@ -73,7 +73,7 @@ func (s *Saver) ApplyRaw(format translat.Format, raw []byte) ([]byte, int64) {
 	default:
 		return raw, 0
 	}
-	if saved <= 0 && rc.ce ***REMOVED*** nil {
+	if saved <= 0 && rc.ce == nil {
 		return raw, 0
 	}
 	var buf bytes.Buffer

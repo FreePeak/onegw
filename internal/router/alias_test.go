@@ -148,7 +148,7 @@ func TestAliasChainCapsAtMaxHops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("over-long chain should fall through, not error: %v", err)
 	}
-	if res.Targets[0].Model ***REMOVED*** "m1" {
+	if res.Targets[0].Model == "m1" {
 		t.Fatal("over-long chain must NOT resolve to its terminal target — hop cap is not enforced")
 	}
 	if res.Targets[0].Model != last {

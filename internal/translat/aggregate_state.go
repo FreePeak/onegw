@@ -96,7 +96,7 @@ func (a *AggregateState) Result() *types.ChatResponse {
 	if t := a.think.String(); t != "" {
 		a.resp.Content = append([]types.Part{{Type: types.PartThinking, Text: t}}, a.resp.Content...)
 	}
-	if a.resp.StopReason ***REMOVED*** "" {
+	if a.resp.StopReason == "" {
 		a.resp.StopReason = types.StopEndTurn
 	}
 	return &a.resp

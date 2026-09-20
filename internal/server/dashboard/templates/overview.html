@@ -54,7 +54,7 @@ function tokSeries(s){
   return {label: s.label, stroke: s.color, width: 1.6,
     fill: s.fill ? `color-mix(in srgb, ${s.color} 18%, transparent)` : undefined,
     points: {show: false},
-    value: (u, v, si, i) => v ***REMOVED*** null ? '' : kmb(s.layer[i])};
+    value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])};
 }
 function draw(){
   const el = document.getElementById('chart-tok');

@@ -36,7 +36,7 @@ func newReasoningEchoStub() *reasoningEchoStub {
 		_ = json.Unmarshal(b, &req)
 		bad := false
 		for _, m := range req.Messages {
-			if m["role"] ***REMOVED*** "assistant" {
+			if m["role"] == "assistant" {
 				if _, has := m["reasoning"]; has {
 					bad = true
 				}

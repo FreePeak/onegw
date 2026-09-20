@@ -100,7 +100,7 @@ func TestTransportErrClassification(t *testing.T) {
 			if got.Status != c.wantStatus || got.Type != c.wantType {
 				t.Fatalf("got %d/%s, want %d/%s", got.Status, got.Type, c.wantStatus, c.wantType)
 			}
-			if got.Message ***REMOVED*** "" {
+			if got.Message == "" {
 				t.Fatal("classifier must keep the underlying error text")
 			}
 		})
@@ -150,7 +150,7 @@ func TestDoTimeoutSurfacesUpstreamTimeout(t *testing.T) {
 		HeaderTimeout: 80 * time.Millisecond,
 	}
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("stalled upstream must error out via the header-timeout budget")
 	}
 	if apiErr.Type != "upstream_timeout" || apiErr.Status != 504 {
@@ -173,7 +173,7 @@ func TestHTTPClientMemoizedPerDef(t *testing.T) {
 	if c1 != c2 {
 		t.Fatal("httpClient must return one client per Def (connection pooling)")
 	}
-	if c1 ***REMOVED*** client {
+	if c1 == client {
 		t.Fatal("tuned HeaderTimeout must not silently fall back to the default client")
 	}
 	var tr *http.Transport

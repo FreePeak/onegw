@@ -47,7 +47,7 @@ func tokenCount(r *http.Request, body []byte) int {
 	var probe struct {
 		MockTokens int `json:"mock_tokens"`
 	}
-	if json.Unmarshal(body, &probe) ***REMOVED*** nil && probe.MockTokens > 0 {
+	if json.Unmarshal(body, &probe) == nil && probe.MockTokens > 0 {
 		n = probe.MockTokens
 	}
 	return n

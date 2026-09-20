@@ -147,7 +147,7 @@ func TestTaskRoutingDecisionLogged(t *testing.T) {
 	entries := srv.reqlog.latest(50)
 	found := false
 	for _, e := range entries {
-		if e.Kind ***REMOVED*** "task_routing" {
+		if e.Kind == "task_routing" {
 			found = true
 			if !strings.Contains(e.Err, "task=heavy") || !strings.Contains(e.Err, "strong/deep > cheap/fast") {
 				t.Fatalf("decision detail = %q", e.Err)

@@ -15,7 +15,7 @@ func mkRunPool(t *testing.T, minRun, maxRun int, accts ...Account) (*accountPool
 	p.pickN = func(int) int { return 0 }
 	pick := func() string {
 		a, _ := p.next("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatalf("pool unexpectedly cooling")
 		}
 		return a.Name

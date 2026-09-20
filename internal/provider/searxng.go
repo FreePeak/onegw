@@ -56,7 +56,7 @@ const (
 // ParseSearchTimeout turns a provider timeout string ("10s", "1m") into a
 // duration; empty or invalid falls back to SearchDefaultTimeout.
 func ParseSearchTimeout(s string) time.Duration {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return SearchDefaultTimeout
 	}
 	d, err := time.ParseDuration(s)
@@ -125,7 +125,7 @@ type searxResult struct {
 // combos fall through to the next target — search is fail-open.
 func (d *Def) searxSearch(ctx context.Context, acct *Account, query string) ([]searxResult, *types.APIError) {
 	base := strings.TrimRight(d.Base(acct), "/")
-	if base ***REMOVED*** "" {
+	if base == "" {
 		return nil, searchUnavailable(fmt.Errorf("no base_url configured"))
 	}
 	maxResults, timeout := d.searchLimits()
@@ -194,11 +194,11 @@ func searchQuery(body []byte) (string, error) {
 // flattenUserContent renders OpenAI message content — a plain string or a
 // parts array — as text. Non-text parts (images) are ignored.
 func flattenUserContent(raw json.RawMessage) string {
-	if len(raw) ***REMOVED*** 0 {
+	if len(raw) == 0 {
 		return ""
 	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err ***REMOVED*** nil {
+	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
 	var parts []struct {
@@ -210,7 +210,7 @@ func flattenUserContent(raw json.RawMessage) string {
 	}
 	var sb strings.Builder
 	for _, p := range parts {
-		if p.Type ***REMOVED*** "text" && p.Text != "" {
+		if p.Type == "text" && p.Text != "" {
 			if sb.Len() > 0 {
 				sb.WriteByte(' ')
 			}
@@ -225,13 +225,13 @@ func flattenUserContent(raw json.RawMessage) string {
 func formatSearchResults(query string, results []searxResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Web search results for %q\n\n", query)
-	if len(results) ***REMOVED*** 0 {
+	if len(results) == 0 {
 		b.WriteString("No results found.")
 		return b.String()
 	}
 	for i, r := range results {
 		title := collapseSpace(r.Title)
-		if title ***REMOVED*** "" {
+		if title == "" {
 			title = r.URL
 		}
 		fmt.Fprintf(&b, "%d. [%s](%s)", i+1, capBytes(title, searchTitleCap), r.URL)
@@ -298,7 +298,7 @@ func searchSSE(model, content string, in, out int64) []byte {
 	}
 	var b bytes.Buffer
 	write := func(c map[string]any) {
-		if raw, err := json.Marshal(c); err ***REMOVED*** nil {
+		if raw, err := json.Marshal(c); err == nil {
 			b.WriteString("data: ")
 			b.Write(raw)
 			b.WriteString("\n\n")

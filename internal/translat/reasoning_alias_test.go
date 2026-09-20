@@ -33,7 +33,7 @@ func TestDecodeOpenAIRequestReasoningAliases(t *testing.T) {
 			continue
 		}
 		for _, p := range m.Content {
-			if p.Type ***REMOVED*** types.PartThinking {
+			if p.Type == types.PartThinking {
 				got = append(got, p.Text)
 			}
 		}
@@ -69,7 +69,7 @@ func TestDecodeOpenAIRequestNoReasoningInvented(t *testing.T) {
 	}
 	for _, m := range u.Messages {
 		for _, p := range m.Content {
-			if p.Type ***REMOVED*** types.PartThinking {
+			if p.Type == types.PartThinking {
 				t.Fatalf("invented thinking part: %+v", p)
 			}
 		}
@@ -85,7 +85,7 @@ func TestDecodeOpenAIStreamReasoningAlias(t *testing.T) {
 	}
 	found := false
 	for _, e := range evs {
-		if e.Kind ***REMOVED*** EvDelta && e.PartType ***REMOVED*** types.PartThinking && e.Thinking ***REMOVED*** "thinking via alias" {
+		if e.Kind == EvDelta && e.PartType == types.PartThinking && e.Thinking == "thinking via alias" {
 			found = true
 		}
 	}
@@ -105,7 +105,7 @@ func TestDecodeOpenAIResponseReasoningAlias(t *testing.T) {
 	}
 	found := false
 	for _, p := range resp.Content {
-		if p.Type ***REMOVED*** types.PartThinking && p.Text ***REMOVED*** "thinking via alias" {
+		if p.Type == types.PartThinking && p.Text == "thinking via alias" {
 			found = true
 		}
 	}
@@ -119,7 +119,7 @@ func TestDecodeOpenAIResponseReasoningAlias(t *testing.T) {
 	}
 	found2 := false
 	for _, p := range resp2.Content {
-		if p.Type ***REMOVED*** types.PartThinking && p.Text ***REMOVED*** "detail text" {
+		if p.Type == types.PartThinking && p.Text == "detail text" {
 			found2 = true
 		}
 	}

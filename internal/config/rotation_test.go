@@ -81,7 +81,7 @@ billing_parole = "whenever"`,
 	} {
 		path := filepath.Join(dir, name+" toml")
 		os.WriteFile(path, []byte(body), 0o600)
-		if _, err := Load(path); err ***REMOVED*** nil {
+		if _, err := Load(path); err == nil {
 			t.Errorf("%s: Load must fail", name)
 		}
 	}

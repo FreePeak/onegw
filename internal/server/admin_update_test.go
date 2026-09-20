@@ -50,7 +50,7 @@ func TestUpdateStatusEndpoint(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if st.Pid ***REMOVED*** 0 || st.Current ***REMOVED*** "" {
+	if st.Pid == 0 || st.Current == "" {
 		t.Fatalf("status missing pid/current: %+v", st)
 	}
 }
@@ -69,7 +69,7 @@ func TestUpdatePOSTCheckRunsCheck(t *testing.T) {
 	}
 	// The fixture repo has no releases: the check must record an error,
 	// not pretend everything is fine.
-	if st.LastError ***REMOVED*** "" || st.LastCheck ***REMOVED*** nil {
+	if st.LastError == "" || st.LastCheck == nil {
 		t.Fatalf("expected failed-check status, got %+v", st)
 	}
 	// last_check must be a real timestamp (RFC3339 JSON), not epoch zero.

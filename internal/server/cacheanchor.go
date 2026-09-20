@@ -40,7 +40,7 @@ import (
 // them at load); bodies that fail to parse are forwarded verbatim.
 // json.Number decoding keeps numeric fidelity across the rewrite.
 func anchorCacheProfile(body []byte, model string, def *provider.Def, upstream translat.Format, sessionKey string) []byte {
-	if def ***REMOVED*** nil {
+	if def == nil {
 		return body
 	}
 	switch def.CacheProfile {
@@ -57,7 +57,7 @@ func anchorCacheProfile(body []byte, model string, def *provider.Def, upstream t
 		}
 		return capDashScopeMarkers(body)
 	case "sticky-key":
-		if upstream != translat.FmtOpenAI || sessionKey ***REMOVED*** "" {
+		if upstream != translat.FmtOpenAI || sessionKey == "" {
 			return body
 		}
 		return injectPromptCacheKey(body, sessionKey)
@@ -122,12 +122,12 @@ func anchorClaudeCache(body []byte) []byte {
 	msgs, _ := root["messages"].([]any)
 	target := -1
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if m, ok := msgs[i].(map[string]any); ok && m["role"] ***REMOVED*** "assistant" {
+		if m, ok := msgs[i].(map[string]any); ok && m["role"] == "assistant" {
 			target = i
 			break
 		}
 	}
-	if target ***REMOVED*** -1 && len(msgs) > 0 {
+	if target == -1 && len(msgs) > 0 {
 		target = len(msgs) - 1 // turn one: anchor the final message
 	}
 	if target >= 0 {
@@ -148,7 +148,7 @@ func anchorClaudeCache(body []byte) []byte {
 func anchorLastCacheableBlock(m map[string]any) bool {
 	switch c := m["content"].(type) {
 	case string:
-		if c ***REMOVED*** "" {
+		if c == "" {
 			return false
 		}
 		m["content"] = []any{map[string]any{
@@ -258,7 +258,7 @@ func injectPromptCacheKey(body []byte, sessionKey string) []byte {
 	if err := dec.Decode(&root); err != nil {
 		return body
 	}
-	if cur, ok := root["prompt_cache_key"].(string); ok && cur ***REMOVED*** sessionKey {
+	if cur, ok := root["prompt_cache_key"].(string); ok && cur == sessionKey {
 		return body
 	}
 	root["prompt_cache_key"] = sessionKey

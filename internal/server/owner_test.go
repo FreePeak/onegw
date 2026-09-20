@@ -105,7 +105,7 @@ func TestReloadRestampsOwner(t *testing.T) {
 	srv.Reload(cfg)
 
 	after := mtime()
-	if after ***REMOVED*** before {
+	if after == before {
 		t.Fatalf("owner.json not re-stamped on reload: config_mtime %q unchanged", after)
 	}
 	// Health keeps serving the fresh record.

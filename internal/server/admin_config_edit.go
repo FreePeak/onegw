@@ -118,7 +118,7 @@ func (s *Server) handleAdminProviderEdit(w http.ResponseWriter, r *http.Request)
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.Name) ***REMOVED*** "" {
+	if strings.TrimSpace(req.Name) == "" {
 		adminError(w, http.StatusBadRequest, "provider name is required")
 		return
 	}
@@ -153,7 +153,7 @@ func (s *Server) handleAdminProviderDisabled(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	name := r.PathValue("name")
-	if strings.TrimSpace(name) ***REMOVED*** "" {
+	if strings.TrimSpace(name) == "" {
 		adminError(w, http.StatusBadRequest, "provider name is required")
 		return
 	}
@@ -199,11 +199,11 @@ func (s *Server) handleAdminComboEdit(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.Name) ***REMOVED*** "" {
+	if strings.TrimSpace(req.Name) == "" {
 		adminError(w, http.StatusBadRequest, "combo name is required")
 		return
 	}
-	if len(req.Targets) ***REMOVED*** 0 {
+	if len(req.Targets) == 0 {
 		adminError(w, http.StatusBadRequest, "combo needs at least one target")
 		return
 	}
@@ -280,7 +280,7 @@ func scanBlocks(lines []string, header string) []tomlBlock {
 			continue
 		}
 		switch {
-		case t ***REMOVED*** header:
+		case t == header:
 			if cur >= 0 {
 				out = append(out, tomlBlock{cur, i})
 			}
@@ -371,7 +371,7 @@ func spliceProvider(lines []string, req providerEditReq) ([]string, string, erro
 		return nil, "", err
 	}
 	out := cloneLines(lines)
-	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]
 	}
 	out = append(out, "")
@@ -409,7 +409,7 @@ func parseAccounts(block []string) map[string]config.Acct {
 		t := strings.TrimSpace(ln)
 		if strings.HasPrefix(t, "[") {
 			flush()
-			inAcct = t ***REMOVED*** "[[providers.accounts]]"
+			inAcct = t == "[[providers.accounts]]"
 			cur = config.Acct{}
 			continue
 		}
@@ -459,7 +459,7 @@ func parseAccounts(block []string) map[string]config.Acct {
 			if items, _, ok := gatherStringArray(block, i); ok {
 				for n, k := range items {
 					name := fmt.Sprintf("key-%d", n+1)
-					if k ***REMOVED*** "" {
+					if k == "" {
 						continue
 					}
 					if _, taken := out[name]; !taken {
@@ -562,7 +562,7 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 		for _, a := range req.Accounts {
 			o, known := old[a.Name]
 			key := a.APIKey
-			if key ***REMOVED*** "" {
+			if key == "" {
 				if known && o.APIKey != "" {
 					key = o.APIKey
 					used[a.Name] = true
@@ -576,10 +576,10 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 			// DELETED from the file. Per-account base_url and weight are live
 			// (server.go copies both into provider.Account).
 			if known {
-				if a.BaseURL ***REMOVED*** "" {
+				if a.BaseURL == "" {
 					a.BaseURL = o.BaseURL
 				}
-				if a.Weight ***REMOVED*** 0 {
+				if a.Weight == 0 {
 					a.Weight = o.Weight
 				}
 			}
@@ -587,7 +587,7 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 		}
 		// api_key: superseded iff the request did not just write a fresh
 		// provider-level key and the "default" carry-over was consumed.
-		if req.APIKey ***REMOVED*** "" && used["default"] {
+		if req.APIKey == "" && used["default"] {
 			block = removeScalar(block, "api_key")
 		}
 		block = dropSupersededKeysArray(block, used)
@@ -604,7 +604,7 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 // moment a keyless row is written. The keyless-by-design kinds keep their
 // carve-out, matching config.Load.
 func refuseStrandedAccounts(req providerEditReq, old map[string]config.Acct) error {
-	if req.Accounts ***REMOVED*** nil {
+	if req.Accounts == nil {
 		return nil
 	}
 	switch req.Kind {
@@ -677,7 +677,7 @@ func upsertScalar(block []string, key, rendered string) []string {
 	for i := 1; i < tops; i++ {
 		t := strings.TrimSpace(block[i])
 		eq := strings.Index(t, "=")
-		if eq > 0 && strings.TrimSpace(t[:eq]) ***REMOVED*** "name" {
+		if eq > 0 && strings.TrimSpace(t[:eq]) == "name" {
 			at = i + 1
 			break
 		}
@@ -731,7 +731,7 @@ func removeAccountTables(block []string) []string {
 	for _, ln := range block {
 		t := strings.TrimSpace(ln)
 		if strings.HasPrefix(t, "[") { // any header ends the account region
-			inAcct = t ***REMOVED*** "[[providers.accounts]]"
+			inAcct = t == "[[providers.accounts]]"
 			if !inAcct {
 				out = append(out, ln)
 			}
@@ -741,12 +741,12 @@ func removeAccountTables(block []string) []string {
 			out = append(out, ln)
 			continue
 		}
-		if t ***REMOVED*** "" || isAcctField(t) {
+		if t == "" || isAcctField(t) {
 			continue // re-rendered from the request
 		}
 		hoisted = append(hoisted, ln)
 	}
-	if len(hoisted) ***REMOVED*** 0 {
+	if len(hoisted) == 0 {
 		return out
 	}
 	// Hoisted lines join the top-level region, where the scalar upserts
@@ -888,7 +888,7 @@ func spliceCombo(lines []string, req comboEditReq) ([]string, string, error) {
 		return nil, "", err
 	}
 	out := cloneLines(lines)
-	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]
 	}
 	out = append(out, "")
@@ -920,13 +920,13 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 	want := map[string]string{}
 	for _, a := range accts {
 		svc, name := strings.TrimSpace(a.OAuth), strings.TrimSpace(a.Name)
-		if svc ***REMOVED*** "" || name ***REMOVED*** "" {
+		if svc == "" || name == "" {
 			continue
 		}
 		want[name] = svc
 	}
 	blocks := scanBlocks(lines, "[[oauth.accounts]]")
-	if len(blocks) ***REMOVED*** 0 && len(want) ***REMOVED*** 0 {
+	if len(blocks) == 0 && len(want) == 0 {
 		return lines, nil
 	}
 	// Borrower references among the entries this save does NOT manage: dropping
@@ -948,7 +948,7 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 	last := 0
 	for _, b := range blocks {
 		e := parseOAuthBlock(cloneLines(lines[b.start:b.end]))
-		managed := e.owner ***REMOVED*** "" && e.provider ***REMOVED*** provName
+		managed := e.owner == "" && e.provider == provName
 		if managed && insertAt < 0 {
 			// Newest first, so the grid's sign-in pills agree with the order
 			// the editor lists accounts in. Taken before the entry's leading
@@ -962,7 +962,7 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 			continue
 		}
 		svc := want[e.account]
-		if svc ***REMOVED*** "" {
+		if svc == "" {
 			if deps := borrowedBy[e.provider+"/"+e.account]; len(deps) > 0 {
 				return nil, fmt.Errorf("cannot drop the OAuth account %s: %s borrows its session (owner = %q) — remove that borrower first",
 					e.provider+"/"+e.account, strings.Join(deps, ", "), e.provider+"/"+e.account)
@@ -980,13 +980,13 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 	var add []string
 	for _, a := range accts {
 		svc, name := strings.TrimSpace(a.OAuth), strings.TrimSpace(a.Name)
-		if svc ***REMOVED*** "" || name ***REMOVED*** "" || kept[name] {
+		if svc == "" || name == "" || kept[name] {
 			continue
 		}
 		kept[name] = true // a duplicated row must not write a second entry
 		add = append(add, renderOAuthEntry(provName, name, svc)...)
 	}
-	if len(add) ***REMOVED*** 0 {
+	if len(add) == 0 {
 		return out, nil
 	}
 	add = append([]string{""}, add...)
@@ -997,7 +997,7 @@ func spliceOAuthAccounts(lines []string, provName string, accts []acctEdit) ([]s
 		res = append(res, out[insertAt:]...)
 		return res, nil
 	}
-	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) ***REMOVED*** "" {
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]
 	}
 	return append(out, add...), nil
@@ -1012,7 +1012,7 @@ func parseOAuthBlock(block []string) oauthEntry {
 	e := oauthEntry{lines: block}
 	for _, ln := range block {
 		t := strings.TrimSpace(ln)
-		if t ***REMOVED*** "" || strings.HasPrefix(t, "[") || strings.HasPrefix(t, "#") {
+		if t == "" || strings.HasPrefix(t, "[") || strings.HasPrefix(t, "#") {
 			continue
 		}
 		eq := strings.Index(t, "=")
@@ -1031,10 +1031,10 @@ func parseOAuthBlock(block []string) oauthEntry {
 			e.owner = val
 		}
 	}
-	if e.account ***REMOVED*** "" {
+	if e.account == "" {
 		e.account = "default"
 	}
-	if e.service ***REMOVED*** "" && e.owner ***REMOVED*** "" {
+	if e.service == "" && e.owner == "" {
 		e.service = e.provider
 	}
 	return e

@@ -115,7 +115,7 @@ func truncErr(s string) string {
 // paths that never picked an account (or hand-built CallResults in tests)
 // carry an empty account.
 func acctName(a *provider.Account) string {
-	if a ***REMOVED*** nil {
+	if a == nil {
 		return ""
 	}
 	return a.Name

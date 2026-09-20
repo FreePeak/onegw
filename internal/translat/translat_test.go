@@ -102,7 +102,7 @@ func TestAnthropicRequestToUnifiedToOpenAI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Thinking ***REMOVED*** nil || u.Thinking.BudgetTokens != 5000 {
+	if u.Thinking == nil || u.Thinking.BudgetTokens != 5000 {
 		t.Fatalf("thinking lost: %+v", u.Thinking)
 	}
 	// user msg: text part + tool_result part; assistant: tool_use
@@ -126,7 +126,7 @@ func TestAnthropicRequestToUnifiedToOpenAI(t *testing.T) {
 	if len(msgs) != want {
 		t.Fatalf("want %d openai messages, got %d: %s", want, len(msgs), out)
 	}
-	if a := msgs[1].(map[string]any); a["role"] != "assistant" || a["tool_calls"] ***REMOVED*** nil {
+	if a := msgs[1].(map[string]any); a["role"] != "assistant" || a["tool_calls"] == nil {
 		t.Fatalf("assistant tool_calls turn lost: %v", a)
 	}
 	toolMsg := msgs[2].(map[string]any)
@@ -227,7 +227,7 @@ func TestTranslateStreamAnthropicToOpenAI(t *testing.T) {
 	if !strings.HasPrefix(out, "data: ") {
 		t.Fatalf("missing SSE prefix: %q", out[:40])
 	}
-	if !strings.Contains(out, `"reasoning_content"`) ***REMOVED*** true && strings.Count(out, "tool_calls") < 2 {
+	if !strings.Contains(out, `"reasoning_content"`) == true && strings.Count(out, "tool_calls") < 2 {
 		t.Fatalf("tool_calls chunks missing: %s", out)
 	}
 	if !strings.Contains(out, `"finish_reason":"tool_calls"`) {
@@ -331,7 +331,7 @@ func TestTranslateStreamOpenAIToAnthropicSynthesizesBlockStarts(t *testing.T) {
 				data = strings.TrimPrefix(ln, "data: ")
 			}
 		}
-		if name ***REMOVED*** "" {
+		if name == "" {
 			continue
 		}
 		var fields map[string]any
@@ -438,7 +438,7 @@ func TestOpenAIResponseRoundTrip(t *testing.T) {
 	}
 	found := false
 	for _, p := range u2.Content {
-		if p.Type ***REMOVED*** types.PartToolUse && p.Name ***REMOVED*** "ls" {
+		if p.Type == types.PartToolUse && p.Name == "ls" {
 			found = true
 		}
 	}

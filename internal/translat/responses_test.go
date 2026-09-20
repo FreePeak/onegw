@@ -31,7 +31,7 @@ func TestEncodeResponsesRequestBasics(t *testing.T) {
 	if req.Instructions != "be terse" {
 		t.Fatalf("instructions = %q", req.Instructions)
 	}
-	if req.MaxOutputTokens ***REMOVED*** nil || *req.MaxOutputTokens != 512 {
+	if req.MaxOutputTokens == nil || *req.MaxOutputTokens != 512 {
 		t.Fatalf("max_output_tokens = %v", req.MaxOutputTokens)
 	}
 	if req.Store {
@@ -87,11 +87,11 @@ func TestEncodeResponsesRequestToolFlow(t *testing.T) {
 	for _, it := range items {
 		switch it.Type {
 		case "function_call":
-			sawCall = it.CallID ***REMOVED*** "call_1" && it.Name ***REMOVED*** "clock" && it.Arguments ***REMOVED*** `{"tz":"utc"}`
+			sawCall = it.CallID == "call_1" && it.Name == "clock" && it.Arguments == `{"tz":"utc"}`
 		case "function_call_output":
-			sawOutput = it.CallID ***REMOVED*** "call_1" && it.Output ***REMOVED*** "12:34"
+			sawOutput = it.CallID == "call_1" && it.Output == "12:34"
 		case "message":
-			if it.Role ***REMOVED*** "assistant" && strings.Contains(string(it.Content), "checking") {
+			if it.Role == "assistant" && strings.Contains(string(it.Content), "checking") {
 				sawAssistantText = true
 			}
 		}
@@ -159,7 +159,7 @@ func TestEncodeResponsesRequestReasoning(t *testing.T) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.Reasoning ***REMOVED*** nil || req.Reasoning.Effort != "high" {
+	if req.Reasoning == nil || req.Reasoning.Effort != "high" {
 		t.Fatalf("budget-derived effort missing: %+v", req.Reasoning)
 	}
 	// Budget must NOT override an explicit client effort.
@@ -172,7 +172,7 @@ func TestEncodeResponsesRequestReasoning(t *testing.T) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.Reasoning ***REMOVED*** nil || req.Reasoning.Effort != "low" {
+	if req.Reasoning == nil || req.Reasoning.Effort != "low" {
 		t.Fatalf("budget overrode explicit effort: %+v", req.Reasoning)
 	}
 }
@@ -369,7 +369,7 @@ func TestResponsesStreamDisconnectFails(t *testing.T) {
 	})
 	var out bytes.Buffer
 	_, err := TranslateStream(strings.NewReader(stream), &out, nil, FmtResponses, FmtOpenAI, "grok-4.6")
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "before response.completed") {
+	if err == nil || !strings.Contains(err.Error(), "before response.completed") {
 		t.Fatalf("want disconnect error, got %v", err)
 	}
 }

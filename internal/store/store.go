@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day);
 			col.Close()
 			return err
 		}
-		if name ***REMOVED*** "node_id" {
+		if name == "node_id" {
 			hasNode = true
 		}
 	}

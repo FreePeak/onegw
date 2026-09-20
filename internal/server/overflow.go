@@ -112,7 +112,7 @@ func pruneToFit(body []byte, f translat.Format, window, measured int) []byte {
 		return nil
 	}
 	msgs, _ := root["messages"].([]any)
-	if len(msgs) ***REMOVED*** 0 {
+	if len(msgs) == 0 {
 		return nil
 	}
 
@@ -120,7 +120,7 @@ func pruneToFit(body []byte, f translat.Format, window, measured int) []byte {
 	// survive every cut. (Anthropic keeps its system prompt in a top-level
 	// field that pruning never touches.)
 	var lead []any
-	if f ***REMOVED*** translat.FmtOpenAI {
+	if f == translat.FmtOpenAI {
 		k := 0
 		for k < len(msgs) {
 			role := msgRole(msgs[k])
@@ -166,7 +166,7 @@ func conversationCuts(msgs []any, f translat.Format) []cut {
 	for i, mv := range msgs {
 		// State of `open` here = tool calls opened in msgs[0:i] and not yet
 		// answered: the exact condition for a safe cut at i.
-		if len(open) ***REMOVED*** 0 && msgRole(mv) ***REMOVED*** "user" {
+		if len(open) == 0 && msgRole(mv) == "user" {
 			cuts = append(cuts, cut{at: i, drop: sum})
 		}
 		for _, id := range openedCalls(mv, f) {
@@ -193,7 +193,7 @@ func tryEncode(root map[string]any, lead, msgs []any, cut int, budgetBytes int64
 	kept = append(kept, msgs[cut:]...)
 	root["messages"] = kept
 	nb := reencodeRoot(root, nil)
-	if nb ***REMOVED*** nil || int64(len(nb)) > budgetBytes {
+	if nb == nil || int64(len(nb)) > budgetBytes {
 		return nil
 	}
 	return nb
@@ -245,7 +245,7 @@ func openedCalls(m any, f translat.Format) []string {
 		var ids []string
 		blocks, _ := mm["content"].([]any)
 		for _, bv := range blocks {
-			if b, _ := bv.(map[string]any); b != nil && b["type"] ***REMOVED*** "tool_use" {
+			if b, _ := bv.(map[string]any); b != nil && b["type"] == "tool_use" {
 				if id, _ := b["id"].(string); id != "" {
 					ids = append(ids, id)
 				}
@@ -278,7 +278,7 @@ func answeredCalls(m any, f translat.Format) []string {
 		var ids []string
 		blocks, _ := mm["content"].([]any)
 		for _, bv := range blocks {
-			if b, _ := bv.(map[string]any); b != nil && b["type"] ***REMOVED*** "tool_result" {
+			if b, _ := bv.(map[string]any); b != nil && b["type"] == "tool_result" {
 				if id, _ := b["tool_use_id"].(string); id != "" {
 					ids = append(ids, id)
 				}
@@ -300,7 +300,7 @@ func peekMaxOutput(body []byte) int {
 		return 0
 	}
 	for _, n := range []json.Number{probe.MaxCompletionTokens, probe.MaxTokens} {
-		if v, err := n.Int64(); err ***REMOVED*** nil && v > 0 {
+		if v, err := n.Int64(); err == nil && v > 0 {
 			return int(v)
 		}
 	}

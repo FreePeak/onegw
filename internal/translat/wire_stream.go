@@ -83,7 +83,7 @@ func (d errDecoder) decode(ev sseEvent) ([]StreamEvent, error) { return nil, d.e
 
 func decodeOpenAIStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 	data := ev.Data
-	if strings.TrimSpace(string(data)) ***REMOVED*** "[DONE]" || len(data) ***REMOVED*** 0 {
+	if strings.TrimSpace(string(data)) == "[DONE]" || len(data) == 0 {
 		return nil, nil
 	}
 	var c oaChunk
@@ -181,7 +181,7 @@ type anStreamMsg struct {
 }
 
 func decodeAnthropicStreamEvent(ev sseEvent) ([]StreamEvent, error) {
-	if len(ev.Data) ***REMOVED*** 0 {
+	if len(ev.Data) == 0 {
 		return nil, nil
 	}
 	var m anStreamMsg
@@ -235,7 +235,7 @@ func decodeAnthropicStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 		return []StreamEvent{e}, nil
 	case "content_block_delta":
 		e := StreamEvent{Kind: EvDelta, Index: m.Index}
-		if len(m.DeltaRaw) ***REMOVED*** 0 {
+		if len(m.DeltaRaw) == 0 {
 			return nil, nil
 		}
 		var d struct {
@@ -272,7 +272,7 @@ func decodeAnthropicStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 				StopReason   string  `json:"stop_reason"`
 				StopSequence *string `json:"stop_sequence"`
 			}
-			if json.Unmarshal(m.DeltaRaw, &d) ***REMOVED*** nil {
+			if json.Unmarshal(m.DeltaRaw, &d) == nil {
 				e.StopReason = mapAnthropicStop(d.StopReason)
 				if d.StopSequence != nil {
 					e.StopSeq = *d.StopSequence
@@ -351,7 +351,7 @@ type gemChunk struct {
 }
 
 func decodeGeminiStreamEvent(ev sseEvent) ([]StreamEvent, error) {
-	if len(ev.Data) ***REMOVED*** 0 {
+	if len(ev.Data) == 0 {
 		return nil, nil
 	}
 	var c gemChunk
@@ -417,7 +417,7 @@ func decodeGeminiStreamEvent(ev sseEvent) ([]StreamEvent, error) {
 }
 
 func gemArgsJSON(raw json.RawMessage) json.RawMessage {
-	if len(raw) ***REMOVED*** 0 {
+	if len(raw) == 0 {
 		return json.RawMessage("{}")
 	}
 	return raw
@@ -508,7 +508,7 @@ func (e *openaiEncoder) chunk(w io.Writer, delta any, finish string, usage *oaUs
 func (e *openaiEncoder) encode(w io.Writer, ev StreamEvent) error {
 	switch ev.Kind {
 	case EvStart:
-		if e.created ***REMOVED*** 0 {
+		if e.created == 0 {
 			e.created = nowUnix()
 		}
 		if ev.ID != "" {
@@ -527,7 +527,7 @@ func (e *openaiEncoder) encode(w io.Writer, ev StreamEvent) error {
 	case EvPartStart:
 		idx := e.nextToolIdx
 		e.nextToolIdx++
-		if e.toolIdx ***REMOVED*** nil {
+		if e.toolIdx == nil {
 			e.toolIdx = map[int]int{}
 		}
 		e.toolIdx[ev.Index] = idx
@@ -548,7 +548,7 @@ func (e *openaiEncoder) encode(w io.Writer, ev StreamEvent) error {
 			if !ok {
 				idx = e.nextToolIdx
 				e.nextToolIdx++
-				if e.toolIdx ***REMOVED*** nil {
+				if e.toolIdx == nil {
 					e.toolIdx = map[int]int{}
 				}
 				e.toolIdx[ev.Index] = idx
@@ -581,7 +581,7 @@ func (e *openaiEncoder) encode(w io.Writer, ev StreamEvent) error {
 }
 
 func (e *openaiEncoder) finish(w io.Writer) error {
-	if e.created ***REMOVED*** 0 {
+	if e.created == 0 {
 		e.created = nowUnix()
 	}
 	if !e.started {
@@ -704,7 +704,7 @@ func (e *anthropicEncoder) ensureStart(w io.Writer, ev StreamEvent) error {
 }
 
 func (e *anthropicEncoder) blockIndex(upstream int) int {
-	if e.blockMap ***REMOVED*** nil {
+	if e.blockMap == nil {
 		e.blockMap = map[int]int{}
 	}
 	if idx, ok := e.blockMap[upstream]; ok {
@@ -815,7 +815,7 @@ func (e *anthropicEncoder) startBlock(partType, toolID, toolName string) map[str
 }
 
 func openBlocksSet(m map[int]string, up int, partType string) map[int]string {
-	if m ***REMOVED*** nil {
+	if m == nil {
 		m = map[int]string{}
 	}
 	m[up] = partType
@@ -856,7 +856,7 @@ func (e *anthropicEncoder) finish(w io.Writer) error {
 }
 
 func stopSeqOrNull(s string) any {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return nil
 	}
 	return s
@@ -909,7 +909,7 @@ func (e *geminiEncoder) encode(w io.Writer, ev StreamEvent) error {
 			e.usage.Merge(*ev.Usage)
 		}
 	case EvPartStart:
-		if ev.PartType ***REMOVED*** types.PartToolUse {
+		if ev.PartType == types.PartToolUse {
 			e.pendingTool = &struct {
 				name string
 				args strings.Builder
@@ -917,24 +917,24 @@ func (e *geminiEncoder) encode(w io.Writer, ev StreamEvent) error {
 			}{name: ev.ToolName, idx: ev.Index}
 		}
 	case EvDelta:
-		if ev.PartType ***REMOVED*** types.PartToolUse && e.pendingTool != nil {
+		if ev.PartType == types.PartToolUse && e.pendingTool != nil {
 			e.pendingTool.args.WriteString(ev.ToolArgs)
 			return nil
 		}
 		parts := []map[string]any{}
-		if ev.PartType ***REMOVED*** types.PartThinking {
+		if ev.PartType == types.PartThinking {
 			parts = append(parts, map[string]any{"text": ev.Thinking, "thought": true})
 		} else if ev.Text != "" {
 			parts = append(parts, map[string]any{"text": ev.Text})
 		}
-		if len(parts) ***REMOVED*** 0 {
+		if len(parts) == 0 {
 			return nil
 		}
 		return e.chunk(w, parts, "", nil)
 	case EvPartStop:
 		if e.pendingTool != nil {
 			args := e.pendingTool.args.String()
-			if strings.TrimSpace(args) ***REMOVED*** "" {
+			if strings.TrimSpace(args) == "" {
 				args = "{}"
 			}
 			err := e.chunk(w, []map[string]any{{

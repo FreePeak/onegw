@@ -223,7 +223,7 @@ func floorDiv(a, b time.Duration) int64 {
 // isoWeekStart returns Monday 00:00 UTC of u's ISO week.
 func isoWeekStart(u time.Time) time.Time {
 	wd := int(u.Weekday())
-	if wd ***REMOVED*** 0 {
+	if wd == 0 {
 		wd = 7
 	}
 	y, m, d := u.Date()
@@ -240,11 +240,11 @@ func (t *Tracker) Observe(provider string, tokens, requests int64, now time.Time
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	l, ok := t.limits[provider]
-	if !ok || l.Window ***REMOVED*** Off {
+	if !ok || l.Window == Off {
 		return
 	}
 	ws := t.state[provider]
-	if ws ***REMOVED*** nil {
+	if ws == nil {
 		ws = &windowState{}
 		t.state[provider] = ws
 	}
@@ -276,11 +276,11 @@ func (t *Tracker) Status(provider string, now time.Time) (Status, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	l, ok := t.limits[provider]
-	if !ok || l.Window ***REMOVED*** Off {
+	if !ok || l.Window == Off {
 		return Status{}, false
 	}
 	ws := t.state[provider]
-	if ws ***REMOVED*** nil {
+	if ws == nil {
 		ws = &windowState{}
 	}
 	anchor := ws.start
@@ -337,7 +337,7 @@ func exhausted(l Limits, usedT, usedR int64) bool {
 // reload); it is fresher than the last flush. Only providers present in the
 // new limits are carried over; stale windows reset on the next Observe.
 func (t *Tracker) Inherit(o *Tracker) {
-	if o ***REMOVED*** nil {
+	if o == nil {
 		return
 	}
 	o.mu.Lock()
@@ -364,13 +364,13 @@ func (t *Tracker) Inherit(o *Tracker) {
 // history that predates it (conservative — a window starting mid-hour counts
 // that whole hour).
 func (t *Tracker) seed(now time.Time) {
-	if t.store ***REMOVED*** nil {
+	if t.store == nil {
 		return
 	}
-	if rows, err := t.store.LoadQuotaState(); err ***REMOVED*** nil {
+	if rows, err := t.store.LoadQuotaState(); err == nil {
 		for _, r := range rows {
 			l, ok := t.limits[r.Provider]
-			if !ok || l.Window ***REMOVED*** Off {
+			if !ok || l.Window == Off {
 				continue
 			}
 			start, err := time.Parse(time.RFC3339, r.WindowStart)
@@ -383,7 +383,7 @@ func (t *Tracker) seed(now time.Time) {
 		}
 	}
 	for name, l := range t.limits {
-		if l.Window ***REMOVED*** Off {
+		if l.Window == Off {
 			continue
 		}
 		if ws := t.state[name]; ws != nil && !ws.start.IsZero() {
@@ -401,7 +401,7 @@ func (t *Tracker) seed(now time.Time) {
 			continue
 		}
 		usedT, usedR, err := t.rollupSum(name, start)
-		if err != nil || (usedT ***REMOVED*** 0 && usedR ***REMOVED*** 0) {
+		if err != nil || (usedT == 0 && usedR == 0) {
 			continue
 		}
 		t.state[name] = &windowState{start: start, usedTokens: usedT, usedRequests: usedR}
@@ -418,7 +418,7 @@ func (t *Tracker) rebuildAnchor(name string, l Limits, now time.Time) time.Time 
 	if _, ok := rollingPeriod(l.Window); !ok {
 		return time.Time{} // calendar kinds derive from the calendar
 	}
-	if fs, err := t.store.QuotaFirstSeen(name); err ***REMOVED*** nil && !fs.IsZero() && fs.Before(now) {
+	if fs, err := t.store.QuotaFirstSeen(name); err == nil && !fs.IsZero() && fs.Before(now) {
 		return fs
 	}
 	return now
@@ -434,7 +434,7 @@ func (t *Tracker) rollupSum(provider string, start time.Time) (tokens, requests 
 	}
 	sd, sh := start.UTC().Format("2006-01-02"), start.UTC().Format("15")
 	for _, r := range rows {
-		if r.Provider != provider || r.Day < sd || (r.Day ***REMOVED*** sd && r.Hour < sh) {
+		if r.Provider != provider || r.Day < sd || (r.Day == sd && r.Hour < sh) {
 			continue
 		}
 		tokens += r.InputTok + r.OutputTok + r.Reasoning
@@ -446,14 +446,14 @@ func (t *Tracker) rollupSum(provider string, start time.Time) (tokens, requests 
 // flush persists window state; best-effort (a lost flush is recovered from
 // rollups or costs at most one window of slight under-count after a crash).
 func (t *Tracker) flush() {
-	if t.store ***REMOVED*** nil {
+	if t.store == nil {
 		return
 	}
 	t.mu.Lock()
 	rows := make([]store.QuotaState, 0, len(t.state))
 	for name, ws := range t.state {
 		l := t.limits[name]
-		if l.Window ***REMOVED*** Off || ws.start.IsZero() {
+		if l.Window == Off || ws.start.IsZero() {
 			continue
 		}
 		rows = append(rows, store.QuotaState{
@@ -465,7 +465,7 @@ func (t *Tracker) flush() {
 		})
 	}
 	t.mu.Unlock()
-	if len(rows) ***REMOVED*** 0 {
+	if len(rows) == 0 {
 		return
 	}
 	_ = t.store.SaveQuotaState(rows)

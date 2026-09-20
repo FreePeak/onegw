@@ -126,7 +126,7 @@ func TestQuotaExhaustedFallsThroughCombo(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("exhausted direct hit: want 503, got %d body %s", w.Code, w.Body.String())
 	}
-	if w.Header().Get("Retry-After") ***REMOVED*** "" {
+	if w.Header().Get("Retry-After") == "" {
 		t.Fatal("503 must carry Retry-After")
 	}
 	if !strings.Contains(w.Body.String(), "quota") {
@@ -231,7 +231,7 @@ func TestQuotaFallThroughNoStaleRetryAfter(t *testing.T) {
 	}
 	// A direct exhausted hit still must carry it.
 	w = do(t, h, authed(t, "primary/m", "sk-test-gw"))
-	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") ***REMOVED*** "" {
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" {
 		t.Fatalf("direct exhausted hit: %d retry-after=%q", w.Code, w.Header().Get("Retry-After"))
 	}
 }
@@ -268,7 +268,7 @@ func TestQuotaRebuildAcrossServerRestart(t *testing.T) {
 	}
 	defer srv2.Close()
 	q := srv2.cur().quota
-	if q ***REMOVED*** nil {
+	if q == nil {
 		t.Fatal("quota tracker missing after restart")
 	}
 	st, ok := q.Status("primary", time.Now())
@@ -433,7 +433,7 @@ func TestQuotaAutoRejectAndDynamicResume(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("exhausted direct request: want 503, got %d body %s", w.Code, w.Body.String())
 	}
-	if w.Header().Get("Retry-After") ***REMOVED*** "" {
+	if w.Header().Get("Retry-After") == "" {
 		t.Fatal("503 must carry Retry-After")
 	}
 	if primary.hits.Load() != before {

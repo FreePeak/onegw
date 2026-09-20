@@ -70,7 +70,7 @@ func TestAdminPasswordChangeEndToEnd(t *testing.T) {
 	_ = srv
 
 	c, code := loginForm(t, h, "admin")
-	if c ***REMOVED*** nil || code != http.StatusSeeOther {
+	if c == nil || code != http.StatusSeeOther {
 		t.Fatalf("login: code %d cookie %v", code, c)
 	}
 
@@ -148,7 +148,7 @@ func TestAdminPasswordChangeEndToEnd(t *testing.T) {
 		t.Fatalf("generated flag: %v", resp2)
 	}
 	gen, _ := resp2["password"].(string)
-	if gen ***REMOVED*** "" {
+	if gen == "" {
 		t.Fatal("generated response must carry the credential once")
 	}
 	r3 := httptest.NewRequest(http.MethodPut, "/admin/config/reload", nil)

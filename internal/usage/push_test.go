@@ -133,7 +133,7 @@ func TestPushBodyIsNodeAttributedJSONL(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(body) ***REMOVED*** 0 {
+	if len(body) == 0 {
 		t.Fatal("no push body captured")
 	}
 	lines := strings.Split(strings.TrimSpace(string(body)), "\n")

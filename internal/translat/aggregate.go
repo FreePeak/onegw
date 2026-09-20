@@ -10,7 +10,7 @@ import (
 // wireReader picks the framing for a format: commandcode is NDJSON (bare
 // lines), every other format is SSE.
 func wireReader(f Format) func(*bufio.Reader, func(sseEvent) error) error {
-	if f ***REMOVED*** FmtCommandCode {
+	if f == FmtCommandCode {
 		return readNDJSON
 	}
 	return readSSE
@@ -32,7 +32,7 @@ func AggregateStream(body io.Reader, from Format, model string) (*types.ChatResp
 			return derr
 		}
 		for _, e := range events {
-			if e.Kind ***REMOVED*** EvError && e.Err != nil {
+			if e.Kind == EvError && e.Err != nil {
 				return e.Err
 			}
 			if !agg.Aggregate(e) {

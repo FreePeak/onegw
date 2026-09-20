@@ -66,7 +66,7 @@ const CEDIT = {{.Edit}};
   let editing = null;
 
   function showErr(m){ errBox.textContent = m; errBox.hidden = false; }
-  function syncRR(){ document.getElementById('cf-rr-wrap').hidden = stratIn.value !***REMOVED*** 'round-robin'; }
+  function syncRR(){ document.getElementById('cf-rr-wrap').hidden = stratIn.value !== 'round-robin'; }
   stratIn.onchange = syncRR;
 
   document.getElementById('addcombo').onclick = () => {
@@ -79,7 +79,7 @@ const CEDIT = {{.Edit}};
     nameIn.focus();
   };
   document.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
-    const c = (CEDIT || []).find(x => x.name ***REMOVED***= b.dataset.edit);
+    const c = (CEDIT || []).find(x => x.name === b.dataset.edit);
     if (!c) return;
     editing = c.name;
     nameIn.value = c.name; nameIn.disabled = true;
@@ -99,7 +99,7 @@ const CEDIT = {{.Edit}};
       name: nameIn.value.trim(),
       targets: targetsIn.value.split('\n').map(s => s.trim()).filter(Boolean),
       strategy: stratIn.value,
-      round_robin_limit: stratIn.value ***REMOVED***= 'round-robin' ? (parseInt(rrIn.value, 10) || 0) : 0,
+      round_robin_limit: stratIn.value === 'round-robin' ? (parseInt(rrIn.value, 10) || 0) : 0,
     };
     if (!body.name) { showErr('combo name is required'); return; }
     if (!body.targets.length) { showErr('at least one target is required'); return; }

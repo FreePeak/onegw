@@ -38,7 +38,7 @@ func TestWindowed429BenchesForStatedWindow(t *testing.T) {
 	a1 := &def.Accounts[0]
 
 	_, apiErr := def.Do(context.Background(), a1, "z-ai/glm-5.3-free", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 429 {
+	if apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("got %+v, want 429", apiErr)
 	}
 	if got := apiErr.RateWindow(); got != time.Minute {
@@ -58,7 +58,7 @@ func TestWindowed429BenchesForStatedWindow(t *testing.T) {
 
 	// The window is a per-key request-count limit (unlike the shared
 	// admission wall): the account must be benched so rotation starts.
-	if a, _ := def.NextAccount(""); a != nil && a.Name ***REMOVED*** "a1" {
+	if a, _ := def.NextAccount(""); a != nil && a.Name == "a1" {
 		t.Fatal("benched account must not be re-picked before the window clears")
 	}
 }
@@ -97,7 +97,7 @@ func TestSharedProviderBudgetGatesWholePool(t *testing.T) {
 
 	for _, want := range []string{"a", "b"} {
 		a, ready := p.next("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatalf("pick %q: pool empty, ready=%v", want, ready)
 		}
 		if a.Name != want {
@@ -114,7 +114,7 @@ func TestSharedProviderBudgetGatesWholePool(t *testing.T) {
 		t.Fatalf("ready = %v, want ~10s shared refill", ready)
 	}
 	cur = ready // refill instant: the next pick is granted
-	if a, _ := p.next(""); a ***REMOVED*** nil {
+	if a, _ := p.next(""); a == nil {
 		t.Fatal("pick after shared refill blocked")
 	}
 }
@@ -130,7 +130,7 @@ func TestSharedBudgetBlocksStickyPin(t *testing.T) {
 	p.now = func() time.Time { return cur }
 
 	p.next("sess-1") // pins a, spends burst token 1
-	if a, _ := p.next("sess-1"); a ***REMOVED*** nil || a.Name != "a" {
+	if a, _ := p.next("sess-1"); a == nil || a.Name != "a" {
 		t.Fatalf("sticky pin must hold: got %v", a)
 	}
 	if a, ready := p.next("sess-1"); a != nil {
@@ -142,7 +142,7 @@ func TestSharedBudgetBlocksStickyPin(t *testing.T) {
 func TestSharedBudgetZeroUncapped(t *testing.T) {
 	p := newAccountPool([]Account{{Name: "a", APIKey: "ka"}}, 0, 0)
 	for range 50 {
-		if a, _ := p.next(""); a ***REMOVED*** nil {
+		if a, _ := p.next(""); a == nil {
 			t.Fatal("uncapped pool drained")
 		}
 	}
@@ -165,7 +165,7 @@ func TestBlockedScanDoesNotSpendOwnBuckets(t *testing.T) {
 	// Advance far past the shared refill: the pool must serve immediately
 	// again (own buckets untouched by the blocked scans).
 	cur = cur.Add(31 * time.Second)
-	if a, _ := p.next(""); a ***REMOVED*** nil {
+	if a, _ := p.next(""); a == nil {
 		t.Fatal("blocked scans spent own-bucket tokens; pool should serve")
 	}
 }
@@ -181,14 +181,14 @@ func TestSharedBudgetCoexistsWithOwnBuckets(t *testing.T) {
 	p.now = func() time.Time { return cur }
 
 	for range 3 { // shared burst 2 + refill at 10s steps
-		if a, _ := p.next(""); a ***REMOVED*** nil {
+		if a, _ := p.next(""); a == nil {
 			t.Fatal("unexpected early pool-empty")
 		}
 		cur = cur.Add(10 * time.Second)
 	}
 	// b is uncapped; shared refilled at each 10s step, so a pick exists.
 	a, ready := p.next("")
-	if a ***REMOVED*** nil {
+	if a == nil {
 		t.Fatalf("b is uncapped and shared refilled: pick should exist (ready=%v)", ready)
 	}
 }

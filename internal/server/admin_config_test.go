@@ -78,7 +78,7 @@ func newTestServerFromFile(t *testing.T, tomlText string) (*Server, http.Handler
 // (master's adminOK is header-only constant-time).
 func adminCfgReq(method, target string, body *strings.Reader, withAuth bool) *http.Request {
 	var r *http.Request
-	if body ***REMOVED*** nil {
+	if body == nil {
 		r = httptest.NewRequest(method, target, nil)
 	} else {
 		r = httptest.NewRequest(method, target, body)
@@ -404,19 +404,19 @@ func TestSpliceAuthKeysEdgeShapes(t *testing.T) {
 	})
 	t.Run("unterminated array refused", func(t *testing.T) {
 		raw := "[auth]\nkeys = [\"a\",\n"
-		if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), []string{"b"}, nil); err ***REMOVED*** nil {
+		if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), []string{"b"}, nil); err == nil {
 			t.Fatal("expected refusal for unterminated array")
 		}
 	})
 	t.Run("non-string element refused", func(t *testing.T) {
 		raw := "[auth]\nkeys = [\"a\", 42]\n"
-		if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), nil, nil); err ***REMOVED*** nil {
+		if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), nil, nil); err == nil {
 			t.Fatal("expected refusal for non-string element")
 		}
 	})
 	t.Run("refuse removing last key", func(t *testing.T) {
 		raw := "[auth]\nkeys = [\"only\"]\n"
-		if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), nil, []string{"only"}); err ***REMOVED*** nil {
+		if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), nil, []string{"only"}); err == nil {
 			t.Fatal("expected refusal to remove the last key")
 		}
 	})
@@ -430,7 +430,7 @@ func TestWriteConfigAtomicallyRefusesInvalid(t *testing.T) {
 	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeConfigAtomically(path, []byte("this is not toml")); err ***REMOVED*** nil {
+	if err := writeConfigAtomically(path, []byte("this is not toml")); err == nil {
 		t.Fatal("expected rejection of invalid TOML")
 	}
 	after, _ := os.ReadFile(path)

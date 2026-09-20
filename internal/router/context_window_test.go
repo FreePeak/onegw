@@ -39,7 +39,7 @@ func TestExecuteFallsThroughOnContextWindowOverflow(t *testing.T) {
 
 	var smallAttempts int
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if def.Name ***REMOVED*** "smallwin" {
+		if def.Name == "smallwin" {
 			smallAttempts++
 			return nil, &types.APIError{Status: 400, Type: "BadRequestError", Message: live400}
 		}
@@ -76,7 +76,7 @@ func TestExecuteFallsThroughOnContextWindowOverflow(t *testing.T) {
 		return nil, &types.APIError{Status: 400, Type: "BadRequestError", Message: live400}
 	}
 	got := r.Execute(context.Background(), resD, direct, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 400 || !strings.Contains(got.Message, "longer than the model's context length") {
+	if got == nil || got.Status != 400 || !strings.Contains(got.Message, "longer than the model's context length") {
 		t.Fatalf("direct oversized route: got %v, want the upstream 400", got)
 	}
 }

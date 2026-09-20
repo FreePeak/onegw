@@ -11,7 +11,7 @@ import (
 func newTestCache(t *testing.T, capacity int, ttl time.Duration) (*Cache, *time.Time) {
 	t.Helper()
 	c := New(capacity, ttl)
-	if c ***REMOVED*** nil {
+	if c == nil {
 		t.Fatal("New returned nil")
 	}
 	now := time.Unix(1_700_000_000, 0)
@@ -76,12 +76,12 @@ func TestCoalesceWaitsForOriginal(t *testing.T) {
 		t.Fatal("first claim: want Miss")
 	}
 	d2, _, w := c.Claim("s", "k", hash)
-	if d2 != Wait || w ***REMOVED*** nil {
+	if d2 != Wait || w == nil {
 		t.Fatalf("second claim: got %v, want Wait", d2)
 	}
 	c.Finish("s", "k", hash, &Result{Status: 200, ContentType: "application/json", Body: []byte("same")})
 	got := w.Wait(context.Background())
-	if got ***REMOVED*** nil || got.Gone || got.Stream || string(got.Body) != "same" || got.Status != 200 {
+	if got == nil || got.Gone || got.Stream || string(got.Body) != "same" || got.Status != 200 {
 		t.Fatalf("waiter got %+v, want the original's result", got)
 	}
 }
@@ -175,7 +175,7 @@ func TestGoneWakesWaiters(t *testing.T) {
 	}
 	_, _, w := c.Claim("s", "k", hash)
 	c.Finish("s", "k", hash, nil) // origin wrote nothing
-	if got := w.Wait(context.Background()); got ***REMOVED*** nil || !got.Gone {
+	if got := w.Wait(context.Background()); got == nil || !got.Gone {
 		t.Fatalf("waiter got %+v, want Gone", got)
 	}
 	// The vanished origin's key is free again: a fresh claim executes.
@@ -208,10 +208,10 @@ func TestNewDisablesOnNonPositiveTTL(t *testing.T) {
 	if c := New(8, -time.Second); c != nil {
 		t.Fatal("negative ttl must disable the cache (nil)")
 	}
-	if c := New(0, time.Second); c ***REMOVED*** nil || c.cap != DefaultEntries {
+	if c := New(0, time.Second); c == nil || c.cap != DefaultEntries {
 		t.Fatal("capacity 0 must select the default")
 	}
-	if c := New(MaxEntriesHard+1, time.Second); c ***REMOVED*** nil || c.cap != MaxEntriesHard {
+	if c := New(MaxEntriesHard+1, time.Second); c == nil || c.cap != MaxEntriesHard {
 		t.Fatal("capacity past the hard max must clamp")
 	}
 }
@@ -228,7 +228,7 @@ func TestFinishClientAbortNotReplayed(t *testing.T) {
 	}
 	_, _, w := c.Claim("s", "k", hash)
 	c.Finish("s", "k", hash, &Result{Status: 499, ContentType: "application/json", Body: []byte("{}")})
-	if got := w.Wait(context.Background()); got ***REMOVED*** nil || !got.Gone {
+	if got := w.Wait(context.Background()); got == nil || !got.Gone {
 		t.Fatalf("waiter got %+v, want Gone (not a replayed 499)", got)
 	}
 	if d, _, _ := c.Claim("s", "k", hash); d != Miss {

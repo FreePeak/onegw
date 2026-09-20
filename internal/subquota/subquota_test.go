@@ -31,7 +31,7 @@ func TestParseOpenCodeGoHappy(t *testing.T) {
 	if windows[0].Name != "Rolling" || windows[0].Used != 13 {
 		t.Fatalf("rolling = %+v", windows[0])
 	}
-	if windows[0].Resets ***REMOVED*** nil || windows[0].Resets.IsZero() {
+	if windows[0].Resets == nil || windows[0].Resets.IsZero() {
 		t.Fatal("rolling reset not parsed from ISO resetsAt")
 	}
 	if got := windows[0].Resets.UTC().Format(time.RFC3339); got != "2026-09-04T14:28:02Z" {
@@ -65,7 +65,7 @@ func TestParseOpenCodeGoErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := parseOpenCodeGo([]byte(tc.body), tc.status)
-		if err ***REMOVED*** "" {
+		if err == "" {
 			t.Fatalf("status %d: want error containing %q, got none", tc.status, tc.want)
 		}
 	}
@@ -90,7 +90,7 @@ func TestParseZaiCreditLimits(t *testing.T) {
 	if windows[0].Name != "Session (5h)" || windows[0].Used != 25 {
 		t.Fatalf("session window = %+v", windows[0])
 	}
-	if windows[0].Resets ***REMOVED*** nil || windows[0].Resets.UnixMilli() != 1787905548392 {
+	if windows[0].Resets == nil || windows[0].Resets.UnixMilli() != 1787905548392 {
 		t.Fatalf("session reset = %+v", windows[0].Resets)
 	}
 	if windows[1].Name != "Weekly (7d)" || windows[1].Used != 10 {
@@ -124,7 +124,7 @@ func TestParseZaiErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, _, err := parseZai([]byte(tc.body), tc.status)
-		if err ***REMOVED*** "" {
+		if err == "" {
 			t.Fatalf("status %d body %.40s: want error containing %q", tc.status, tc.body, tc.want)
 		}
 	}
@@ -157,7 +157,7 @@ func TestParseCommandCodeWindows(t *testing.T) {
 	if windows[1].Name != "Weekly window" || windows[1].Used != 100 {
 		t.Fatalf("weekly window = %+v (used 35.0018/cap 35 must park at 100%%)", windows[1])
 	}
-	if windows[1].Resets ***REMOVED*** nil || windows[1].Resets.UnixMilli() != 1789539876848 {
+	if windows[1].Resets == nil || windows[1].Resets.UnixMilli() != 1789539876848 {
 		t.Fatalf("weekly reset = %+v", windows[1].Resets)
 	}
 	if windows[2].Name != creditsWindow || windows[2].Used != 85 {
@@ -180,7 +180,7 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 	}
 	found := false
 	for _, w := range drained {
-		if w.Name ***REMOVED*** creditsWindow {
+		if w.Name == creditsWindow {
 			found = true
 			if w.Used != 100 {
 				t.Fatalf("drained credits window = %+v, want 100%%", w)
@@ -206,7 +206,7 @@ func TestParseCommandCodeDrainedCreditsAndShapeGuards(t *testing.T) {
 		{200, `{`},
 		{200, `{"windowLimits":null,"credits":null}`},
 	} {
-		if _, _, err := parseCommandCode([]byte(tc.body), tc.status, 0); err ***REMOVED*** "" {
+		if _, _, err := parseCommandCode([]byte(tc.body), tc.status, 0); err == "" {
 			t.Fatalf("status %d body %.30s: want error", tc.status, tc.body)
 		}
 	}
@@ -250,7 +250,7 @@ func TestParseCommandCodeCreditsPercent(t *testing.T) {
 		t.Fatal("credits pool with headroom must not park")
 	}
 	// Over-counted spend cannot fabricate the drained park: the fraction
-	// floors below 100, so only remaining ***REMOVED*** 0 (or absent grant) parks.
+	// floors below 100, so only remaining == 0 (or absent grant) parks.
 	over, _, err := parseCommandCode([]byte(
 		`{"credits":{"monthlyCredits":1},"windowLimits":{"fiveHour":{"used":0,"cap":3}}}`), 200, 1e6)
 	if err != "" {
@@ -323,7 +323,7 @@ func TestParseGrokCliWeeklyPool(t *testing.T) {
 	if w.Name != "Weekly pool" || w.Used != 62 {
 		t.Fatalf("pool = %+v, want Weekly pool at floored 62%%", w)
 	}
-	if w.Resets ***REMOVED*** nil || w.Resets.Unix() != 1789660800 {
+	if w.Resets == nil || w.Resets.Unix() != 1789660800 {
 		t.Fatalf("reset = %+v, want the {seconds} period end", w.Resets)
 	}
 	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
@@ -425,7 +425,7 @@ func TestParseGrokCliLegacyMonthlyEnvelope(t *testing.T) {
 	}
 	// Neither shape: still an error, so a genuinely unknown body is visible
 	// rather than silently shown as 0 %.
-	if _, _, err := parseGrokCli(grokTestJWT("1"), []byte(`{"config":{"productUsage":[]}}`), 200); err ***REMOVED*** "" {
+	if _, _, err := parseGrokCli(grokTestJWT("1"), []byte(`{"config":{"productUsage":[]}}`), 200); err == "" {
 		t.Fatal("a body with neither envelope must still fail")
 	}
 }
@@ -509,7 +509,7 @@ func TestTrackerPollCachesAndParks(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if got := tr.All(); len(got) ***REMOVED*** 3 {
+		if got := tr.All(); len(got) == 3 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -518,7 +518,7 @@ func TestTrackerPollCachesAndParks(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("want 3 snapshots, got %d", len(all))
 	}
-	if all[0].Account != "bad" || all[0].Err ***REMOVED*** "" {
+	if all[0].Account != "bad" || all[0].Err == "" {
 		t.Fatalf("failed probe must keep Err: %+v", all[0])
 	}
 	if all[1].Account != "full" || len(all[1].Windows) != 1 || all[1].Windows[0].Used != 100 {
@@ -553,7 +553,7 @@ func TestTrackerInheritKeepsFreshTargetsOnly(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if len(old.All()) ***REMOVED*** 1 {
+		if len(old.All()) == 1 {
 			break
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -579,7 +579,7 @@ func TestProbeHTTPOpensErrorAndDialects(t *testing.T) {
 	defer tr.Stop()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if all := tr.All(); len(all) ***REMOVED*** 1 && all[0].Err != "" {
+		if all := tr.All(); len(all) == 1 && all[0].Err != "" {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -647,7 +647,7 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var snaps []Snapshot
 	for time.Now().Before(deadline) {
-		if snaps = tr.All(); len(snaps) ***REMOVED*** 1 {
+		if snaps = tr.All(); len(snaps) == 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -664,14 +664,14 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 	}
 	var credits *Window
 	for i := range s.Windows {
-		if s.Windows[i].Name ***REMOVED*** creditsWindow {
+		if s.Windows[i].Name == creditsWindow {
 			credits = &s.Windows[i]
 		}
-		if s.Windows[i].Name ***REMOVED*** "Weekly window" && s.Windows[i].Used != 100 {
+		if s.Windows[i].Name == "Weekly window" && s.Windows[i].Used != 100 {
 			t.Fatalf("weekly = %+v, want exhausted", s.Windows[i])
 		}
 	}
-	if credits ***REMOVED*** nil {
+	if credits == nil {
 		t.Fatalf("credits window missing: %+v", s.Windows)
 	}
 	// Summary spend turns the pool into a real percent: 59.87 of 70.16
@@ -679,7 +679,7 @@ func TestProbeCommandCodeEndToEnd(t *testing.T) {
 	if credits.Used != 85 {
 		t.Fatalf("credits used = %+v, want 85%% from summary spend", credits)
 	}
-	if credits.Resets ***REMOVED*** nil || credits.Resets.UTC().Format(time.RFC3339) != "2026-10-02T02:03:39Z" {
+	if credits.Resets == nil || credits.Resets.UTC().Format(time.RFC3339) != "2026-10-02T02:03:39Z" {
 		t.Fatalf("credits reset = %+v, want billing period end", credits.Resets)
 	}
 	// And the exhausted weekly window must park via the normal hook.
@@ -767,7 +767,7 @@ func TestTrackerResolvesLiveKey(t *testing.T) {
 	mu.Lock()
 	first := append([]string(nil), keysSeen...)
 	mu.Unlock()
-	if len(first) ***REMOVED*** 0 || first[0] != "key-A" {
+	if len(first) == 0 || first[0] != "key-A" {
 		t.Fatalf("probe must receive the resolved live key, saw %v", first)
 	}
 
@@ -780,7 +780,7 @@ func TestTrackerResolvesLiveKey(t *testing.T) {
 	for !sawB && time.Now().Before(deadline) {
 		mu.Lock()
 		for _, k := range keysSeen {
-			if k ***REMOVED*** "key-B" {
+			if k == "key-B" {
 				sawB = true
 			}
 		}
@@ -792,7 +792,7 @@ func TestTrackerResolvesLiveKey(t *testing.T) {
 	}
 	for {
 		got := tr.All()
-		if len(got) ***REMOVED*** 1 {
+		if len(got) == 1 {
 			break
 		}
 		if len(got) > 1 {
@@ -828,7 +828,7 @@ func TestCursorUserIDStripsConnectionPrefix(t *testing.T) {
 			t.Fatalf("sub %q: uid=%q msg=%q, want %q", sub, uid, msg, want)
 		}
 	}
-	if _, msg := cursorUserID("sk-not-a-jwt"); msg ***REMOVED*** "" {
+	if _, msg := cursorUserID("sk-not-a-jwt"); msg == "" {
 		t.Fatal("a non-JWT credential must report a probe error, not probe cursor.com")
 	}
 }
@@ -861,7 +861,7 @@ func TestParseCursorSummaryMeters(t *testing.T) {
 	}
 	want := time.Date(2026, 10, 3, 3, 51, 46, 559000000, time.UTC)
 	for _, w := range windows {
-		if r := w.Resets; r ***REMOVED*** nil || !r.Equal(want) {
+		if r := w.Resets; r == nil || !r.Equal(want) {
 			t.Fatalf("%s reset = %v, want %v", w.Name, r, want)
 		}
 	}

@@ -24,7 +24,7 @@ func TestSelectionDefaultKeepsRoundRobin(t *testing.T) {
 	var got []string
 	for i := 0; i < 6; i++ {
 		a, _ := d.NextAccount("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatalf("round %d: pool empty", i)
 		}
 		got = append(got, a.Name)
@@ -41,20 +41,20 @@ func TestSelectionDefaultKeepsRoundRobin(t *testing.T) {
 func TestSelectionLeastUsed(t *testing.T) {
 	d := selPool(t, "least-used", nil)
 	for i := 0; i < 3; i++ {
-		if a, _ := d.NextAccount(""); a ***REMOVED*** nil {
+		if a, _ := d.NextAccount(""); a == nil {
 			t.Fatal("pool empty")
 		}
 	}
 	// Backdate b so least-used must prefer it (a and c are more recent).
 	d.pool.mu.Lock()
 	for i := range d.pool.accts {
-		if d.pool.accts[i].acct.Name ***REMOVED*** "b" {
+		if d.pool.accts[i].acct.Name == "b" {
 			d.pool.accts[i].lastUsed = time.Now().Add(-time.Hour)
 		}
 	}
 	d.pool.mu.Unlock()
 	a, _ := d.NextAccount("")
-	if a ***REMOVED*** nil || a.Name != "b" {
+	if a == nil || a.Name != "b" {
 		t.Fatalf("least-used must pick the oldest-served account, got %v", a)
 	}
 }
@@ -66,7 +66,7 @@ func TestSelectionStrictRandomDeck(t *testing.T) {
 	var order []string
 	for i := 0; i < 3; i++ {
 		a, _ := d.NextAccount("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatal("pool empty")
 		}
 		counts[a.Name]++
@@ -82,10 +82,10 @@ func TestSelectionStrictRandomDeck(t *testing.T) {
 // its cooldown gates are open.
 func TestSelectionP2CPrefersHeadroom(t *testing.T) {
 	head := func(acct string) (float64, bool) {
-		if acct ***REMOVED*** "a" {
+		if acct == "a" {
 			return 5, true // nearly spent
 		}
-		if acct ***REMOVED*** "b" {
+		if acct == "b" {
 			return 95, true // fresh
 		}
 		return 0, false
@@ -100,7 +100,7 @@ func TestSelectionP2CPrefersHeadroom(t *testing.T) {
 	d.pool.mu.Unlock()
 
 	first, _ := d.NextAccount("")
-	if first ***REMOVED*** nil || first.Name ***REMOVED*** "a" {
+	if first == nil || first.Name == "a" {
 		t.Fatalf("p2c must avoid the nearly-spent account, got %v", first)
 	}
 
@@ -110,13 +110,13 @@ func TestSelectionP2CPrefersHeadroom(t *testing.T) {
 	for i := range d2.pool.accts {
 		s := &d2.pool.accts[i]
 		s.lastUsed = time.Now().Add(-time.Hour)
-		if s.acct.Name ***REMOVED*** "b" {
+		if s.acct.Name == "b" {
 			s.strikes = 4
 		}
 	}
 	d2.pool.mu.Unlock()
 	got, _ := d2.NextAccount("")
-	if got ***REMOVED*** nil || got.Name ***REMOVED*** "b" {
+	if got == nil || got.Name == "b" {
 		t.Fatalf("p2c must avoid the recently rate-limited account, got %v", got)
 	}
 }
@@ -135,7 +135,7 @@ func TestSelectionRespectsGates(t *testing.T) {
 		d.pool.mu.Unlock()
 		for i := 0; i < 3; i++ {
 			a, _ := d.NextAccount("")
-			if a ***REMOVED*** nil || a.Name != "c" {
+			if a == nil || a.Name != "c" {
 				t.Fatalf("mode %q: must pick the only open slot, got %v", mode, a)
 			}
 		}
@@ -155,24 +155,24 @@ func TestSelectionOccupancyGateAcrossModes(t *testing.T) {
 			s := &d.pool.accts[i]
 			s.lastUsed = now.Add(-time.Hour)
 			// Busy: "a" has one call in flight. Idle: b and c.
-			if s.acct.Name ***REMOVED*** "a" {
+			if s.acct.Name == "a" {
 				s.live = 1
 			}
 			// Make "b" the LESS attractive normal candidate (slow, struck),
 			// so a mode that ignored occupancy would happily pick "a" or
 			// "b"; only the occupancy gate makes "c" correct... but any idle
 			// slot is acceptable, so assert the pick is not the busy one.
-			if s.acct.Name ***REMOVED*** "b" {
+			if s.acct.Name == "b" {
 				s.strikes = 5
 			}
 		}
 		d.pool.mu.Unlock()
 		for i := 0; i < 3; i++ {
 			a, _ := d.NextAccount("")
-			if a ***REMOVED*** nil {
+			if a == nil {
 				t.Fatalf("mode %q: pool empty", mode)
 			}
-			if a.Name ***REMOVED*** "a" {
+			if a.Name == "a" {
 				t.Fatalf("mode %q: picked the slot with a call in flight (occupancy gate lost)", mode)
 			}
 		}

@@ -62,7 +62,7 @@ func TestAliasValidationRejects(t *testing.T) {
 	}
 	for name, aliases := range cases {
 		p := writeCfg(t, aliasBase+"\n[aliases]\n"+aliases+"\n")
-		if _, err := Load(p); err ***REMOVED*** nil {
+		if _, err := Load(p); err == nil {
 			t.Fatalf("%s: expected validation failure", name)
 		}
 	}
@@ -76,7 +76,7 @@ func TestAliasEmptyNameRejected(t *testing.T) {
 	cfg.Defaults()
 	cfg.Providers = []ProviderCfg{{Name: "p1", Kind: "openai", APIKey: "k"}}
 	cfg.Aliases = map[string]string{"": "p1/m1"}
-	if err := cfg.Validate(); err ***REMOVED*** nil {
+	if err := cfg.Validate(); err == nil {
 		t.Fatal("empty alias name should be rejected")
 	}
 }

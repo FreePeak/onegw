@@ -78,12 +78,12 @@ omp computes its own tok/s; it does not read onegw's metrics.
 nowMs)` in `packages/coding-agent/src/utils/token-rate.ts`:
 
 ```
-scan newest→oldest for the LAST message with role***REMOVED***="assistant",
-  typeof timestamp***REMOVED***="number", typeof usage.output***REMOVED***="number"
+scan newest→oldest for the LAST message with role==="assistant",
+  typeof timestamp==="number", typeof usage.output==="number"
 out  = usage.output                       (provider-reported; ≤0/non-finite → null)
 win  = (duration finite && >0) ? duration            // finished turn: whole-turn span
        : isStreaming ? nowMs - timestamp : null      // live turn: clock since turn start
-null when win***REMOVED***=null || win < 100 ms
+null when win===null || win < 100 ms
 tok/s = out * 1000 / win
 ```
 
@@ -98,7 +98,7 @@ tok/s = out * 1000 / win
   and the RPC `get_state` (plain single-session value).
 - **Badge cache**: on a null leaf tick (sub-100 ms window, `usage.output` not yet
   populated), the display layer **replays the previous rate for the same turn**
-  (`if (this.#ge ***REMOVED***= lastAssistantTimestamp) return this.#me`) instead of blanking;
+  (`if (this.#ge === lastAssistantTimestamp) return this.#me`) instead of blanking;
   it blanks only when the last assistant message changes or none exists. The leaf is
   honest; the badge can be a stale-but-same-turn value — treat mid-turn as advisory.
 
@@ -196,7 +196,7 @@ idle gateway's window is short, not week-long (`admin_pages.go:257,282-307`).
 
 Two filter rules the numbers depend on:
 
-- Keep `code ***REMOVED*** 200` rows **without** a decision `kind`: `speed_order`, `task_routing` and
+- Keep `code == 200` rows **without** a decision `kind`: `speed_order`, `task_routing` and
   `key_invalidated` rows carry no usage at all.
 - An **absent** `tps`/`dtps` means *not observed* (sub-floor window, buffered reply,
   synthetic/passthrough result), never 0 — the fields are `omitempty`. Folding them as

@@ -43,7 +43,7 @@ func (s *Server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	svc := s.updater()
-	if svc ***REMOVED*** nil {
+	if svc == nil {
 		adminError(w, http.StatusConflict, "no updater configured")
 		return
 	}
@@ -63,7 +63,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	svc := s.updater()
-	if svc ***REMOVED*** nil {
+	if svc == nil {
 		adminError(w, http.StatusConflict, "no updater configured")
 		return
 	}
@@ -79,7 +79,7 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	st := svc.Snapshot()
 	if st.InContainer {
 		tag := st.Latest
-		if tag ***REMOVED*** "" {
+		if tag == "" {
 			tag = "latest"
 		}
 		w.Header().Set("Content-Type", "application/json")

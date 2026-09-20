@@ -272,7 +272,7 @@ func TestPassthroughUpstreamErrorRelayedVerbatim(t *testing.T) {
 func TestPassthroughConfigValidationRejectsUnknownCapability(t *testing.T) {
 	cfg := ptProviders(t, "", "")
 	cfg.Providers[0].Passthrough = []string{"bogus"}
-	if err := cfg.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "unknown passthrough capability") {
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "unknown passthrough capability") {
 		t.Fatalf("Validate = %v, want unknown-passthrough error", err)
 	}
 	cfg.Providers[0].Passthrough = []string{"stt"}

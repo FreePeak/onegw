@@ -388,23 +388,23 @@ type Config struct {
 
 // Defaults fills zero values with production-safe defaults.
 func (c *Config) Defaults() {
-	if c.Server.Listen ***REMOVED*** "" {
+	if c.Server.Listen == "" {
 		// Security default: loopback only. Expose explicitly via listen = "0.0.0.0:8080".
 		c.Server.Listen = "127.0.0.1:8080"
 	}
-	if c.Server.DataDir ***REMOVED*** "" {
+	if c.Server.DataDir == "" {
 		c.Server.DataDir = defaultDataDir()
 	}
-	if c.Server.MaxBody ***REMOVED*** 0 {
+	if c.Server.MaxBody == 0 {
 		c.Server.MaxBody = 32 << 20
 	}
-	if c.Server.BufferCap ***REMOVED*** 0 {
+	if c.Server.BufferCap == 0 {
 		c.Server.BufferCap = 48 << 20
 	}
 	// Configuredness is recorded where the value is supplied, so the
 	// built-in fallback stays recognisable as "nobody chose a password"
 	// (adminpw.go): first boot then generates a real credential instead.
-	if c.Server.AdminPassword ***REMOVED*** "" {
+	if c.Server.AdminPassword == "" {
 		if v := os.Getenv("ONEGW_ADMIN_PASSWORD"); v != "" {
 			c.Server.AdminPassword = v
 		}
@@ -414,22 +414,22 @@ func (c *Config) Defaults() {
 	} else {
 		c.Server.AdminPassword = "admin"
 	}
-	if c.Usage.FlushInterval ***REMOVED*** "" {
+	if c.Usage.FlushInterval == "" {
 		c.Usage.FlushInterval = "5s"
 	}
-	if c.Usage.ExportPassword ***REMOVED*** "" {
+	if c.Usage.ExportPassword == "" {
 		c.Usage.ExportPassword = os.Getenv("ONEGW_EXPORT_PASSWORD")
 	}
-	if c.Update.Repo ***REMOVED*** "" {
+	if c.Update.Repo == "" {
 		c.Update.Repo = "FreePeak/onegw"
 	}
-	if c.Update.CheckInterval ***REMOVED*** "" {
+	if c.Update.CheckInterval == "" {
 		c.Update.CheckInterval = "24h"
 	}
-	if c.Usage.RetentionDays ***REMOVED*** 0 {
+	if c.Usage.RetentionDays == 0 {
 		c.Usage.RetentionDays = 90
 	}
-	if c.Server.IdempotencyTTL ***REMOVED*** "" {
+	if c.Server.IdempotencyTTL == "" {
 		c.Server.IdempotencyTTL = "5s"
 	}
 	for i := range c.Providers {
@@ -441,11 +441,11 @@ func (c *Config) Defaults() {
 		// ONEGW_PROVIDER_<NAME>_KEY2..KEY9 add subscription keys as extra
 		// rotating accounts when the provider defines none in TOML. With a
 		// single _KEY only, the legacy single-account path applies.
-		if len(p.Accounts) ***REMOVED*** 0 && len(p.Keys) ***REMOVED*** 0 && p.APIKey != "" {
+		if len(p.Accounts) == 0 && len(p.Keys) == 0 && p.APIKey != "" {
 			accts := []Acct{{Name: "key-1", APIKey: p.APIKey}}
 			for i := 2; i <= 9; i++ {
 				k := strings.TrimSpace(os.Getenv(fmt.Sprintf("%s_KEY%d", envName, i)))
-				if k ***REMOVED*** "" {
+				if k == "" {
 					continue
 				}
 				accts = append(accts, Acct{Name: fmt.Sprintf("key-%d", i), APIKey: k})
@@ -459,7 +459,7 @@ func (c *Config) Defaults() {
 		// [[providers.accounts]] entries.
 		if len(p.Keys) > 0 {
 			for i, k := range p.Keys {
-				if k = strings.TrimSpace(k); k ***REMOVED*** "" {
+				if k = strings.TrimSpace(k); k == "" {
 					continue
 				}
 				p.Accounts = append(p.Accounts, Acct{Name: fmt.Sprintf("key-%d", i+1), APIKey: k})
@@ -503,7 +503,7 @@ func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
 // TaskRoutingOn reports whether task-aware combo reordering (issue #54)
 // is enabled. Anything other than "on" (case-insensitive) is off.
 func (c *Config) TaskRoutingOn() bool {
-	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) ***REMOVED*** "on"
+	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) == "on"
 }
 
 // IdempotencyTTLDur parses [server] idempotency_ttl; 0 means the feature
@@ -526,7 +526,7 @@ func (c *Config) IdempotencyTTLDur() time.Duration {
 // UpdateEvery parses the release-check interval; 0 means disabled.
 func (c *Config) UpdateEvery() time.Duration {
 	s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval))
-	if s ***REMOVED*** "0" || s ***REMOVED*** "off" || s ***REMOVED*** "false" || s ***REMOVED*** "disabled" {
+	if s == "0" || s == "off" || s == "false" || s == "disabled" {
 		return 0
 	}
 	d, err := time.ParseDuration(s)
@@ -557,7 +557,7 @@ func (c *Config) Validate() error {
 	}
 	names := map[string]bool{}
 	for _, p := range c.Providers {
-		if p.Name ***REMOVED*** "" {
+		if p.Name == "" {
 			return fmt.Errorf("provider missing name")
 		}
 		if names["provider:"+p.Name] {
@@ -574,7 +574,7 @@ func (c *Config) Validate() error {
 			// Virtual search provider: no upstream credential needed
 			// (public instances are open; private ones auth via
 			// extra_headers), but an instance URL is mandatory.
-			if p.BaseURL ***REMOVED*** "" {
+			if p.BaseURL == "" {
 				return fmt.Errorf("provider %s (searxng) needs base_url", p.Name)
 			}
 		case "":
@@ -584,7 +584,7 @@ func (c *Config) Validate() error {
 		}
 		// opencode-free is the OpenCode Zen FREE tier — keyless by design
 		// (same carve-out shape as searxng).
-		if p.Kind != "searxng" && p.Kind != "opencode-free" && len(p.Accounts) ***REMOVED*** 0 && p.APIKey ***REMOVED*** "" && len(p.Keys) ***REMOVED*** 0 {
+		if p.Kind != "searxng" && p.Kind != "opencode-free" && len(p.Accounts) == 0 && p.APIKey == "" && len(p.Keys) == 0 {
 			return fmt.Errorf("provider %s needs api_key, keys, or accounts", p.Name)
 		}
 		// Two accounts with the same name silently shadow each other in the
@@ -592,7 +592,7 @@ func (c *Config) Validate() error {
 		// reject the shape loudly (the config-edit splices rely on this).
 		seenAcct := make(map[string]bool, len(p.Accounts))
 		for _, a := range p.Accounts {
-			if a.Name ***REMOVED*** "" {
+			if a.Name == "" {
 				continue
 			}
 			if seenAcct[a.Name] {
@@ -614,7 +614,7 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("provider %s invalid quota_reset_anchor %q: %w", p.Name, p.QuotaResetAnchor, err)
 			}
 		}
-		if p.QuotaWindow ***REMOVED*** "" && (p.QuotaLimitTokens != 0 || p.QuotaLimitRequests != 0) {
+		if p.QuotaWindow == "" && (p.QuotaLimitTokens != 0 || p.QuotaLimitRequests != 0) {
 			return fmt.Errorf("provider %s sets quota limits without quota_window", p.Name)
 		}
 		if p.SubscriptionQuota != "" && !subquota.ValidDialect(p.SubscriptionQuota) {
@@ -636,7 +636,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %s unknown cache_profile %q (want none, claude-anchor, dashscope-marker or sticky-key)", p.Name, p.CacheProfile)
 		}
 		for _, tier := range p.Tiers {
-			if tier.Model ***REMOVED*** "" {
+			if tier.Model == "" {
 				return fmt.Errorf("provider %s: [[tier]] missing model", p.Name)
 			}
 			if tier.Power < 0 || tier.Power > 150 {
@@ -687,7 +687,7 @@ func (c *Config) Validate() error {
 	}
 	comboNames := map[string]bool{}
 	for _, cb := range c.Combos {
-		if cb.Name ***REMOVED*** "" {
+		if cb.Name == "" {
 			return fmt.Errorf("combo missing name")
 		}
 		if comboNames[strings.ToLower(cb.Name)] {
@@ -729,7 +729,7 @@ func (c *Config) Validate() error {
 	}
 	for alias, target := range c.Aliases {
 		low := strings.ToLower(alias)
-		if alias ***REMOVED*** "" {
+		if alias == "" {
 			return fmt.Errorf("alias missing name")
 		}
 		if strings.Contains(alias, "/") {
@@ -776,7 +776,7 @@ func (c *Config) Validate() error {
 		switch in.Mode {
 		case "caveman", "terse", "ponytail":
 		case "custom":
-			if strings.TrimSpace(in.Text) ***REMOVED*** "" {
+			if strings.TrimSpace(in.Text) == "" {
 				return fmt.Errorf("saver.inject[%d]: custom mode needs text", i)
 			}
 		case "":
@@ -785,7 +785,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("saver.inject[%d]: unknown mode %q (caveman|terse|ponytail|custom)", i, in.Mode)
 		}
 	}
-	if c.Saver.External.Enabled && c.Saver.External.URL ***REMOVED*** "" {
+	if c.Saver.External.Enabled && c.Saver.External.URL == "" {
 		return fmt.Errorf("saver.external enabled but url missing")
 	}
 	if err := validateOAuth(c); err != nil {
@@ -802,14 +802,14 @@ const maxAliasHops = 8
 // session_header: RFC 7230 token characters, no spaces. Invalid values
 // must fail config load, not silently drop the derived ids upstream.
 func validHeaderName(s string) bool {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return false
 	}
 	for i := range len(s) {
 		c := s[i]
 		switch {
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case c ***REMOVED*** '-' || c ***REMOVED*** '_' || c ***REMOVED*** '.':
+		case c == '-' || c == '_' || c == '.':
 		default:
 			return false
 		}
@@ -822,7 +822,7 @@ func validHeaderName(s string) bool {
 // means "unset" (the default applies) so only negatives are rejected.
 func validateRotation(r RotationCfg, where string) error {
 	dur := func(name, s string) (time.Duration, error) {
-		if s ***REMOVED*** "" {
+		if s == "" {
 			return 0, nil
 		}
 		d, err := time.ParseDuration(s)
@@ -892,7 +892,7 @@ func Load(path string) (*Config, error) {
 // sentinel) is left untouched.
 func anchorDataDir(c *Config, path string) {
 	dd := c.Server.DataDir
-	if dd ***REMOVED*** "" || dd ***REMOVED*** "memory" || filepath.IsAbs(dd) {
+	if dd == "" || dd == "memory" || filepath.IsAbs(dd) {
 		return
 	}
 	abs, err := filepath.Abs(path)

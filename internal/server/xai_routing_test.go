@@ -80,7 +80,7 @@ func TestXaiResponsesOnlyIdRoutesToResponsesWire(t *testing.T) {
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || len(out.Choices) ***REMOVED*** 0 ||
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || len(out.Choices) == 0 ||
 		out.Choices[0].Message.Content != "pong" {
 		t.Fatalf("Responses reply not translated back into a chat completion: %s", w.Body.String())
 	}

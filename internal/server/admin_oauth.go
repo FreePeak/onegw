@@ -139,7 +139,7 @@ func oauthKeyParam(r *http.Request) string {
 // and unknown services are refused.
 func (s *Server) spec(key string) (oauth.AccountSpec, config.OAuthAccount, bool) {
 	st := s.cur()
-	if st ***REMOVED*** nil || key ***REMOVED*** "" {
+	if st == nil || key == "" {
 		return oauth.AccountSpec{}, config.OAuthAccount{}, false
 	}
 	for _, a := range st.cfg.OAuthAccounts() {
@@ -184,7 +184,7 @@ func (s *Server) handleAdminOAuthAccounts(w http.ResponseWriter, r *http.Request
 
 func (s *Server) oauthStates() []oauthState {
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return nil
 	}
 	out := make([]oauthState, 0, len(st.cfg.OAuth.Accounts))
@@ -223,7 +223,7 @@ func (s *Server) oauthStates() []oauthState {
 				v.State = oauthPending
 				p := lg.prompt
 				v.Prompt = &p
-			} else if lg.err != "" && (v.State ***REMOVED*** oauthSignedOut || v.State ***REMOVED*** oauthExpired) {
+			} else if lg.err != "" && (v.State == oauthSignedOut || v.State == oauthExpired) {
 				v.State = oauthFailed
 			}
 			v.Error = lg.err
@@ -237,7 +237,7 @@ func (s *Server) oauthStates() []oauthState {
 // tokenOf returns the stored token's expiry ("" when it never expires) and
 // whether a token exists at all.
 func (s *Server) tokenOf(key string) (string, bool) {
-	if s.oauth ***REMOVED*** nil {
+	if s.oauth == nil {
 		return "", false
 	}
 	tok, ok := s.oauth.Store().Get(key)
@@ -252,7 +252,7 @@ func (s *Server) tokenOf(key string) (string, bool) {
 
 func expired(rfc3339 string) bool {
 	t, err := time.Parse(time.RFC3339, rfc3339)
-	return err ***REMOVED*** nil && !time.Now().Before(t)
+	return err == nil && !time.Now().Before(t)
 }
 
 // handleAdminOAuthLogin starts (or re-offers) one account's sign-in. The
@@ -265,7 +265,7 @@ func (s *Server) handleAdminOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		adminUnauthorized(w)
 		return
 	}
-	if s.oauth ***REMOVED*** nil {
+	if s.oauth == nil {
 		adminError(w, http.StatusServiceUnavailable, "oauth unavailable (no data dir)")
 		return
 	}
@@ -408,7 +408,7 @@ func (s *Server) handleAdminOAuthLogout(w http.ResponseWriter, r *http.Request) 
 		adminUnauthorized(w)
 		return
 	}
-	if s.oauth ***REMOVED*** nil {
+	if s.oauth == nil {
 		adminError(w, http.StatusServiceUnavailable, "oauth unavailable (no data dir)")
 		return
 	}

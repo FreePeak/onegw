@@ -31,7 +31,7 @@ func TestExecuteSharedWallFlagFallsThroughImmediately(t *testing.T) {
 	calls := map[string]int{}
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls[def.Name]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			// The empty-body one-api shape: nothing to text-match, only
 			// the behavioural verdict.
 			return nil, &types.APIError{Status: 429, Type: "upstream_empty_body",
@@ -61,7 +61,7 @@ func TestExecuteSharedWallDirectRouteSurfacesWithRetryAfter(t *testing.T) {
 		return nil, &types.APIError{Status: 429, Type: "upstream_empty_body", SharedWall: true}
 	}
 	got := r.Execute(context.Background(), res, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 429 {
+	if got == nil || got.Status != 429 {
 		t.Fatalf("direct route must surface the burst 429, got %+v", got)
 	}
 	if got.RetryAfter != "2" {

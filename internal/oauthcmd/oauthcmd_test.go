@@ -62,7 +62,7 @@ func TestResolveDataDirPrecedence(t *testing.T) {
 // box. A broken $BROWSER must surface as an error (the CLI prints the URL
 // fallback then), never a hang or a swallowed failure.
 func TestOpenBrowserHonoursBROWSER(t *testing.T) {
-	if runtime.GOOS ***REMOVED*** "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("sh stub")
 	}
 	dir := t.TempDir()
@@ -86,7 +86,7 @@ func TestOpenBrowserHonoursBROWSER(t *testing.T) {
 	}
 
 	t.Setenv("BROWSER", filepath.Join(dir, "no-such-opener"))
-	if err := openBrowser(url); err ***REMOVED*** nil {
+	if err := openBrowser(url); err == nil {
 		t.Fatal("missing opener must error, not claim success")
 	}
 }

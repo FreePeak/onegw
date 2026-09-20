@@ -87,7 +87,7 @@ func (c *Config) GenerateAndStoreAdminPassword() (bool, error) {
 		return false, nil
 	}
 	dir := c.Server.DataDir
-	if dir ***REMOVED*** "" || dir ***REMOVED*** "memory" {
+	if dir == "" || dir == "memory" {
 		return false, nil
 	}
 	pw, err := GenerateAdminPassword()
@@ -121,10 +121,10 @@ func (c *Config) adminPwPath() string {
 // password change so a container recreated from a config whose key is empty
 // picks the operator's password up from the data volume.
 func WriteAdminPasswordFile(dir, pw string) error {
-	if dir ***REMOVED*** "" || dir ***REMOVED*** "memory" {
+	if dir == "" || dir == "memory" {
 		return nil
 	}
-	if strings.TrimSpace(pw) ***REMOVED*** "" {
+	if strings.TrimSpace(pw) == "" {
 		return errors.New("refusing to store an empty admin password")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {

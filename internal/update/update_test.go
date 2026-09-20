@@ -88,7 +88,7 @@ func TestLatestAndSelectAsset(t *testing.T) {
 	if err != nil || a.Name != assetName {
 		t.Fatalf("SelectAsset: %v, %v", a, err)
 	}
-	if _, err := rel.SelectAsset("plan9", "mips"); err ***REMOVED*** nil {
+	if _, err := rel.SelectAsset("plan9", "mips"); err == nil {
 		t.Fatal("missing asset must error")
 	}
 }
@@ -102,7 +102,7 @@ func TestLatestBadStatus(t *testing.T) {
 	defer srv.Close()
 	c := &Client{Base: srv.URL, Repo: "r", Token: "wrong"}
 	_, err := c.Latest(context.Background())
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "401") {
+	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("want 401 error, got %v", err)
 	}
 	// A rejected token must point at the fix, and an absent token at the
@@ -112,7 +112,7 @@ func TestLatestBadStatus(t *testing.T) {
 	}
 	c2 := &Client{Base: srv.URL, Repo: "r"}
 	_, err = c2.Latest(context.Background())
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "private repo?") {
+	if err == nil || !strings.Contains(err.Error(), "private repo?") {
 		t.Fatalf("401 without token must hint at the private-repo fix, got %v", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestDownloadDigestVerification(t *testing.T) {
 
 	// Corrupt digest: download must fail and remove the partial file.
 	rel.Assets[0].Digest = "sha256:" + fmt.Sprintf("%x", sha256.Sum256([]byte("other")))
-	if err := rel.Assets[0].Download(context.Background(), dst); err ***REMOVED*** nil {
+	if err := rel.Assets[0].Download(context.Background(), dst); err == nil {
 		t.Fatal("digest mismatch must fail")
 	}
 	// Corrupt attempt must not disturb the previously verified file.

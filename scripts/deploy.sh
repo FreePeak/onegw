@@ -45,7 +45,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-step() { echo "***REMOVED*** $1 ***REMOVED***"; }
+step() { echo "== $1 =="; }
 die() { echo "DEPLOY ABORTED: $1" >&2; exit 1; }
 run() { # run <desc> <cmd...>: execute, or print only under --dry-run
   # shift past the description, else "$@" execs a literal binary named

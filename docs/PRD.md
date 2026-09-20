@@ -1,3 +1,24 @@
+*Last updated: 2026-09-20 (corrupt upstream streams: a vendor that splices invalid UTF-8 into its SSE JSON is now failed over at the gateway before the client sees a byte; this branch also repairs the tree-wide `==` redaction damage):*
+The `free` lane served raw invalid UTF-8 INSIDE its SSE JSON strings — 4 thinking blocks across 711
+xdev sessions render as mojibake, the "weird characters" a thinking box shows. The vendor's own
+decode emits the garbage (the live leg resolves `kilocode/kilo-auto/free` -> openrouter -> Novita ->
+`inclusionai/ling-3.0-flash-vl:free`, and the vendor counts the junk as output: 122 reasoning tokens
+for a 288-char block), so it is generated, not leaked. Every JSON decoder downstream substitutes
+U+FFFD silently, so no decoded-text check can tell a corrupt wire from a model that emitted U+FFFD
+of its own: the verdict has to be byte-level. `translat.CorruptGuard` validates the raw wire —
+carrying an incomplete trailing rune into the next read so a character split across TCP chunks is
+not junk — and on a failover-capable buffered attempt holds the stream head, so the verdict lands
+BEFORE `w.WriteHeader`: `relayResponse` benches the leg and `Router.Execute` falls through to the
+next combo target, exactly like any other refusal. A released stream is never aborted (the client is
+already reading it), `hold == 0` keeps the fast path and single-target routes scan-only,
+`retry_forever` keeps its no-downgrade contract, and `textResponse` excludes gzip/binary bodies.
+
+This branch also repairs the redaction damage that made the tree uncompilable: a pass had replaced
+`==` with a 13-char marker in 236 files (215 Go) — `go build` failed repo-wide with
+`undefined: REMOVED`. The repair is lossless: after replacing the marker with `==`, the tree is
+byte-identical to its pre-redaction twin (local `94f9f4f`) apart from the docs-only
+`FREE-MODELS-PLAN.md` this chain carries.
+
 *Last updated: 2026-09-19 (release CI: the version job recomputed the same tag forever — fixed; the `docker` job's owner-gated GHCR block is now loud but non-fatal):*
 Four failures were stacked on the `release` workflow, and only one of them was a bug in its logic.
 
@@ -110,7 +131,7 @@ retry shortly.", `limit_source` = `upstream_provider_shared_pool`. `oaError` dec
 decode sites (`DecodeOpenAIError`, `DecodeOpenAIResponse`, `decodeOpenAIStreamEvent`) produced
 `APIError{Status:429, Type:"upstream_error", Code:"429", Message:"Provider returned error"}` — byte-identical to a
 genuine per-key 429 — and `SharedConcurrency()` matched none of OpenRouter's wording. In `Def.Do` that meant
-`shared ***REMOVED*** false`; the burst fallback could not fire either, because the pool holds ONE account (`harvey`) and
+`shared == false`; the burst fallback could not fire either, because the pool holds ONE account (`harvey`) and
 `wallStrike` needs two distinct accounts to prove a shared lane. Result: `rateLimited(acct, 0)` benched the healthy key
 on the 10s→20s→40s ladder for an upstream-side wall that clears in seconds, `Router.Execute` burned its same-target
 retries into the saturated lane instead of falling through, and the dashboard row named no cause. Live probe
@@ -167,7 +188,7 @@ binary — verify with one real `xdev` request.**
 *Deployed: 73f6954 (cursor usage-summary dialect) via scripts/deploy.sh --binary /tmp/onegw-cs zero-drop at 23:06 local (pid 27586, single listener, old 45275 drained). Authenticated /admin/health 200; real completion through `free` 200. Config: mnhatlinh.doan@gmail.com cursor credential swapped to the browser web-type session token (exp 2026-11-13) — first poll 23:08:55 shows auth0-user plan "enterprise" included-usage 12% reset Oct-1, mnhatlinh plan "free" 5% reset Oct-3 03:51Z, both matching cursor.com's own meters, no probe errors. Stable path ~/.local/bin/onegw re-pointed to the same bytes. Earlier:*
 *Last updated: 2026-09-14 (cursor dialect now reads `/api/usage-summary` — the old `/api/usage` was blind to the grok account): the per-model `/api/usage` buckets returned all-zero/`maxRequestUsage:null` for the personal (grok-linked) account, which the poller rendered as "uncapped 0%" while cursor.com's own dashboard showed ~5% of included usage consumed — the meter simply does not live in those buckets. `usage-summary` carries the real state in one call: `totalPercentUsed`/`apiPercentUsed` are exactly the dashboard's display-message percentages (4.5→"5%", 12.35→"12%", verified with both accounts' own session cookies), and `billingCycleEnd` is the vendor's own reset instant (replacing the old startOfMonth + AddDate month-anchor guess that could read up to 3 days off). New windows: "included usage" + "included API usage" (0-100 percent, so the existing exhausted-≥100 parking works unchanged); plan label = `membershipType` ("free"/"enterprise"); `isUnlimited` keeps the tracked-only-never-parked rule; `teamUsage` is ignored (per-user meters ride in `individualUsage.plan` even for team members — live-verified). Auth is now cookie-only (no `?user=` append). IMPORTANT: `usage-summary` requires a BROWSER-type session JWT — the CLI/agent keychain token 401s there (measured 2026-09-14), so the `mnhatlinh.doan@gmail.com` account's credential was swapped to a browser session export (exp 2026-11-02). Tests rewritten against both live account shapes (`TestParseCursorSummaryMeters`, `TestParseCursorTeamMemberMeters`). Earlier:*
 *Last updated: 2026-09-14 (config live: cursor subquota enabled; `free` ladder restored to v7): `subscription_quota = "cursor"` added to the cursor provider block (valid now that the running binary is 8404904/v0.37.0 — e92368d's dialect); `PUT /admin/config/reload` -> {reloaded:true, providers:9}; first poller cycle 22:33 fetched both cursor accounts via cursor.com/api/usage with the accounts' own session JWTs — auth0-user "1000 req/mo" gpt-4 monthly used=25, the CLI account "uncapped" (tracked only, never parked per the #79 rule). Issue #96 closed with this evidence. The same reload restored `free` to the v7 single leg ["b-ai/qwen3.8-flash"]: a 21:28 edit had re-added kilocode/tokenrouter/commandcode/glm/hy3 legs, contradicting the file's own v7 standing-order comment ("free is b-ai only, permanently"); the 17:49 verified state is served again (GET /admin/api/v1/combos). `dev`/`fast` untouched. Earlier:*
-*Deployed: 8404904 via scripts/deploy.sh --binary /tmp/onegw-new zero-drop at 22:14:51 local (pid 45275). Single listener verified, /admin/health 200 x2, real completion through `free`→qwen3.8-flash served by the new binary. Banner: budget 200 MiB, memlimit 2048 MiB (operator GOMEMLIMIT inherited). Config onegw.toml unchanged by the deploy; live***REMOVED***file ladder retained. Earlier:*
+*Deployed: 8404904 via scripts/deploy.sh --binary /tmp/onegw-new zero-drop at 22:14:51 local (pid 45275). Single listener verified, /admin/health 200 x2, real completion through `free`→qwen3.8-flash served by the new binary. Banner: budget 200 MiB, memlimit 2048 MiB (operator GOMEMLIMIT inherited). Config onegw.toml unchanged by the deploy; live==file ladder retained. Earlier:*
 *Last updated: 2026-09-14 (context-window overflow RECOVERY — prune + replay, not just fall-through):
 the #97-era work made a context-length 400 a *fall-through* verdict (try the next combo leg). That is correct
 when one leg has room, but the `free` combo proved the terminal case: a client session grew to 432,168 tokens,
@@ -494,7 +515,7 @@ entry's device_url/token_url/client_id/scope exactly like the dashboard's sign-i
 that redirected the flow was silently ignored and the CLI hit the real vendor, which is how two throwaway
 probe runs reached accounts.x.ai. The login banner now names the device endpoint before the operator
 approves, the one thing that distinguishes a stub from production. Verified: image rebuilt and inspected
-(both binaries present; `onegw version` reports container), container CLI ***REMOVED*** binary CLI on the same wiring
+(both binaries present; `onegw version` reports container), container CLI == binary CLI on the same wiring
 (in-container `onegw oauth login` -> token in /data -> chat carries `Bearer at-cli-token`; dashboard API and
 providers page 200 in-container), A/B of the host binary vs the container on twin configs identical (models,
 oauth state, chat bearer, health), closed-port configs prove the endpoint resolution without contacting the
@@ -745,7 +766,7 @@ crash/OOM/reboot tries to exec a missing file; `onegw-mem-bin2` is this session'
 deploy-provenance reference; `onegw-rm-bin` is the pre-session binary, the only surviving
 evidence of what was serving before this session and the artifact that settled the parity
 question. Check the mapping before touching any of them:
-`lsof -p $(lsof -t -iTCP:8080 -sTCP:LISTEN) | awk '$4***REMOVED***"txt"'`. Park-state at audit:
+`lsof -p $(lsof -t -iTCP:8080 -sTCP:LISTEN) | awk '$4=="txt"'`. Park-state at audit:
 `"invalidated":true` absent while `"has_key"` is present (the load-bearing pairing — `omitempty`
 hides false), i.e. zero terminal parks. Earlier:)*
 **Ref-rewrite incident (direction corrected — the first record of this got it backwards), for
@@ -886,7 +907,7 @@ totalMonthlyCredits) and the window reports spend/(spend+remaining) — OmniRout
 which the original #79 port left unported (landed d90aa04). Live-verified: GOAT (harvey) 0% → 85%
 (spend 59.87 + remaining 10.29 = 70 pool), Go (linhdmn) 61% (6.18 + 3.82). Park discipline is
 unchanged and hardened — the fraction floors below 100, so spend alone can never fabricate the
-drained park (only remaining ***REMOVED*** 0 does), and the GOAT key's real parking signal remains the
+drained park (only remaining == 0 does), and the GOAT key's real parking signal remains the
 vendor's own weekly window (100%, reset 2026-09-16T06:24:36Z, confirmed by its 429 body). Quota
 dashboard: the subscription state column is now per-window (a parked account's healthy windows no
 longer read "exhausted") and parked accounts carry a "parked" pill in the account cell. Verified:
@@ -1009,7 +1030,7 @@ sorts to the front by the s=0 promotion rule, and `in~Ntok` is an estimate, not 
 `task_routing` keeps green; unclassified kinds keep red. Built from HEAD + the single template
 hunk (no peer WIP swept), embedded templates → binary redeploy required.
 Follow-up (same day): the EXPANDED detail body (the `detText` block under a clicked row) now
-follows the row color for decision rows ONLY — `det.className = e.kind ***REMOVED***= 'speed_order' ?
+follows the row color for decision rows ONLY — `det.className = e.kind === 'speed_order' ?
 'det warn-det' : 'det'` + `#logtbl .det.warn-det .detbody { text-warn }` (kind-scoped, not
 status-scoped: the first cut `.det.code-4xx .detbody` would also have tinted real 4xx request
 detail bodies amber while 5xx stayed gray — inconsistency nobody asked for). admin.src.css +
@@ -1484,7 +1505,7 @@ now falls through to the next combo leg — reconciled 2026-09-10 (c3f4130 + cc6
 same 400 wording via api.commandcode.ai/provider/v1) landed types.ReasoningEchoRequired + a router break,
 which supersedes the Fallbackable mark — normalizeRoles applies identically on every attempt, so the
 mark's retry-once replayed a byte-identical body (guaranteed second 400; 3/3 live occurrences repeated
-before the combo advanced). TestReasoningEcho400FallsThrough re-pinned to hits***REMOVED***1. The same reconciliation
+before the combo advanced). TestReasoningEcho400FallsThrough re-pinned to hits==1. The same reconciliation
 closed the alias gaps the rename missed: normalizeRoles now also converts reasoning_text and the
 structured reasoning_details[] array (pi replays details verbatim for commandcode-served turns,
 openai-completions.js:1043; converted only when reasoning_content is absent — the native echo wins), and
@@ -1712,7 +1733,7 @@ env GITHUB_TOKEN — is fixed by 7fc339d (anonymous public-repo fallback).)*
   detached, env token vars scrubbed in the record, single listener verified, /admin/update
   last_error cleared (latest=v0.13.6, no 401). DEPLOY HANDOFF for the next session: the
   live record name is now **onegw-live2** with binary /tmp/onegw-401fix-bin — overlap-bind
-  your new pid, poll health owner.pid ***REMOVED*** yours, SIGTERM 72826, re-create/adopt the record
+  your new pid, poll health owner.pid == yours, SIGTERM 72826, re-create/adopt the record
   with YOUR binary path.)*
 
 *Last updated: 2026-09-09 (live supervision: the gateway had NO auto-restart — every
@@ -1727,7 +1748,7 @@ env GITHUB_TOKEN — is fixed by 7fc339d (anonymous public-repo fallback).)*
   launchd KeepAlive (not yet installed). Wedged names onegw/onegw-live abandoned. DEPLOY
   HANDOFF (the recipe for the next deploying session): onegw-sup is LIVE, not wedged —
   hub-start on that name fails until 70282 exits. Correct sequence after spawning your
-  new binary overlap-bound: (1) poll /admin/health owner.pid ***REMOVED*** YOUR new pid; (2) SIGTERM
+  new binary overlap-bound: (1) poll /admin/health owner.pid == YOUR new pid; (2) SIGTERM
   the old 70282 explicitly; (3) `hub stop onegw-sup` clears the exited record (hub stop
   on an already-exited record can wedge — if it does, use a FRESH name with restart=
   on-failure persist detached, same spec); (4) hub-start under the cleared/fresh name so
@@ -2840,6 +2861,32 @@ the issue):
   grok cli configs (pi `models.json` is the proven pattern).
 
 ## Current status (post-M5)
+- **Corrupt upstream streams — byte-level detection + pre-commit failover**
+  (2026-09-20, branch `fix/corrupt-stream-failover`, issue #125): the `free`
+  lane (kilocode -> openrouter -> Novita, `inclusionai/ling-3.0-flash-vl:free`)
+  emitted raw invalid UTF-8 inside its SSE JSON strings; 4 thinking blocks
+  across 711 xdev sessions carry U+FFFD as a result. Fix: the new
+  `translat.CorruptGuard` wraps the relay source and validates the raw wire,
+  carrying an incomplete trailing rune so a chunk-split character is not junk,
+  and holds the head of a failover-capable buffered attempt so the verdict
+  lands before `w.WriteHeader`. `relayResponse` benches the leg and
+  `Router.Execute` falls through the combo on the new `CorruptStream` verdict;
+  a direct route surfaces the 502 untouched, and a late post-release verdict
+  is recorded for metrics only — a stream the client is already reading is
+  never aborted. `hold == 0` keeps the fast path and single-target routes
+  scan-only, `retry_forever` is excluded so its no-downgrade contract holds,
+  and `textResponse` excludes gzip/binary bodies. Coverage ceiling: junk that
+  is VALID UTF-8 (a model emitting U+FFFD of its own) stays `LoopBreaker`'s
+  job. Tests: `internal/translat/corrupt_test.go` (failover on reasoning junk,
+  empty-content prefix keeps holding, post-release verdict is not
+  failover-capable, chunk-split rune survives, scan-only mode records without
+  failing over, an error delivered with the last bytes is propagated).
+  End-to-end on a throwaway port (fake junk upstream + a healthy sibling): the
+  unmodified build relays 92,893 bytes that contain invalid UTF-8 at byte 174;
+  the fixed build logs one `upstream_stream_corrupt` row for the junk leg
+  (`502`, same byte offset), answers the healthy leg instead — 1,416 bytes of
+  valid UTF-8 carrying `hello from good leg` — and leaves non-stream traffic
+  byte-identical.
 - **Upstream pre-first-byte timeouts on massive prefills — RCA + fix**
   (2026-09-08 evening, branch `fix/upstream-header-timeout`): the b-ai
   glm-5.3-flash dashboard showed recurring
@@ -3078,7 +3125,7 @@ Local-calendar dashboard windows (96c948d): every admin-dashboard time
   TestUsageTodaySpansUTCDayBoundary + TestChartDayModeLocalBuckets
   (mutation-verified red pre-fix) and a UTC/UTC+7/UTC−8/UTC+14 suite sweep.
   Zero-drop deployed from the origin/master archive (live page verified:
-  xs[0] ***REMOVED*** local-midnight epoch).
+  xs[0] == local-midnight epoch).
 
 Usage dashboard chart fix (5020c34): the tokens chart legend/hover showed
   cumulative raw integers (stack accumulation without a per-series `value`

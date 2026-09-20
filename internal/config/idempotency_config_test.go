@@ -29,13 +29,13 @@ func TestValidateIdempotencyKnobs(t *testing.T) {
 	for _, tc := range cases {
 		c := &Config{Server: Server{IdempotencyTTL: tc.ttl, IdempotencyCache: tc.cache}}
 		err := c.Validate()
-		if tc.errSub ***REMOVED*** "" {
+		if tc.errSub == "" {
 			if err != nil {
 				t.Errorf("ttl %q cache %d: unexpected error %v", tc.ttl, tc.cache, err)
 			}
 			continue
 		}
-		if err ***REMOVED*** nil || !strings.Contains(err.Error(), tc.errSub) {
+		if err == nil || !strings.Contains(err.Error(), tc.errSub) {
 			t.Errorf("ttl %q cache %d: want error containing %q, got %v", tc.ttl, tc.cache, tc.errSub, err)
 		}
 	}

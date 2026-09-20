@@ -22,7 +22,7 @@ func TestValidateSearxngNeedsNoCredentials(t *testing.T) {
 func TestValidateSearxngRequiresBaseURL(t *testing.T) {
 	c := &Config{Providers: []ProviderCfg{{Name: "search", Kind: "searxng"}}}
 	err := c.Validate()
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "base_url") {
+	if err == nil || !strings.Contains(err.Error(), "base_url") {
 		t.Fatalf("searxng without base_url: got %v, want base_url error", err)
 	}
 }
@@ -41,14 +41,14 @@ func TestValidateAcceptsCustomWireKinds(t *testing.T) {
 
 func TestValidateRejectsUnknownKind(t *testing.T) {
 	c := &Config{Providers: []ProviderCfg{{Name: "x", Kind: "nope", APIKey: "k"}}}
-	if err := c.Validate(); err ***REMOVED*** nil {
+	if err := c.Validate(); err == nil {
 		t.Fatal("unknown kind must be rejected")
 	}
 }
 
 func TestValidateStillRequiresKeysForChatKinds(t *testing.T) {
 	c := &Config{Providers: []ProviderCfg{{Name: "real", Kind: "openai"}}}
-	if err := c.Validate(); err ***REMOVED*** nil {
+	if err := c.Validate(); err == nil {
 		t.Fatal("openai provider without key/accounts must still be rejected")
 	}
 }

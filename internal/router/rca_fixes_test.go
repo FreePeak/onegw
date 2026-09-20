@@ -58,7 +58,7 @@ func TestExecuteFallsThroughOnCloudflare520(t *testing.T) {
 	attempts := 0
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		attempts++
-		if def.Name ***REMOVED*** "cc" {
+		if def.Name == "cc" {
 			return nil, &types.APIError{Status: 520, Type: "server_error",
 				Message: "Upstream model provider is temporarily unavailable. Please try again in a moment."}
 		}
@@ -92,7 +92,7 @@ func TestExecutePoolEmptyMessageNamesCause(t *testing.T) {
 			Message: "No permission to access model: glm-5.3-flash"}
 	}
 	err := r.Execute(context.Background(), res, caller, func(a any) {})
-	if err ***REMOVED*** nil || err.Status != 429 || err.Type != "provider_rate_limited" || err.RetryAfter ***REMOVED*** "" {
+	if err == nil || err.Status != 429 || err.Type != "provider_rate_limited" || err.RetryAfter == "" {
 		t.Fatalf("got %v, want pool-empty 429 provider_rate_limited with Retry-After", err)
 	}
 	if !strings.Contains(err.Message, "403") || !strings.Contains(err.Message, "model_access_denied") {
@@ -164,7 +164,7 @@ func TestExecuteFallsThroughOnModel404(t *testing.T) {
 	}
 	var thAttempts int
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if def.Name ***REMOVED*** "th" {
+		if def.Name == "th" {
 			thAttempts++
 			return nil, &types.APIError{Status: 404, Type: "model_not_found",
 				Message: "Model 'deepseek-v4.1-flash' is not available. Browse models at https://tokenharbor.ai/dashboard/models or call GET /v1/models for the live list."}
@@ -182,7 +182,7 @@ func TestExecuteFallsThroughOnModel404(t *testing.T) {
 	// upstream 404 surfaces.
 	resD, _ := r.Resolve("th/deepseek-v4.1-flash:free")
 	got := r.Execute(context.Background(), resD, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 404 || !strings.Contains(got.Message, "not available") {
+	if got == nil || got.Status != 404 || !strings.Contains(got.Message, "not available") {
 		t.Fatalf("direct dead-model route: got %v, want the upstream 404", got)
 	}
 	if thAttempts != 2 {

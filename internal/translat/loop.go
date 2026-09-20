@@ -39,11 +39,11 @@ const loopErrorType = "upstream_reasoning_loop"
 
 // IsLoopError reports whether err is a detected-reasoning-loop APIError.
 func IsLoopError(err error) bool {
-	if err ***REMOVED*** nil {
+	if err == nil {
 		return false
 	}
 	apiErr, ok := err.(*types.APIError)
-	return ok && apiErr.Type ***REMOVED*** loopErrorType
+	return ok && apiErr.Type == loopErrorType
 }
 
 // LoopError is the APIError returned when the guard trips. Its
@@ -90,7 +90,7 @@ type LoopBreaker struct {
 // body is the upstream response body, closed to abort a looping stream.
 func NewLoopBreaker(r io.Reader, body io.Closer, from Format) *LoopBreaker {
 	dec, _ := newStreamDecoder(from)
-	b := &LoopBreaker{r: r, body: body, dec: dec, ndjson: from ***REMOVED*** FmtCommandCode}
+	b := &LoopBreaker{r: r, body: body, dec: dec, ndjson: from == FmtCommandCode}
 	b.text.seed = maphash.MakeSeed()
 	b.think.seed = maphash.MakeSeed()
 	b.text.ndjson = b.ndjson
@@ -119,7 +119,7 @@ func (b *LoopBreaker) Read(p []byte) (int, error) {
 func (b *LoopBreaker) observe(chunk string) {
 	lines := strings.Split(chunk, "\n")
 	for _, line := range lines {
-		if line ***REMOVED*** "" {
+		if line == "" {
 			continue
 		}
 		b.think.push(line)
@@ -164,7 +164,7 @@ func (b *LoopBreaker) tryTrip() {
 			continue
 		}
 		unit := hashUnit(b.text.seed, lines, 0, period)
-		if unit ***REMOVED*** 0 {
+		if unit == 0 {
 			continue
 		}
 		reps := countCycle(b.text.seed, lines, period, unit)
@@ -204,7 +204,7 @@ func countCycle(seed maphash.Seed, lines []string, period int, unit uint64) int 
 			h.Write([]byte(lines[i+j]))
 			h.Write([]byte{0})
 		}
-		if h.Sum64() ***REMOVED*** unit {
+		if h.Sum64() == unit {
 			cur++
 			if cur > best {
 				best = cur

@@ -11,11 +11,11 @@ import (
 // root-owned and any in-place replacement is lost on the next recreate, so
 // self-update inside a container degrades to check + host-side guidance.
 func InContainer() bool {
-	if os.Getenv("ONEGW_IN_CONTAINER") ***REMOVED*** "1" {
+	if os.Getenv("ONEGW_IN_CONTAINER") == "1" {
 		return true
 	}
 	for _, p := range []string{"/.dockerenv", "/run/.containerenv"} {
-		if _, err := os.Stat(p); err ***REMOVED*** nil {
+		if _, err := os.Stat(p); err == nil {
 			return true
 		}
 	}

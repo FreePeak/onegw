@@ -128,7 +128,7 @@ func (s *Server) handleAdminConfigGet(w http.ResponseWriter, r *http.Request) {
 // documented tradeoff of the mask format; no key material leaves the
 // process.
 func maskSecret(v string) string {
-	if v ***REMOVED*** "" {
+	if v == "" {
 		return ""
 	}
 	return fmt.Sprintf("***(len=%d)", len(v))
@@ -191,7 +191,7 @@ func (s *Server) handleAdminConfigReload(w http.ResponseWriter, r *http.Request)
 	defer s.cfgMu.Unlock()
 
 	path := s.configPath()
-	if path ***REMOVED*** "" {
+	if path == "" {
 		adminError(w, http.StatusBadRequest, "config file path unknown (start with -config or set ONEGW_CONFIG)")
 		return
 	}
@@ -244,7 +244,7 @@ func (s *Server) handleAdminKeys(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if len(req.Add) ***REMOVED*** 0 && len(req.Remove) ***REMOVED*** 0 && len(req.ProviderSet) ***REMOVED*** 0 && len(req.ProviderClear) ***REMOVED*** 0 {
+	if len(req.Add) == 0 && len(req.Remove) == 0 && len(req.ProviderSet) == 0 && len(req.ProviderClear) == 0 {
 		adminError(w, http.StatusBadRequest, "add and remove are both empty")
 		return
 	}
@@ -338,7 +338,7 @@ func (s *Server) handleAdminAliases(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if len(req.Set) ***REMOVED*** 0 && len(req.Delete) ***REMOVED*** 0 {
+	if len(req.Set) == 0 && len(req.Delete) == 0 {
 		adminError(w, http.StatusBadRequest, "set and delete are both empty")
 		return
 	}
@@ -375,7 +375,7 @@ func editFailed(w http.ResponseWriter, err error) {
 // and the caller gets the fresh config back (nil error) to hand onward.
 func (s *Server) patchConfigFile(mutate func(lines []string) ([]string, error)) (*config.Config, error) {
 	path := s.configPath()
-	if path ***REMOVED*** "" {
+	if path == "" {
 		return nil, badConfigEdit{errors.New("config file path unknown (start with -config or set ONEGW_CONFIG)")}
 	}
 	raw, err := os.ReadFile(path)
@@ -406,7 +406,7 @@ func (s *Server) patchConfigFile(mutate func(lines []string) ([]string, error)) 
 // failure the original file is untouched.
 func writeConfigAtomically(path string, edited []byte) error {
 	mode := os.FileMode(0o600)
-	if fi, err := os.Stat(path); err ***REMOVED*** nil {
+	if fi, err := os.Stat(path); err == nil {
 		mode = fi.Mode().Perm()
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".onegw-config-*.toml")
@@ -453,7 +453,7 @@ var (
 func findSection(lines []string, name string) (hdr, end int, ok bool) {
 	for i, ln := range lines {
 		m := sectionRe.FindStringSubmatch(ln)
-		if m ***REMOVED*** nil || m[1] != name {
+		if m == nil || m[1] != name {
 			continue
 		}
 		hdr = i
@@ -477,7 +477,7 @@ func findSection(lines []string, name string) (hdr, end int, ok bool) {
 // unauthenticated. Key material never appears in error text.
 func spliceAuthKeys(lines []string, add, remove []string) (out, keys []string, added, removed int, err error) {
 	for i, k := range add {
-		if k ***REMOVED*** "" || k != strings.TrimSpace(k) || strings.ContainsFunc(k, unicode.IsControl) {
+		if k == "" || k != strings.TrimSpace(k) || strings.ContainsFunc(k, unicode.IsControl) {
 			return nil, nil, 0, 0, fmt.Errorf(
 				"invalid key at add position %d: empty, whitespace-padded, or contains control characters", i+1)
 		}
@@ -543,7 +543,7 @@ func spliceAuthKeys(lines []string, add, remove []string) (out, keys []string, a
 		next = append(next, k)
 		added++
 	}
-	if len(next) ***REMOVED*** 0 && len(cur) > 0 {
+	if len(next) == 0 && len(cur) > 0 {
 		return nil, nil, 0, 0, fmt.Errorf("refusing to remove the last auth key (gateway would become unauthenticated)")
 	}
 
@@ -557,7 +557,7 @@ func spliceAuthKeys(lines []string, add, remove []string) (out, keys []string, a
 		// Section exists without a keys line: add the line at the end of
 		// the table (before the next section header / trailing newline).
 		at := end
-		if at ***REMOVED*** len(out) && len(out) > 0 && out[at-1] ***REMOVED*** "" {
+		if at == len(out) && len(out) > 0 && out[at-1] == "" {
 			at-- // insert before the trailing-newline element
 		}
 		out = append(out[:at], append([]string{newLine}, out[at:]...)...)
@@ -586,7 +586,7 @@ func spliceAliases(lines []string, set map[string]string, del []string) (out []s
 		if !bareNameRe.MatchString(name) {
 			return nil, 0, 0, 0, fmt.Errorf("invalid alias name %q: must match [A-Za-z0-9_-]+", name)
 		}
-		if target ***REMOVED*** "" || strings.ContainsFunc(target, unicode.IsControl) {
+		if target == "" || strings.ContainsFunc(target, unicode.IsControl) {
 			return nil, 0, 0, 0, fmt.Errorf("invalid alias target for %q: empty or contains control characters", name)
 		}
 	}
@@ -646,7 +646,7 @@ func spliceAliases(lines []string, set map[string]string, del []string) (out []s
 		if delIdx[i] {
 			continue
 		}
-		if found && i ***REMOVED*** end && len(toAppend) > 0 && !inserted {
+		if found && i == end && len(toAppend) > 0 && !inserted {
 			final = append(final, toAppend...)
 			inserted = true
 		}
@@ -656,7 +656,7 @@ func spliceAliases(lines []string, set map[string]string, del []string) (out []s
 	case inserted:
 	case found && len(toAppend) > 0: // section ran to EOF
 		at := len(final)
-		if at > 0 && final[at-1] ***REMOVED*** "" {
+		if at > 0 && final[at-1] == "" {
 			at-- // before the trailing-newline element
 		}
 		final = append(final[:at], append(append([]string{}, toAppend...), "")...)
@@ -689,7 +689,7 @@ func renderStringArray(items []string) string {
 // so callers refuse the edit instead of corrupting the file.
 func scanStringArray(text string) (items []string, ok bool) {
 	i := 0
-	for i < len(text) && (text[i] ***REMOVED*** ' ' || text[i] ***REMOVED*** '\t') {
+	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
 		i++
 	}
 	if i >= len(text) || text[i] != '[' {
@@ -705,18 +705,18 @@ scan:
 		c := text[i]
 		if quote != 0 {
 			switch {
-			case quote ***REMOVED*** '"' && esc:
+			case quote == '"' && esc:
 				esc = false
-			case quote ***REMOVED*** '"' && c ***REMOVED*** '\\':
+			case quote == '"' && c == '\\':
 				esc = true
-			case c ***REMOVED*** quote:
+			case c == quote:
 				quote = 0
 			}
 			continue
 		}
 		switch c {
 		case '"', '\'':
-			if depth ***REMOVED*** 1 && start < 0 {
+			if depth == 1 && start < 0 {
 				start = i
 			}
 			quote = c
@@ -724,7 +724,7 @@ scan:
 			return nil, false // nested arrays unsupported — refuse
 		case ']':
 			depth--
-			if depth ***REMOVED*** 0 {
+			if depth == 0 {
 				if start >= 0 {
 					elems = append(elems, text[start:i])
 				}
@@ -732,7 +732,7 @@ scan:
 				break scan
 			}
 		case ',':
-			if depth ***REMOVED*** 1 {
+			if depth == 1 {
 				if start >= 0 {
 					elems = append(elems, text[start:i])
 				}
@@ -743,7 +743,7 @@ scan:
 				i++
 			}
 		default:
-			if depth ***REMOVED*** 1 && start < 0 && c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+			if depth == 1 && start < 0 && c != ' ' && c != '\t' && c != '\r' && c != '\n' {
 				return nil, false // non-string element — refuse the edit
 			}
 		}
@@ -753,7 +753,7 @@ scan:
 	}
 	for _, e := range elems {
 		e = strings.TrimSpace(e)
-		if e ***REMOVED*** "" {
+		if e == "" {
 			continue
 		}
 		s, good := parseTOMLString(e)
@@ -769,7 +769,7 @@ scan:
 // literal '...'), allowing trailing spaces and a trailing comment.
 func parseTOMLString(s string) (string, bool) {
 	s = strings.TrimSpace(s)
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return "", false
 	}
 	q := s[0]
@@ -779,11 +779,11 @@ func parseTOMLString(s string) (string, bool) {
 	i := 1
 	for ; i < len(s); i++ {
 		c := s[i]
-		if q ***REMOVED*** '"' && c ***REMOVED*** '\\' {
+		if q == '"' && c == '\\' {
 			i++
 			continue
 		}
-		if c ***REMOVED*** q {
+		if c == q {
 			break
 		}
 	}
@@ -795,7 +795,7 @@ func parseTOMLString(s string) (string, bool) {
 		return "", false
 	}
 	inner := s[1:i]
-	if q ***REMOVED*** '\'' {
+	if q == '\'' {
 		return inner, true // literal strings have no escapes
 	}
 	return unescapeTOMLBasic(inner)
@@ -830,7 +830,7 @@ func unescapeTOMLBasic(s string) (string, bool) {
 			b.WriteByte('\\')
 		case 'u', 'U':
 			n := 4
-			if s[i] ***REMOVED*** 'U' {
+			if s[i] == 'U' {
 				n = 8
 			}
 			if i+n >= len(s) {

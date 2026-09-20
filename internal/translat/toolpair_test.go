@@ -33,23 +33,23 @@ func assertToolPairing(t *testing.T, body []byte) {
 		t.Fatalf("decode wire body: %v (%s)", err, body)
 	}
 	for i, m := range wire.Messages {
-		if m.Role ***REMOVED*** "tool" {
-			if i ***REMOVED*** 0 {
+		if m.Role == "tool" {
+			if i == 0 {
 				t.Fatalf("messages[0]: tool message has no predecessor at all: %s", body)
 			}
 			prev := wire.Messages[i-1]
-			if prev.Role != "tool" && !(prev.Role ***REMOVED*** "assistant" && len(prev.ToolCalls) > 0) {
+			if prev.Role != "tool" && !(prev.Role == "assistant" && len(prev.ToolCalls) > 0) {
 				t.Fatalf("messages[%d]: tool message must follow an assistant message with tool_calls (predecessor role %q): %s", i, prev.Role, body)
 			}
 		}
-		if m.Role != "assistant" || len(m.ToolCalls) ***REMOVED*** 0 {
+		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
 			continue
 		}
 		want := make(map[string]bool, len(m.ToolCalls))
 		for _, tc := range m.ToolCalls {
 			want[tc.ID] = false
 		}
-		for j := i + 1; j < len(wire.Messages) && wire.Messages[j].Role ***REMOVED*** "tool"; j++ {
+		for j := i + 1; j < len(wire.Messages) && wire.Messages[j].Role == "tool"; j++ {
 			id := wire.Messages[j].ToolCallID
 			answered, known := want[id]
 			if !known {
@@ -125,7 +125,7 @@ func TestEncodeOpenAIRequestMixedToolResultTurn(t *testing.T) {
 	}
 	for _, m := range wire.Messages {
 		roles = append(roles, m.Role)
-		if m.Role ***REMOVED*** "user" {
+		if m.Role == "user" {
 			userText.Write(m.Content)
 		}
 	}

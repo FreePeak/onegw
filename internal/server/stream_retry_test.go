@@ -21,7 +21,7 @@ import (
 func flaky429Upstream() (*httptest.Server, *int32) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&hits, 1) ***REMOVED*** 1 {
+		if atomic.AddInt32(&hits, 1) == 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(429)
 			_, _ = w.Write([]byte(`{"error":{"message":"The request rate exceeds the current model Concurrency limit 1200. Please reduce the request frequency.","type":"upstream_error","code":1302}}`))
@@ -112,7 +112,7 @@ func TestStreamFastPathLargeBodyAnswersManagedRetryable(t *testing.T) {
 	if w.Code != 429 {
 		t.Fatalf("code=%d, want 429; body=%s", w.Code, w.Body.String())
 	}
-	if ra := w.Header().Get("Retry-After"); ra ***REMOVED*** "" {
+	if ra := w.Header().Get("Retry-After"); ra == "" {
 		t.Fatal("managed retryable answer must carry Retry-After")
 	}
 	if !strings.Contains(w.Body.String(), "Concurrency limit") {

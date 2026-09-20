@@ -23,13 +23,13 @@ func TestRoundRobinComboConfig(t *testing.T) {
 	if err := base("round-robin", 0).Validate(); err != nil {
 		t.Fatalf("round-robin without a limit must default: %v", err)
 	}
-	if err := base("order", 2).Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "without strategy") {
+	if err := base("order", 2).Validate(); err == nil || !strings.Contains(err.Error(), "without strategy") {
 		t.Fatalf("a limit without the strategy must be rejected, got %v", err)
 	}
-	if err := base("round-robin", 1001).Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "out of range") {
+	if err := base("round-robin", 1001).Validate(); err == nil || !strings.Contains(err.Error(), "out of range") {
 		t.Fatalf("an out-of-range limit must be rejected, got %v", err)
 	}
-	if err := base("roundrobin", 0).Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "must be") {
+	if err := base("roundrobin", 0).Validate(); err == nil || !strings.Contains(err.Error(), "must be") {
 		t.Fatalf("an unknown strategy must be rejected, got %v", err)
 	}
 }

@@ -35,7 +35,7 @@ type Pusher struct {
 // NewPusher returns a Pusher posting JSONL rows to url with the given admin
 // password (X-Admin-Password header) and node id. nil url disables it.
 func NewPusher(url, adminPassword, nodeID string) *Pusher {
-	if url ***REMOVED*** "" {
+	if url == "" {
 		return nil
 	}
 	return &Pusher{
@@ -49,7 +49,7 @@ func NewPusher(url, adminPassword, nodeID string) *Pusher {
 // AfterFlush hands the just-flushed buckets to the pusher. Non-blocking:
 // work happens on the delivery goroutine, never inside the flush loop.
 func (p *Pusher) AfterFlush(buckets []Bucket) {
-	if p ***REMOVED*** nil || len(buckets) ***REMOVED*** 0 {
+	if p == nil || len(buckets) == 0 {
 		return
 	}
 	rows := make([]rollupWire, len(buckets))
@@ -72,7 +72,7 @@ func (p *Pusher) worker(rows []rollupWire) {
 	for {
 		p.deliver(rows)
 		p.mu.Lock()
-		if len(p.pending) ***REMOVED*** 0 {
+		if len(p.pending) == 0 {
 			p.inflight = false
 			p.mu.Unlock()
 			return
@@ -111,8 +111,8 @@ func (p *Pusher) deliver(rows []rollupWire) {
 			req.Header.Set("X-Admin-Password", p.apiKey)
 		}
 		resp, err := p.client.Do(req)
-		if err ***REMOVED*** nil {
-			if resp.StatusCode ***REMOVED*** http.StatusOK {
+		if err == nil {
+			if resp.StatusCode == http.StatusOK {
 				resp.Body.Close()
 				p.mu.Lock()
 				p.droppedAt = time.Time{}
@@ -124,7 +124,7 @@ func (p *Pusher) deliver(rows []rollupWire) {
 		} else {
 			lastErr = err
 		}
-		if attempt ***REMOVED*** 0 {
+		if attempt == 0 {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}

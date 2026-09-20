@@ -39,7 +39,7 @@ OmniRoute pitfall #10 ("filtering listing without filtering routing = 402/403",
 | Clause | Source |
 | --- | --- |
 | id ends `:free` (or the reseller's `-free` / `/free` spelling) | `OmniRoute/src/shared/utils/freeModels.ts:57-70`; `9router/open-sse/providers/capabilities.js:384-389` (free variant matched **before** the paid base id, because free tiers cap context/output well below the paid window) |
-| `pricing.prompt ***REMOVED*** 0 && pricing.completion ***REMOVED*** 0` | `freeModels.ts:44-49,58-62`; `9router/src/app/api/providers/suggested-models/filters.js:8-17` (plus a `context_length >= 200000` utility floor so a useless free model is never advertised) |
+| `pricing.prompt == 0 && pricing.completion == 0` | `freeModels.ts:44-49,58-62`; `9router/src/app/api/providers/suggested-models/filters.js:8-17` (plus a `context_length >= 200000` utility floor so a useless free model is never advertised) |
 | membership in a known free set for the (alias-resolved) provider | `freeModels.ts:22-33,61-66` — onegw's equivalent is the live catalog, not a table |
 
 Plus two upstream rules that are easy to miss:
@@ -378,7 +378,7 @@ lane counters; boost never enters the steady sum.
   shipped paths. Parse `Retry-After` in all three dialects — Groq relative
   (`5m`), plain integer seconds, HTTP-date — plus the
   `please retry in 38.92s` literal, in that order (`classify429.ts:185-319`; the
-  order matters because `parseInt("5m") ***REMOVED***= 5`).
+  order matters because `parseInt("5m") === 5`).
 * **Per-provider 429 retry policy** (matrix #26): 9router's kiro sets
   `retry: {"429": 0}` — never retry a 429 in place, rotate immediately — beside
   per-model `rateMultiplier` and `quotaFamily` tags
@@ -462,7 +462,7 @@ every-entry-valid test; `onegw free init` golden TOML test.
 (**`recurring-credit` is not recurring** — it goes into the credit sum;
 `recurring-uncapped`, `one-time-initial`, `discontinued` never enter the
 headline — `freeModelCatalog.ts:56`). `dedupedSum` takes **max per `poolKey`**
-and sums loose `poolKey***REMOVED***""` entries, so a 30-model shared pool contributes one
+and sums loose `poolKey==""` entries, so a 30-model shared pool contributes one
 budget, not thirty (`:80-95` — upstream pitfall #1). Outputs
 `steady | steady+recurringCredits | firstMonth | boostMonthly |
 uncappedProviders | modelCount | poolCount | headline`. Uncapped lanes are

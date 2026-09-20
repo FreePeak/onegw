@@ -58,7 +58,7 @@ func Stamp() Build {
 		case "vcs.revision":
 			b.Revision = s.Value
 		case "vcs.modified":
-			b.Modified = s.Value ***REMOVED*** "true"
+			b.Modified = s.Value == "true"
 		}
 	}
 	return b
@@ -76,7 +76,7 @@ func Capture(listen, configPath string, startedAt time.Time) Info {
 		Argv:       os.Args,
 		Build:      Stamp(),
 	}
-	if fi, err := os.Stat(configPath); err ***REMOVED*** nil {
+	if fi, err := os.Stat(configPath); err == nil {
 		info.ConfigMtime = fi.ModTime().UTC().Format(time.RFC3339Nano)
 	}
 	return info
@@ -87,7 +87,7 @@ func Capture(listen, configPath string, startedAt time.Time) Info {
 // disk, and every write is a no-op (the in-memory record still powers
 // /admin/health).
 func file(dataDir string) string {
-	if dataDir ***REMOVED*** "" || dataDir ***REMOVED*** "memory" {
+	if dataDir == "" || dataDir == "memory" {
 		return ""
 	}
 	return filepath.Join(dataDir, "owner.json")
@@ -98,7 +98,7 @@ func file(dataDir string) string {
 // real data_dir.
 func Write(dataDir string, info Info) error {
 	p := file(dataDir)
-	if p ***REMOVED*** "" {
+	if p == "" {
 		return nil
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -125,7 +125,7 @@ func Write(dataDir string, info Info) error {
 func Read(dataDir string) (Info, error) {
 	var info Info
 	p := file(dataDir)
-	if p ***REMOVED*** "" {
+	if p == "" {
 		return info, fmt.Errorf("owner: no data_dir")
 	}
 	b, err := os.ReadFile(p)

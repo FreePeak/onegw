@@ -54,7 +54,7 @@ func (f *oauthIdP) handler() http.Handler {
 	})
 	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		if r.PostForm.Get("grant_type") ***REMOVED*** "refresh_token" {
+		if r.PostForm.Get("grant_type") == "refresh_token" {
 			f.mu.Lock()
 			f.refresh++
 			f.mu.Unlock()
@@ -177,7 +177,7 @@ func oauthStateOf(t *testing.T, h http.Handler, key string) (string, string) {
 		t.Fatalf("GET oauth accounts: %d %s", w.Code, w.Body.String())
 	}
 	for _, a := range decodeJSON[oauthAccountsResp](t, w.Body.String()).Accounts {
-		if a.Key ***REMOVED*** key {
+		if a.Key == key {
 			return a.State, a.ExpiresAt
 		}
 	}
@@ -191,7 +191,7 @@ func waitOAuthState(t *testing.T, h http.Handler, key, want string) {
 	var got string
 	for time.Now().Before(deadline) {
 		got, _ = oauthStateOf(t, h, key)
-		if got ***REMOVED*** want {
+		if got == want {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -225,7 +225,7 @@ func TestOAuthSignInFromDashboardEndToEnd(t *testing.T) {
 			VerificationURLComplete string `json:"verification_uri_complete"`
 		} `json:"prompt"`
 	}](t, w.Body.String())
-	if body.Prompt ***REMOVED*** nil || body.Prompt.UserCode != "CODE-1" {
+	if body.Prompt == nil || body.Prompt.UserCode != "CODE-1" {
 		t.Fatalf("login response carries no prompt: %s", w.Body.String())
 	}
 	if !strings.Contains(body.Prompt.VerificationURLComplete, "CODE-1") {
@@ -233,7 +233,7 @@ func TestOAuthSignInFromDashboardEndToEnd(t *testing.T) {
 	}
 
 	waitOAuthState(t, h, "xai/main", "signed-in")
-	if _, exp := oauthStateOf(t, h, "xai/main"); exp ***REMOVED*** "" {
+	if _, exp := oauthStateOf(t, h, "xai/main"); exp == "" {
 		t.Fatal("signed-in state must report the token expiry")
 	}
 
@@ -279,12 +279,12 @@ func TestOAuthLoginReoffersPendingPrompt(t *testing.T) {
 				UserCode string `json:"user_code"`
 			} `json:"prompt"`
 		}](t, body)
-		if v.Prompt ***REMOVED*** nil {
+		if v.Prompt == nil {
 			return ""
 		}
 		return v.Prompt.UserCode
 	}
-	if a, b := get(first.Body.String()), get(second.Body.String()); a ***REMOVED*** "" || a != b {
+	if a, b := get(first.Body.String()), get(second.Body.String()); a == "" || a != b {
 		t.Fatalf("second click must re-offer %q, got %q", a, b)
 	}
 	if n := idp.starts; n != 1 {
@@ -632,7 +632,7 @@ func TestProviderSavePreservesUnmodeledAccountFields(t *testing.T) {
 	if strings.Contains(after, "rpm = 7") {
 		t.Fatalf("a modeled field omitted by the request must clear:\n%s", after)
 	}
-	if before ***REMOVED*** after {
+	if before == after {
 		t.Fatal("fixture check: the save must have changed something")
 	}
 }
@@ -788,7 +788,7 @@ func TestOAuthBrowserSignInEndToEnd(t *testing.T) {
 		t.Fatalf("login: %d %s", w.Code, w.Body.String())
 	}
 	bp := decodeJSON[browserPrompt](t, w.Body.String())
-	if bp.Prompt ***REMOVED*** nil || bp.Prompt.Mode != "browser" {
+	if bp.Prompt == nil || bp.Prompt.Mode != "browser" {
 		t.Fatalf("xAI must default to the browser dialect: %s", w.Body.String())
 	}
 	if bp.Prompt.UserCode != "" {
@@ -814,7 +814,7 @@ func TestOAuthBrowserSignInEndToEnd(t *testing.T) {
 			t.Fatalf("authorize %s = %q, want %q (url %s)", key, got, want, authURL)
 		}
 	}
-	if q.Get("code_challenge") ***REMOVED*** "" || q.Get("nonce") ***REMOVED*** "" || q.Get("state") ***REMOVED*** "" {
+	if q.Get("code_challenge") == "" || q.Get("nonce") == "" || q.Get("state") == "" {
 		t.Fatalf("authorize must carry challenge/state/nonce: %s", authURL)
 	}
 	callback, err := url.Parse(q.Get("redirect_uri"))
@@ -866,7 +866,7 @@ func TestOAuthCallbackRefusesUnknownState(t *testing.T) {
 	}
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
-	if res.StatusCode ***REMOVED*** http.StatusOK || !strings.Contains(string(body), "already used or has expired") {
+	if res.StatusCode == http.StatusOK || !strings.Contains(string(body), "already used or has expired") {
 		t.Fatalf("unknown state must be refused, got %d: %s", res.StatusCode, firstLines(string(body), 3))
 	}
 	if state, _ := oauthStateOf(t, h, "xai/main"); state != "pending" {

@@ -28,22 +28,22 @@ func (c *Config) fill() Config {
 	if !v.DedupLines {
 		v.DedupLines = true
 	}
-	if v.MaxLine ***REMOVED*** 0 {
+	if v.MaxLine == 0 {
 		v.MaxLine = 400
 	}
-	if v.MaxHead ***REMOVED*** 0 {
+	if v.MaxHead == 0 {
 		v.MaxHead = 120
 	}
-	if v.MaxTail ***REMOVED*** 0 {
+	if v.MaxTail == 0 {
 		v.MaxTail = 20
 	}
-	if v.MinSavingsPct ***REMOVED*** 0 {
+	if v.MinSavingsPct == 0 {
 		v.MinSavingsPct = 5
 	}
-	if v.External.TimeoutMS ***REMOVED*** 0 {
+	if v.External.TimeoutMS == 0 {
 		v.External.TimeoutMS = 2000
 	}
-	if v.External.MinBytes ***REMOVED*** 0 {
+	if v.External.MinBytes == 0 {
 		v.External.MinBytes = 32768
 	}
 	return v
@@ -85,7 +85,7 @@ func (s *Saver) Compress(text string) string {
 	cfg := s.settings()
 	out := s.compressFiltered(text, cfg)
 	// Never grow, never over-truncate: savings gate.
-	if out ***REMOVED*** "" || len(out) >= len(text) {
+	if out == "" || len(out) >= len(text) {
 		return text
 	}
 	saved := 100 * (len(text) - len(out)) / len(text)
@@ -211,8 +211,8 @@ func dedup(text string) string {
 	count := 0
 	flush := func() {
 		switch {
-		case count ***REMOVED*** 0:
-		case count ***REMOVED*** 1:
+		case count == 0:
+		case count == 1:
 			b.WriteString(prev)
 			b.WriteByte('\n')
 		default:
@@ -223,7 +223,7 @@ func dedup(text string) string {
 		}
 	}
 	for line := range strings.SplitSeq(text, "\n") {
-		if line ***REMOVED*** prev {
+		if line == prev {
 			count++
 			continue
 		}
@@ -241,7 +241,7 @@ func stripWhitespace(text string) string {
 	blank := 0
 	for line := range strings.SplitSeq(text, "\n") {
 		t := strings.TrimRight(line, " \t\r")
-		if t ***REMOVED*** "" {
+		if t == "" {
 			blank++
 			if blank > 1 {
 				continue
@@ -326,7 +326,7 @@ func filterGeneric(text string, cfg Config) string {
 }
 
 func itoa(n int) string {
-	if n ***REMOVED*** 0 {
+	if n == 0 {
 		return "0"
 	}
 	neg := n < 0

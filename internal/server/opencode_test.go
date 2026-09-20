@@ -25,7 +25,7 @@ func TestOpencodeRotationAndSession(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		seenKeys[r.Header.Get("Authorization")]++
-		if r.Header.Get("X-Opencode-Session") ***REMOVED*** "" {
+		if r.Header.Get("X-Opencode-Session") == "" {
 			missingSession++
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -89,7 +89,7 @@ func responsesStub(t *testing.T, stream bool) *httptest.Server {
 		if r.URL.Path != "/v1/responses" {
 			t.Errorf("grok must hit /v1/responses, got %s", r.URL.Path)
 		}
-		if r.Header.Get("X-Opencode-Session") ***REMOVED*** "" {
+		if r.Header.Get("X-Opencode-Session") == "" {
 			t.Error("responses call missing session header")
 		}
 		var req map[string]any
@@ -169,7 +169,7 @@ func TestGrokNonStreamViaResponsesUpstream(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("client got non-OpenAI-shaped body: %v (%s)", err, w.Body.String())
 	}
-	if len(resp.Choices) ***REMOVED*** 0 || resp.Choices[0].Message.Content != "pong" {
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content != "pong" {
 		t.Fatalf("content missing: %s", w.Body.String())
 	}
 	if resp.Choices[0].FinishReason != "stop" {
@@ -226,7 +226,7 @@ func TestGrokAnthropicClientViaResponses(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("not anthropic-shaped: %v (%s)", err, w.Body.String())
 	}
-	if resp.Type != "message" || len(resp.Content) ***REMOVED*** 0 || resp.Content[0].Text != "pong" {
+	if resp.Type != "message" || len(resp.Content) == 0 || resp.Content[0].Text != "pong" {
 		t.Fatalf("anthropic content wrong: %s", w.Body.String())
 	}
 	if resp.Usage.InputTokens != 7 {
@@ -297,7 +297,7 @@ func TestGrokGeminiClientViaResponses(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("not gemini-shaped: %v (%s)", err, w.Body.String())
 	}
-	if len(resp.Candidates) ***REMOVED*** 0 || resp.Candidates[0].Content.Parts[0].Text != "pong" {
+	if len(resp.Candidates) == 0 || resp.Candidates[0].Content.Parts[0].Text != "pong" {
 		t.Fatalf("gemini content wrong: %s", w.Body.String())
 	}
 }
@@ -349,7 +349,7 @@ func TestUnionAlphaOpenAIClientViaAnthropicUpstream(t *testing.T) {
 	if gotAPIKey != "oc-k1" || gotVersion != "2023-06-01" {
 		t.Fatalf("x-api-key=%q anthropic-version=%q", gotAPIKey, gotVersion)
 	}
-	if gotSession ***REMOVED*** "" {
+	if gotSession == "" {
 		t.Fatal("missing x-opencode-session")
 	}
 	if !strings.Contains(gotBody, `"max_tokens"`) || strings.Contains(gotBody, `"input"`) {
@@ -365,7 +365,7 @@ func TestUnionAlphaOpenAIClientViaAnthropicUpstream(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("client got non-OpenAI-shaped body: %v (%s)", err, w.Body.String())
 	}
-	if len(resp.Choices) ***REMOVED*** 0 || resp.Choices[0].Message.Content != "hi" {
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content != "hi" {
 		t.Fatalf("content missing: %s", w.Body.String())
 	}
 }

@@ -38,12 +38,12 @@ func newOpencodeEchoStub() *opencodeEchoStub {
 		// tool-tail body, so the "serves after synthesis" assertions could
 		// only ever pass through the combo's fallback leg.)
 		bad := false
-		if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1]["role"] ***REMOVED*** "tool" {
+		if len(req.Messages) > 0 && req.Messages[len(req.Messages)-1]["role"] == "tool" {
 			for _, m := range req.Messages {
 				if m["role"] != "assistant" {
 					continue
 				}
-				if s, _ := m["reasoning_content"].(string); s ***REMOVED*** "" {
+				if s, _ := m["reasoning_content"].(string); s == "" {
 					bad = true
 					break
 				}
@@ -156,7 +156,7 @@ func TestReasoningEchoSynthesizedOnToolLoop(t *testing.T) {
 		if m["role"] != "assistant" {
 			continue
 		}
-		if s, _ := m["reasoning_content"].(string); s ***REMOVED*** "" {
+		if s, _ := m["reasoning_content"].(string); s == "" {
 			t.Fatalf("assistant[%d] reached upstream without echo: %s", i, bods[0])
 		}
 	}

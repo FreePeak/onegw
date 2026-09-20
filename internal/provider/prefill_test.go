@@ -142,7 +142,7 @@ func TestPrefillModelCapBoundsCardinality(t *testing.T) {
 // rate = the accurate token count.
 func TestPrefillBucketComesFromTheEstimate(t *testing.T) {
 	const est, actual = int64(40_000), int64(27_814)
-	if PrefillBucket(est) ***REMOVED*** PrefillBucket(actual) {
+	if PrefillBucket(est) == PrefillBucket(actual) {
 		t.Skip("fixture no longer straddles a bucket boundary; pick sizes that do")
 	}
 	// Wrong side of the contract: stored under the actual-token bucket.
@@ -198,7 +198,7 @@ func TestPrefillExcludesAdmissionQueue(t *testing.T) {
 	go func() {
 		defer close(held)
 		res, apiErr := def.Do(t.Context(), &def.Accounts[0], "m", nil, strings.NewReader(`{}`), false)
-		if apiErr ***REMOVED*** nil {
+		if apiErr == nil {
 			res.Resp.Body.Close()
 		}
 	}()

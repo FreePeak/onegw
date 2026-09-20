@@ -139,15 +139,15 @@ func (s *Service) wake() {
 // drains THIS process, so a caller must not wait for the result here; on
 // failure the current process keeps serving.
 func (s *Service) ApplyAsync(opt Opt) error {
-	if opt.Repo ***REMOVED*** "" {
+	if opt.Repo == "" {
 		opt.Repo = s.cfgFn().Repo
 	}
-	if opt.Listen ***REMOVED*** "" || opt.AdminPassword ***REMOVED*** "" {
+	if opt.Listen == "" || opt.AdminPassword == "" {
 		cfg := s.cfgFn()
-		if opt.Listen ***REMOVED*** "" {
+		if opt.Listen == "" {
 			opt.Listen = cfg.Listen
 		}
-		if opt.AdminPassword ***REMOVED*** "" {
+		if opt.AdminPassword == "" {
 			opt.AdminPassword = cfg.Password
 		}
 	}
@@ -167,7 +167,7 @@ func (s *Service) ApplyAsync(opt Opt) error {
 		s.applying = false
 		s.st.Applying = false
 		switch {
-		case err ***REMOVED*** nil:
+		case err == nil:
 			s.st.LastApply = "applied" // this process is being drained now
 		case errors.Is(err, ErrUpToDate):
 			s.st.LastApply = "already up to date"

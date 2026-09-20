@@ -82,7 +82,7 @@ func (d *Def) doCursor(ctx context.Context, acct *Account, model string, body io
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: err.Error()}
 	}
 	token := acct.bearerToken()
-	if token ***REMOVED*** "" {
+	if token == "" {
 		// Stale session: the account row exists but its APIKey
 		// was cleared (oauth-tokens.json expired out, or a config
 		// edit dropped the static key) — surface it as an honest

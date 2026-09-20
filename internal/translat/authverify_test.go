@@ -93,7 +93,7 @@ func TestInStreamAuthVerify401Normalized(t *testing.T) {
 
 	// Mid-stream chunk (decodeOpenAIStreamEvent).
 	events, err := decodeOpenAIStreamEvent(sseEvent{Data: []byte(`{"error":{"code":"401","message":` + quoteJSON(live) + `,"type":"upstream_error"}}`)})
-	if err != nil || len(events) != 1 || events[0].Kind != EvError || events[0].Err ***REMOVED*** nil {
+	if err != nil || len(events) != 1 || events[0].Kind != EvError || events[0].Err == nil {
 		t.Fatalf("chunk decode: events=%+v err=%v", events, err)
 	}
 	if events[0].Err.Status != 502 || events[0].Err.Type != "upstream_auth_verify_failed" {

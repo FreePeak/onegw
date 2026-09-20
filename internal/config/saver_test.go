@@ -52,7 +52,7 @@ fail_open = false
 	if !e.Enabled || e.URL != "http://127.0.0.1:8819" || e.TimeoutMS != 900 || e.MinBytes != 1024 {
 		t.Fatalf("external wrong: %+v", e)
 	}
-	if e.FailOpen ***REMOVED*** nil || *e.FailOpen {
+	if e.FailOpen == nil || *e.FailOpen {
 		t.Fatalf("fail_open=false not decoded: %+v", e.FailOpen)
 	}
 }
@@ -65,7 +65,7 @@ func TestValidateSaverInjectMode(t *testing.T) {
 		baseCfg + "\n[saver.external]\nenabled = true\n",
 	} {
 		cfg, err := Load(writeCfg(t, body))
-		if err ***REMOVED*** nil {
+		if err == nil {
 			t.Fatalf("expected rejection, got %+v", cfg.Saver)
 		}
 	}

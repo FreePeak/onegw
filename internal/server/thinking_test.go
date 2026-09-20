@@ -19,7 +19,7 @@ func assertField(t *testing.T, body []byte, key, want string) {
 		t.Fatalf("unmarshal %s: %v", body, err)
 	}
 	got, _ := m[key].(string)
-	if want ***REMOVED*** "" {
+	if want == "" {
 		if _, ok := m[key]; ok {
 			t.Errorf("%s = %q, want absent (body %s)", key, got, body)
 		}

@@ -57,7 +57,7 @@ type ExternalCfg struct {
 	FailOpen *bool `toml:"fail_open"`
 }
 
-func (e ExternalCfg) failOpen() bool { return e.FailOpen ***REMOVED*** nil || *e.FailOpen }
+func (e ExternalCfg) failOpen() bool { return e.FailOpen == nil || *e.FailOpen }
 
 // Prompt texts are honest directives: they instruct the model to be
 // maximally concise without false claims (no persona lies) and without
@@ -116,11 +116,11 @@ func (r InjectCfg) prompt() string {
 // matchRule reports whether rule applies to model. Globs follow
 // path.Match semantics ("*" does not cross "/"); empty Models matches all.
 func (r InjectCfg) matchRule(model string) bool {
-	if len(r.Models) ***REMOVED*** 0 {
+	if len(r.Models) == 0 {
 		return true
 	}
 	for _, g := range r.Models {
-		if ok, err := path.Match(g, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(g, model); err == nil && ok {
 			return true
 		}
 	}
@@ -141,10 +141,10 @@ func (s *Saver) InjectRaw(format translat.Format, raw []byte, model string) []by
 			break
 		}
 	}
-	if rule ***REMOVED*** nil {
+	if rule == nil {
 		return raw
 	}
-	if rule.Mode ***REMOVED*** "ponytail" && strings.Contains(string(raw), ponytailClientSig) {
+	if rule.Mode == "ponytail" && strings.Contains(string(raw), ponytailClientSig) {
 		return raw // the client already runs the ponytail plugin; don't stack the ladder
 	}
 	prompt := rule.prompt()
@@ -184,7 +184,7 @@ func injectOpenAI(root map[string]any, prompt string, raw []byte) []byte {
 			}
 		}
 	}
-	if msgs ***REMOVED*** nil {
+	if msgs == nil {
 		return raw // no messages array to extend; don't invent structure
 	}
 	injected := append([]any{map[string]any{
@@ -270,7 +270,7 @@ func (s *Saver) CompressExternal(ctx context.Context, raw []byte) ([]byte, error
 		return raw, nil
 	}
 	msgs, ok := root["messages"].([]any)
-	if !ok || len(msgs) ***REMOVED*** 0 {
+	if !ok || len(msgs) == 0 {
 		return raw, nil // Gemini-style contents or non-chat body: hook is messages-shaped only
 	}
 	reqBytes, err := json.Marshal(map[string]any{"messages": msgs})
@@ -288,8 +288,8 @@ func (s *Saver) CompressExternal(ctx context.Context, raw []byte) ([]byte, error
 	var resp struct {
 		Messages json.RawMessage `json:"messages"`
 	}
-	if err := json.Unmarshal(out, &resp); err != nil || len(resp.Messages) ***REMOVED*** 0 ||
-		string(resp.Messages) ***REMOVED*** "null" {
+	if err := json.Unmarshal(out, &resp); err != nil || len(resp.Messages) == 0 ||
+		string(resp.Messages) == "null" {
 		s.logExtFailure(fmt.Errorf("response missing messages array"))
 		return raw, nil
 	}

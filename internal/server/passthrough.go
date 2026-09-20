@@ -72,7 +72,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		mp          *multipartPeek
 		contentType = "application/json"
 	)
-	if sf ***REMOVED*** surfTranscriptions {
+	if sf == surfTranscriptions {
 		ct := r.Header.Get("Content-Type")
 		if !strings.HasPrefix(ct, "multipart/form-data") {
 			writeErr(w, translat.FmtOpenAI, errAPI(400, "invalid_request", "multipart/form-data content type required"))
@@ -80,7 +80,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		}
 		contentType = ct // the boundary must reach the upstream intact
 		mp = splitMultipartModel(r.Body)
-		if mp ***REMOVED*** nil {
+		if mp == nil {
 			writeErr(w, translat.FmtOpenAI, errAPI(400, "invalid_request", "unreadable multipart body"))
 			return
 		}
@@ -108,7 +108,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 			}
 		}
 		res.Targets = kept
-		if len(kept) ***REMOVED*** 0 {
+		if len(kept) == 0 {
 			writeErr(w, translat.FmtOpenAI, errAPI(http.StatusNotFound, "passthrough_not_supported",
 				"no provider in combo serves passthrough \""+sf.cap+"\""))
 			return
@@ -118,7 +118,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 	// Streaming multipart cannot be replayed for a retry or fallback, so
 	// those requests get exactly one attempt against one target; buffered
 	// JSON bodies take the router's normal retry/fallback path.
-	if sf ***REMOVED*** surfTranscriptions {
+	if sf == surfTranscriptions {
 		if res.IsCombo || len(res.Targets) != 1 {
 			writeErr(w, translat.FmtOpenAI, errAPI(400, "invalid_request",
 				"audio transcriptions requires a single provider/model route (streamed bodies cannot be replayed)"))
@@ -140,7 +140,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		mp.retarget(t.Model)
 		id := requestIdentity(r.Header, ak)
 		acct, poolReady := def.NextAccount(id)
-		if acct ***REMOVED*** nil {
+		if acct == nil {
 			// Pool cooling from upstream 429s: answer 429 + Retry-After
 			// without a doomed upstream call, mirroring proxyStream.
 			cool := time.Until(poolReady)
@@ -158,7 +158,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 			mp.replay(), mp.length(r.ContentLength), contentType, r.Header, 1)
 		if aerr != nil {
 			def.Unpin(id) // failed one-shot attempt must not keep its pin
-			if w.Header().Get("Content-Type") ***REMOVED*** "" {
+			if w.Header().Get("Content-Type") == "" {
 				writeErr(w, translat.FmtOpenAI, aerr)
 			}
 		}
@@ -179,7 +179,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 		out = anchorCacheProfile(out, m, def, translat.FmtOpenAI, requestIdentity(r.Header, ak))
 		return nil, s.passthroughCall(ctx, w, def, acct, sf, m, bytes.NewReader(out), int64(len(out)), contentType, r.Header, attempts)
 	}, func(v any) {})
-	if execErr != nil && w.Header().Get("Content-Type") ***REMOVED*** "" {
+	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtOpenAI, execErr)
 	}
 }
@@ -221,7 +221,7 @@ func (s *Server) passthroughCall(ctx context.Context, w http.ResponseWriter, def
 	w.WriteHeader(resp.StatusCode)
 
 	var rec types.Usage
-	if sf ***REMOVED*** surfSpeech {
+	if sf == surfSpeech {
 		// Binary audio: stream untouched, no sniffing. Requests are counted.
 		_, _ = io.Copy(w, resp.Body)
 		rec = types.Usage{Estimated: true}
@@ -259,7 +259,7 @@ type multipartPeek struct {
 func splitMultipartModel(body io.Reader) *multipartPeek {
 	br := bufio.NewReaderSize(body, multipartPeekLimit)
 	prefix, _ := br.Peek(multipartPeekLimit) // shorter prefix at EOF is fine
-	if len(prefix) ***REMOVED*** 0 {
+	if len(prefix) == 0 {
 		return nil
 	}
 	if _, err := br.Discard(len(prefix)); err != nil {
@@ -275,7 +275,7 @@ func splitMultipartModel(body io.Reader) *multipartPeek {
 
 // retarget replaces the model field value inside the inspected prefix.
 func (m *multipartPeek) retarget(model string) {
-	if m.valueOff < 0 || model ***REMOVED*** "" || model ***REMOVED*** m.model {
+	if m.valueOff < 0 || model == "" || model == m.model {
 		return
 	}
 	next := make([]byte, 0, len(m.prefix)-(m.valueEnd-m.valueOff)+len(model))

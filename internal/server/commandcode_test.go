@@ -116,10 +116,10 @@ func TestCommandCodeStreamingE2E(t *testing.T) {
 	if got := hdr.Get("Authorization"); got != "Bearer user_test_fake_key" {
 		t.Fatalf("upstream auth: %q", got)
 	}
-	if hdr.Get("x-command-code-version") ***REMOVED*** "" || hdr.Get("x-cli-environment") != "cli" {
+	if hdr.Get("x-command-code-version") == "" || hdr.Get("x-cli-environment") != "cli" {
 		t.Fatalf("commandcode fingerprint headers missing: %v", hdr)
 	}
-	if hdr.Get("x-session-id") ***REMOVED*** "" {
+	if hdr.Get("x-session-id") == "" {
 		t.Fatal("x-session-id missing")
 	}
 	if hdr.Get("Accept") != "text/event-stream" {
@@ -352,7 +352,7 @@ func TestCursorKindEndToEnd(t *testing.T) {
 	// request body), and Go's h1 transport cannot stream a request while
 	// reading the response — h1 tests deadlock. The live upstream is h2.
 	up := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-cursor-checksum") ***REMOVED*** "" {
+		if r.Header.Get("x-cursor-checksum") == "" {
 			t.Errorf("upstream: x-cursor-checksum header missing")
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer up-key" {
@@ -461,7 +461,7 @@ func pbUvarintForTest(b []byte, field int, v uint64) []byte {
 // (0x40 tag with non-empty payload) — the forbidden system prompt.
 func pbHasField8System(sent []byte) bool {
 	for i := 0; i+1 < len(sent); i++ {
-		if sent[i] ***REMOVED*** 0x42 && i+2 < len(sent) && sent[i+1] > 0 { // field 8, wire 2, len>0
+		if sent[i] == 0x42 && i+2 < len(sent) && sent[i+1] > 0 { // field 8, wire 2, len>0
 			return true
 		}
 	}

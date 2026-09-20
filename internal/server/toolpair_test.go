@@ -37,23 +37,23 @@ func assertOAWireToolPairing(t *testing.T, body []byte) []oaWireTool {
 	}
 	msgs := wire.Messages
 	for i, m := range msgs {
-		if m.Role ***REMOVED*** "tool" {
-			if i ***REMOVED*** 0 {
+		if m.Role == "tool" {
+			if i == 0 {
 				t.Fatalf("messages[0]: a tool message cannot lead the array: %s", body)
 			}
 			prev := msgs[i-1]
-			if prev.Role != "tool" && !(prev.Role ***REMOVED*** "assistant" && len(prev.ToolCalls) > 0) {
+			if prev.Role != "tool" && !(prev.Role == "assistant" && len(prev.ToolCalls) > 0) {
 				t.Fatalf("messages[%d]: tool message must follow an assistant message with tool_calls (predecessor role %q): %s", i, prev.Role, body)
 			}
 		}
-		if m.Role != "assistant" || len(m.ToolCalls) ***REMOVED*** 0 {
+		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
 			continue
 		}
 		want := make(map[string]bool, len(m.ToolCalls))
 		for _, tc := range m.ToolCalls {
 			want[tc.ID] = false
 		}
-		for j := i + 1; j < len(msgs) && msgs[j].Role ***REMOVED*** "tool"; j++ {
+		for j := i + 1; j < len(msgs) && msgs[j].Role == "tool"; j++ {
 			answered, known := want[msgs[j].ToolCallID]
 			if !known {
 				t.Fatalf("messages[%d]: tool reply for call id %q that no assistant turn asked for: %s", j, msgs[j].ToolCallID, body)

@@ -160,8 +160,8 @@
     var td = pkBody.querySelectorAll('tr');
     for (var i = 0; i < td.length; i++) {
       var cells = td[i].children;
-      if (!cells || cells[0].textContent.indexOf(r.provider) !***REMOVED*** 0) continue;
-      if (cells[1].textContent !***REMOVED*** r.account) continue;
+      if (!cells || cells[0].textContent.indexOf(r.provider) !== 0) continue;
+      if (cells[1].textContent !== r.account) continue;
       var keyCell = cells[2], actCell = cells[3];
       keyCell.innerHTML = '';
       var inp = el('input');
@@ -205,8 +205,8 @@
     if (!addBox.hidden) nkVal.focus();
   };
   nkVal.onkeydown = function(e){
-    if (e.key ***REMOVED***= 'Enter') { e.preventDefault(); document.getElementById('nk-save').click(); }
-    else if (e.key ***REMOVED***= 'Escape') addBox.hidden = true;
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('nk-save').click(); }
+    else if (e.key === 'Escape') addBox.hidden = true;
   };
   document.getElementById('nk-gen').onclick = function(){
     // 32 random bytes, base64url: the shape a shell-generated key already has,

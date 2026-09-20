@@ -16,7 +16,7 @@ import (
 // account here.
 func pick(p *accountPool, id string) *Account {
 	a, _ := p.next(id)
-	if a ***REMOVED*** nil {
+	if a == nil {
 		panic("pick: pool unexpectedly cooling (fixture bug)")
 	}
 	return a
@@ -44,11 +44,11 @@ func TestPlainRoundRobinUnchangedWithoutSticky(t *testing.T) {
 	for range 3 {
 		names = append(names, pick(p, "").Name)
 	}
-	if names[0] ***REMOVED*** names[1] || names[1] ***REMOVED*** names[2] {
+	if names[0] == names[1] || names[1] == names[2] {
 		t.Fatalf("plain RR should rotate: %v", names)
 	}
 	// With ttl=0 even a non-empty identity stays plain RR.
-	if pick(p, "sess").Name ***REMOVED*** pick(p, "sess").Name {
+	if pick(p, "sess").Name == pick(p, "sess").Name {
 		t.Fatal("ttl=0 must ignore identity")
 	}
 }
@@ -63,7 +63,7 @@ func TestStickyPinsIdentityAcrossCalls(t *testing.T) {
 	}
 	// A different identity gets its own pin (not serialized onto a's key).
 	second := pick(p, "other")
-	if second.Name ***REMOVED*** first.Name {
+	if second.Name == first.Name {
 		t.Fatalf("distinct identity should rotate to next account, got %s twice", first.Name)
 	}
 	if got := pick(p, "other"); got != second {
@@ -75,7 +75,7 @@ func TestStickyExpiresAfterTTL(t *testing.T) {
 	p, cur := mkPool(t, 5*time.Minute)
 	first := pick(p, "sess")
 	*cur = cur.Add(6 * time.Minute)
-	if got := pick(p, "sess"); got ***REMOVED*** first {
+	if got := pick(p, "sess"); got == first {
 		t.Fatal("expired pin must rotate to the next account")
 	}
 }
@@ -86,7 +86,7 @@ func TestStickyRotatesWhenPinnedAccountCools(t *testing.T) {
 	p.cool(first, time.Minute) // pinned key exhausted upstream
 	*cur = cur.Add(time.Second)
 	got := pick(p, "sess")
-	if got.Name ***REMOVED*** first.Name {
+	if got.Name == first.Name {
 		t.Fatal("cooling pinned account must rotate")
 	}
 	// The rotated pick re-pins: subsequent calls follow the new account.
@@ -99,7 +99,7 @@ func TestUnpinFreesTheIdentity(t *testing.T) {
 	p, _ := mkPool(t, 5*time.Minute)
 	first := pick(p, "sess")
 	p.unpin("sess")
-	if got := pick(p, "sess"); got ***REMOVED*** first {
+	if got := pick(p, "sess"); got == first {
 		t.Fatal("after unpin the next pick must rotate to a different account")
 	}
 }
@@ -111,7 +111,7 @@ func TestFailedAttemptNeverRePinsSameAccount(t *testing.T) {
 	failed := pick(p, "sess")
 	p.unpin("sess")
 	retry := pick(p, "sess")
-	if retry.Name ***REMOVED*** failed.Name {
+	if retry.Name == failed.Name {
 		t.Fatalf("retry stuck to failed account %s", failed.Name)
 	}
 	// Combo fallthrough to a second provider's pool is a fresh pool, so
@@ -133,7 +133,7 @@ func TestStickyHonorsWeights(t *testing.T) {
 	pinned := pick(p, "sess")
 	p.unpin("sess")
 	got := pick(p, "sess")
-	if got.Name ***REMOVED*** pinned.Name {
+	if got.Name == pinned.Name {
 		t.Fatal("rotate after unpin must move accounts")
 	}
 }
@@ -172,7 +172,7 @@ func TestStickyWeightsRotateThroughWeightedSlots(t *testing.T) {
 		order = append(order, pick(p, "sess").Name)
 		p.unpin("sess")
 	}
-	if order[0] ***REMOVED*** order[1] && order[1] ***REMOVED*** order[2] {
+	if order[0] == order[1] && order[1] == order[2] {
 		t.Fatalf("weighted rotation stuck on one account: %v", order)
 	}
 }
@@ -181,7 +181,7 @@ func TestStickyIdentityEmptyFallsBackToRR(t *testing.T) {
 	p, _ := mkPool(t, 5*time.Minute)
 	a := pick(p, "")
 	b := pick(p, "")
-	if a.Name ***REMOVED*** b.Name {
+	if a.Name == b.Name {
 		t.Fatal("empty identity must stay plain round-robin")
 	}
 }
@@ -257,7 +257,7 @@ func TestNextAccountNilWhenPoolCooling(t *testing.T) {
 	// soonest recovery instant.
 	p, cur := mkPool(t, 0)
 	a, ready := p.next("")
-	if a ***REMOVED*** nil || !ready.IsZero() {
+	if a == nil || !ready.IsZero() {
 		t.Fatalf("fresh pool: a=%v ready=%v, want account and zero ready", a, ready)
 	}
 	// Cool the whole pool (b and c carry Retry-After-style shorter and
@@ -314,7 +314,7 @@ func TestWeightedAccountLadderEscalatesOnce(t *testing.T) {
 	p.rateLimited(&Account{Name: "b", APIKey: "kb"}, 0) // second 429 of the SAME account
 	for i := range p.accts {
 		s := &p.accts[i]
-		if s.acct.Name ***REMOVED*** "b" && (s.strikes != 2 || !s.cooldown.Equal(cur.Add(20*time.Second))) {
+		if s.acct.Name == "b" && (s.strikes != 2 || !s.cooldown.Equal(cur.Add(20*time.Second))) {
 			t.Fatalf("after 2nd 429 slot %d: strikes=%d cooldown=%v, want 2/+20s", i, s.strikes, s.cooldown)
 		}
 	}
@@ -324,7 +324,7 @@ func TestWeightedAccountLadderEscalatesOnce(t *testing.T) {
 // the pool to assert internal bench state).
 func findSlot(p *accountPool, name string) *accountState {
 	for i := range p.accts {
-		if p.accts[i].acct.Name ***REMOVED*** name {
+		if p.accts[i].acct.Name == name {
 			return &p.accts[i]
 		}
 	}
@@ -337,7 +337,7 @@ func mkRateStub(t *testing.T, retryAfter string) (*httptest.Server, *int32) {
 	t.Helper()
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.LoadInt32(&hits) ***REMOVED*** 0 {
+		if atomic.LoadInt32(&hits) == 0 {
 			if retryAfter != "" {
 				w.Header().Set("Retry-After", retryAfter)
 			}
@@ -363,7 +363,7 @@ func TestDoAdaptiveCooldownAndSuccessReset(t *testing.T) {
 
 	a1 := &def.Accounts[0]
 	_, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 429 {
+	if apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("first call: got %v, want 429", apiErr)
 	}
 	// a1 benched 10s: the pool must hand out a2.
@@ -395,7 +395,7 @@ func TestDoRetryAfterBench(t *testing.T) {
 		Accounts: []Account{{Name: "a1", APIKey: "k1"}}}
 	p.Set(def)
 	a1 := &def.Accounts[0]
-	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr ***REMOVED*** nil || apiErr.Status != 429 {
+	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("got %v, want 429", apiErr)
 	}
 	slot := findSlot(def.pool, "a1")

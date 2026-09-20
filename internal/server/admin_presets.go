@@ -100,7 +100,7 @@ func validatePresetDoc(doc presetDoc) string {
 	}
 	if doc.BaseURL != "" {
 		u, err := url.Parse(doc.BaseURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host ***REMOVED*** "" {
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return "base_url must be an absolute http(s) URL"
 		}
 	}
@@ -149,7 +149,7 @@ type presetRowView struct {
 func (s *Server) storedPresets() []presetRowView {
 	var stored []presetRowView
 	if s.st != nil {
-		if rows, err := s.st.ListPresets(); err ***REMOVED*** nil {
+		if rows, err := s.st.ListPresets(); err == nil {
 			for _, p := range rows {
 				stored = append(stored, presetRowView{Name: p.Name, doc: p.Doc})
 			}
@@ -180,7 +180,7 @@ func (s *Server) handleAdminPresetPut(w http.ResponseWriter, r *http.Request) {
 		adminUnauthorized(w)
 		return
 	}
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		adminError(w, http.StatusServiceUnavailable, "presets need a data dir (memory stores nothing)")
 		return
 	}
@@ -198,7 +198,7 @@ func (s *Server) handleAdminPresetPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name ***REMOVED*** "" {
+	if req.Name == "" {
 		adminError(w, http.StatusBadRequest, "preset name is required")
 		return
 	}
@@ -228,7 +228,7 @@ func (s *Server) handleAdminPresetDelete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if name ***REMOVED*** "" {
+	if name == "" {
 		adminError(w, http.StatusBadRequest, "name is required")
 		return
 	}
@@ -236,7 +236,7 @@ func (s *Server) handleAdminPresetDelete(w http.ResponseWriter, r *http.Request)
 		adminError(w, http.StatusBadRequest, "built-in presets cannot be deleted — override or ignore them")
 		return
 	}
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		adminError(w, http.StatusNotFound, "no preset "+name)
 		return
 	}

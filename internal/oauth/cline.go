@@ -134,11 +134,11 @@ type clinePayload struct {
 // previous refresh token when a response omits one (Cline rotates, but
 // 9router's `tokens.refreshToken || refreshToken` guard exists for a reason).
 func (cp clinePayload) token(fallbackRefresh string) (*Token, error) {
-	if cp.AccessToken ***REMOVED*** "" {
+	if cp.AccessToken == "" {
 		return nil, fmt.Errorf("cline auth response carried no accessToken")
 	}
 	tok := &Token{AccessToken: clineBearer(cp.AccessToken), RefreshToken: cp.RefreshToken}
-	if tok.RefreshToken ***REMOVED*** "" {
+	if tok.RefreshToken == "" {
 		tok.RefreshToken = fallbackRefresh
 	}
 	tok.ExpiresAt = cp.expiry()
@@ -151,10 +151,10 @@ func (cp clinePayload) token(fallbackRefresh string) (*Token, error) {
 func (cp clinePayload) expiry() time.Time {
 	s := strings.Trim(strings.TrimSpace(string(cp.ExpiresAt)), `"`)
 	if s != "" && s != "null" {
-		if t, err := time.Parse(time.RFC3339Nano, s); err ***REMOVED*** nil {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 			return t
 		}
-		if ms, err := strconv.ParseFloat(s, 64); err ***REMOVED*** nil && ms > 0 {
+		if ms, err := strconv.ParseFloat(s, 64); err == nil && ms > 0 {
 			return time.UnixMilli(int64(ms))
 		}
 	}
@@ -173,7 +173,7 @@ func newClineSession(p Provider, redirectURI string) (PKCESession, error) {
 	if err != nil {
 		return PKCESession{}, fmt.Errorf("cline state: %w", err)
 	}
-	if redirectURI ***REMOVED*** "" {
+	if redirectURI == "" {
 		redirectURI = p.RedirectURI(0)
 	}
 	redirectURI = strings.TrimSuffix(redirectURI, "/") + "/" + state
@@ -194,7 +194,7 @@ func newClineSession(p Provider, redirectURI string) (PKCESession, error) {
 // after the final brace — both repairs are 9router's (cline.js:17-23). nil
 // means "not a blob", and the caller falls back to the documented token POST.
 func decodeClineCredential(code string) *clinePayload {
-	if code ***REMOVED*** "" {
+	if code == "" {
 		return nil
 	}
 	padded := code + strings.Repeat("=", (4-len(code)%4)%4)
@@ -209,7 +209,7 @@ func decodeClineCredential(code string) *clinePayload {
 			continue
 		}
 		var cp clinePayload
-		if json.Unmarshal(b[:i+1], &cp) ***REMOVED*** nil && cp.AccessToken != "" {
+		if json.Unmarshal(b[:i+1], &cp) == nil && cp.AccessToken != "" {
 			found = &cp
 			break
 		}
@@ -221,7 +221,7 @@ func decodeClineCredential(code string) *clinePayload {
 // the redirect and no network call happens at all; only a real code (or a
 // pasted callback URL) reaches the token POST.
 func (p Provider) exchangeCline(ctx context.Context, hc *http.Client, code, redirectURI string) (*Token, error) {
-	if code ***REMOVED*** "" {
+	if code == "" {
 		return nil, fmt.Errorf("cline sign-in: the callback carried no authorization code")
 	}
 	if cp := decodeClineCredential(code); cp != nil {
@@ -234,7 +234,7 @@ func (p Provider) exchangeCline(ctx context.Context, hc *http.Client, code, redi
 		}
 		return tok, nil
 	}
-	if hc ***REMOVED*** nil {
+	if hc == nil {
 		hc = http.DefaultClient
 	}
 	// The vendor's own validator names the fields it wants: posting the Cline
@@ -297,14 +297,14 @@ func (p Provider) clineRefresh(ctx context.Context, hc *http.Client, old Token) 
 // the {success,data} envelope the account API uses everywhere.
 func clineTokenOf(body []byte, fallbackRefresh string) (*Token, error) {
 	var cp clinePayload
-	if err := json.Unmarshal(body, &cp); err ***REMOVED*** nil && cp.AccessToken != "" {
+	if err := json.Unmarshal(body, &cp); err == nil && cp.AccessToken != "" {
 		return cp.token(fallbackRefresh)
 	}
 	var env struct {
 		Success bool         `json:"success"`
 		Data    clinePayload `json:"data"`
 	}
-	if err := json.Unmarshal(body, &env); err != nil || env.Data.AccessToken ***REMOVED*** "" {
+	if err := json.Unmarshal(body, &env); err != nil || env.Data.AccessToken == "" {
 		return nil, fmt.Errorf("no accessToken in response: %s", truncate(body))
 	}
 	return env.Data.token(fallbackRefresh)
@@ -369,7 +369,7 @@ func (c clineDevicePoller) Poll(ctx context.Context, deviceCode string) (*Token,
 // session credential. The body is camelCase JSON, and the answer arrives in
 // the same {success,data} envelope as everything else on this API.
 func (p Provider) clineRegister(ctx context.Context, hc *http.Client, pair Token) (*Token, error) {
-	if pair.AccessToken ***REMOVED*** "" {
+	if pair.AccessToken == "" {
 		return nil, fmt.Errorf("cline register: no authorization-server token to exchange")
 	}
 	body, err := json.Marshal(map[string]string{

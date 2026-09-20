@@ -114,7 +114,7 @@ func effortIsHigh(effort string) bool {
 
 // effortIsLight reports an absent or explicitly low reasoning knob.
 func effortIsLight(effort string) bool {
-	if effort ***REMOVED*** "" {
+	if effort == "" {
 		return true
 	}
 	switch effort {
@@ -182,19 +182,19 @@ func (s TaskSignals) Classify() Task {
 	// Light: tiny request with no heavy/critical marker.
 	light := s.PromptChars <= 2_000 &&
 		s.Messages <= 3 &&
-		s.Tools ***REMOVED*** 0 &&
+		s.Tools == 0 &&
 		s.MaxTokens <= 1500 &&
 		effortIsLight(s.Effort) &&
 		!s.CriticalKW &&
 		!s.HeavyKW
-	if light || (s.LightKW && s.PromptChars <= 4_000 && s.Tools ***REMOVED*** 0 && effortIsLight(s.Effort) && !s.CriticalKW) {
-		if len(reasons) ***REMOVED*** 0 {
+	if light || (s.LightKW && s.PromptChars <= 4_000 && s.Tools == 0 && effortIsLight(s.Effort) && !s.CriticalKW) {
+		if len(reasons) == 0 {
 			reasons = []string{"small-simple-request"}
 		}
 		return Task{TaskSignals: s, Level: TaskLight, Reasons: reasons}
 	}
 
-	if len(reasons) ***REMOVED*** 0 {
+	if len(reasons) == 0 {
 		reasons = []string{"default"}
 	}
 	return Task{TaskSignals: s, Level: TaskStandard, Reasons: reasons}
@@ -301,7 +301,7 @@ func WithTask(ctx context.Context, sig TaskSignals) context.Context {
 // routing off, or a path that never collected them) — Execute then keeps
 // the configured order byte-for-byte.
 func TaskFrom(ctx context.Context) (TaskSignals, bool) {
-	if ctx ***REMOVED*** nil {
+	if ctx == nil {
 		return TaskSignals{}, false
 	}
 	sig, ok := ctx.Value(taskKey{}).(TaskSignals)
@@ -428,7 +428,7 @@ func (r *Router) reorderBySpeed(ctx context.Context, res *Resolution) {
 // logSpeedDecision emits one #19-ring row recording a size-aware (prefill)
 // reorder, through the same server-owned sink as the task-routing decision.
 func (r *Router) logSpeedDecision(res *Resolution, inTokens int64) {
-	if r.SpeedLog ***REMOVED*** nil {
+	if r.SpeedLog == nil {
 		return
 	}
 	var b strings.Builder
@@ -475,7 +475,7 @@ const maxTaskLogDetail = 280
 // order. The sink is server-owned (observeLog's requestLog); TaskLog is
 // the narrow seam — nil means silent.
 func (r *Router) logTaskDecision(res *Resolution, task Task) {
-	if r.TaskLog ***REMOVED*** nil {
+	if r.TaskLog == nil {
 		return
 	}
 	var b strings.Builder
@@ -597,20 +597,20 @@ func CollectSignals(body []byte) TaskSignals {
 // collectRaw handles a RawMessage that is either a JSON string (its text
 // counts) or an array of text blocks ({text}); anything else is ignored.
 func collectRaw(raw json.RawMessage, addText func(string), sig *TaskSignals) {
-	if len(raw) ***REMOVED*** 0 {
+	if len(raw) == 0 {
 		return
 	}
 	switch raw[0] {
 	case '"':
 		var s string
-		if json.Unmarshal(raw, &s) ***REMOVED*** nil {
+		if json.Unmarshal(raw, &s) == nil {
 			addText(s)
 		}
 	case '[':
 		var blocks []taskPart
-		if json.Unmarshal(raw, &blocks) ***REMOVED*** nil {
+		if json.Unmarshal(raw, &blocks) == nil {
 			for _, b := range blocks {
-				if b.Type ***REMOVED*** "image_url" || b.Type ***REMOVED*** "image" || len(b.InlineData) > 0 {
+				if b.Type == "image_url" || b.Type == "image" || len(b.InlineData) > 0 {
 					sig.HasImage = true
 				}
 				addText(b.Text)
@@ -629,7 +629,7 @@ func collectMsg(raw json.RawMessage, addText func(string), sig *TaskSignals) {
 	}
 	if m.Parts != nil {
 		for _, p := range m.Parts {
-			if len(p.InlineData) > 0 || p.Type ***REMOVED*** "image_url" || p.Type ***REMOVED*** "image" {
+			if len(p.InlineData) > 0 || p.Type == "image_url" || p.Type == "image" {
 				sig.HasImage = true
 			}
 			addText(p.Text)

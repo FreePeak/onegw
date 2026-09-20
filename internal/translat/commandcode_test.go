@@ -53,7 +53,7 @@ func TestEncodeCommandCodeRequest(t *testing.T) {
 	if err := json.Unmarshal(out, &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.ThreadID ***REMOVED*** "" {
+	if req.ThreadID == "" {
 		t.Fatal("missing threadId")
 	}
 	p := req.Params
@@ -75,11 +75,11 @@ func TestEncodeCommandCodeRequest(t *testing.T) {
 	}
 	var call *ccBlock
 	for i := range p.Messages[1].Content {
-		if p.Messages[1].Content[i].Type ***REMOVED*** "tool-call" {
+		if p.Messages[1].Content[i].Type == "tool-call" {
 			call = &p.Messages[1].Content[i]
 		}
 	}
-	if call ***REMOVED*** nil || call.ToolCallID != "call_1" || call.ToolName != "ls" || string(call.Input) != `{"path":"/"}` {
+	if call == nil || call.ToolCallID != "call_1" || call.ToolName != "ls" || string(call.Input) != `{"path":"/"}` {
 		t.Fatalf("tool-call block not mapped: %+v", p.Messages[1].Content)
 	}
 	if p.Messages[2].Role != "tool" || p.Messages[2].Content[0].Type != "tool-result" ||
@@ -225,7 +225,7 @@ func TestInspectCommandCodeHeadError(t *testing.T) {
 	if head != nil {
 		t.Fatalf("error head must not replay content: %q", head)
 	}
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("expected APIError from error event")
 	}
 	if apiErr.Status != 429 || apiErr.Type != "rate_limit_error" {
@@ -320,7 +320,7 @@ func TestAggregateCommandCodeStreamToolCall(t *testing.T) {
 	}
 	var found bool
 	for _, p := range resp.Content {
-		if p.Type ***REMOVED*** types.PartToolUse && p.ID ***REMOVED*** "tu9" && p.Name ***REMOVED*** "run" && strings.Contains(string(p.Args), `"cmd"`) {
+		if p.Type == types.PartToolUse && p.ID == "tu9" && p.Name == "run" && strings.Contains(string(p.Args), `"cmd"`) {
 			found = true
 		}
 	}

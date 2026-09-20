@@ -48,17 +48,17 @@ func TestRingTPSWindowFloor(t *testing.T) {
 	}
 
 	entries := srv.reqlog.latest(10)
-	if len(entries) ***REMOVED*** 0 {
+	if len(entries) == 0 {
 		t.Fatal("no log entries recorded")
 	}
 	var e *logEntry
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Code ***REMOVED*** 200 && entries[i].Provider ***REMOVED*** "p1" {
+		if entries[i].Code == 200 && entries[i].Provider == "p1" {
 			e = &entries[i]
 			break
 		}
 	}
-	if e ***REMOVED*** nil {
+	if e == nil {
 		t.Fatal("no p1 200 row in ring")
 	}
 	// Sniffed usage: 40 output tokens over >=400ms of chunks => tps in

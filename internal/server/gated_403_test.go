@@ -32,7 +32,7 @@ func newGatedUpstream(t *testing.T) *gatedUpstream {
 		gate := g.gateOn
 		g.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if auth ***REMOVED*** "Bearer key-gated" && gate {
+		if auth == "Bearer key-gated" && gate {
 			w.WriteHeader(403)
 			_, _ = w.Write([]byte(`{"error":{"message":"Access restricted. Deposit required to unlock premium models.","type":"access_denied","code":"access_denied"}}`))
 			return
@@ -166,7 +166,7 @@ func TestGatedPoolAnswers429Not503(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &e); err != nil || e.Error.Code != "rate_limit_exceeded" {
 		t.Fatalf("error shape: %s (err=%v)", w.Body.String(), err)
 	}
-	if w.Header().Get("Retry-After") ***REMOVED*** "" {
+	if w.Header().Get("Retry-After") == "" {
 		t.Fatal("Retry-After missing on gated-pool 429")
 	}
 

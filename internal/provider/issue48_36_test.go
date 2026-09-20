@@ -93,7 +93,7 @@ func TestDoDerivedSessionHeaderOnlyWhenGated(t *testing.T) {
 		Accounts: []Account{{Name: "k1", APIKey: "key-a"}, {Name: "k2", APIKey: "key-b"}}}
 	for _, key := range []string{"key-a", "key-b", "key-a"} {
 		acct := defSess.Accounts[0]
-		if key ***REMOVED*** "key-b" {
+		if key == "key-b" {
 			acct = defSess.Accounts[1]
 		}
 		if _, apiErr := defSess.Do(t.Context(), &acct, "m", nil, bytes.NewReader([]byte(`{}`)), false); apiErr != nil {
@@ -101,7 +101,7 @@ func TestDoDerivedSessionHeaderOnlyWhenGated(t *testing.T) {
 		}
 	}
 	got := *seen
-	if got[1] ***REMOVED*** "" || got[2] ***REMOVED*** "" || got[3] ***REMOVED*** "" {
+	if got[1] == "" || got[2] == "" || got[3] == "" {
 		t.Fatalf("gated provider did not derive ids: %v", got)
 	}
 	if !strings.HasPrefix(got[1], "ses_") || len(got[1]) != len("ses_")+32 {
@@ -110,7 +110,7 @@ func TestDoDerivedSessionHeaderOnlyWhenGated(t *testing.T) {
 	if got[1] != got[3] {
 		t.Fatalf("same key derived %q then %q, want stable", got[1], got[3])
 	}
-	if got[1] ***REMOVED*** got[2] {
+	if got[1] == got[2] {
 		t.Fatal("different keys derived the same id")
 	}
 
@@ -127,7 +127,7 @@ func TestDoDerivedSessionHeaderOnlyWhenGated(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // Grok Build proxy (issue #36 follow-up): 9router's grok-cli executor ALWAYS
-// sends x-grok-session-id ***REMOVED*** x-grok-conv-id from one resolved id, so the
+// sends x-grok-session-id == x-grok-conv-id from one resolved id, so the
 // openai-responses kind must derive both, never invent on other kinds, and
 // client-sent ids keep winning.
 // ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ func TestGrokKindAlwaysSendsBothSessionIDs(t *testing.T) {
 	call(&def.Accounts[1], nil) // key-b
 
 	a, repeat, other := seen[0], seen[1], seen[2]
-	if a.conv ***REMOVED*** "" || a.sess != a.conv {
+	if a.conv == "" || a.sess != a.conv {
 		t.Fatalf("no-client call: conv=%q sess=%q, want both present and equal", a.conv, a.sess)
 	}
 	if !strings.HasPrefix(a.conv, "ses_") || len(a.conv) != len("ses_")+32 {
@@ -164,7 +164,7 @@ func TestGrokKindAlwaysSendsBothSessionIDs(t *testing.T) {
 	if repeat != a {
 		t.Fatalf("id not stable per key: %v then %v", a, repeat)
 	}
-	if other.conv ***REMOVED*** a.conv {
+	if other.conv == a.conv {
 		t.Fatal("different keys derived the same id")
 	}
 
@@ -221,7 +221,7 @@ func mkGatedStub(t *testing.T, failKey string, status int, body string) (*httpte
 	gated := true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
-		if gated && r.Header.Get("Authorization") ***REMOVED*** "Bearer "+failKey {
+		if gated && r.Header.Get("Authorization") == "Bearer "+failKey {
 			atomic.AddInt32(&hits, 1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
@@ -247,7 +247,7 @@ func TestGated403BenchesAccountAndFallsBack(t *testing.T) {
 	// The gated key's call fails with a Fallbackable 403 — and the
 	// account is benched on the ladder.
 	res, apiErr := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 403 || !apiErr.Fallbackable {
+	if apiErr == nil || apiErr.Status != 403 || !apiErr.Fallbackable {
 		t.Fatalf("got %+v, want 403 Fallbackable", apiErr)
 	}
 	if res != nil {
@@ -283,7 +283,7 @@ func TestNonGated403FailsFast(t *testing.T) {
 	def := &Def{Name: "p", Kind: KindOpenAI, BaseURL: srv.URL,
 		Accounts: []Account{{Name: "a1", APIKey: "k1"}}}
 	p.Set(def)
-	if _, apiErr := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr ***REMOVED*** nil || apiErr.Status != 403 || apiErr.Fallbackable {
+	if _, apiErr := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr == nil || apiErr.Status != 403 || apiErr.Fallbackable {
 		t.Fatalf("got %+v, want plain 403 (fail fast)", apiErr)
 	}
 	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() {
@@ -301,7 +301,7 @@ func TestGated403LadderEscalates(t *testing.T) {
 	p.Set(def)
 	a1 := &def.Accounts[0]
 	for i := range 2 {
-		if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr ***REMOVED*** nil || !apiErr.Fallbackable {
+		if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false); apiErr == nil || !apiErr.Fallbackable {
 			t.Fatalf("hit %d: got %+v, want Fallbackable 403", i, apiErr)
 		}
 	}

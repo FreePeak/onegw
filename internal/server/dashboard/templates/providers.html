@@ -337,7 +337,7 @@ const PRESETS = {{.Presets}}||[];
     dlg.showModal();
   }
   function openEdit(name){
-    const p = (PREFILL || []).find(x => x.name ***REMOVED***= name);
+    const p = (PREFILL || []).find(x => x.name === name);
     if (!p) return;
     editing = name;
     form.reset(); accts.innerHTML = ''; hideErr();
@@ -372,17 +372,17 @@ const PRESETS = {{.Presets}}||[];
   PRESETS.forEach(p => {
     const o = document.createElement('option');
     o.value = p.name;
-    o.textContent = p.name + (p.source ***REMOVED***= 'built-in' ? '' : ' · saved');
+    o.textContent = p.name + (p.source === 'built-in' ? '' : ' · saved');
     presetSel.appendChild(o);
   });
   function setSel(sel, v) {
-    if (v && ![...sel.options].some(o => o.value ***REMOVED***= v)) {
+    if (v && ![...sel.options].some(o => o.value === v)) {
       const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o);
     }
     sel.value = v || '';
   }
   function applyPreset(name) {
-    const p = PRESETS.find(x => x.name ***REMOVED***= name);
+    const p = PRESETS.find(x => x.name === name);
     if (!p) return;
     const d = p.doc || {};
     document.getElementById('pf-kind').value = d.kind || 'openai';
@@ -482,7 +482,7 @@ const PRESETS = {{.Presets}}||[];
     accts.scrollTop = 0;
     bdlg.close();
     brows.value = '';
-    const notes = [rows.length + (rows.length ***REMOVED***= 1 ? ' account added' : ' accounts added')];
+    const notes = [rows.length + (rows.length === 1 ? ' account added' : ' accounts added')];
     if (dupes) notes.push(dupes + ' duplicate name skipped');
     if (stranded.length) notes.push(stranded.length + ' line skipped (no key)');
     ogwToast(notes.join(' · '), !stranded.length);
@@ -586,7 +586,7 @@ const PRESETS = {{.Presets}}||[];
     popup = null;
   }
   function showPrompt(key, p){
-    const browser = !p || p.mode !***REMOVED*** 'device';
+    const browser = !p || p.mode !== 'device';
     const u = p && (p.verification_uri_complete || p.verification_uri);
     if (browser) {
       obox.hidden = true; lbox.hidden = false;
@@ -612,7 +612,7 @@ const PRESETS = {{.Presets}}||[];
     // 9router-style: the sign-in page comes to you, in either dialect. One tab
     // per flow — pollState re-shows the prompt every 2 s, so this is keyed by
     // account and reset per Sign-in click. A blocked pop-up leaves the link.
-    if (u && authOpened !***REMOVED*** key) {
+    if (u && authOpened !== key) {
       authOpened = key;
       const win = browser ? openAuth(u) : window.open(u, '_blank', 'noopener');
       if (!win) ost.textContent = key + ' — pop-up blocked; click the link below';
@@ -668,10 +668,10 @@ const PRESETS = {{.Presets}}||[];
       const r = await fetch('/admin/config/oauth/accounts');
       if (!r.ok) return;
       const j = await r.json();
-      const a = (j.accounts || []).find(x => x.key ***REMOVED***= watching);
+      const a = (j.accounts || []).find(x => x.key === watching);
       if (!a) return;
       if (a.prompt) showPrompt(watching, a.prompt);
-      if (a.state ***REMOVED***= 'signed-in') {
+      if (a.state === 'signed-in') {
         const key = watching;
         stopPolling();
         odlg.close();
@@ -679,11 +679,11 @@ const PRESETS = {{.Presets}}||[];
         setTimeout(() => location.reload(), 400);
         return;
       }
-      if (a.state ***REMOVED***= 'failed') {
+      if (a.state === 'failed') {
         oerr.textContent = a.error || 'login failed';
         oerr.hidden = false;
         owait.textContent = '';
-      } else if (a.state ***REMOVED***= 'pending' && a.prompt && a.prompt.mode !***REMOVED*** 'device') {
+      } else if (a.state === 'pending' && a.prompt && a.prompt.mode !== 'device') {
         owait.textContent = 'Waiting for you to finish in the browser…';
       }
       ost.textContent = watching + ' · ' + a.state + (a.cooling ? ' (cooling)' : '');

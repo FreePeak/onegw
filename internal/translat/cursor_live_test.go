@@ -24,7 +24,7 @@ func TestLiveCursorAgentDuplex(t *testing.T) {
 	}
 	token := os.Getenv("CURSOR_TOKEN")
 	machineID := os.Getenv("CURSOR_MACHINE_ID")
-	if token ***REMOVED*** "" || machineID ***REMOVED*** "" {
+	if token == "" || machineID == "" {
 		t.Skip("live probe: set CURSOR_TOKEN + CURSOR_MACHINE_ID")
 	}
 
@@ -86,10 +86,10 @@ func TestLiveCursorAgentDuplex(t *testing.T) {
 			events := CursorAgentEvents(payload)
 			dump.WriteString(fmt.Sprintf("frame %dB events=%d\n", len(payload), len(events)))
 			for _, e := range events {
-				if e.Kind ***REMOVED*** EvDelta {
+				if e.Kind == EvDelta {
 					dump.WriteString("  TEXT: " + e.Text + "\n")
 				}
-				if e.Kind ***REMOVED*** EvStop {
+				if e.Kind == EvStop {
 					dump.WriteString(fmt.Sprintf("  STOP usage=%+v\n", e.Usage))
 					// Agent turn complete: cursor keeps the stream open with
 					// 10s keepalives forever — stop reading (the production

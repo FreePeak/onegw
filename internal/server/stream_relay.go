@@ -88,7 +88,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 		return s.streamFallback(r, prefix, whole)
 	}
 	var model string
-	if err := json.Unmarshal(prefix[sc.modelQuoteStart:sc.modelQuoteEnd+1], &model); err != nil || model ***REMOVED*** "" {
+	if err := json.Unmarshal(prefix[sc.modelQuoteStart:sc.modelQuoteEnd+1], &model); err != nil || model == "" {
 		return s.streamFallback(r, prefix, whole)
 	}
 	d.model = s.boundedModel(model)
@@ -158,7 +158,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 
 	id := requestIdentity(r.Header, ak)
 	acct, poolReady := def.NextAccount(id)
-	if acct ***REMOVED*** nil {
+	if acct == nil {
 		// Whole account pool cooling from upstream 429s: never send a
 		// doomed upstream call from the single-shot fast path. Answer
 		// 429 with the pool's soonest recovery, exactly like the
@@ -247,7 +247,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 				log.Printf("server: learned reasoning-echo %s/%s from upstream 400; future stream requests go buffered", def.Name, t.Model)
 			}
 		}
-		if w.Header().Get("Content-Type") ***REMOVED*** "" {
+		if w.Header().Get("Content-Type") == "" {
 			writeErr(w, clientFmt, apiErr)
 		}
 		return true
@@ -280,7 +280,7 @@ func readPrefix(r io.Reader) (prefix []byte, whole bool, err error) {
 		m, rerr := r.Read(buf[n:])
 		n += m
 		if rerr != nil {
-			if rerr ***REMOVED*** io.EOF {
+			if rerr == io.EOF {
 				return buf[:n], true, nil
 			}
 			return buf[:n], false, rerr
@@ -375,7 +375,7 @@ func blockHasStringText(block []byte) bool {
 			continue // a string value quoting "text"
 		}
 		j = skipJSONSpace(block, j+1)
-		return j < len(block) && block[j] ***REMOVED*** '"'
+		return j < len(block) && block[j] == '"'
 	}
 }
 
@@ -389,7 +389,7 @@ func skipJSONSpace(b []byte, i int) int {
 }
 
 func isJSONSpace(c byte) bool {
-	return c ***REMOVED*** ' ' || c ***REMOVED*** '\t' || c ***REMOVED*** '\n' || c ***REMOVED*** '\r'
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
 // countingReader counts bytes read through it.
@@ -414,12 +414,12 @@ func hasDeveloperRole(visible []byte) bool {
 	i := bytes.Index(visible, []byte(`"role"`))
 	for i >= 0 {
 		j := i + len(`"role"`)
-		for j < len(visible) && (visible[j] ***REMOVED*** ' ' || visible[j] ***REMOVED*** '\t' || visible[j] ***REMOVED*** '\n' || visible[j] ***REMOVED*** '\r') {
+		for j < len(visible) && (visible[j] == ' ' || visible[j] == '\t' || visible[j] == '\n' || visible[j] == '\r') {
 			j++
 		}
-		if j < len(visible) && visible[j] ***REMOVED*** ':' {
+		if j < len(visible) && visible[j] == ':' {
 			j++
-			for j < len(visible) && (visible[j] ***REMOVED*** ' ' || visible[j] ***REMOVED*** '\t' || visible[j] ***REMOVED*** '\n' || visible[j] ***REMOVED*** '\r') {
+			for j < len(visible) && (visible[j] == ' ' || visible[j] == '\t' || visible[j] == '\n' || visible[j] == '\r') {
 				j++
 			}
 			if bytes.HasPrefix(visible[j:], []byte(`"developer"`)) {
@@ -438,7 +438,7 @@ func hasDeveloperRole(visible []byte) bool {
 // scanTopLevel walks the leading bytes of a JSON object and records the
 // top-level keys the streaming gate needs: "model" (string, with its exact
 // byte range for splicing), "stream" (bool), and the normalizeRoles
-// triggers (top-level "store", messages[].role***REMOVED***"developer") which force
+// triggers (top-level "store", messages[].role=="developer") which force
 // the buffered path.
 //
 // Values of uninteresting keys are skipped only while they fit in the
@@ -451,7 +451,7 @@ func hasDeveloperRole(visible []byte) bool {
 func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 	i, n := 0, len(prefix)
 	skipSpace := func() {
-		for i < n && (prefix[i] ***REMOVED*** ' ' || prefix[i] ***REMOVED*** '\t' || prefix[i] ***REMOVED*** '\n' || prefix[i] ***REMOVED*** '\r') {
+		for i < n && (prefix[i] == ' ' || prefix[i] == '\t' || prefix[i] == '\n' || prefix[i] == '\r') {
 			i++
 		}
 	}
@@ -476,7 +476,7 @@ func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 		if i >= n {
 			return bail()
 		}
-		if prefix[i] ***REMOVED*** '}' {
+		if prefix[i] == '}' {
 			return sc, sc.modelOK // whole object scanned: absence is definitive
 		}
 		if prefix[i] != '"' {
@@ -582,11 +582,11 @@ func scanTopLevel(prefix []byte) (sc streamScan, ok bool) {
 			i = after
 		}
 		skipSpace()
-		if i < n && prefix[i] ***REMOVED*** ',' {
+		if i < n && prefix[i] == ',' {
 			i++
 			continue
 		}
-		if i < n && prefix[i] ***REMOVED*** '}' {
+		if i < n && prefix[i] == '}' {
 			return sc, sc.modelOK // whole object scanned: absence is definitive
 		}
 		return sc, false // malformed separator
@@ -629,7 +629,7 @@ func skipJSONValue(prefix []byte, i int) (int, bool) {
 				depth++
 			case '}', ']':
 				depth--
-				if depth ***REMOVED*** 0 {
+				if depth == 0 {
 					return j + 1, true
 				}
 			}
@@ -639,12 +639,12 @@ func skipJSONValue(prefix []byte, i int) (int, bool) {
 		j := i
 		for j < len(prefix) {
 			c := prefix[j]
-			if c ***REMOVED*** ',' || c ***REMOVED*** '}' || c ***REMOVED*** ']' || c ***REMOVED*** ' ' || c ***REMOVED*** '\t' || c ***REMOVED*** '\n' || c ***REMOVED*** '\r' {
+			if c == ',' || c == '}' || c == ']' || c == ' ' || c == '\t' || c == '\n' || c == '\r' {
 				break
 			}
 			j++
 		}
-		if j ***REMOVED*** i {
+		if j == i {
 			return 0, false
 		}
 		return j, true

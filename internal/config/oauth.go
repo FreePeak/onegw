@@ -55,10 +55,10 @@ func (a OAuthAccount) StoreKey() string {
 func (c *Config) OAuthAccounts() []OAuthAccount {
 	out := make([]OAuthAccount, 0, len(c.OAuth.Accounts))
 	for _, a := range c.OAuth.Accounts {
-		if a.Account ***REMOVED*** "" {
+		if a.Account == "" {
 			a.Account = "default"
 		}
-		if a.Service ***REMOVED*** "" {
+		if a.Service == "" {
 			a.Service = a.Provider
 		}
 		out = append(out, a)
@@ -77,13 +77,13 @@ func validateOAuth(c *Config) error {
 	accounts := c.OAuthAccounts()
 	ownKeys := map[string]bool{}
 	for _, a := range accounts {
-		if a.Owner ***REMOVED*** "" {
+		if a.Owner == "" {
 			ownKeys[a.StoreKey()] = true
 		}
 	}
 	seen := map[string]bool{}
 	for _, a := range accounts {
-		if a.Provider ***REMOVED*** "" {
+		if a.Provider == "" {
 			return fmt.Errorf("oauth account missing provider")
 		}
 		if !provNames[a.Provider] {
@@ -100,7 +100,7 @@ func validateOAuth(c *Config) error {
 			// is the owner's business: a borrower resolves no endpoints, so
 			// its (defaulted) service is not checked — OAuthAccounts() fills
 			// it from the provider name, which would reject every borrower.
-			if a.Owner ***REMOVED*** key {
+			if a.Owner == key {
 				return fmt.Errorf("oauth account %s borrows itself (owner = %q)", key, a.Owner)
 			}
 			if !ownKeys[a.Owner] {

@@ -53,7 +53,7 @@ func TestHeaderTimeoutStormBenchesModel(t *testing.T) {
 	// cannot catch the threshold being raised.
 	for range 3 {
 		apiErr := doStall(t, def, "glm-5.3-flash")
-		if apiErr ***REMOVED*** nil || apiErr.Status != 504 || !apiErr.NoSameTargetRetry {
+		if apiErr == nil || apiErr.Status != 504 || !apiErr.NoSameTargetRetry {
 			t.Fatalf("want header-budget 504, got %+v", apiErr)
 		}
 	}
@@ -71,7 +71,7 @@ func TestHeaderTimeoutStormBenchesModel(t *testing.T) {
 	// And the accounts are NOT benched — this indicts the leg, not keys.
 	for range def.Accounts {
 		a, _ := def.NextAccount("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatal("header-timeout storm must not drain the account pool")
 		}
 	}
@@ -81,7 +81,7 @@ func TestLoneHeaderTimeoutDoesNotBench(t *testing.T) {
 	_, def := newDef(t, stallSrv(t).URL)
 	def.HeaderTimeout = 200 * time.Millisecond
 	apiErr := doStall(t, def, "glm-5.3-flash")
-	if apiErr ***REMOVED*** nil || apiErr.Status != 504 {
+	if apiErr == nil || apiErr.Status != 504 {
 		t.Fatalf("want 504, got %+v", apiErr)
 	}
 	if b, _ := def.ModelBenched("glm-5.3-flash"); b {

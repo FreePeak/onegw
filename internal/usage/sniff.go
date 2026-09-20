@@ -140,7 +140,7 @@ func (s *Sniffer) extract() {
 // them, and a window cut mid-number cannot shrink the count.
 func maxMatch(re *regexp.Regexp, b []byte) int64 {
 	ms := re.FindAllSubmatch(b, -1)
-	if len(ms) ***REMOVED*** 0 {
+	if len(ms) == 0 {
 		return -1
 	}
 	best := int64(-1)

@@ -36,7 +36,7 @@ func statusFromOAErr(code any, typ, msg string) int {
 			return int(c)
 		}
 	case string:
-		if n, err := strconv.Atoi(strings.TrimSpace(c)); err ***REMOVED*** nil && n >= 400 && n < 600 {
+		if n, err := strconv.Atoi(strings.TrimSpace(c)); err == nil && n >= 400 && n < 600 {
 			return n
 		}
 	}
@@ -107,7 +107,7 @@ func UpstreamParseRejected(status int, typ, msg string) bool {
 // the HTTP-level path already downgrades them. Mutates and returns e for
 // call-site convenience; nil-safe.
 func NormalizeInStreamError(e *types.APIError) *types.APIError {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return nil
 	}
 	if UpstreamAuthVerifyFailed(e.Status, e.Type, e.Message) {
@@ -184,7 +184,7 @@ func NormalizeToolPairs(u *types.ChatRequest) {
 		open, pending, results, hold, name = false, nil, nil, nil, ""
 	}
 	for _, m := range u.Messages {
-		if m.Role ***REMOVED*** types.RoleAssistant {
+		if m.Role == types.RoleAssistant {
 			flush()
 			out = append(out, m)
 			for _, p := range m.Content {
@@ -192,7 +192,7 @@ func NormalizeToolPairs(u *types.ChatRequest) {
 				// (a malformed client) takes each wire's own fallback at
 				// encode time, and answering it here would mean inventing an
 				// id the call never had.
-				if p.Type ***REMOVED*** types.PartToolUse && p.ID != "" {
+				if p.Type == types.PartToolUse && p.ID != "" {
 					pending = append(pending, p.ID)
 				}
 			}
@@ -207,7 +207,7 @@ func NormalizeToolPairs(u *types.ChatRequest) {
 		}
 		res, rest := splitToolResults(m)
 		for _, p := range res {
-			if name ***REMOVED*** "" {
+			if name == "" {
 				name = m.Name
 			}
 			results = append(results, pairResultID(p, &pending))
@@ -225,11 +225,11 @@ func NormalizeToolPairs(u *types.ChatRequest) {
 func needsPairRepair(msgs []types.Message) bool {
 	for i := range msgs {
 		m := &msgs[i]
-		if m.Role ***REMOVED*** types.RoleTool {
+		if m.Role == types.RoleTool {
 			return true
 		}
 		for _, p := range m.Content {
-			if p.Type ***REMOVED*** types.PartToolUse || p.Type ***REMOVED*** types.PartToolResult {
+			if p.Type == types.PartToolUse || p.Type == types.PartToolResult {
 				return true
 			}
 		}
@@ -244,7 +244,7 @@ func needsPairRepair(msgs []types.Message) bool {
 // tool-role message (hand-built requests, not decoder output) flattens to one
 // result part and no rest.
 func splitToolResults(m types.Message) (results []types.Part, rest *types.Message) {
-	if m.Role ***REMOVED*** types.RoleTool {
+	if m.Role == types.RoleTool {
 		return []types.Part{{
 			Type:      types.PartToolResult,
 			Name:      orDefault(m.Name, m.ToolCallID),
@@ -258,15 +258,15 @@ func splitToolResults(m types.Message) (results []types.Part, rest *types.Messag
 			keep = append(keep, p)
 			continue
 		}
-		if p.ToolUseID ***REMOVED*** "" {
+		if p.ToolUseID == "" {
 			p.ToolUseID = orDefault(m.ToolCallID, m.Name)
 		}
 		results = append(results, p)
 	}
-	if len(results) ***REMOVED*** 0 {
+	if len(results) == 0 {
 		return nil, &m
 	}
-	if len(keep) ***REMOVED*** 0 {
+	if len(keep) == 0 {
 		return results, nil
 	}
 	m.Content = keep
@@ -282,7 +282,7 @@ func pairResultID(p types.Part, pending *[]string) types.Part {
 		if p.ToolUseID != "" && p.ToolUseID != id {
 			continue
 		}
-		if p.ToolUseID ***REMOVED*** "" {
+		if p.ToolUseID == "" {
 			p.ToolUseID = id
 		}
 		*pending = append((*pending)[:i], (*pending)[i+1:]...)

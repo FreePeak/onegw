@@ -176,7 +176,7 @@ func TestInjectGeminiSurface(t *testing.T) {
 	if err := json.Unmarshal(out, &probe); err != nil {
 		t.Fatalf("bad body: %v", err)
 	}
-	if probe.SystemInstruction ***REMOVED*** nil || len(probe.SystemInstruction.Parts) != 1 ||
+	if probe.SystemInstruction == nil || len(probe.SystemInstruction.Parts) != 1 ||
 		!strings.Contains(probe.SystemInstruction.Parts[0].Text, tersePrompt) {
 		t.Fatalf("gemini systemInstruction not created: %+v", probe.SystemInstruction)
 	}
@@ -336,7 +336,7 @@ func TestExternalCompressFailClosedWhenConfigured(t *testing.T) {
 	no := false
 	s := New(Config{External: ExternalCfg{Enabled: true, URL: up.URL, MinBytes: 1, FailOpen: &no}})
 	raw := bigBody(40000)
-	if _, err := s.CompressExternal(context.Background(), raw); err ***REMOVED*** nil {
+	if _, err := s.CompressExternal(context.Background(), raw); err == nil {
 		t.Fatalf("fail_open=false must surface the error")
 	}
 }

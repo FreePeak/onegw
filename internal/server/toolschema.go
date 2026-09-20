@@ -97,7 +97,7 @@ func normalizeToolRoots(body []byte) []byte {
 // itself is never dropped.
 func retypeUnionBranches(node map[string]any, key string) bool {
 	branches, ok := node[key].([]any)
-	if !ok || len(branches) ***REMOVED*** 0 {
+	if !ok || len(branches) == 0 {
 		return false
 	}
 	objs := make([]map[string]any, 0, len(branches))

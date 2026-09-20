@@ -90,7 +90,7 @@ func DecodeGeminiRequest(body []byte) (*types.ChatRequest, error) {
 			u.TopK = &k
 		}
 		u.StopSequences = g.StopSequences
-		if g.ResponseMimeType ***REMOVED*** "application/json" {
+		if g.ResponseMimeType == "application/json" {
 			rf := &types.ResponseFormat{Type: "json_object"}
 			if len(g.ResponseSchema) > 0 {
 				rf.Type = "json_schema"
@@ -108,7 +108,7 @@ func DecodeGeminiRequest(body []byte) (*types.ChatRequest, error) {
 		case "AUTO":
 			u.ToolChoice = types.ToolChoiceAuto
 		}
-		if names := req.ToolConfig.FunctionCallingConfig.AllowedFunctionNames; len(names) ***REMOVED*** 1 {
+		if names := req.ToolConfig.FunctionCallingConfig.AllowedFunctionNames; len(names) == 1 {
 			u.ToolChoice = &types.ToolChoiceTool{Name: names[0]}
 		}
 	}
@@ -119,7 +119,7 @@ func DecodeGeminiRequest(body []byte) (*types.ChatRequest, error) {
 	}
 	for _, c := range req.Contents {
 		role := types.RoleUser
-		if c.Role ***REMOVED*** "model" {
+		if c.Role == "model" {
 			role = types.RoleAssistant
 		}
 		msg := types.Message{Role: role}
@@ -158,7 +158,7 @@ func DecodeGeminiRequest(body []byte) (*types.ChatRequest, error) {
 }
 
 func gemArgsOrEmpty(raw json.RawMessage) json.RawMessage {
-	if len(raw) ***REMOVED*** 0 || strings.TrimSpace(string(raw)) ***REMOVED*** "" {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" {
 		return json.RawMessage("{}")
 	}
 	return raw
@@ -230,7 +230,7 @@ func EncodeGeminiRequest(u *types.ChatRequest) ([]byte, error) {
 	}
 	for _, m := range u.Messages {
 		role := "user"
-		if m.Role ***REMOVED*** types.RoleAssistant {
+		if m.Role == types.RoleAssistant {
 			role = "model"
 		}
 		c := gemContent{Role: role}
@@ -254,7 +254,7 @@ func EncodeGeminiRequest(u *types.ChatRequest) ([]byte, error) {
 				}{Name: p.Name, Args: gemArgsOrEmpty(p.Args)}})
 			case types.PartToolResult:
 				resp := p.Text
-				if strings.TrimSpace(resp) ***REMOVED*** "" {
+				if strings.TrimSpace(resp) == "" {
 					resp = "{}"
 				}
 				// Response must be a JSON object; wrap raw text if needed.
@@ -283,7 +283,7 @@ func toolNameForMsgs(msgs []types.Message, p types.Part) string {
 	}
 	for _, m := range msgs {
 		for _, q := range m.Content {
-			if q.Type ***REMOVED*** types.PartToolUse && q.ID ***REMOVED*** p.ToolUseID {
+			if q.Type == types.PartToolUse && q.ID == p.ToolUseID {
 				return q.Name
 			}
 		}
@@ -292,7 +292,7 @@ func toolNameForMsgs(msgs []types.Message, p types.Part) string {
 }
 
 func appendPart(c *gemContent, p gemPart) *gemContent {
-	if c ***REMOVED*** nil {
+	if c == nil {
 		c = &gemContent{Role: "user"}
 	}
 	c.Parts = append(c.Parts, p)
@@ -393,7 +393,7 @@ func EncodeGeminiResponse(r *types.ChatResponse) ([]byte, error) {
 			content.Parts = append(content.Parts, gemPart{Text: p.Text, Thought: true, ThoughtSign: p.Signature})
 		}
 	}
-	if len(content.Parts) ***REMOVED*** 0 {
+	if len(content.Parts) == 0 {
 		content.Parts = []gemPart{{Text: ""}}
 	}
 	cand.Content = content
@@ -426,7 +426,7 @@ func DecodeGeminiError(body []byte, status int) *types.APIError {
 			Status  string `json:"status"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message ***REMOVED*** "" {
+	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message == "" {
 		return &types.APIError{Status: status, Type: "upstream_error", Message: strings.TrimSpace(string(body))}
 	}
 	st := status

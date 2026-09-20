@@ -119,7 +119,7 @@ func (m *Manager) Sync(specs []AccountSpec) {
 	}
 	want := make(map[string]AccountSpec, len(specs))
 	for _, s := range specs {
-		if s.Key ***REMOVED*** "" {
+		if s.Key == "" {
 			continue
 		}
 		want[s.Key] = s
@@ -228,7 +228,7 @@ func (m *Manager) refreshLoop(ctx context.Context, spec AccountSpec) {
 // refresher slept.
 func (m *Manager) maybeRefresh(ctx context.Context, spec AccountSpec, lead time.Duration) {
 	tok, ok := m.store.Get(spec.Key)
-	if !ok || tok.RefreshToken ***REMOVED*** "" || tok.AccessToken ***REMOVED*** "" {
+	if !ok || tok.RefreshToken == "" || tok.AccessToken == "" {
 		return // nothing to refresh (e.g. Kilo: no refresh token)
 	}
 	exp := tok.ExpiresAt
@@ -264,7 +264,7 @@ func (m *Manager) maybeRefresh(ctx context.Context, spec AccountSpec, lead time.
 // persists it. Returns the new token.
 func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error) {
 	old, ok := m.store.Get(spec.Key)
-	if !ok || old.RefreshToken ***REMOVED*** "" {
+	if !ok || old.RefreshToken == "" {
 		return nil, errors.New("no refresh token stored for " + spec.Key)
 	}
 	if spec.Provider.ClineFlow {
@@ -298,7 +298,7 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("token refresh: %w", err)
 	}
-	if raw.AccessToken ***REMOVED*** "" {
+	if raw.AccessToken == "" {
 		return nil, fmt.Errorf("token refresh: no access_token in response")
 	}
 	tok := Token{AccessToken: raw.AccessToken, Scope: raw.Scope}
@@ -321,7 +321,7 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 }
 
 // sameSpec reports whether two account specs are identical (Provider
-// contains a map, so it is not comparable with ***REMOVED***).
+// contains a map, so it is not comparable with ==).
 func sameSpec(a, b AccountSpec) bool {
 	if a.Key != b.Key || a.Provider.Name != b.Provider.Name ||
 		a.Provider.DeviceCodeURL != b.Provider.DeviceCodeURL ||

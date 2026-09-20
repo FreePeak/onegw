@@ -180,7 +180,7 @@ func TestSearchE2EStreaming(t *testing.T) {
 		}
 		for _, ch := range c.Choices {
 			content.WriteString(ch.Delta.Content)
-			if ch.FinishReason ***REMOVED*** "stop" {
+			if ch.FinishReason == "stop" {
 				stopSeen = true
 			}
 		}

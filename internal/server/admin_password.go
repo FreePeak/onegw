@@ -58,7 +58,7 @@ func (s *Server) handleAdminPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	generated := false
 	next := req.NewPassword
-	if next ***REMOVED*** "" {
+	if next == "" {
 		if next, err = config.GenerateAdminPassword(); err != nil {
 			adminError(w, http.StatusInternalServerError, "generate password: "+err.Error())
 			return
@@ -80,7 +80,7 @@ func (s *Server) handleAdminPassword(w http.ResponseWriter, r *http.Request) {
 	if path := s.configPath(); path != "" && fileExists(path) {
 		if _, err := s.patchConfigFile(func(lines []string) ([]string, error) {
 			return spliceAdminPassword(lines, next)
-		}); err ***REMOVED*** nil {
+		}); err == nil {
 			persistedTOML = true
 		} else {
 			var bad badConfigEdit
@@ -133,7 +133,7 @@ func (s *Server) handleAdminPassword(w http.ResponseWriter, r *http.Request) {
 // nested [[providers.accounts]] — is carried over byte-for-byte; the
 // caller's patchConfigFile round-trip validates the result before the write.
 func spliceAdminPassword(lines []string, pw string) ([]string, error) {
-	if strings.TrimSpace(pw) ***REMOVED*** "" {
+	if strings.TrimSpace(pw) == "" {
 		return nil, errors.New("refusing to write an empty admin_password")
 	}
 	rendered := tsv("admin_password", pw)
@@ -141,7 +141,7 @@ func spliceAdminPassword(lines []string, pw string) ([]string, error) {
 	serverAt, insertAt := -1, 0
 	for i, ln := range lines {
 		t := strings.TrimSpace(ln)
-		if t ***REMOVED*** "[server]" {
+		if t == "[server]" {
 			serverAt, insertAt = i, i+1
 			break
 		}
@@ -174,5 +174,5 @@ func spliceAdminPassword(lines []string, pw string) ([]string, error) {
 // process was started with may simply never have been written).
 func fileExists(path string) bool {
 	fi, err := os.Stat(path)
-	return err ***REMOVED*** nil && !fi.IsDir()
+	return err == nil && !fi.IsDir()
 }

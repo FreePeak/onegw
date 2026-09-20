@@ -76,7 +76,7 @@ func lossFixtureJSON(keys int, errorKey int) string {
 	var sb strings.Builder
 	sb.WriteString("{\n")
 	for i := range keys {
-		if i ***REMOVED*** errorKey {
+		if i == errorKey {
 			sb.WriteString(fmt.Sprintf("  \"key_%03d\": \"FATAL: quota exceeded\",\n", i))
 		} else {
 			sb.WriteString(fmt.Sprintf("  \"key_%03d\": \"value with some text %d\",\n", i, i))

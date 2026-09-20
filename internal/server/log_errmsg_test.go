@@ -34,7 +34,7 @@ func TestUpstreamErrorMessageReachesRequestLog(t *testing.T) {
 	}
 
 	entries := srv.reqlog.latest(10)
-	if len(entries) ***REMOVED*** 0 {
+	if len(entries) == 0 {
 		t.Fatal("no log entries recorded")
 	}
 	e := entries[len(entries)-1]
@@ -65,7 +65,7 @@ func TestUpstreamErrorMessageReachesRequestLog(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("logs API json: %v", err)
 	}
-	if len(payload.Entries) ***REMOVED*** 0 {
+	if len(payload.Entries) == 0 {
 		t.Fatal("logs API returned no entries")
 	}
 	last := payload.Entries[len(payload.Entries)-1]
@@ -99,7 +99,7 @@ func TestUpstreamErrorMessageTruncated(t *testing.T) {
 	}
 
 	entries := srv.reqlog.latest(10)
-	if len(entries) ***REMOVED*** 0 {
+	if len(entries) == 0 {
 		t.Fatal("no log entries recorded")
 	}
 	e := entries[len(entries)-1]
@@ -142,7 +142,7 @@ func TestNoRouteMessageReachesRequestLog(t *testing.T) {
 	}
 
 	entries := srv.reqlog.latest(10)
-	if len(entries) ***REMOVED*** 0 {
+	if len(entries) == 0 {
 		t.Fatal("no log entries recorded")
 	}
 	e := entries[len(entries)-1]
@@ -192,7 +192,7 @@ func TestInStream429CoolsAccountAndLogs(t *testing.T) {
 		t.Fatalf("upstream calls = %d, want 1", calls.Load())
 	}
 	entries := srv.reqlog.latest(10)
-	if len(entries) ***REMOVED*** 0 {
+	if len(entries) == 0 {
 		t.Fatal("no log entries recorded")
 	}
 	e := entries[len(entries)-1]

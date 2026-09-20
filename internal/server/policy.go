@@ -34,7 +34,7 @@ import (
 // display, never identity. A request blocked on TPM must not consume an
 // RPM slot, so the tpm check runs before the rpm Allow.
 func (s *Server) enforceRateLimits(w http.ResponseWriter, clientFmt translat.Format, ak *config.AuthKey) bool {
-	if ak ***REMOVED*** nil {
+	if ak == nil {
 		return true
 	}
 	if ak.TPM > 0 {
@@ -59,7 +59,7 @@ func (s *Server) enforceRateLimits(w http.ResponseWriter, clientFmt translat.For
 // observeTPM records a completed request's tokens into the key's tpm
 // window. Called from the usage hook; no-op for unlimited keys.
 func (s *Server) observeTPM(ak *config.AuthKey, tokens int64) {
-	if ak ***REMOVED*** nil || ak.TPM <= 0 || tokens <= 0 || ak.Key ***REMOVED*** "" {
+	if ak == nil || ak.TPM <= 0 || tokens <= 0 || ak.Key == "" {
 		return
 	}
 	s.rl.ObserveTPM(ak.Key, ak.TPM, tokens)
@@ -70,14 +70,14 @@ func (s *Server) observeTPM(ak *config.AuthKey, tokens int64) {
 // client's model string, or any resolved target as "provider/model" or
 // bare model — so combo names, direct routes, and bare models all work.
 func modelAllowed(ak *config.AuthKey, model string, res *router.Resolution) bool {
-	if ak ***REMOVED*** nil || len(ak.Models) ***REMOVED*** 0 {
+	if ak == nil || len(ak.Models) == 0 {
 		return true
 	}
 	for _, e := range ak.Models {
 		if strings.EqualFold(e, model) {
 			return true
 		}
-		if res ***REMOVED*** nil {
+		if res == nil {
 			continue
 		}
 		for _, t := range res.Targets {

@@ -97,7 +97,7 @@ func (h *sseHub) unsubscribe(sub *sseSub) {
 // publish queues a frame to subscribers watching the topic. Never blocks:
 // a full ring closes the subscriber (client resyncs on reconnect).
 func (h *sseHub) publish(topic, data string) {
-	if h ***REMOVED*** nil {
+	if h == nil {
 		return
 	}
 	frame := "event: " + topic + "\ndata: " + strings.ReplaceAll(data, "\n", " ") + "\n\n"
@@ -117,7 +117,7 @@ func (h *sseHub) publish(topic, data string) {
 }
 
 func (h *sseHub) shutdown() {
-	if h ***REMOVED*** nil {
+	if h == nil {
 		return
 	}
 	select {
@@ -144,7 +144,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			topics = append(topics, t)
 		}
 	}
-	if len(topics) ***REMOVED*** 0 {
+	if len(topics) == 0 {
 		topics = []string{"health"}
 	}
 	sub := s.events.subscribe(topics)
@@ -275,7 +275,7 @@ func (l *requestLog) record(e logEntry) {
 	l.ring[l.head] = e
 	l.head = (l.head + 1) % len(l.ring)
 	l.mu.Unlock()
-	if b, err := json.Marshal(e); err ***REMOVED*** nil && l.next != nil {
+	if b, err := json.Marshal(e); err == nil && l.next != nil {
 		l.next.publish("logs", string(b))
 	}
 }
@@ -294,7 +294,7 @@ func (l *requestLog) latest(n int) []logEntry {
 	for i := range n {
 		idx := (l.head - 1 - i + len(l.ring)) % len(l.ring)
 		e := l.ring[idx]
-		if e.Seq ***REMOVED*** 0 {
+		if e.Seq == 0 {
 			break
 		}
 		if e.TS < cutoff {
@@ -316,7 +316,7 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	}
 	n := 200
 	if v := r.URL.Query().Get("limit"); v != "" {
-		if x, err := strconv.Atoi(v); err ***REMOVED*** nil && x > 0 && x <= logRingCap {
+		if x, err := strconv.Atoi(v); err == nil && x > 0 && x <= logRingCap {
 			n = x
 		}
 	}
@@ -326,7 +326,7 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 // observeLog is the single hook the proxy paths call on completion.
 // ms/tps carry the decode phase's duration and tokens/sec (0 = unknown).
 func (s *Server) observeLog(provider, model, acct string, code int, kind string, u types.Usage, saved int64, errMsg string, ms int64, tps float64, e2eMs int64, dtps float64) {
-	if s.reqlog ***REMOVED*** nil {
+	if s.reqlog == nil {
 		return
 	}
 	s.reqlog.record(logEntry{
@@ -397,7 +397,7 @@ func (s *Server) authedPage(w http.ResponseWriter, r *http.Request, id, title st
 // days for the shell's right-rail ranking. Read-only; empty when the store
 // is unavailable.
 func (s *Server) rankRows() []dashboard.RankRow {
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		return nil
 	}
 	to := time.Now().Format("2006-01-02")
@@ -410,11 +410,11 @@ func (s *Server) rankRows() []dashboard.RankRow {
 	byProv := map[string]*agg{}
 	for _, r := range raw {
 		name := r.Provider
-		if name ***REMOVED*** "" {
+		if name == "" {
 			name = "unresolved"
 		}
 		a := byProv[name]
-		if a ***REMOVED*** nil {
+		if a == nil {
 			a = &agg{}
 			byProv[name] = a
 		}
@@ -432,7 +432,7 @@ func (s *Server) rankRows() []dashboard.RankRow {
 	}
 	for i := range rows {
 		rows[i].Rank = i + 1
-		rows[i].Featured = i ***REMOVED*** 0
+		rows[i].Featured = i == 0
 	}
 	return rows
 }
@@ -451,12 +451,12 @@ func (s *Server) rankRows() []dashboard.RankRow {
 // it represents. ok=false for odd/legacy keys; callers fall back to the
 // raw key as the display label.
 func rollupInstant(day, hour string) (time.Time, bool) {
-	if hour ***REMOVED*** "" {
+	if hour == "" {
 		t, err := time.ParseInLocation("2006-01-02", day, time.UTC)
-		return t, err ***REMOVED*** nil
+		return t, err == nil
 	}
 	t, err := time.ParseInLocation("2006-01-02 15", day+" "+hour, time.UTC)
-	return t, err ***REMOVED*** nil
+	return t, err == nil
 }
 
 // utcKeyWindow maps an inclusive local-day window onto the range of UTC
@@ -477,10 +477,10 @@ func utcKeyWindow(from, to string) (string, string) {
 
 // rowsInLocalWindow queries the rollup store for the UTC key superset
 // covering the inclusive LOCAL-day window [from, to] and keeps only rows
-// whose rollup instant falls on a local day inside it. from ***REMOVED*** "" queries
+// whose rollup instant falls on a local day inside it. from == "" queries
 // the whole history (the upper bound still applies).
 func (s *Server) rowsInLocalWindow(from, to string) ([]store.UsageRow, error) {
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		return nil, nil
 	}
 	kFrom, kTo := utcKeyWindow(from, to)
@@ -535,7 +535,7 @@ func (s *Server) overviewView() *overviewData {
 	v := &overviewData{}
 	st := s.cur()
 	today := time.Now().Format("2006-01-02") // local calendar day, like every dashboard window
-	if rows, err := s.rowsInLocalWindow(today, today); err ***REMOVED*** nil {
+	if rows, err := s.rowsInLocalWindow(today, today); err == nil {
 		for _, r := range rows {
 			v.TodayReq += r.Requests
 			v.TodayIn += r.InputTok
@@ -686,7 +686,7 @@ func rangeWindow(sel string) (from, to string) {
 
 func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 	sel := r.URL.Query().Get("range")
-	if sel ***REMOVED*** "" {
+	if sel == "" {
 		sel = "all"
 	}
 	from, to := rangeWindow(sel)
@@ -694,7 +694,7 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 	// Raw export API is UTC-day-keyed: hand it the UTC key superset.
 	v.ExportFrom, v.ExportTo = utcKeyWindow(from, to)
 	for _, rg := range usageRanges {
-		v.Ranges = append(v.Ranges, usageRange{ID: rg.ID, Label: rg.Label, On: rg.ID ***REMOVED*** sel})
+		v.Ranges = append(v.Ranges, usageRange{ID: rg.ID, Label: rg.Label, On: rg.ID == sel})
 	}
 	switch sel {
 	case "today":
@@ -705,7 +705,7 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 		v.Window = "all stored rollups"
 	}
 	rows, err := s.usageRowsLocal(from, to)
-	if err ***REMOVED*** nil {
+	if err == nil {
 		v.Rows = rows
 		for _, r2 := range rows {
 			v.Totals.Req += r2.Req
@@ -722,7 +722,7 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 		v.ChartJSON = template.JS(s.chartJSON(from, to))
 	}
 	v.ChartUnit = "per day"
-	if from ***REMOVED*** to {
+	if from == to {
 		v.ChartUnit = "per hour (local)"
 	}
 	s.authedPage(w, r, "usage", "Usage", false, v)
@@ -731,7 +731,7 @@ func (s *Server) usagePage(w http.ResponseWriter, r *http.Request) {
 // usageRows aggregates the LOCAL-window rollups to one row per
 // provider+model.
 func (s *Server) usageRowsLocal(from, to string) ([]usageRowView, error) {
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		return nil, nil
 	}
 	raw, err := s.rowsInLocalWindow(from, to)
@@ -743,7 +743,7 @@ func (s *Server) usageRowsLocal(from, to string) ([]usageRowView, error) {
 	for _, r := range raw {
 		k := key{r.Provider, r.Model}
 		v := agg[k]
-		if v ***REMOVED*** nil {
+		if v == nil {
 			v = &usageRowView{Provider: r.Provider, Model: r.Model}
 			agg[k] = v
 		}
@@ -775,7 +775,7 @@ func (s *Server) chartJSON(from, to string) string {
 	// slot: local label for a rollup row. ok=false (odd legacy keys) falls
 	// back to the raw key as the display label.
 	slot := func(r store.UsageRow) (string, bool) {
-		if from ***REMOVED*** to { // hour-of-the-day label
+		if from == to { // hour-of-the-day label
 			if inst, ok := rollupInstant(r.Day, r.Hour); ok {
 				return inst.In(time.Local).Format("15"), true
 			}
@@ -792,7 +792,7 @@ func (s *Server) chartJSON(from, to string) string {
 	}
 	var ax axis
 	ax.Keys = map[string][4]int64{}
-	if rows, err := s.rowsInLocalWindow(from, to); err ***REMOVED*** nil {
+	if rows, err := s.rowsInLocalWindow(from, to); err == nil {
 		for _, r := range rows {
 			label, _ := slot(r)
 			d := ax.Keys[label]
@@ -803,7 +803,7 @@ func (s *Server) chartJSON(from, to string) string {
 			ax.Keys[label] = d
 		}
 	}
-	if from ***REMOVED*** to { // dense 00..23 local-hour axis
+	if from == to { // dense 00..23 local-hour axis
 		for h := range 24 {
 			ax.Labels = append(ax.Labels, fmt.Sprintf("%02d", h))
 		}
@@ -831,7 +831,7 @@ func (s *Server) chartJSON(from, to string) string {
 	xs := make([]int64, len(ax.Labels))
 	for i, d := range ax.Labels {
 		var t time.Time
-		if from ***REMOVED*** to { // hour label on the current local day
+		if from == to { // hour label on the current local day
 			h, _ := strconv.Atoi(d)
 			t, _ = time.ParseInLocation("2006-01-02", from, time.Local)
 			t = t.Add(time.Duration(h) * time.Hour)
@@ -864,19 +864,19 @@ func (s *Server) handleAPIUsageDaily(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	to := q.Get("to")
-	if to ***REMOVED*** "" {
+	if to == "" {
 		to = time.Now().UTC().Format("2006-01-02")
 	}
 	from := q.Get("from")
-	if from ***REMOVED*** "" {
+	if from == "" {
 		from = time.Now().UTC().AddDate(0, 0, -3650).Format("2006-01-02")
 	}
 	if cursor := q.Get("cursor"); cursor > from && cursor <= to {
-		if t, err := time.Parse("2006-01-02", cursor); err ***REMOVED*** nil {
+		if t, err := time.Parse("2006-01-02", cursor); err == nil {
 			from = t.AddDate(0, 0, 1).Format("2006-01-02")
 		}
 	}
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		writeJSON(w, map[string]any{"days": []string{}, "rows": []store.UsageRow{}, "next_cursor": nil})
 		return
 	}
@@ -885,7 +885,7 @@ func (s *Server) handleAPIUsageDaily(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "store query failed")
 		return
 	}
-	if raw ***REMOVED*** nil {
+	if raw == nil {
 		raw = []store.UsageRow{}
 	}
 	seen := map[string]bool{}
@@ -952,9 +952,9 @@ func providerViews(st *state) []providerView {
 	out := make([]providerView, 0, len(st.cfg.Providers))
 	for _, p := range st.cfg.Providers {
 		n := len(p.Accounts)
-		if n ***REMOVED*** 0 {
+		if n == 0 {
 			n = len(p.Keys)
-			if n ***REMOVED*** 0 && p.APIKey != "" {
+			if n == 0 && p.APIKey != "" {
 				n = 1
 			}
 		}
@@ -999,12 +999,12 @@ func providerAttention(v *providerView) {
 	if v.Disabled {
 		return // switched off on purpose: nothing to fix, nothing to nag about
 	}
-	if v.Accounts ***REMOVED*** 0 {
+	if v.Accounts == 0 {
 		v.Attention = "no credential"
 		return
 	}
 	for _, o := range v.OAuth {
-		if o.Owner ***REMOVED*** "" && o.State != oauthSignedIn {
+		if o.Owner == "" && o.State != oauthSignedIn {
 			v.Attention = "sign " + o.Account + " in"
 			return
 		}
@@ -1087,19 +1087,19 @@ func providerEditViews(st *state) []providerEditView {
 		}
 		oauth := map[string]config.OAuthAccount{}
 		for _, a := range st.cfg.OAuthAccounts() {
-			if a.Provider ***REMOVED*** p.Name {
+			if a.Provider == p.Name {
 				oauth[a.Account] = a
 			}
 		}
 		src := p.Accounts
-		if len(src) ***REMOVED*** 0 {
+		if len(src) == 0 {
 			for i, k := range p.Keys {
-				if k ***REMOVED*** "" {
+				if k == "" {
 					continue // env-provided; nothing to preserve or report
 				}
 				src = append(src, config.Acct{Name: fmt.Sprintf("key-%d", i+1), APIKey: k})
 			}
-			if len(src) ***REMOVED*** 0 && p.APIKey != "" {
+			if len(src) == 0 && p.APIKey != "" {
 				src = []config.Acct{{Name: "default", APIKey: p.APIKey}}
 			}
 		}
@@ -1146,7 +1146,7 @@ func (s *Server) providersPage(w http.ResponseWriter, r *http.Request) {
 		v.OAuthStates = s.oauthStates()
 		v.Services = oauth.Providers()
 		edits := providerEditViews(st)
-		if b, err := json.Marshal(edits); err ***REMOVED*** nil {
+		if b, err := json.Marshal(edits); err == nil {
 			v.Edit = template.JS(b)
 		}
 	}
@@ -1198,7 +1198,7 @@ func (s *Server) combosPage(w http.ResponseWriter, r *http.Request) {
 	if st := s.cur(); st != nil {
 		for _, c := range st.cfg.Combos {
 			strategy := c.Strategy
-			if strategy ***REMOVED*** "" {
+			if strategy == "" {
 				strategy = "fastest" // the documented default when unset
 			}
 			out = append(out, struct{ Name, Targets, Strategy string }{c.Name, strings.Join(c.Targets, "  →  "), strategy})
@@ -1216,7 +1216,7 @@ func (s *Server) combosPage(w http.ResponseWriter, r *http.Request) {
 		for _, c := range st.cfg.Combos {
 			edits = append(edits, ce{Name: c.Name, Targets: c.Targets, Strategy: c.Strategy, RoundRobinLimit: c.RoundRobinLimit})
 		}
-		if b, err := json.Marshal(edits); err ***REMOVED*** nil {
+		if b, err := json.Marshal(edits); err == nil {
 			v.Edit = template.JS(b)
 		}
 	}
@@ -1253,7 +1253,7 @@ type quotaRowView struct {
 
 func quotaViews(st *state) []quotaRowView {
 	out := []quotaRowView{}
-	if st ***REMOVED*** nil || st.quota ***REMOVED*** nil {
+	if st == nil || st.quota == nil {
 		return out
 	}
 	now := time.Now()
@@ -1332,7 +1332,7 @@ func (s *Server) saverPage(w http.ResponseWriter, r *http.Request) {
 		v.External.Enabled = st.cfg.Saver.External.Enabled
 		v.External.URL = st.cfg.Saver.External.URL
 		v.External.MinBytes = st.cfg.Saver.External.MinBytes
-		if st.cfg.Saver.External.FailOpen ***REMOVED*** nil || *st.cfg.Saver.External.FailOpen {
+		if st.cfg.Saver.External.FailOpen == nil || *st.cfg.Saver.External.FailOpen {
 			v.External.FailOpen = "fail-open"
 		} else {
 			v.External.FailOpen = "fail-closed"
@@ -1364,7 +1364,7 @@ func (s *Server) handleAPISaver(w http.ResponseWriter, r *http.Request) {
 func (s *Server) savedAllTime() int64 {
 	var saved int64
 	if s.st != nil {
-		if rows, err := s.rowsInLocalWindow("", time.Now().Format("2006-01-02")); err ***REMOVED*** nil {
+		if rows, err := s.rowsInLocalWindow("", time.Now().Format("2006-01-02")); err == nil {
 			for _, r := range rows {
 				saved += r.SavedTok
 			}
@@ -1487,18 +1487,18 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	v.DataDir = s.dataDir
 	if o := s.owner.Load(); o != nil {
 		v.Build = o.Build.Revision
-		if v.Build ***REMOVED*** "" {
+		if v.Build == "" {
 			v.Build = o.Build.ModuleVersion
 		}
 		if o.Build.GoVersion != "" {
 			v.Build += " · " + o.Build.GoVersion
 		}
-		if v.Listen ***REMOVED*** "" {
+		if v.Listen == "" {
 			v.Listen = o.Listen
 		}
 		v.ConfigPath = o.ConfigPath
 		// The owner record stamps UTC; the dashboard shows local.
-		if mt, err := time.Parse(time.RFC3339Nano, o.ConfigMtime); err ***REMOVED*** nil {
+		if mt, err := time.Parse(time.RFC3339Nano, o.ConfigMtime); err == nil {
 			v.ConfigMtime = mt.Local().Format(time.RFC3339)
 		} else {
 			v.ConfigMtime = o.ConfigMtime
@@ -1525,7 +1525,7 @@ func humanBytes(n int64) string {
 func listenHost(listen string) string {
 	if i := strings.LastIndex(listen, ":"); i >= 0 {
 		h := listen[:i]
-		if h ***REMOVED*** "" || h ***REMOVED*** "0.0.0.0" || h ***REMOVED*** "::" {
+		if h == "" || h == "0.0.0.0" || h == "::" {
 			return "127.0.0.1"
 		}
 		return h

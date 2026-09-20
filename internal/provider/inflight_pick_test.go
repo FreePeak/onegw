@@ -31,7 +31,7 @@ func liveOf(p *accountPool, name string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.accts {
-		if p.accts[i].acct.Name ***REMOVED*** name {
+		if p.accts[i].acct.Name == name {
 			return p.accts[i].live
 		}
 	}
@@ -44,7 +44,7 @@ func TestPickSpreadsOffBusyAccount(t *testing.T) {
 	fast, slow := &def.Accounts[0], &def.Accounts[1]
 	seedSpeed(p, 0, 400) // clone2 decodes faster: it wins an idle pick
 
-	if a, _ := p.next(""); a ***REMOVED*** nil || a.Name != fast.Name {
+	if a, _ := p.next(""); a == nil || a.Name != fast.Name {
 		t.Fatalf("idle pick must honor speed, got %+v", a)
 	}
 
@@ -54,7 +54,7 @@ func TestPickSpreadsOffBusyAccount(t *testing.T) {
 		t.Fatalf("begin: want depth 1, got %d", n)
 	}
 	a, _ := p.next("")
-	if a ***REMOVED*** nil || a.Name != slow.Name {
+	if a == nil || a.Name != slow.Name {
 		t.Fatalf("in-flight fast key must yield to an idle sibling, got %+v", a)
 	}
 
@@ -63,7 +63,7 @@ func TestPickSpreadsOffBusyAccount(t *testing.T) {
 	if got := liveOf(p, fast.Name); got != 0 {
 		t.Fatalf("end must release the slot, live=%d", got)
 	}
-	if a, _ := p.next(""); a ***REMOVED*** nil || a.Name != fast.Name {
+	if a, _ := p.next(""); a == nil || a.Name != fast.Name {
 		t.Fatalf("released key must win again, got %+v", a)
 	}
 }
@@ -96,7 +96,7 @@ func TestDoHoldsOccupancyUntilReturn(t *testing.T) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	if a, _ := p.next(""); a ***REMOVED*** nil || a.Name != slow.Name {
+	if a, _ := p.next(""); a == nil || a.Name != slow.Name {
 		t.Fatalf("while Do waits on headers the slot is busy; got %+v", a)
 	}
 
@@ -119,7 +119,7 @@ func TestPinnedAccountYieldsWhileBusy(t *testing.T) {
 	}, time.Minute, 0)
 
 	pinned, _ := p.next("k:client")
-	if pinned ***REMOVED*** nil {
+	if pinned == nil {
 		t.Fatal("next: no account")
 	}
 	// The pin holds while the account is idle: a second pick without a
@@ -130,7 +130,7 @@ func TestPinnedAccountYieldsWhileBusy(t *testing.T) {
 
 	p.begin(pinned)
 	other, _ := p.next("k:client")
-	if other ***REMOVED*** nil || other.Name ***REMOVED*** pinned.Name {
+	if other == nil || other.Name == pinned.Name {
 		t.Fatalf("busy pinned account must yield to the least-busy scan, got %+v", other)
 	}
 

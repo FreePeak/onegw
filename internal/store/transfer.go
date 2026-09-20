@@ -79,7 +79,7 @@ func scanRollupRow(sc interface{ Scan(...any) error }) (RollupRow, error) {
 }
 
 func parseTime(s string) time.Time {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return time.Time{}
 	}
 	t, err := time.Parse(time.RFC3339, s)
@@ -134,7 +134,7 @@ func mergeStmt(tx *sql.Tx, delta bool) (*sql.Stmt, error) {
 // merge mode: false = snapshot (replace counters per key+node; idempotent
 // re-import), true = delta (sum counters; push windows).
 func (s *Store) MergeRows(rows []RollupRow, delta bool) error {
-	if len(rows) ***REMOVED*** 0 {
+	if len(rows) == 0 {
 		return nil
 	}
 	s.mu.Lock()

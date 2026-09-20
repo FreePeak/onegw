@@ -66,7 +66,7 @@ func TestRateLimitRPMDeniesWithRetryAfter(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("4th request status %d, want 429", w.Code)
 	}
-	if ra := w.Header().Get("Retry-After"); ra ***REMOVED*** "" || ra ***REMOVED*** "0" {
+	if ra := w.Header().Get("Retry-After"); ra == "" || ra == "0" {
 		t.Fatalf("Retry-After = %q, want positive seconds", ra)
 	}
 	e := errBody(t, w)
@@ -105,7 +105,7 @@ func TestRateLimitTPMBlocksNextRequest(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status %d, want 429 after tokens exceeded tpm", w.Code)
 	}
-	if w.Header().Get("Retry-After") ***REMOVED*** "" {
+	if w.Header().Get("Retry-After") == "" {
 		t.Fatal("missing Retry-After on 429")
 	}
 	if got := errBody(t, w)["type"]; got != "rate_limited" {
@@ -205,7 +205,7 @@ func TestGeminiSurfaceEnforcesPolicy(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("second gemini request status %d, want 429", w.Code)
 	}
-	if w.Header().Get("Retry-After") ***REMOVED*** "" {
+	if w.Header().Get("Retry-After") == "" {
 		t.Fatal("missing Retry-After on gemini 429")
 	}
 }

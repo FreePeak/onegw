@@ -160,7 +160,7 @@ func (f *Family) renderTo(b *strings.Builder) {
 
 // writeLabels emits {name="value",...} with pairs sorted by label name.
 func (f *Family) writeLabels(b *strings.Builder, vals []string) {
-	if len(vals) ***REMOVED*** 0 {
+	if len(vals) == 0 {
 		return
 	}
 	type pair struct{ name, val string }

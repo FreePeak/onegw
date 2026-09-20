@@ -151,7 +151,7 @@ env_upsert() { # file KEY VALUE — set KEY=VALUE where it already sits (append 
   [ -f "$f" ] || : >"$f"
   tmp=$(mktemp "${f}.tmp.XXXXXX")
   awk -v kv="$k=$v" -v key="$k=" '
-    substr($0, 1, length(key)) ***REMOVED*** key { print kv; seen = 1; next }
+    substr($0, 1, length(key)) == key { print kv; seen = 1; next }
     { print }
     END { if (!seen) print kv }' "$f" >"$tmp"
   chmod 600 "$tmp" && mv "$tmp" "$f"
@@ -357,9 +357,9 @@ for pair in "${INHERITED[@]:-}"; do
   ENV_ARGS+=(-e "$v=${pair#*=}")
 done
 
-# ***REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED***=
+# ===========================================================================
 # compose mode: hand the stack to docker compose
-# ***REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED******REMOVED***=
+# ===========================================================================
 if [ "$MODE" = compose ]; then
   compose_args=()
   for p in "${PROFILES[@]:-}"; do

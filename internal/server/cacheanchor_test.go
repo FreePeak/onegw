@@ -44,7 +44,7 @@ func markerPaths(t *testing.T, body []byte) []string {
 }
 
 func itoa(i int) string {
-	if i ***REMOVED*** 0 {
+	if i == 0 {
 		return "0"
 	}
 	var b [20]byte

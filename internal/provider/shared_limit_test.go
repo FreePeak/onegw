@@ -56,7 +56,7 @@ func TestSharedConcurrency429SkipsLadder(t *testing.T) {
 	a1 := &def.Accounts[0]
 
 	_, apiErr := def.Do(context.Background(), a1, "glm-5.3-flash", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
+	if apiErr == nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
 		t.Fatalf("got %+v, want 429 SharedConcurrency", apiErr)
 	}
 	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() || slot.strikes != 0 {
@@ -64,7 +64,7 @@ func TestSharedConcurrency429SkipsLadder(t *testing.T) {
 	}
 	// The pool still hands out the same healthy account for the next
 	// request (retry lands on it, unlike a benched key).
-	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a1" {
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a1" {
 		t.Fatalf("pool must keep serving the healthy key, got %+v", got)
 	}
 	if atomic.LoadInt32(hits) != 1 {
@@ -79,7 +79,7 @@ func TestSharedConcurrency429SignatureNarrow(t *testing.T) {
 	srv, _ := mkErrStub(t, 429, `{"error":{"message":"rate limit exceeded, key sk-x","type":"upstream_error"}}`)
 	def := newSingleDef(t, srv, "b-ai")
 	a1 := &def.Accounts[0]
-	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{}`)), false); apiErr ***REMOVED*** nil || apiErr.SharedConcurrency() {
+	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{}`)), false); apiErr == nil || apiErr.SharedConcurrency() {
 		t.Fatalf("got %+v, want plain 429 (ladder path)", apiErr)
 	}
 	slot := findSlot(def.pool, "a1")
@@ -105,13 +105,13 @@ func TestSharedTPMWall429SkipsLadder(t *testing.T) {
 	a1 := &def.Accounts[0]
 
 	_, apiErr := def.Do(context.Background(), a1, "glm-5.3-flash", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
+	if apiErr == nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
 		t.Fatalf("got %+v, want 429 SharedConcurrency (TPM wall)", apiErr)
 	}
 	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() || slot.strikes != 0 {
 		t.Fatalf("TPM-wall 429 must not bench the account, cooldown=%v strikes=%d", slot.cooldown, slot.strikes)
 	}
-	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a1" {
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a1" {
 		t.Fatalf("pool must keep serving the healthy key, got %+v", got)
 	}
 	if atomic.LoadInt32(hits) != 1 {
@@ -125,7 +125,7 @@ func TestAuthVerify401DowngradedToRetryable502(t *testing.T) {
 	a1 := &def.Accounts[0]
 
 	_, apiErr := def.Do(context.Background(), a1, "glm-5.3-flash", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("expected error")
 	}
 	if apiErr.Status != 502 || apiErr.Type != "upstream_auth_verify_failed" {
@@ -155,7 +155,7 @@ func TestRealInvalidKey401Untouched(t *testing.T) {
 	def := newSingleDef(t, srv, "b-ai")
 	a1 := &def.Accounts[0]
 	_, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 401 {
+	if apiErr == nil || apiErr.Status != 401 {
 		t.Fatalf("got %+v, want untouched 401", apiErr)
 	}
 	if apiErr.Retryable() {
@@ -182,11 +182,11 @@ func TestUpstreamRetryAfterRidesErrorObject(t *testing.T) {
 		Accounts: []Account{{Name: "a1", APIKey: "k1"}}}
 	p.Set(def2)
 
-	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{}`)), false); apiErr ***REMOVED*** nil {
+	if _, apiErr := def.Do(context.Background(), a1, "m", nil, bytes.NewReader([]byte(`{}`)), false); apiErr == nil {
 		t.Fatal("expected error from srv")
 	}
 	_, apiErr := def2.Do(context.Background(), &def2.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.RetryAfter != "7" {
+	if apiErr == nil || apiErr.RetryAfter != "7" {
 		t.Fatalf("got %+v, want RetryAfter=7 propagated verbatim", apiErr)
 	}
 }
@@ -204,7 +204,7 @@ func TestAdmissionWall429SkipsLadder(t *testing.T) {
 	a1 := &def.Accounts[0]
 
 	_, apiErr := def.Do(context.Background(), a1, "z-ai/glm-5.3-free", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
+	if apiErr == nil || apiErr.Status != 429 || !apiErr.SharedConcurrency() {
 		t.Fatalf("got %+v, want 429 SharedConcurrency (admission wall)", apiErr)
 	}
 	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() {
@@ -237,7 +237,7 @@ func TestOpenRouterSharedPool429SkipsLadder(t *testing.T) {
 	a1 := &def.Accounts[0]
 
 	_, apiErr := def.Do(context.Background(), a1, "stealth/union-alpha", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 429 {
+	if apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("got %+v, want 429", apiErr)
 	}
 	// The vendor's nested diagnostic must survive decoding — the classifier
@@ -252,7 +252,7 @@ func TestOpenRouterSharedPool429SkipsLadder(t *testing.T) {
 	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() || slot.strikes != 0 {
 		t.Fatalf("shared-pool 429 must not bench the account, cooldown=%v strikes=%d", slot.cooldown, slot.strikes)
 	}
-	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a1" {
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a1" {
 		t.Fatalf("pool must keep serving the healthy key, got %+v", got)
 	}
 	if atomic.LoadInt32(hits) != 1 {

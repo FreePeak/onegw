@@ -64,23 +64,23 @@ func assertOpenAIPairsHold(t *testing.T, body []byte) {
 	// Leading system turns are pinned, then the conversation must start at
 	// a user turn.
 	i := 0
-	for i < len(msgs) && (msgs[i].Role ***REMOVED*** "system" || msgs[i].Role ***REMOVED*** "developer") {
+	for i < len(msgs) && (msgs[i].Role == "system" || msgs[i].Role == "developer") {
 		i++
 	}
-	if i ***REMOVED*** 0 || i >= len(msgs) {
+	if i == 0 || i >= len(msgs) {
 		t.Fatalf("no system lead or empty conversation: %+v", msgs)
 	}
 	if msgs[i].Role != "user" {
 		t.Fatalf("kept conversation heads with role %q, want user", msgs[i].Role)
 	}
 	for j, m := range msgs {
-		if m.Role ***REMOVED*** "tool" {
+		if m.Role == "tool" {
 			found := false
 			for k := j - 1; k >= 0; k-- {
 				if msgs[k].Role != "tool" {
-					if msgs[k].Role ***REMOVED*** "assistant" {
+					if msgs[k].Role == "assistant" {
 						for _, c := range msgs[k].ToolCalls {
-							if c.ID ***REMOVED*** m.ToolCallID {
+							if c.ID == m.ToolCallID {
 								found = true
 							}
 						}
@@ -104,7 +104,7 @@ func TestPruneToFitOpenAIKeepsToolPairs(t *testing.T) {
 	// constant ~67.7KB byte budget (16928/50000 × 4): forces a mid-history
 	// cut.
 	pruned := pruneToFit(body, translat.FmtOpenAI, 20_000, len(body)/4)
-	if pruned ***REMOVED*** nil {
+	if pruned == nil {
 		t.Fatal("pruneToFit returned nil, want a fitted body")
 	}
 	if len(pruned) >= len(body) {
@@ -161,7 +161,7 @@ func TestPruneToFitAnthropicKeepsResultPairing(t *testing.T) {
 		t.Fatal(err)
 	}
 	pruned := pruneToFit(body, translat.FmtAnthropic, 20_000, len(body)/4)
-	if pruned ***REMOVED*** nil {
+	if pruned == nil {
 		t.Fatal("pruneToFit returned nil")
 	}
 	var root struct {
@@ -181,7 +181,7 @@ func TestPruneToFitAnthropicKeepsResultPairing(t *testing.T) {
 	if root.System != "be nice" {
 		t.Fatalf("top-level system lost: %q", root.System)
 	}
-	if len(root.Messages) ***REMOVED*** 0 || root.Messages[0].Role != "user" {
+	if len(root.Messages) == 0 || root.Messages[0].Role != "user" {
 		t.Fatalf("kept history must head with user: %+v", root.Messages[:min(2, len(root.Messages))])
 	}
 	open := map[string]bool{}
@@ -214,7 +214,7 @@ func TestPruneToFitUnknownDensityHalves(t *testing.T) {
 	// at least halve the body.
 	body := bigOpenAIBody(t, "m", 40)
 	pruned := pruneToFit(body, translat.FmtOpenAI, 5_000_000, 0)
-	if pruned ***REMOVED*** nil {
+	if pruned == nil {
 		t.Fatal("unknown-density overflow must still be pruned")
 	}
 	if int64(len(pruned)) > int64(len(body))/2 {

@@ -93,7 +93,7 @@ added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></
     var show = 'password changed and live. ';
     show += j.generated ? 'Generated password (copy it now): ' + j.password
                         : 'Sign in again with the new password.';
-    if (j.persisted ***REMOVED***= 'marker') {
+    if (j.persisted === 'marker') {
       // The TOML was not writable (read-only config mount, permissions): the
       // data-dir marker carries the credential instead — a future config
       // reload of an empty key keeps it, so this is not a rollback.
@@ -176,12 +176,12 @@ added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></
     var deadline = Date.now() + 90000;
     (function poll(){
       fetch('/admin/api/v1/update').then(function(r){
-        if (r.status ***REMOVED***= 401 || r.status ***REMOVED***= 404){ location.reload(); return null; } // new process
+        if (r.status === 401 || r.status === 404){ location.reload(); return null; } // new process
         return r.json();
       }).then(function(st){
         if (!st) return;
-        if (st.pid && st.pid !***REMOVED*** startPid){ location.reload(); return; } // new build owns the port
-        if (st.last_apply && st.last_apply.indexOf('failed') ***REMOVED***= 0){
+        if (st.pid && st.pid !== startPid){ location.reload(); return; } // new build owns the port
+        if (st.last_apply && st.last_apply.indexOf('failed') === 0){
           show('update failed: ' + st.last_apply);
           statePill(st); reset(); return;
         }
@@ -230,11 +230,11 @@ added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></
       keys.forEach(k => {
         const v = fields[k];
         const row = document.createElement('div'); row.className = 'field mb-1';
-        const isBool = v ***REMOVED***= 'true' || v ***REMOVED***= 'false';
+        const isBool = v === 'true' || v === 'false';
         const isNum = /^\d+$/.test(v);
         const id = 'sec-' + sec + '-' + k.replace(/\W/g,'_');
         let input;
-        if (isBool) { input = document.createElement('input'); input.type='checkbox'; input.checked = v***REMOVED***='true'; }
+        if (isBool) { input = document.createElement('input'); input.type='checkbox'; input.checked = v==='true'; }
         else { input = document.createElement('input'); input.type = isNum ? 'number' : (k.includes('password')?'password':'text'); input.value = v; input.spellcheck=false; }
         input.id = id;
         const lab = document.createElement('label'); lab.htmlFor = id;
@@ -247,7 +247,7 @@ added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></
         const settings = {};
         for (const k in inputs) {
           const {input, isBool} = inputs[k];
-          settings[k] = isBool ? input.checked : (input.type***REMOVED***='number' ? (input.value***REMOVED***=''?0:parseInt(input.value,10)) : input.value);
+          settings[k] = isBool ? input.checked : (input.type==='number' ? (input.value===''?0:parseInt(input.value,10)) : input.value);
         }
         btn.disabled = true; btn.textContent='Saving…';
         try {

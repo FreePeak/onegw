@@ -50,7 +50,7 @@ func TestRelayResponseBudgetSurvivesReloadMidAcquire(t *testing.T) {
 		Resp: &http.Response{
 			StatusCode:    http.StatusOK,
 			Header:        http.Header{"Content-Type": []string{"application/json"}},
-			ContentLength: 1024, // reserve ***REMOVED*** MaxBody headroom ***REMOVED*** the whole budget
+			ContentLength: 1024, // reserve == MaxBody headroom == the whole budget
 			Body:          io.NopCloser(strings.NewReader(`{"garbage":true}`)),
 		},
 		Format: translat.FmtOpenAI,
@@ -65,7 +65,7 @@ func TestRelayResponseBudgetSurvivesReloadMidAcquire(t *testing.T) {
 
 	// Wait until relayResponse is genuinely blocked inside budget.Acquire.
 	deadline := time.Now().Add(2 * time.Second)
-	for budget.Waiting() ***REMOVED*** 0 {
+	for budget.Waiting() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("relayResponse never entered budget.Acquire")
 		}
@@ -77,7 +77,7 @@ func TestRelayResponseBudgetSurvivesReloadMidAcquire(t *testing.T) {
 	// old snapshot — that is the contract under test.
 	srv.Reload(cfg1)
 	newBudget := srv.cur().budget
-	if newBudget ***REMOVED*** budget {
+	if newBudget == budget {
 		t.Fatal("reload did not install a new budget; test premise broken")
 	}
 

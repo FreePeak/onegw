@@ -44,7 +44,7 @@ func TestInStreamErrorStatusExtraction(t *testing.T) {
 // A 200 body carrying an error object (one-api style) maps the same way.
 func TestBodyErrorStatusExtraction(t *testing.T) {
 	_, err := DecodeOpenAIResponse([]byte(`{"error":{"code":"429","message":"rate limited"}}`))
-	if err ***REMOVED*** nil {
+	if err == nil {
 		t.Fatal("expected error")
 	}
 	apiErr, ok := err.(*types.APIError)
@@ -106,7 +106,7 @@ func TestOpenRouterNestedMetadataSurvivesDecode(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			e := c.got()
-			if e ***REMOVED*** nil {
+			if e == nil {
 				t.Fatal("no error decoded")
 			}
 			if !strings.Contains(e.Message, raw) || !strings.Contains(e.Message, lane) {

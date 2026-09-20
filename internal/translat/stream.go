@@ -64,7 +64,7 @@ func readSSE(r *bufio.Reader, yield func(sseEvent) error) error {
 	var name string
 	var data bytes.Buffer
 	flush := func() error {
-		if data.Len() ***REMOVED*** 0 && name ***REMOVED*** "" {
+		if data.Len() == 0 && name == "" {
 			return nil
 		}
 		ev := sseEvent{Name: name, Data: append([]byte(nil), data.Bytes()...)}
@@ -74,9 +74,9 @@ func readSSE(r *bufio.Reader, yield func(sseEvent) error) error {
 	}
 	for {
 		line, err := readLine(r)
-		if len(line) > 0 || err ***REMOVED*** nil {
+		if len(line) > 0 || err == nil {
 			switch {
-			case line ***REMOVED*** "": // event boundary
+			case line == "": // event boundary
 				if ferr := flush(); ferr != nil {
 					return ferr
 				}
@@ -91,7 +91,7 @@ func readSSE(r *bufio.Reader, yield func(sseEvent) error) error {
 			}
 		}
 		if err != nil {
-			if err ***REMOVED*** io.EOF {
+			if err == io.EOF {
 				if ferr := flush(); ferr != nil {
 					return ferr
 				}
@@ -109,15 +109,15 @@ func readLine(r *bufio.Reader) (string, error) {
 	for {
 		chunk, err := r.ReadByte()
 		if err != nil {
-			if err ***REMOVED*** io.EOF {
-				if sb.Len() ***REMOVED*** 0 {
+			if err == io.EOF {
+				if sb.Len() == 0 {
 					return "", io.EOF
 				}
 				return sb.String(), io.EOF
 			}
 			return sb.String(), err
 		}
-		if chunk ***REMOVED*** '\n' {
+		if chunk == '\n' {
 			return strings.TrimSuffix(sb.String(), "\r"), nil
 		}
 		sb.WriteByte(chunk)

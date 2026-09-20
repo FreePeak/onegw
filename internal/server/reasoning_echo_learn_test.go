@@ -96,7 +96,7 @@ func TestReasoningEchoLearnContainsRepeatRefusals(t *testing.T) {
 	if hits != 2 { // refusal (fresh learn) + one filled retry, then fall through
 		t.Fatalf("th hits=%d, want 2 (one learn-driven retry, no more)", hits)
 	}
-	if b, _, _ := otherCap.snapshot(); len(b) ***REMOVED*** 0 {
+	if b, _, _ := otherCap.snapshot(); len(b) == 0 {
 		t.Fatal("next combo leg never hit")
 	}
 

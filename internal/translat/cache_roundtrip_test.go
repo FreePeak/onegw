@@ -68,7 +68,7 @@ func TestAnthropicCacheControlRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(out, &rt); err != nil {
 		t.Fatalf("re-encoded body unparseable: %v (%s)", err, out)
 	}
-	if len(rt.System) != 2 || rt.System[1].CacheControl ***REMOVED*** nil || rt.System[1].CacheControl.Type != "ephemeral" {
+	if len(rt.System) != 2 || rt.System[1].CacheControl == nil || rt.System[1].CacheControl.Type != "ephemeral" {
 		t.Fatalf("system breakpoint not re-anchored: %s", out)
 	}
 	if rt.System[0].CacheControl != nil {
@@ -78,7 +78,7 @@ func TestAnthropicCacheControlRoundTrip(t *testing.T) {
 		t.Fatalf("message shape changed: %s", out)
 	}
 	last := rt.Messages[1].Content[1]
-	if last.CacheControl ***REMOVED*** nil || last.CacheControl.Type != "ephemeral" {
+	if last.CacheControl == nil || last.CacheControl.Type != "ephemeral" {
 		t.Fatalf("message breakpoint not re-anchored: %s", out)
 	}
 	if rt.Messages[1].Content[0].CacheControl != nil {

@@ -87,7 +87,7 @@ for v in "$HOST" "$CONFIG" "$DEST" "$SERVICE"; do
 done
 case "$ARCH" in "") ;; amd64|arm64) ;; *) echo "DEPLOY ABORTED: --arch must be amd64 or arm64" >&2; exit 2 ;; esac
 
-step() { echo "***REMOVED*** $1 ***REMOVED***"; }
+step() { echo "== $1 =="; }
 die() { echo "DEPLOY ABORTED: $1" >&2; exit 1; }
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 STAGE=$(mktemp -d /tmp/onegw-vps.XXXXXX)
@@ -394,7 +394,7 @@ step "4. remote takeover"
 if [ "$DRY_RUN" = 1 ]; then
   echo "  [dry-run] ssh $HOST bash -s -- '$CONFIG' '$DEST' '$NEW_NAME' '$([ "$SUDO_MODE" = 1 ] && echo sudo -n || echo)' '$SERVICE'"
   sed 's/^/  | /' "$STAGE/takeover.sh" >&2
-  echo "***REMOVED*** DRY-RUN COMPLETE (nothing was touched) ***REMOVED***"
+  echo "== DRY-RUN COMPLETE (nothing was touched) =="
   exit 0
 fi
 SUDO=""; [ "$SUDO_MODE" = 1 ] && SUDO="sudo -n"

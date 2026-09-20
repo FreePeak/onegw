@@ -141,7 +141,7 @@ func (r *Router) SetAliases(m map[string]string) {
 	defer r.mu.Unlock()
 	t := make(map[string]string, len(m))
 	for k, v := range m {
-		if k ***REMOVED*** "" || v ***REMOVED*** "" || k ***REMOVED*** v {
+		if k == "" || v == "" || k == v {
 			continue
 		}
 		t[strings.ToLower(k)] = v
@@ -178,7 +178,7 @@ func (r *Router) SetTaskRouting(on bool) {
 // strings come from unauthenticated client traffic and must not create a
 // new label series per distinct string.
 func (r *Router) KnownModel(model string) bool {
-	if model ***REMOVED*** "" {
+	if model == "" {
 		return false
 	}
 	r.mu.RLock()
@@ -265,7 +265,7 @@ type Resolution struct {
 //   - combo name       → ordered combo targets
 //   - bare "model"     → matched against any provider's advertised models
 func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
-	if model ***REMOVED*** "" {
+	if model == "" {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: "missing model"}
 	}
 	r.mu.RLock()
@@ -342,7 +342,7 @@ type identityKey struct{}
 
 // WithIdentity tags ctx with the request's affinity identity ("" = none).
 func WithIdentity(ctx context.Context, id string) context.Context {
-	if id ***REMOVED*** "" {
+	if id == "" {
 		return ctx
 	}
 	return context.WithValue(ctx, identityKey{}, id)
@@ -360,7 +360,7 @@ func WithInputSize(ctx context.Context, tokens int64) context.Context {
 }
 
 func inputSizeFrom(ctx context.Context) int64 {
-	if ctx ***REMOVED*** nil {
+	if ctx == nil {
 		return 0
 	}
 	n, _ := ctx.Value(inputSizeKey{}).(int64)
@@ -369,7 +369,7 @@ func inputSizeFrom(ctx context.Context) int64 {
 
 // IdentityFrom extracts the identity tagged by WithIdentity.
 func IdentityFrom(ctx context.Context) string {
-	if ctx ***REMOVED*** nil {
+	if ctx == nil {
 		return ""
 	}
 	id, _ := ctx.Value(identityKey{}).(string)
@@ -471,7 +471,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		var refusal bool
 		for attempt := 0; retryForever || attempt < max(1, r.MaxAttempts) || benched > 0; {
 			acct, poolReady := def.NextAccount(id)
-			if acct ***REMOVED*** nil && retryForever {
+			if acct == nil && retryForever {
 				// Whole pool cooling/benched (upstream 429s, gated 403s):
 				// for a retry_forever target this is a wall to wait out,
 				// not a reason to fall through. poolReady is the pool's own
@@ -482,7 +482,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				}
 				continue
 			}
-			if acct ***REMOVED*** nil {
+			if acct == nil {
 				// Whole account pool cooling from upstream 429s or
 				// premium-gating 403s: an upstream call now is a doomed
 				// ~1s attempt that only digs the limit deeper. Fall
@@ -496,7 +496,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// custom pool-empty error (e.g. the #80 unfunded answer)
 				// already names its own truth, and overwriting it would
 				// discard the specific remedy the message carries.
-				if cause != nil && pe.Type ***REMOVED*** "provider_rate_limited" {
+				if cause != nil && pe.Type == "provider_rate_limited" {
 					pe.Message = fmt.Sprintf("provider %s: all accounts benched after upstream %d (%s); retry after %ss",
 						def.Name, cause.Status, cause.Type, pe.RetryAfter)
 				}
@@ -504,7 +504,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				break
 			}
 			out, err := call(ctx, def, acct, t.Model)
-			if err ***REMOVED*** nil {
+			if err == nil {
 				onResult(out)
 				// Sticky round-robin bookkeeping (#82): a success extends
 				// the leader's run, and a spent run advances the counter
@@ -524,6 +524,21 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// error write because the content type is set.
 				return err
 			}
+			if err.CorruptStream && !retryForever {
+				// Corrupt upstream stream (translat.CorruptGuard; live
+				// 2026-09-20 free lane): the vendor's own decoder spliced
+				// invalid UTF-8 into its JSON, so every client downstream
+				// renders mojibake. The guard withheld the stream head, so
+				// this attempt committed NOTHING and the pair is already
+				// benched — and a broken decoder is broken for every
+				// account of this provider, so a same-target retry only
+				// re-burns the leg. Fall through to the next combo target;
+				// a direct route has no sibling and surfaces the 502.
+				// retry_forever keeps its contract (it waits a leg out
+				// instead of downgrading, benches included).
+				refusal = true // this leg is done: see the post-loop guard
+				break
+			}
 			// A hard refusal that is none of the verdicts below ends THIS
 			// leg and falls through to the next combo target; a direct
 			// route surfaces it unchanged. retry_forever does NOT override
@@ -532,7 +547,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			// real answer behind an endless wait.
 			refusal = !(err.Retryable() || err.RegionLocked() || err.Fallbackable)
 			if refusal {
-				if err.Status ***REMOVED*** 404 && err.ModelScoped() {
+				if err.Status == 404 && err.ModelScoped() {
 					// Catalog-level verdict (tokenharbor 2026-09-10:
 					// deepseek-v4.1-flash left their live catalog mid-day —
 					// every key of the pool re-discovers the same 404): Do
@@ -586,7 +601,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// verdict. Surface it unchanged (master behaviour).
 				return err
 			}
-			if err.Fallbackable && err.Status ***REMOVED*** 403 {
+			if err.Fallbackable && err.Status == 403 {
 				// Gated account (issue #48): Do benched it on the
 				// ladder, so rotation is bounded by the POOL — every
 				// hit benches exactly one account, so the next pick is
@@ -675,10 +690,10 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				" left its leg without a terminal refusal: " + lastErr.Error())
 		}
 	}
-	if lastErr ***REMOVED*** nil {
+	if lastErr == nil {
 		lastErr = &types.APIError{Status: 502, Type: "no_route", Message: "no route succeeded"}
 	}
-	if (lastErr.OverQuota() || lastErr.SharedConcurrency()) && lastErr.RetryAfter ***REMOVED*** "" {
+	if (lastErr.OverQuota() || lastErr.SharedConcurrency()) && lastErr.RetryAfter == "" {
 		// The error is about to reach the client (mid-chain errors are
 		// replaced by later targets' results, so stamping the final one
 		// cannot leak a stale hint onto a successful response): give the
@@ -790,12 +805,12 @@ func (c *Combo) rrLimit() int {
 // whole implementation.
 func (r *Router) rotateRoundRobin(res *Resolution) {
 	c := r.combos[strings.ToLower(res.Combo)]
-	if c ***REMOVED*** nil || len(res.Targets) < 2 {
+	if c == nil || len(res.Targets) < 2 {
 		return
 	}
 	r.rrMu.Lock()
 	st := r.rr[c.Name]
-	if st ***REMOVED*** nil {
+	if st == nil {
 		st = &comboRR{counter: 0, winner: -1}
 		r.rr[c.Name] = st
 	}
@@ -827,16 +842,16 @@ func (r *Router) rotateRoundRobin(res *Resolution) {
 // OmniRoute's rrStickyTargets: successCount >= limit → counter = served+1,
 // clear sticky).
 func (r *Router) recordRRSuccess(res *Resolution, served Target) {
-	if res ***REMOVED*** nil || !res.IsCombo || !res.RoundRobin || res.Combo ***REMOVED*** "" {
+	if res == nil || !res.IsCombo || !res.RoundRobin || res.Combo == "" {
 		return
 	}
 	c := r.combos[strings.ToLower(res.Combo)]
-	if c ***REMOVED*** nil || len(res.Targets) < 2 {
+	if c == nil || len(res.Targets) < 2 {
 		return
 	}
 	idx := -1
 	for i, t := range res.Targets {
-		if t.Provider ***REMOVED*** served.Provider && t.Model ***REMOVED*** served.Model {
+		if t.Provider == served.Provider && t.Model == served.Model {
 			idx = i
 			break
 		}
@@ -847,7 +862,7 @@ func (r *Router) recordRRSuccess(res *Resolution, served Target) {
 	r.rrMu.Lock()
 	defer r.rrMu.Unlock()
 	st := r.rr[c.Name]
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return
 	}
 	limit := c.rrLimit()
@@ -866,7 +881,7 @@ func (r *Router) recordRRSuccess(res *Resolution, served Target) {
 	}
 	// A run continues only when the SAME original target served again while
 	// it was the leader (rotated index 0); any other leg starts a new run.
-	if idx ***REMOVED*** 0 && st.winner ***REMOVED*** orig {
+	if idx == 0 && st.winner == orig {
 		st.run++
 	} else {
 		st.winner, st.run = orig, 1

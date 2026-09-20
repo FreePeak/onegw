@@ -99,7 +99,7 @@ func (s *Server) expireBrowserLogin(ctx context.Context, cancel context.CancelFu
 			delete(s.oa.states, lg.pkce.State)
 		}
 	}
-	empty := len(s.oa.states) ***REMOVED*** 0
+	empty := len(s.oa.states) == 0
 	s.oa.mu.Unlock()
 	if empty {
 		s.closeCallback()
@@ -150,7 +150,7 @@ func (s *Server) ensureCallbackListener() (string, error) {
 func (s *Server) closeCallback() {
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
-	if len(s.oa.states) > 0 || s.oa.srv ***REMOVED*** nil {
+	if len(s.oa.states) > 0 || s.oa.srv == nil {
 		return
 	}
 	srv, ln := s.oa.srv, s.oa.ln
@@ -169,7 +169,7 @@ func (s *Server) closeCallback() {
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	state := q.Get("state")
-	if state ***REMOVED*** "" {
+	if state == "" {
 		// Cline never echoes `state` — it redirects to the exact callback_url
 		// it was given — so its per-login token is the last path segment
 		// (newClineSession). Any profile that does send state still matches
@@ -188,7 +188,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.oa.mu.Unlock()
 
-	if !known || lg ***REMOVED*** nil {
+	if !known || lg == nil {
 		oauthCallbackPage(w, http.StatusBadRequest, false,
 			"This sign-in link was already used or has expired. Start it again from the onegw dashboard.")
 		return
@@ -199,7 +199,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := q.Get("code")
-	if code ***REMOVED*** "" {
+	if code == "" {
 		s.failBrowserLogin(key, lg, "callback carried no authorization code")
 		oauthCallbackPage(w, http.StatusBadRequest, false, "No authorization code in the callback. Close this tab and retry.")
 		return
@@ -222,7 +222,7 @@ func (s *Server) exchangeBrowserCode(ctx context.Context, key string, lg *oauthL
 	s.oa.mu.Lock()
 	sess := lg.pkce
 	s.oa.mu.Unlock()
-	if sess ***REMOVED*** nil {
+	if sess == nil {
 		return nil, oauthRejected("this sign-in was not started from the dashboard")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -280,7 +280,7 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 		adminUnauthorized(w)
 		return
 	}
-	if s.oauth ***REMOVED*** nil {
+	if s.oauth == nil {
 		adminError(w, http.StatusServiceUnavailable, "oauth unavailable (no data dir)")
 		return
 	}
@@ -302,7 +302,7 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 		return
 	}
 	code := oauthExtractCode(req.Code)
-	if code ***REMOVED*** "" {
+	if code == "" {
 		adminError(w, http.StatusBadRequest, "code is empty — paste the ?code= value or the whole callback URL")
 		return
 	}
@@ -325,10 +325,10 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 // browser address bar shows when the loopback redirect was unreachable).
 func oauthExtractCode(s string) string {
 	s = strings.TrimSpace(s)
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return ""
 	}
-	if u, err := url.Parse(s); err ***REMOVED*** nil && (u.Scheme != "" || strings.Contains(s, "?")) {
+	if u, err := url.Parse(s); err == nil && (u.Scheme != "" || strings.Contains(s, "?")) {
 		if c := u.Query().Get("code"); c != "" {
 			return c
 		}

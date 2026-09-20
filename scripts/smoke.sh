@@ -55,39 +55,39 @@ done
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
-echo "***REMOVED*** 1. health ***REMOVED***"
+echo "== 1. health =="
 curl -sf -H "X-Admin-Password: smoke" "$GW/admin/health" | grep -q '"ok"' || fail health
 
-echo "***REMOVED*** 2. OpenAI non-streaming passthrough ***REMOVED***"
+echo "== 2. OpenAI non-streaming passthrough =="
 OUT=$(curl -sf "$GW/v1/chat/completions" -d '{"model":"mock/mock-model","mock_tokens":50,"messages":[{"role":"user","content":"hi"}]}')
 echo "$OUT" | grep -q '"completion_tokens":50' || fail "openai non-stream usage: $OUT"
 
-echo "***REMOVED*** 3. OpenAI streaming passthrough ***REMOVED***"
+echo "== 3. OpenAI streaming passthrough =="
 OUT=$(curl -sfN "$GW/v1/chat/completions" -d '{"model":"mock/mock-model","mock_tokens":30,"stream":true,"messages":[{"role":"user","content":"hi"}]}')
 echo "$OUT" | grep -q '\[DONE\]' || fail "openai stream [DONE]"
 echo "$OUT" | grep -q '"completion_tokens":30' || fail "openai stream usage"
 
-echo "***REMOVED*** 4. OpenAI client → Anthropic upstream (cross-format translation) ***REMOVED***"
+echo "== 4. OpenAI client → Anthropic upstream (cross-format translation) =="
 OUT=$(curl -sfN "$GW/v1/chat/completions" -d '{"model":"mocka/mock-claude","mock_tokens":25,"stream":true,"messages":[{"role":"user","content":"hi"}]}')
 echo "$OUT" | grep -q '\[DONE\]' || fail "translated stream [DONE]"
 echo "$OUT" | grep -q '"finish_reason":"stop"' || fail "translated finish_reason"
 echo "$OUT" | grep -q '"completion_tokens":200' || fail "translated usage: $OUT"
 
-echo "***REMOVED*** 4b. OpenAI client → Anthropic upstream, non-streaming (buffered cross-format) ***REMOVED***"
+echo "== 4b. OpenAI client → Anthropic upstream, non-streaming (buffered cross-format) =="
 OUT=$(curl -sf "$GW/v1/chat/completions" -d '{"model":"mocka/mock-claude","mock_tokens":25,"messages":[{"role":"user","content":"hi"}]}')
 echo "$OUT" | grep -q '"content":"alpha bravo' || fail "non-stream translated content: $OUT"
 echo "$OUT" | grep -q '"completion_tokens":200' || fail "non-stream translated usage: $OUT"
 
-echo "***REMOVED*** 5. Anthropic client → OpenAI upstream (cross-format translation) ***REMOVED***"
+echo "== 5. Anthropic client → OpenAI upstream (cross-format translation) =="
 OUT=$(curl -sfN "$GW/v1/messages" -H 'anthropic-version: 2023-06-01' -d '{"model":"mock/mock-model","max_tokens":100,"mock_tokens":25,"stream":true,"messages":[{"role":"user","content":"hi"}]}')
 echo "$OUT" | grep -q 'event: message_stop' || fail "anthropic stream shape: $OUT"
 echo "$OUT" | grep -q '"input_tokens":200' || fail "anthropic translated usage: $OUT"
 
-echo "***REMOVED*** 6. models listing ***REMOVED***"
+echo "== 6. models listing =="
 OUT=$(curl -sf "$GW/v1/models")
 echo "$OUT" | grep -q 'mock/mock-model' || fail models
 
-echo "***REMOVED*** 7. usage accounting (admin) ***REMOVED***"
+echo "== 7. usage accounting (admin) =="
 sleep 2   # allow a flush
 sleep 1
 OUT=$(curl -sf -H "X-Admin-Password: smoke" "$GW/admin/usage?source=store&days=1")
@@ -95,7 +95,7 @@ echo "$OUT" | grep -q '"provider":"mock"' || fail "admin usage missing mock: $OU
 REQS=$(echo "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(r["requests"] for r in d["rows"]))')
 [ "$REQS" -ge 4 ] || fail "expected >=4 requests in usage, got $REQS"
 
-echo "***REMOVED*** 8. unknown model 404 ***REMOVED***"
+echo "== 8. unknown model 404 =="
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$GW/v1/chat/completions" -d '{"model":"nobody/none","messages":[]}')
 [ "$CODE" = "404" ] || fail "unknown model: $CODE"
 

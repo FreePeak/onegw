@@ -135,11 +135,11 @@ func (s *Server) handleAPIModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		writeJSON(w, []modelRowView{})
 		return
 	}
-	if r.URL.Query().Get("refresh") ***REMOVED*** "1" {
+	if r.URL.Query().Get("refresh") == "1" {
 		s.autoDiscoverModels(st, false)
 	}
 	writeJSON(w, s.modelRows(st))
@@ -149,19 +149,19 @@ func (s *Server) handleAPIModels(w http.ResponseWriter, r *http.Request) {
 // catalog. Pure read: no network, so both the page and the JSON twin can use it
 // on every poll.
 func (s *Server) modelRows(st *state) []modelRowView {
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return []modelRowView{}
 	}
 	rows := make([]modelRowView, 0, len(st.cfg.Providers))
 	for _, p := range st.cfg.Providers {
-		if p.Kind ***REMOVED*** "searxng" {
+		if p.Kind == "searxng" {
 			continue // a search surface, not a model catalog
 		}
 		row := modelRowView{Provider: p.Name, Kind: p.Kind, Disabled: p.Disabled, Configured: []string{}}
 		if def, ok := st.pool.Get(p.Name); ok {
 			row.Configured = def.Models
 		}
-		row.Passthrough = len(row.Configured) ***REMOVED*** 0
+		row.Passthrough = len(row.Configured) == 0
 		shown := len(row.Configured)
 		if d, ok := s.models.get(p.Name); ok && len(d.IDs) > shown {
 			shown = len(d.IDs)
@@ -191,7 +191,7 @@ func (s *Server) handleAdminModelFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		adminError(w, http.StatusServiceUnavailable, "no config loaded")
 		return
 	}
@@ -203,7 +203,7 @@ func (s *Server) handleAdminModelFetch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Apply bool `json:"apply"`
 	}
-	if body, err := s.readBody(r); err ***REMOVED*** nil && len(strings.TrimSpace(string(body))) > 0 {
+	if body, err := s.readBody(r); err == nil && len(strings.TrimSpace(string(body))) > 0 {
 		if err := json.Unmarshal(body, &req); err != nil {
 			adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
@@ -213,9 +213,9 @@ func (s *Server) handleAdminModelFetch(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), discoveryTimeout)
 	defer cancel()
 	ids, acctErr := fetchProviderModels(ctx, def)
-	if len(ids) ***REMOVED*** 0 {
+	if len(ids) == 0 {
 		msg := acctErr
-		if msg ***REMOVED*** "" {
+		if msg == "" {
 			msg = "the upstream returned no models"
 		}
 		s.models.put(name, discoveredModels{At: time.Now().Format(time.RFC3339), Error: msg})
@@ -245,17 +245,17 @@ func (s *Server) handleAdminModelFetch(w http.ResponseWriter, r *http.Request) {
 // of the block is carried over byte-for-byte.
 func (s *Server) pinModels(name string, ids []string) error {
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return fmt.Errorf("no config loaded")
 	}
 	var pc *config.ProviderCfg
 	for i := range st.cfg.Providers {
-		if st.cfg.Providers[i].Name ***REMOVED*** name {
+		if st.cfg.Providers[i].Name == name {
 			pc = &st.cfg.Providers[i]
 			break
 		}
 	}
-	if pc ***REMOVED*** nil {
+	if pc == nil {
 		return fmt.Errorf("not configured")
 	}
 	before := strings.Join(pc.Models, ",")
@@ -265,7 +265,7 @@ func (s *Server) pinModels(name string, ids []string) error {
 		out, _, err := spliceProvider(lines, req)
 		return out, err
 	})
-	if err ***REMOVED*** nil {
+	if err == nil {
 		log.Printf("admin: provider %s models pinned to %d discovered ids (was %q)", name, len(ids), before)
 	}
 	return err
@@ -277,11 +277,11 @@ func (s *Server) pinModels(name string, ids []string) error {
 func (s *Server) autoDiscoverModels(st *state, force bool) {
 	var need []string
 	for _, p := range st.cfg.Providers {
-		if p.Kind ***REMOVED*** "searxng" {
+		if p.Kind == "searxng" {
 			continue
 		}
 		d, ok := s.models.get(p.Name)
-		if ok && !force && (d.Error ***REMOVED*** "" && time.Since(parseOrZero(d.At)) < discoveryTTL) {
+		if ok && !force && (d.Error == "" && time.Since(parseOrZero(d.At)) < discoveryTTL) {
 			continue
 		}
 		if ok && !force && d.Error != "" && time.Since(parseOrZero(d.At)) < 5*time.Minute {
@@ -289,7 +289,7 @@ func (s *Server) autoDiscoverModels(st *state, force bool) {
 		}
 		need = append(need, p.Name)
 	}
-	if len(need) ***REMOVED*** 0 {
+	if len(need) == 0 {
 		return
 	}
 	go func() {
@@ -316,7 +316,7 @@ func (s *Server) autoDiscoverModels(st *state, force bool) {
 // failure rather than hiding it (the page shows why a list is empty).
 func (s *Server) probeProvider(name string) {
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return
 	}
 	def, ok := st.pool.Get(name)
@@ -327,9 +327,9 @@ func (s *Server) probeProvider(name string) {
 	defer cancel()
 	ids, err := fetchProviderModels(ctx, def)
 	d := discoveredModels{IDs: ids, At: time.Now().Format(time.RFC3339)}
-	if len(ids) ***REMOVED*** 0 {
+	if len(ids) == 0 {
 		d.IDs = nil
-		if err ***REMOVED*** "" {
+		if err == "" {
 			err = "the upstream returned no models"
 		}
 		d.Error = err
@@ -344,7 +344,7 @@ func (s *Server) probeProvider(name string) {
 // some keys entitled to the listing endpoint.
 func fetchProviderModels(ctx context.Context, def *provider.Def) ([]string, string) {
 	accts := def.Accounts
-	if len(accts) ***REMOVED*** 0 {
+	if len(accts) == 0 {
 		return nil, "provider has no account to probe"
 	}
 	var lastErr string
@@ -374,7 +374,7 @@ func parseModelIDs(kind provider.Kind, body []byte) []string {
 	var out []string
 	add := func(id string) {
 		id = strings.TrimSpace(id)
-		if id ***REMOVED*** "" || seen[id] {
+		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
@@ -385,28 +385,28 @@ func parseModelIDs(kind provider.Kind, body []byte) []string {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(body, &openai) ***REMOVED*** nil {
+	if json.Unmarshal(body, &openai) == nil {
 		for _, m := range openai.Data {
 			add(m.ID)
 		}
 	}
-	if len(out) ***REMOVED*** 0 {
+	if len(out) == 0 {
 		var gemini struct {
 			Models []struct {
 				Name string `json:"name"`
 			} `json:"models"`
 		}
-		if json.Unmarshal(body, &gemini) ***REMOVED*** nil {
+		if json.Unmarshal(body, &gemini) == nil {
 			for _, m := range gemini.Models {
 				add(strings.TrimPrefix(m.Name, "models/"))
 			}
 		}
 	}
-	if len(out) ***REMOVED*** 0 {
+	if len(out) == 0 {
 		var list struct {
 			Model []string `json:"models"`
 		}
-		if json.Unmarshal(body, &list) ***REMOVED*** nil {
+		if json.Unmarshal(body, &list) == nil {
 			for _, m := range list.Model {
 				add(m)
 			}

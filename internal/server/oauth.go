@@ -30,7 +30,7 @@ func (s *Server) initOAuth(cfg *config.Config) {
 // resolves the borrowed account's stored session — one SuperGrok login
 // then carries every provider surface that shares it.
 func (s *Server) wireOAuthTokens(cfg *config.Config, def *provider.Def) {
-	if s.oauth ***REMOVED*** nil || len(cfg.OAuth.Accounts) ***REMOVED*** 0 {
+	if s.oauth == nil || len(cfg.OAuth.Accounts) == 0 {
 		return
 	}
 	for _, a := range cfg.OAuthAccounts() {
@@ -52,7 +52,7 @@ func (s *Server) wireOAuthTokens(cfg *config.Config, def *provider.Def) {
 // rotating a device session twice per cycle would invalidate the copy the
 // owner just stored, so exactly one entry owns each login.
 func (s *Server) syncOAuth(cfg *config.Config) {
-	if s.oauth ***REMOVED*** nil {
+	if s.oauth == nil {
 		return
 	}
 	specs := make([]oauth.AccountSpec, 0, len(cfg.OAuth.Accounts))
@@ -94,7 +94,7 @@ func (s *Server) syncOAuth(cfg *config.Config) {
 // borrower) for oauthRefreshCool while the loop retries.
 func (s *Server) coolOAuthAccount(key string) {
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return
 	}
 	for _, a := range st.cfg.OAuthAccounts() {
@@ -106,7 +106,7 @@ func (s *Server) coolOAuthAccount(key string) {
 			continue
 		}
 		for i := range def.Accounts {
-			if def.Accounts[i].Name ***REMOVED*** a.Account {
+			if def.Accounts[i].Name == a.Account {
 				def.Cool(&def.Accounts[i], oauthRefreshCool)
 			}
 		}

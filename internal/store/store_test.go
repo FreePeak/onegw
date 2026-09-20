@@ -47,11 +47,11 @@ func TestFlushAndQuery(t *testing.T) {
 	}
 	var m1 *UsageRow
 	for i := range rows {
-		if rows[i].Model ***REMOVED*** "m1" {
+		if rows[i].Model == "m1" {
 			m1 = &rows[i]
 		}
 	}
-	if m1 ***REMOVED*** nil || m1.Requests != 8 || m1.InputTok != 250 || m1.OutputTok != 90 || m1.SavedTok != 50 {
+	if m1 == nil || m1.Requests != 8 || m1.InputTok != 250 || m1.OutputTok != 90 || m1.SavedTok != 50 {
 		t.Fatalf("m1 rollup wrong: %+v", m1)
 	}
 }

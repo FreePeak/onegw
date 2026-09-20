@@ -39,7 +39,7 @@ func (s *speedSample) observe(out int64, d time.Duration, now time.Time) {
 		return
 	}
 	v := float64(out) / d.Seconds()
-	if s.n ***REMOVED*** 0 || now.Sub(s.last) > staleAfter {
+	if s.n == 0 || now.Sub(s.last) > staleAfter {
 		s.v = v
 	} else {
 		s.v = speedAlpha*v + (1-speedAlpha)*s.v
@@ -69,7 +69,7 @@ func (d *Def) ObserveSpeed(acct *Account, model string, outTokens int64, dDur ti
 	d.speed.mu.Lock()
 	defer d.speed.mu.Unlock()
 	d.speed.all.observe(outTokens, dDur, now)
-	if d.speed.byModel ***REMOVED*** nil {
+	if d.speed.byModel == nil {
 		d.speed.byModel = make(map[string]*speedSample)
 	}
 	m, ok := d.speed.byModel[model]
@@ -128,7 +128,7 @@ func (p *accountPool) observeSpeed(a *Account, out int64, d time.Duration, now t
 	defer p.mu.Unlock()
 	for i := range p.accts {
 		s := &p.accts[i]
-		if s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			s.speed.observe(out, d, now)
 			return
 		}
@@ -143,7 +143,7 @@ func (p *accountPool) speedRows() []SpeedRow {
 	seen := map[string]bool{}
 	for i := range p.accts {
 		s := &p.accts[i]
-		if s.speed.n ***REMOVED*** 0 {
+		if s.speed.n == 0 {
 			continue
 		}
 		// Weighted slots share one account; report it once.

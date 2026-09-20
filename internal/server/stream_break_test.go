@@ -112,7 +112,7 @@ func TestRelayPerChunkFlushAndIdleBreak(t *testing.T) {
 	var head []byte
 	select {
 	case head = <-goRead:
-		if len(head) ***REMOVED*** 0 {
+		if len(head) == 0 {
 			t.Fatal("stream ended before the first event")
 		}
 	case <-time.After(800 * time.Millisecond):
@@ -178,7 +178,7 @@ func TestBudgetWaitCapFailsFast(t *testing.T) {
 	go func() { done <- b.Acquire(context.Background(), 512) }()
 	select {
 	case err := <-done:
-		if err ***REMOVED*** nil {
+		if err == nil {
 			t.Fatal("full budget must fail once the wait cap elapses")
 		}
 	case <-time.After(5 * time.Second):

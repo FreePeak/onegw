@@ -32,7 +32,7 @@ func newBillingUpstream(badKey string) *billingUpstream {
 	b.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		w.Header().Set("Content-Type", "application/json")
-		if key ***REMOVED*** b.bad {
+		if key == b.bad {
 			b.fail.Add(1)
 			w.WriteHeader(http.StatusPaymentRequired)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
@@ -101,7 +101,7 @@ func TestTerminalKeyInvalidationOnBillingRefusal(t *testing.T) {
 	// The ring names the invalidation exactly once (log-once contract).
 	var inval int
 	for _, e := range srv.reqlog.latest(64) {
-		if e.Kind ***REMOVED*** "key_invalidated" {
+		if e.Kind == "key_invalidated" {
 			inval++
 			if e.Account != "dead" || e.Provider != "p" {
 				t.Fatalf("ring row names the wrong actor: %+v", e)
@@ -254,7 +254,7 @@ func TestBillingParoleSelfHealsAfterVendorRecovery(t *testing.T) {
 	for {
 		time.Sleep(60 * time.Millisecond)
 		w = do(t, h, authed(t, "p/m", "sk-test-gw"))
-		if w.Code ***REMOVED*** http.StatusOK {
+		if w.Code == http.StatusOK {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -310,7 +310,7 @@ func TestGrokBuildBilling402CoolsNotInvalidates(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("first request: want 429 benched, got %d (%s)", w.Code, w.Body.String())
 	}
-	if ra := w.Header().Get("Retry-After"); ra ***REMOVED*** "" {
+	if ra := w.Header().Get("Retry-After"); ra == "" {
 		t.Fatal("bench answer must carry Retry-After")
 	}
 	def, _ := srv.cur().pool.Get("p")
@@ -318,7 +318,7 @@ func TestGrokBuildBilling402CoolsNotInvalidates(t *testing.T) {
 		t.Fatalf("grok 402 must not invalidate, pool says %v", names)
 	}
 	for _, e := range srv.reqlog.latest(64) {
-		if e.Kind ***REMOVED*** "key_invalidated" {
+		if e.Kind == "key_invalidated" {
 			t.Fatalf("grok 402 logged a terminal row: %+v", e)
 		}
 	}
