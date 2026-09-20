@@ -163,7 +163,7 @@ func clientPromptTotal(t *testing.T, client Format, body string) int64 {
 		for _, line := range strings.Split(body, "\n") {
 			line = strings.TrimSpace(line)
 			line = strings.TrimPrefix(line, "data: ")
-			if line ***REMOVED*** "" || line ***REMOVED*** "[DONE]" || !strings.HasPrefix(line, "{") {
+			if line == "" || line == "[DONE]" || !strings.HasPrefix(line, "{") {
 				continue
 			}
 			var m struct {
@@ -171,7 +171,7 @@ func clientPromptTotal(t *testing.T, client Format, body string) int64 {
 					PromptTokens float64 `json:"prompt_tokens"`
 				} `json:"usage"`
 			}
-			if json.Unmarshal([]byte(line), &m) ***REMOVED*** nil && m.Usage != nil {
+			if json.Unmarshal([]byte(line), &m) == nil && m.Usage != nil {
 				total = m.Usage.PromptTokens
 			}
 		}
@@ -182,7 +182,7 @@ func clientPromptTotal(t *testing.T, client Format, body string) int64 {
 		for _, line := range strings.Split(body, "\n") {
 			line = strings.TrimSpace(line)
 			line = strings.TrimPrefix(line, "data: ")
-			if line ***REMOVED*** "" || !strings.HasPrefix(line, "{") {
+			if line == "" || !strings.HasPrefix(line, "{") {
 				continue
 			}
 			var m struct {
@@ -224,7 +224,7 @@ func clientPromptTotal(t *testing.T, client Format, body string) int64 {
 		for _, line := range strings.Split(body, "\n") {
 			line = strings.TrimSpace(line)
 			line = strings.TrimPrefix(line, "data: ")
-			if line ***REMOVED*** "" || !strings.HasPrefix(line, "{") {
+			if line == "" || !strings.HasPrefix(line, "{") {
 				continue
 			}
 			var m struct {
@@ -232,7 +232,7 @@ func clientPromptTotal(t *testing.T, client Format, body string) int64 {
 					PromptTokenCount float64 `json:"promptTokenCount"`
 				} `json:"usageMetadata"`
 			}
-			if json.Unmarshal([]byte(line), &m) ***REMOVED*** nil && m.UsageMetadata != nil {
+			if json.Unmarshal([]byte(line), &m) == nil && m.UsageMetadata != nil {
 				total = m.UsageMetadata.PromptTokenCount
 			}
 		}
@@ -246,7 +246,7 @@ func clientPromptTotal(t *testing.T, client Format, body string) int64 {
 // (upstream shape × client surface) pair through the buffered path.
 func TestUsageDirectionNonStream(t *testing.T) {
 	for _, f := range usageFixtures {
-		if f.body ***REMOVED*** "" {
+		if f.body == "" {
 			continue // stream-only fixture (grok, commandcode)
 		}
 		for _, client := range []Format{FmtOpenAI, FmtAnthropic, FmtGemini} {
@@ -281,7 +281,7 @@ func TestUsageDirectionNonStream(t *testing.T) {
 // unified usage and the client-visible prompt size.
 func TestUsageDirectionStream(t *testing.T) {
 	for _, f := range usageFixtures {
-		if f.sse ***REMOVED*** "" {
+		if f.sse == "" {
 			continue
 		}
 		for _, client := range []Format{FmtOpenAI, FmtAnthropic, FmtGemini} {

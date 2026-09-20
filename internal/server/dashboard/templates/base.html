@@ -12,8 +12,8 @@
 <script>
 // Sidebar/rail state BEFORE first paint: no collapse flash on reload.
 (function(){
-  if(localStorage.getItem('ogw-side')***REMOVED***='min') document.documentElement.classList.add('side-min');
-  if(localStorage.getItem('ogw-rail')***REMOVED***='off') document.documentElement.classList.add('rail-off');
+  if(localStorage.getItem('ogw-side')==='min') document.documentElement.classList.add('side-min');
+  if(localStorage.getItem('ogw-rail')==='off') document.documentElement.classList.add('rail-off');
 })();
 </script>
 <a class="skip" href="#content">Skip to content</a>
@@ -70,7 +70,7 @@
   var t=localStorage.getItem('ogw-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
   document.documentElement.dataset.theme=t;
   document.getElementById('theme').onclick=function(){
-    var n=document.documentElement.dataset.theme***REMOVED***='dark'?'light':'dark';
+    var n=document.documentElement.dataset.theme==='dark'?'light':'dark';
     document.documentElement.dataset.theme=n;localStorage.setItem('ogw-theme',n);
     document.dispatchEvent(new CustomEvent('ogw-theme'));
   };
@@ -105,7 +105,7 @@
     var K='ogw-acc:';
     document.querySelectorAll('details[data-acc]').forEach(function(d){
       var v=localStorage.getItem(K+d.dataset.acc);
-      if(v!***REMOVED***null) d.open = v***REMOVED***='1';            // before the listener: no write-back
+      if(v!==null) d.open = v==='1';            // before the listener: no write-back
       d.addEventListener('toggle', function(){
         localStorage.setItem(K+d.dataset.acc, d.open?'1':'0');
       });
@@ -115,7 +115,7 @@
   window.ogwToast=function(msg,ok){
     var box=document.getElementById('toasts');
     var el=document.createElement('div');
-    el.className='toast'+(ok***REMOVED***=false?' err':' ok');
+    el.className='toast'+(ok===false?' err':' ok');
     el.textContent=msg;
     box.appendChild(el);
     setTimeout(function(){ el.remove(); },4000);

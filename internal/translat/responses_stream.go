@@ -87,7 +87,7 @@ func (d *responsesDecoder) name(ev sseEvent, c *rsStreamEvent) string {
 }
 
 func (d *responsesDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
-	if len(ev.Data) ***REMOVED*** 0 {
+	if len(ev.Data) == 0 {
 		return nil, nil
 	}
 	var c rsStreamEvent
@@ -102,11 +102,11 @@ func (d *responsesDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
 		return nil, nil
 
 	case "response.output_item.added":
-		if c.Item ***REMOVED*** nil || c.Item.Type != "function_call" {
+		if c.Item == nil || c.Item.Type != "function_call" {
 			return nil, nil
 		}
 		key := c.Item.ID
-		if key ***REMOVED*** "" {
+		if key == "" {
 			key = c.ItemID
 		}
 		idx, ok := d.toolIdx[key]
@@ -123,19 +123,19 @@ func (d *responsesDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
 		}}, nil
 
 	case "response.output_text.delta":
-		if c.Delta ***REMOVED*** "" {
+		if c.Delta == "" {
 			return nil, nil
 		}
 		return []StreamEvent{{Kind: EvDelta, PartType: types.PartText, Text: c.Delta}}, nil
 
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-		if c.Delta ***REMOVED*** "" {
+		if c.Delta == "" {
 			return nil, nil
 		}
 		return []StreamEvent{{Kind: EvDelta, PartType: types.PartThinking, Thinking: c.Delta}}, nil
 
 	case "response.function_call_arguments.delta":
-		if c.Delta ***REMOVED*** "" {
+		if c.Delta == "" {
 			return nil, nil
 		}
 		idx := d.resolveToolIdx(&c)
@@ -144,7 +144,7 @@ func (d *responsesDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
 
 	case "response.output_item.done":
 		// Some upstreams send complete arguments only here.
-		if c.Item ***REMOVED*** nil || c.Item.Type != "function_call" || c.Item.Arguments ***REMOVED*** "" {
+		if c.Item == nil || c.Item.Type != "function_call" || c.Item.Arguments == "" {
 			return nil, nil
 		}
 		idx := d.resolveToolIdx(&c)
@@ -158,7 +158,7 @@ func (d *responsesDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
 		d.terminalSeen = true
 		stop := StreamEvent{Kind: EvStop, StopReason: types.StopEndTurn}
 		if c.Response != nil {
-			if c.Response.Status ***REMOVED*** "incomplete" {
+			if c.Response.Status == "incomplete" {
 				stop.StopReason = types.StopMaxTokens
 			}
 			if c.Response.Usage != nil {
@@ -171,7 +171,7 @@ func (d *responsesDecoder) decode(ev sseEvent) ([]StreamEvent, error) {
 	case "response.failed", "error":
 		d.terminalSeen = true
 		e := c.Error
-		if e ***REMOVED*** nil && c.Response != nil {
+		if e == nil && c.Response != nil {
 			e = c.Response.Error
 		}
 		msg := "responses stream failed"

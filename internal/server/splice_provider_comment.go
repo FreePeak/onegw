@@ -128,7 +128,7 @@ func spliceProviderComment(lines []string, name string, disabled bool) ([]string
 	// Remove any "disabled = true" lines left in provider blocks.
 	for _, b := range scanBlocks(candidate, "[[providers]]") {
 		for i := b.start; i < b.end; i++ {
-			if strings.TrimSpace(candidate[i]) ***REMOVED*** "disabled = true" {
+			if strings.TrimSpace(candidate[i]) == "disabled = true" {
 				candidate = append(candidate[:i], candidate[i+1:]...)
 				break
 			}
@@ -159,7 +159,7 @@ func scanCommentedBlockHeaders(lines []string, header string) []tomlBlock {
 			continue
 		}
 		switch {
-		case inner ***REMOVED*** header:
+		case inner == header:
 			if cur >= 0 {
 				out = append(out, tomlBlock{cur, i})
 			}

@@ -162,7 +162,7 @@ func TestClineCreditWallBenchesModelNotAccount(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &req)
 		hits = append(hits, req.Model)
-		if req.Model ***REMOVED*** "deepseek/deepseek-v4.1-flash" {
+		if req.Model == "deepseek/deepseek-v4.1-flash" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
 			_, _ = io.WriteString(w, `{"error":{"code":"insufficient_credits",`+
@@ -223,11 +223,11 @@ func TestClineCreditWallBenchesModelNotAccount(t *testing.T) {
 	}
 	paid := 0
 	for _, m := range hits {
-		if m ***REMOVED*** "deepseek/deepseek-v4.1-flash" {
+		if m == "deepseek/deepseek-v4.1-flash" {
 			paid++
 		}
 	}
-	if paid ***REMOVED*** 0 || hits[len(hits)-1] != "inclusionai/ling-3.0-flash-fin:free" {
+	if paid == 0 || hits[len(hits)-1] != "inclusionai/ling-3.0-flash-fin:free" {
 		t.Errorf("upstream hits = %v, want the paid model answered then the free lane served", hits)
 	}
 
@@ -240,7 +240,7 @@ func TestClineCreditWallBenchesModelNotAccount(t *testing.T) {
 	do(t, s.Handler(), r3)
 	after := 0
 	for _, m := range hits {
-		if m ***REMOVED*** "deepseek/deepseek-v4.1-flash" {
+		if m == "deepseek/deepseek-v4.1-flash" {
 			after++
 		}
 	}

@@ -31,7 +31,7 @@ func (s *Server) handleAdminAccountReset(w http.ResponseWriter, r *http.Request)
 	}
 	st := s.cur()
 	name, acct := r.PathValue("name"), r.PathValue("acct")
-	if st ***REMOVED*** nil || st.pool ***REMOVED*** nil {
+	if st == nil || st.pool == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "no live pool")
 		return
 	}
@@ -58,10 +58,10 @@ func (s *Server) handleAdminAccountReset(w http.ResponseWriter, r *http.Request)
 func rotationPolicy(global, over config.RotationCfg) provider.RotationPolicy {
 	pick := func(g, o string) time.Duration {
 		for _, s := range []string{o, g} {
-			if s ***REMOVED*** "" {
+			if s == "" {
 				continue
 			}
-			if d, err := time.ParseDuration(s); err ***REMOVED*** nil {
+			if d, err := time.ParseDuration(s); err == nil {
 				return d
 			}
 		}

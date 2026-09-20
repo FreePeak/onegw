@@ -119,12 +119,12 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 		var blocks []anBlock
 		if err := json.Unmarshal(req.System, &blocks); err != nil {
 			var s string
-			if err2 := json.Unmarshal(req.System, &s); err2 ***REMOVED*** nil {
+			if err2 := json.Unmarshal(req.System, &s); err2 == nil {
 				u.System = []types.Part{{Type: types.PartText, Text: s}}
 			}
 		} else {
 			for _, b := range blocks {
-				if b.Type ***REMOVED*** "text" {
+				if b.Type == "text" {
 					u.System = append(u.System, types.Part{
 						Type:            types.PartText,
 						Text:            b.Text,
@@ -146,7 +146,7 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 			u.ToolChoice = types.ToolChoiceAuto
 		}
 	}
-	if req.Thinking != nil && req.Thinking.Type ***REMOVED*** "enabled" && req.Thinking.BudgetTokens > 0 {
+	if req.Thinking != nil && req.Thinking.Type == "enabled" && req.Thinking.BudgetTokens > 0 {
 		u.Thinking = &types.ThinkingCfg{BudgetTokens: req.Thinking.BudgetTokens}
 	}
 	if req.Metadata != nil && req.Metadata.UserID != "" {
@@ -176,7 +176,7 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 			case "image":
 				p := types.Part{Type: types.PartImage, CacheBreakpoint: hasEphemeralCacheControl(b.CacheControl)}
 				if b.Source != nil {
-					if b.Source.Type ***REMOVED*** "base64" {
+					if b.Source.Type == "base64" {
 						p.MIMEType = b.Source.MediaType
 						p.Data = decodeBase64Loose(b.Source.Data)
 					} else {
@@ -200,7 +200,7 @@ func DecodeAnthropicRequest(body []byte) (*types.ChatRequest, error) {
 				})
 			}
 		}
-		if msg.Role ***REMOVED*** "assistant" {
+		if msg.Role == "assistant" {
 			msg.Role = types.RoleAssistant
 		} else {
 			msg.Role = types.RoleUser
@@ -223,17 +223,17 @@ func decodeToolResultBlock(b anBlock, breakpoint bool) []types.Part {
 	}
 	var texts []string
 	var raw = b.Content
-	if len(raw) ***REMOVED*** 0 || string(raw) ***REMOVED*** "null" {
+	if len(raw) == 0 || string(raw) == "null" {
 		texts = nil
-	} else if err := json.Unmarshal(raw, &texts); err ***REMOVED*** nil {
+	} else if err := json.Unmarshal(raw, &texts); err == nil {
 		// []string
 	} else {
 		var inner []anBlock
-		if err := json.Unmarshal(raw, &inner); err ***REMOVED*** nil {
+		if err := json.Unmarshal(raw, &inner); err == nil {
 			for _, ib := range inner {
-				if ib.Type ***REMOVED*** "text" {
+				if ib.Type == "text" {
 					texts = append(texts, ib.Text)
-				} else if ib.Type ***REMOVED*** "image" && ib.Source != nil {
+				} else if ib.Type == "image" && ib.Source != nil {
 					// Images inside tool results: keep text only for
 					// cross-format safety; providers that support it can
 					// re-attach later.
@@ -241,7 +241,7 @@ func decodeToolResultBlock(b anBlock, breakpoint bool) []types.Part {
 			}
 		} else {
 			var s string
-			if json.Unmarshal(raw, &s) ***REMOVED*** nil {
+			if json.Unmarshal(raw, &s) == nil {
 				texts = []string{s}
 			}
 		}
@@ -254,12 +254,12 @@ func decodeToolResultBlock(b anBlock, breakpoint bool) []types.Part {
 // marker of the ephemeral type. Any other (future) type is treated as
 // absent — markers are preserved, not interpreted.
 func hasEphemeralCacheControl(cc *anCacheControl) bool {
-	return cc != nil && cc.Type ***REMOVED*** "ephemeral"
+	return cc != nil && cc.Type == "ephemeral"
 }
 
 func decodeBase64Loose(s string) []byte {
 	s = strings.Map(func(r rune) rune {
-		if r ***REMOVED*** '\n' || r ***REMOVED*** '\r' || r ***REMOVED*** ' ' {
+		if r == '\n' || r == '\r' || r == ' ' {
 			return -1
 		}
 		return r
@@ -354,7 +354,7 @@ func EncodeAnthropicRequest(u *types.ChatRequest) ([]byte, error) {
 			}
 			// Merge consecutive tool_result-only messages is unnecessary;
 			// Anthropic allows multiple tool_result blocks per user turn.
-			if len(blocks) ***REMOVED*** 0 {
+			if len(blocks) == 0 {
 				continue
 			}
 			req.Messages = append(req.Messages, anMessage{Role: "user", Content: mustJSON(blocks)})
@@ -380,7 +380,7 @@ func EncodeAnthropicRequest(u *types.ChatRequest) ([]byte, error) {
 					})
 				}
 			}
-			if len(blocks) ***REMOVED*** 0 {
+			if len(blocks) == 0 {
 				blocks = []anBlock{{Type: "text", Text: ""}}
 			}
 			req.Messages = append(req.Messages, anMessage{Role: "assistant", Content: mustJSON(blocks)})
@@ -434,7 +434,7 @@ func imageBlock(p types.Part) anBlock {
 // by the issue #32 breakpoint round-trip test.
 func appendJSON(arr json.RawMessage, v any) json.RawMessage {
 	b, _ := json.Marshal(v)
-	if len(arr) ***REMOVED*** 0 {
+	if len(arr) == 0 {
 		out := make(json.RawMessage, 0, len(b)+2)
 		out = append(out, '[')
 		out = append(out, b...)
@@ -455,14 +455,14 @@ func appendJSON(arr json.RawMessage, v any) json.RawMessage {
 }
 
 func orInt(v, def int) int {
-	if v ***REMOVED*** 0 {
+	if v == 0 {
 		return def
 	}
 	return v
 }
 
 func orJSON(raw json.RawMessage, def string) json.RawMessage {
-	if len(raw) ***REMOVED*** 0 || string(raw) ***REMOVED*** "null" || strings.TrimSpace(string(raw)) ***REMOVED*** "" {
+	if len(raw) == 0 || string(raw) == "null" || strings.TrimSpace(string(raw)) == "" {
 		return json.RawMessage(def)
 	}
 	return raw
@@ -551,7 +551,7 @@ func EncodeAnthropicResponse(r *types.ChatResponse) ([]byte, error) {
 			resp.Content = append(resp.Content, anBlock{Type: "thinking", Thinking: p.Text, Signature: p.Signature})
 		}
 	}
-	if len(resp.Content) ***REMOVED*** 0 {
+	if len(resp.Content) == 0 {
 		resp.Content = []anBlock{{Type: "text", Text: ""}}
 	}
 	resp.Usage = &struct {
@@ -592,7 +592,7 @@ func DecodeAnthropicError(body []byte, status int) *types.APIError {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message ***REMOVED*** "" {
+	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message == "" {
 		return &types.APIError{Status: status, Type: "upstream_error", Message: strings.TrimSpace(string(body))}
 	}
 	return &types.APIError{Status: status, Type: e.Error.Type, Message: e.Error.Message}

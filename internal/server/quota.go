@@ -27,7 +27,7 @@ func (s *Server) handleAdminQuota(w http.ResponseWriter, r *http.Request) {
 			providers = append(providers, st)
 		}
 	}
-	if providers ***REMOVED*** nil {
+	if providers == nil {
 		providers = []any{}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"providers": providers})

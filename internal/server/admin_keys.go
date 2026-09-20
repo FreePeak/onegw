@@ -83,7 +83,7 @@ func providerKeyViews(st *state) []providerKeyView {
 	for _, p := range st.cfg.Providers {
 		svc := map[string]string{}
 		for _, a := range st.cfg.OAuthAccounts() {
-			if a.Provider ***REMOVED*** p.Name {
+			if a.Provider == p.Name {
 				svc[a.Account] = a.Service
 			}
 		}
@@ -97,7 +97,7 @@ func providerKeyViews(st *state) []providerKeyView {
 		case len(p.Accounts) > 0:
 			for _, a := range p.Accounts {
 				name := a.Name
-				if name ***REMOVED*** "" {
+				if name == "" {
 					name = "default"
 				}
 				push(name, a.APIKey, "")
@@ -105,14 +105,14 @@ func providerKeyViews(st *state) []providerKeyView {
 		case len(p.Keys) > 0:
 			for i, k := range p.Keys {
 				env := ""
-				if k ***REMOVED*** "" {
+				if k == "" {
 					env = fmt.Sprintf("%s_KEY%d", config.ProviderEnvPrefix(p.Name), i+1)
 				}
 				push(fmt.Sprintf("key-%d", i+1), k, env)
 			}
 		default:
 			env := ""
-			if p.APIKey ***REMOVED*** "" {
+			if p.APIKey == "" {
 				env = config.ProviderKeyEnv(p.Name)
 			}
 			push("default", p.APIKey, env)
@@ -125,10 +125,10 @@ func providerKeyViews(st *state) []providerKeyView {
 // anything touches the file.
 func validateKeyRowOps(sets []keyRowOp, dels []keyRowRef) error {
 	for _, op := range sets {
-		if op.Provider ***REMOVED*** "" || op.Account ***REMOVED*** "" {
+		if op.Provider == "" || op.Account == "" {
 			return fmt.Errorf("provider key ops need both provider and account")
 		}
-		if op.Key ***REMOVED*** "" {
+		if op.Key == "" {
 			return fmt.Errorf("provider %s account %s: set needs a key (use clear to remove one)", op.Provider, op.Account)
 		}
 		if strings.ContainsAny(op.Key, "\r\n\"\\") || strings.TrimSpace(op.Key) != op.Key {
@@ -136,7 +136,7 @@ func validateKeyRowOps(sets []keyRowOp, dels []keyRowRef) error {
 		}
 	}
 	for _, ref := range dels {
-		if ref.Provider ***REMOVED*** "" || ref.Account ***REMOVED*** "" {
+		if ref.Provider == "" || ref.Account == "" {
 			return fmt.Errorf("provider key ops need both provider and account")
 		}
 	}
@@ -176,12 +176,12 @@ func applyKeyOps(lines []string, providers []config.ProviderCfg, accounts []conf
 
 	var pc *config.ProviderCfg
 	for i := range providers {
-		if providers[i].Name ***REMOVED*** name {
+		if providers[i].Name == name {
 			pc = &providers[i]
 			break
 		}
 	}
-	if pc ***REMOVED*** nil {
+	if pc == nil {
 		return nil, fmt.Errorf("not configured")
 	}
 	req := providerEditReqFromConfig(*pc, accounts)
@@ -220,7 +220,7 @@ func applyKeyOps(lines []string, providers []config.ProviderCfg, accounts []conf
 		roster = append(roster, acctEdit{Name: acct, APIKey: setBy[acct]})
 		seen[acct] = true
 	}
-	if len(roster) ***REMOVED*** 0 {
+	if len(roster) == 0 {
 		return nil, fmt.Errorf("refusing to leave the provider with no account")
 	}
 	req.Accounts = roster
@@ -236,7 +236,7 @@ func applyKeyOps(lines []string, providers []config.ProviderCfg, accounts []conf
 func providerEditReqFromConfig(p config.ProviderCfg, accounts []config.OAuthAccount) providerEditReq {
 	svc := map[string]string{}
 	for _, a := range accounts {
-		if a.Provider ***REMOVED*** p.Name {
+		if a.Provider == p.Name {
 			svc[a.Account] = a.Service
 		}
 	}
@@ -251,7 +251,7 @@ func providerEditReqFromConfig(p config.ProviderCfg, accounts []config.OAuthAcco
 	case len(p.Accounts) > 0:
 		for _, a := range p.Accounts {
 			name := a.Name
-			if name ***REMOVED*** "" {
+			if name == "" {
 				name = "default"
 			}
 			req.Accounts = append(req.Accounts, acctEdit{

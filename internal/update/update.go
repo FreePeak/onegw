@@ -57,7 +57,7 @@ func ParseSemver(s string) (Semver, bool) {
 	var v Semver
 	nums := [3]int{}
 	for i, p := range parts {
-		if p ***REMOVED*** "" || len(p) > 9 {
+		if p == "" || len(p) > 9 {
 			return Semver{}, false
 		}
 		n, err := strconv.Atoi(p)
@@ -73,11 +73,11 @@ func ParseSemver(s string) (Semver, bool) {
 
 func validPre(pre string) bool {
 	for _, part := range strings.Split(pre, ".") {
-		if part ***REMOVED*** "" {
+		if part == "" {
 			return false
 		}
 		for _, r := range part {
-			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r ***REMOVED*** '-') {
+			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '-') {
 				return false
 			}
 		}
@@ -110,16 +110,16 @@ func Compare(a, b string) int {
 	// Release > prerelease; otherwise dot-separated numeric/lexicographic
 	// identifiers, lowest first.
 	switch {
-	case av.Pre ***REMOVED*** "" && bv.Pre != "":
+	case av.Pre == "" && bv.Pre != "":
 		return 1
-	case av.Pre != "" && bv.Pre ***REMOVED*** "":
+	case av.Pre != "" && bv.Pre == "":
 		return -1
 	}
 	return comparePre(av.Pre, bv.Pre)
 }
 
 func comparePre(a, b string) int {
-	if a ***REMOVED*** b {
+	if a == b {
 		return 0
 	}
 	as, bs := strings.Split(a, "."), strings.Split(b, ".")
@@ -128,13 +128,13 @@ func comparePre(a, b string) int {
 		xn, xerr := strconv.Atoi(x)
 		yn, yerr := strconv.Atoi(y)
 		switch {
-		case xerr ***REMOVED*** nil && yerr ***REMOVED*** nil:
+		case xerr == nil && yerr == nil:
 			if c := cmp3(xn, yn); c != 0 {
 				return c
 			}
-		case xerr ***REMOVED*** nil:
+		case xerr == nil:
 			return -1 // numeric identifiers sort below alphanumeric
-		case yerr ***REMOVED*** nil:
+		case yerr == nil:
 			return 1
 		default:
 			if c := strings.Compare(x, y); c != 0 {

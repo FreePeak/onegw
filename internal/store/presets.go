@@ -53,7 +53,7 @@ func (s *Store) ListPresets() ([]PresetRow, error) {
 
 // UpsertPreset inserts or replaces one catalog entry.
 func (s *Store) UpsertPreset(name, doc string) error {
-	if name ***REMOVED*** "" || doc ***REMOVED*** "" {
+	if name == "" || doc == "" {
 		return fmt.Errorf("preset needs a name and a document")
 	}
 	s.mu.Lock()

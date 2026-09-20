@@ -66,7 +66,7 @@ func childArgv(args []string, cfgAbs string) []string {
 }
 
 func backgroundLogPath(dataDir string) string {
-	if dataDir ***REMOVED*** "" || dataDir ***REMOVED*** "memory" {
+	if dataDir == "" || dataDir == "memory" {
 		return "onegw.log"
 	}
 	return filepath.Join(dataDir, "onegw.log")
@@ -169,7 +169,7 @@ func startBackground(cfg *config.Config, cfgAbs string, args []string) int {
 // executablePath prefers the running binary itself over PATH, so a dev build or
 // a scratch install re-execs itself instead of some other onegw.
 func executablePath() string {
-	if exe, err := os.Executable(); err ***REMOVED*** nil {
+	if exe, err := os.Executable(); err == nil {
 		return exe
 	}
 	return os.Args[0]
@@ -184,7 +184,7 @@ func workingDir() string {
 }
 
 func portOf(addr string) string {
-	if _, port, err := net.SplitHostPort(addr); err ***REMOVED*** nil {
+	if _, port, err := net.SplitHostPort(addr); err == nil {
 		return port
 	}
 	return addr

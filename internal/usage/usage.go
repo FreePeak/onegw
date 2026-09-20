@@ -122,7 +122,7 @@ func fnv32(s string) uint32 {
 		h ^= uint32(s[i])
 		h *= 16777619
 	}
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return 1
 	}
 	return h
@@ -130,7 +130,7 @@ func fnv32(s string) uint32 {
 
 // Observe records one completed request.
 func (t *Tracker) Observe(k Key, u types.Usage, savedTokens int64) {
-	if k.Day ***REMOVED*** "" {
+	if k.Day == "" {
 		now := time.Now().UTC()
 		k.Day = now.Format("2006-01-02")
 		k.Hour = now.Format("15")

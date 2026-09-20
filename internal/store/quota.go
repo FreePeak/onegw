@@ -93,7 +93,7 @@ func (s *Store) QuotaFirstSeen(provider string) (time.Time, error) {
 	if err := s.db.QueryRow(`SELECT MIN(first_seen) FROM usage_rollup WHERE provider = ?`, provider).Scan(&v); err != nil {
 		return time.Time{}, err
 	}
-	if !v.Valid || v.String ***REMOVED*** "" {
+	if !v.Valid || v.String == "" {
 		return time.Time{}, nil
 	}
 	return time.Parse(time.RFC3339, v.String)

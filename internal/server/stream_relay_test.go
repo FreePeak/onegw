@@ -45,7 +45,7 @@ func captureStub() (*httptest.Server, *capUpstream) {
 			Model string `json:"model"`
 		}
 		model := "?"
-		if json.Unmarshal(b, &req) ***REMOVED*** nil && req.Model != "" {
+		if json.Unmarshal(b, &req) == nil && req.Model != "" {
 			model = req.Model
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -145,7 +145,7 @@ func TestStreamRelayNamelessToolUseStaysBuffered(t *testing.T) {
 	up, cap := captureStub()
 	defer up.Close()
 	cfg := streamCfg(t, false, nil, providerSpec{name: "p1", up: up.URL, model: "m1"})
-	cfg.Providers[0].Kind = "anthropic" // /v1/messages client ***REMOVED*** same format
+	cfg.Providers[0].Kind = "anthropic" // /v1/messages client == same format
 	_, h := newStreamServer(t, cfg)
 	in := []byte(`{"model":"p1/m1","max_tokens":16,"stream":true,"messages":[` +
 		`{"role":"user","content":"hi"},` +
@@ -180,7 +180,7 @@ func TestStreamRelayKeylessAssistantTextStaysBuffered(t *testing.T) {
 	up, cap := captureStub()
 	defer up.Close()
 	cfg := streamCfg(t, false, nil, providerSpec{name: "p1", up: up.URL, model: "m1"})
-	cfg.Providers[0].Kind = "anthropic" // /v1/messages client ***REMOVED*** same format
+	cfg.Providers[0].Kind = "anthropic" // /v1/messages client == same format
 	_, h := newStreamServer(t, cfg)
 	in := []byte(`{"model":"p1/m1","max_tokens":16,"stream":true,"messages":[` +
 		`{"role":"user","content":"hi"},` +
@@ -327,7 +327,7 @@ func TestStreamRelayLargeBodyFixedReservation(t *testing.T) {
 	close(stop)
 	mu.Lock()
 	defer mu.Unlock()
-	if maxHeld ***REMOVED*** 0 {
+	if maxHeld == 0 {
 		t.Fatal("streaming path never took its budget reservation")
 	}
 	if maxHeld > 2*streamReserveBytes {
@@ -516,7 +516,7 @@ func TestStreamRelaySaturationBlocksThenProceeds(t *testing.T) {
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
-	for b.Waiting() ***REMOVED*** 0 {
+	for b.Waiting() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("streaming request never blocked on the saturated budget")
 		}
@@ -554,7 +554,7 @@ func TestStreamRelaySaturatedCanceledRequest503(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("canceled request while saturated: code=%d body=%s", w.Code, w.Body.String())
 	}
-	if ra := w.Header().Get("Retry-After"); ra ***REMOVED*** "" {
+	if ra := w.Header().Get("Retry-After"); ra == "" {
 		t.Fatal("503 must carry Retry-After")
 	}
 }

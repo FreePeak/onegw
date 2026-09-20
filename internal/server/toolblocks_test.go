@@ -47,7 +47,7 @@ func assertAnWireTextBlocks(t *testing.T, body []byte) {
 			if b.Type != "text" || m.Role != "assistant" {
 				continue
 			}
-			if b.Text ***REMOVED*** nil {
+			if b.Text == nil {
 				t.Fatalf("messages[%d]: text block reached the upstream with no string text: %s", i, body)
 			}
 		}
@@ -72,7 +72,7 @@ func anWireBlocks(t *testing.T, body []byte) []anWireBlock {
 			continue // plain string content
 		}
 		for _, b := range blocks {
-			if b.Type ***REMOVED*** "tool_use" || b.Type ***REMOVED*** "tool_result" {
+			if b.Type == "tool_use" || b.Type == "tool_result" {
 				out = append(out, b)
 			}
 		}
@@ -93,12 +93,12 @@ func assertAnWireToolBlocks(t *testing.T, body []byte) []anWireBlock {
 	for _, b := range blocks {
 		switch b.Type {
 		case "tool_use":
-			if b.ID ***REMOVED*** "" || b.Name ***REMOVED*** "" {
+			if b.ID == "" || b.Name == "" {
 				t.Fatalf("tool_use needs string id and name, got id=%q name=%q: %s", b.ID, b.Name, body)
 			}
 			callID = b.ID
 		case "tool_result":
-			if b.ToolUseID ***REMOVED*** "" {
+			if b.ToolUseID == "" {
 				t.Fatalf("tool_result needs a string tool_use_id: %s", body)
 			}
 			if b.ToolUseID != callID {
@@ -278,7 +278,7 @@ func TestPrepareUpstreamBodyFillsMissingToolUseID(t *testing.T) {
 		t.Fatalf("prepareUpstreamBody: %v", err)
 	}
 	blocks := anWireBlocks(t, out)
-	if len(blocks) != 1 || blocks[0].ID ***REMOVED*** "" || blocks[0].ID ***REMOVED*** "toolu_" {
+	if len(blocks) != 1 || blocks[0].ID == "" || blocks[0].ID == "toolu_" {
 		t.Fatalf("id-less tool_use must get a usable id, got %+v: %s", blocks, out)
 	}
 }

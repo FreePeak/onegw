@@ -19,7 +19,7 @@ func TestChannelEmpty503KeepsKeysWarmNoPark(t *testing.T) {
 	def := newSingleDef(t, srv, "b-ai")
 	a1 := &def.Accounts[0]
 	_, apiErr := def.Do(context.Background(), a1, "glm-5.3-flash", nil, bytes.NewReader([]byte(`{}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 503 || !apiErr.SharedConcurrency() {
+	if apiErr == nil || apiErr.Status != 503 || !apiErr.SharedConcurrency() {
 		t.Fatalf("got %+v, want 503 SharedConcurrency", apiErr)
 	}
 	if slot := findSlot(def.pool, "a1"); !slot.cooldown.IsZero() || slot.strikes != 0 {

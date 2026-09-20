@@ -44,7 +44,7 @@ func waitSubSnapshots(t *testing.T, srv *Server, want int) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if subs := srv.subscriptionSnapshots(); len(subs) ***REMOVED*** want {
+		if subs := srv.subscriptionSnapshots(); len(subs) == want {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -129,7 +129,7 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		acct, ready := def.NextAccount("")
-		if acct ***REMOVED*** nil && ready.After(time.Now()) {
+		if acct == nil && ready.After(time.Now()) {
 			break // parked until `ready`
 		}
 		if time.Now().After(deadline) {
@@ -142,7 +142,7 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 	if !ok {
 		t.Fatal("provider oc missing from pool")
 	}
-	if a, _ := ocDef.NextAccount(""); a ***REMOVED*** nil {
+	if a, _ := ocDef.NextAccount(""); a == nil {
 		t.Fatal("healthy account must not be parked")
 	}
 }
@@ -186,7 +186,7 @@ func TestSubscriptionQuotaValidation(t *testing.T) {
 			SubscriptionQuota: "carrier-pigeon"},
 	}
 	cfg.Defaults()
-	if err := cfg.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "subscription_quota") {
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "subscription_quota") {
 		t.Fatalf("unknown dialect must fail validation, got %v", err)
 	}
 }
@@ -320,7 +320,7 @@ func TestSuperGrokBorrowedSessionServesAndTracks(t *testing.T) {
 	if mode != "cli" {
 		t.Fatalf("billing x-grok-client-mode = %q, want cli", mode)
 	}
-	if tokenAuth != "xai-grok-cli" || cliVer ***REMOVED*** "" {
+	if tokenAuth != "xai-grok-cli" || cliVer == "" {
 		t.Fatalf("Grok Build fingerprint headers = %q/%q, want xai-grok-cli + a cli version", tokenAuth, cliVer)
 	}
 	if !strings.Contains(respBodyCopy, `"input"`) || !strings.Contains(respBodyCopy, `"store":false`) {
@@ -367,7 +367,7 @@ func TestSubscriptionQuotaTracksOAuthOnlyAccount(t *testing.T) {
 		t.Fatalf("snapshots = %+v, want the OAuth-managed account only", subs)
 	}
 	// Fail-open, but VISIBLE: an operator must see why the window is unknown.
-	if subs[0].Err ***REMOVED*** "" {
+	if subs[0].Err == "" {
 		t.Fatalf("unprobed account must still report its failure, got %+v", subs[0])
 	}
 }
@@ -470,7 +470,7 @@ func TestSubscriptionQuotaCursorDialect(t *testing.T) {
 				served[a.Name]++
 			}
 		}
-		if served["open"] ***REMOVED*** 6 && served["spent"] ***REMOVED*** 0 {
+		if served["open"] == 6 && served["spent"] == 0 {
 			return
 		}
 		if time.Now().After(deadline) {

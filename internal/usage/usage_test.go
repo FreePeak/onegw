@@ -87,7 +87,7 @@ func TestShardingDistinctKeys(t *testing.T) {
 }
 
 func TestEmptyKeyFNVStable(t *testing.T) {
-	if fnv32("") ***REMOVED*** 0 {
+	if fnv32("") == 0 {
 		t.Fatal("fnv32 empty")
 	}
 }

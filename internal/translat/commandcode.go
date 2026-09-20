@@ -104,7 +104,7 @@ type ccRequest struct {
 // non-streaming mode); non-stream clients are served by AggregateStream.
 func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 	wd, err := os.Getwd()
-	if err != nil || wd ***REMOVED*** "" {
+	if err != nil || wd == "" {
 		wd = "/"
 	}
 	req := ccRequest{
@@ -162,7 +162,7 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 					continue
 				}
 				input := p.Args
-				if len(input) ***REMOVED*** 0 {
+				if len(input) == 0 {
 					input = json.RawMessage(`{}`)
 				}
 				msg.Content = append(msg.Content, ccBlock{
@@ -172,7 +172,7 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 					Input:      input,
 				})
 			}
-			if len(msg.Content) ***REMOVED*** 0 {
+			if len(msg.Content) == 0 {
 				msg.Content = append(msg.Content, ccBlock{Type: "text", Text: ""})
 			}
 			req.Params.Messages = append(req.Params.Messages, msg)
@@ -204,7 +204,7 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 				}
 			}
 			req.Params.Messages = append(req.Params.Messages, results...)
-			if len(blocks) ***REMOVED*** 0 {
+			if len(blocks) == 0 {
 				blocks = append(blocks, ccBlock{Type: "text", Text: ""})
 			}
 			req.Params.Messages = append(req.Params.Messages, ccMessage{Role: "user", Content: blocks})
@@ -213,7 +213,7 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 
 	for _, t := range u.Tools {
 		schema := t.Schema
-		if len(schema) ***REMOVED*** 0 {
+		if len(schema) == 0 {
 			schema = json.RawMessage(`{"type":"object"}`)
 		}
 		req.Params.Tools = append(req.Params.Tools, ccToolDef{Name: t.Name, Description: t.Description, InputSchema: schema})
@@ -225,7 +225,7 @@ func EncodeCommandCodeRequest(u *types.ChatRequest) ([]byte, error) {
 func assistantText(m types.Message) string {
 	var sb strings.Builder
 	for _, p := range m.Content {
-		if p.Type ***REMOVED*** types.PartText && p.Text != "" {
+		if p.Type == types.PartText && p.Text != "" {
 			if sb.Len() > 0 {
 				sb.WriteByte('\n')
 			}
@@ -251,7 +251,7 @@ func readNDJSON(r *bufio.Reader, yield func(sseEvent) error) error {
 			}
 		}
 		if err != nil {
-			if err ***REMOVED*** io.EOF {
+			if err == io.EOF {
 				return io.EOF
 			}
 			return err
@@ -265,7 +265,7 @@ func ccLineJSON(data []byte) (map[string]any, bool) {
 	s := strings.TrimSpace(string(data))
 	s = strings.TrimPrefix(s, "data:")
 	s = strings.TrimSpace(s)
-	if s ***REMOVED*** "" || s ***REMOVED*** "[DONE]" {
+	if s == "" || s == "[DONE]" {
 		return nil, false
 	}
 	var ev map[string]any
@@ -333,21 +333,21 @@ func decodeCommandCodeStreamEvent(ev sseEvent, st *ccStreamState) ([]StreamEvent
 	switch ccEventType(obj) {
 	case "text-delta":
 		text := ccEventString(obj, "text", "delta")
-		if text ***REMOVED*** "" {
+		if text == "" {
 			return nil, nil
 		}
 		start()
 		out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: text})
 	case "reasoning-delta":
 		text := ccEventString(obj, "text", "delta")
-		if text ***REMOVED*** "" {
+		if text == "" {
 			return nil, nil
 		}
 		start()
 		out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: text})
 	case "tool-input-start":
 		id := ccEventString(obj, "id", "toolCallId")
-		if id ***REMOVED*** "" {
+		if id == "" {
 			id = fmt.Sprintf("call_%d", st.nextTool)
 		}
 		idx := st.toolIndex(id)
@@ -361,7 +361,7 @@ func decodeCommandCodeStreamEvent(ev sseEvent, st *ccStreamState) ([]StreamEvent
 			idx = st.toolIndex(id)
 		}
 		args := ccEventString(obj, "delta", "inputTextDelta")
-		if args ***REMOVED*** "" {
+		if args == "" {
 			return nil, nil
 		}
 		out = append(out, StreamEvent{Kind: EvDelta, Index: idx, PartType: types.PartToolUse, ToolArgs: args})
@@ -374,10 +374,10 @@ func decodeCommandCodeStreamEvent(ev sseEvent, st *ccStreamState) ([]StreamEvent
 		idx := st.toolIndex(id)
 		start()
 		args := ccEventString(obj, "input")
-		if args ***REMOVED*** "" {
-			if raw, err := json.Marshal(obj["input"]); err ***REMOVED*** nil {
+		if args == "" {
+			if raw, err := json.Marshal(obj["input"]); err == nil {
 				args = string(raw)
-				if args ***REMOVED*** "null" {
+				if args == "null" {
 					args = "{}"
 				}
 			}
@@ -396,7 +396,7 @@ func decodeCommandCodeStreamEvent(ev sseEvent, st *ccStreamState) ([]StreamEvent
 		}
 	case "finish":
 		reason := st.finishReason
-		if reason ***REMOVED*** "" {
+		if reason == "" {
 			reason = ccEventString(obj, "finishReason")
 		}
 		u := st.usage
@@ -423,7 +423,7 @@ func decodeCommandCodeStreamEvent(ev sseEvent, st *ccStreamState) ([]StreamEvent
 }
 
 func (st *ccStreamState) toolIndex(id string) int {
-	if st.toolIdx ***REMOVED*** nil {
+	if st.toolIdx == nil {
 		st.toolIdx = map[string]int{}
 	}
 	if idx, ok := st.toolIdx[id]; ok {
@@ -432,7 +432,7 @@ func (st *ccStreamState) toolIndex(id string) int {
 	idx := st.nextTool
 	st.nextTool++
 	st.toolIdx[id] = idx
-	if st.toolStreamed ***REMOVED*** nil {
+	if st.toolStreamed == nil {
 		st.toolStreamed = map[string]bool{}
 	}
 	return idx
@@ -448,7 +448,7 @@ func ccUsage(raw any) *types.Usage {
 		InputTokens:  ccEventInt(m, "inputTokens", "input_tokens"),
 		OutputTokens: ccEventInt(m, "outputTokens", "output_tokens"),
 	}
-	if u.InputTokens ***REMOVED*** 0 && u.OutputTokens ***REMOVED*** 0 {
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
 		return nil
 	}
 	return u
@@ -477,7 +477,7 @@ func mapCCFinish(s string) string {
 // parseCommandCodeError). Returns an APIError with status 503 for anything
 // unclassifiable.
 func ParseCommandCodeError(event map[string]any) *types.APIError {
-	if event ***REMOVED*** nil {
+	if event == nil {
 		return &types.APIError{Status: 503, Type: "server_error", Message: "CommandCode upstream error"}
 	}
 	var message string
@@ -485,14 +485,14 @@ func ParseCommandCodeError(event map[string]any) *types.APIError {
 	errType := "server_error"
 
 	errVal := event["error"]
-	if errVal ***REMOVED*** nil {
+	if errVal == nil {
 		errVal = event["message"]
 	}
 	switch v := errVal.(type) {
 	case map[string]any:
 		message = ccEventString(v, "message", "error")
-		if message ***REMOVED*** "" {
-			if b, err := json.Marshal(v); err ***REMOVED*** nil {
+		if message == "" {
+			if b, err := json.Marshal(v); err == nil {
 				message = string(b)
 			}
 		}
@@ -505,13 +505,13 @@ func ParseCommandCodeError(event map[string]any) *types.APIError {
 	case string:
 		message = v
 	default:
-		if b, err := json.Marshal(v); err ***REMOVED*** nil {
+		if b, err := json.Marshal(v); err == nil {
 			message = string(b)
 		} else {
 			message = "unknown"
 		}
 	}
-	if message ***REMOVED*** "" {
+	if message == "" {
 		message = "unknown"
 	}
 	if s := int(ccEventInt(event, "statusCode")); s != 0 {
@@ -577,7 +577,7 @@ func InspectCommandCodeHead(body io.Reader) (head []byte, apiErr *types.APIError
 			}
 		}
 		if rerr != nil {
-			if rerr ***REMOVED*** io.EOF {
+			if rerr == io.EOF {
 				return buf.Bytes(), nil, nil
 			}
 			return buf.Bytes(), nil, rerr
@@ -599,7 +599,7 @@ func ccHeadLine(r io.Reader) (string, error) {
 	for {
 		n, err := r.Read(b[:])
 		if n > 0 {
-			if b[0] ***REMOVED*** '\n' {
+			if b[0] == '\n' {
 				return strings.TrimSuffix(sb.String(), "\r"), nil
 			}
 			sb.WriteByte(b[0])
@@ -608,7 +608,7 @@ func ccHeadLine(r io.Reader) (string, error) {
 			}
 		}
 		if err != nil {
-			if err ***REMOVED*** io.EOF {
+			if err == io.EOF {
 				return sb.String(), io.EOF
 			}
 			return sb.String(), err

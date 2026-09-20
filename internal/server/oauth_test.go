@@ -126,7 +126,7 @@ func oauthCfg(t *testing.T, idpURL, upstreamURL string) *config.Config {
 // resolved from cfg exactly like the CLI does.
 func loginOAuth(t *testing.T, s *Server, cfg *config.Config) {
 	t.Helper()
-	if s.oauth ***REMOVED*** nil {
+	if s.oauth == nil {
 		t.Fatal("server has no oauth manager")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -259,7 +259,7 @@ func TestOAuthRefreshBeforeExpirySwap(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if cur, _ := store.Get("xai/main"); cur.AccessToken ***REMOVED*** "at-live-2" {
+		if cur, _ := store.Get("xai/main"); cur.AccessToken == "at-live-2" {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -331,7 +331,7 @@ func TestOAuthConfigValidation(t *testing.T) {
 		cfg.OAuth.Accounts = []config.OAuthAccount{{Provider: "ghost", Account: "a"}}
 		cfg.Defaults()
 		err := cfg.Validate()
-		if err ***REMOVED*** nil || !strings.Contains(err.Error(), "unknown provider") {
+		if err == nil || !strings.Contains(err.Error(), "unknown provider") {
 			t.Fatalf("want unknown provider error, got %v", err)
 		}
 	})
@@ -342,7 +342,7 @@ func TestOAuthConfigValidation(t *testing.T) {
 		cfg.OAuth.Accounts = []config.OAuthAccount{{Provider: "xai", Service: "ghostservice"}}
 		cfg.Defaults()
 		err := cfg.Validate()
-		if err ***REMOVED*** nil || !strings.Contains(err.Error(), "unknown oauth service") {
+		if err == nil || !strings.Contains(err.Error(), "unknown oauth service") {
 			t.Fatalf("want unknown service error, got %v", err)
 		}
 	})
@@ -356,7 +356,7 @@ func TestOAuthConfigValidation(t *testing.T) {
 		}
 		cfg.Defaults()
 		err := cfg.Validate()
-		if err ***REMOVED*** nil || !strings.Contains(err.Error(), "duplicate oauth account") {
+		if err == nil || !strings.Contains(err.Error(), "duplicate oauth account") {
 			t.Fatalf("want duplicate error, got %v", err)
 		}
 	})
@@ -391,11 +391,11 @@ func TestOAuthConfigValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg.OAuth.Accounts[1].Owner = "grokbuild/main"
-		if err := cfg.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "borrows itself") {
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "borrows itself") {
 			t.Fatalf("want self-borrow error, got %v", err)
 		}
 		cfg.OAuth.Accounts[1].Owner = "ghost/none"
-		if err := cfg.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "not a declared") {
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "not a declared") {
 			t.Fatalf("want dangling-owner error, got %v", err)
 		}
 		// A borrower writes no service: it resolves no endpoints, so the
@@ -406,7 +406,7 @@ func TestOAuthConfigValidation(t *testing.T) {
 		}
 		// Borrowers collide like any other account.
 		cfg.OAuth.Accounts = append(cfg.OAuth.Accounts, config.OAuthAccount{Provider: "grokbuild", Account: "main", Owner: "xai/main"})
-		if err := cfg.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "duplicate oauth account") {
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate oauth account") {
 			t.Fatalf("want duplicate-borrower error, got %v", err)
 		}
 	})
@@ -466,10 +466,10 @@ func TestOAuthAccountCoolingOnFailedRefresh(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && refreshFail.Load() ***REMOVED*** 0 {
+	for time.Now().Before(deadline) && refreshFail.Load() == 0 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if refreshFail.Load() ***REMOVED*** 0 {
+	if refreshFail.Load() == 0 {
 		t.Fatal("refresh never attempted/failed")
 	}
 	// The failure hook must have cooled every slot of the account.
@@ -477,7 +477,7 @@ func TestOAuthAccountCoolingOnFailedRefresh(t *testing.T) {
 	for {
 		cooling := false
 		for _, st := range def.PoolStates() {
-			if st.Name ***REMOVED*** "main" && st.Cooling {
+			if st.Name == "main" && st.Cooling {
 				cooling = true
 			}
 		}

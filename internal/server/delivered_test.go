@@ -90,7 +90,7 @@ func TestDeliveryContextRoundTrip(t *testing.T) {
 	d := &delivery{start: time.Now(), model: "dev"}
 	ctx := withDelivery(context.Background(), d)
 	got := deliveryFrom(ctx)
-	if got ***REMOVED*** nil || got.model != "dev" {
+	if got == nil || got.model != "dev" {
 		t.Fatalf("deliveryFrom=%+v, want dev delivery", got)
 	}
 	got.model = "free" // pointer: later mutation is visible to the relay site

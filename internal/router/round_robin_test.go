@@ -59,7 +59,7 @@ func TestStickyRoundRobinFallbackLegBecomesLeader(t *testing.T) {
 	var order []string
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		order = append(order, def.Name)
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			// Retryable 503 with MaxAttempts=1: one attempt, then the next leg.
 			return nil, &types.APIError{Status: 503, Type: "upstream_unavailable", Message: "down"}
 		}

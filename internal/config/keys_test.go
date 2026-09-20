@@ -182,7 +182,7 @@ models = ["m1"]
 [auth]
 keys = 42
 `)
-	if _, err := Load(path); err ***REMOVED*** nil {
+	if _, err := Load(path); err == nil {
 		t.Fatal("load accepted auth.keys = 42")
 	}
 }
@@ -200,7 +200,7 @@ key = "sk-test-dup"
 key = "sk-test-dup"
 `)
 	_, err := Load(path)
-	if err ***REMOVED*** nil {
+	if err == nil {
 		t.Fatal("load accepted duplicate keys")
 	}
 }
@@ -216,7 +216,7 @@ models = ["m1"]
 key = ""
 name = "blank"
 `)
-	if _, err := Load(path); err ***REMOVED*** nil {
+	if _, err := Load(path); err == nil {
 		t.Fatal("load accepted empty key")
 	}
 }
@@ -232,7 +232,7 @@ models = ["m1"]
 key = "sk-test-neg"
 rpm = -1
 `)
-	if _, err := Load(path); err ***REMOVED*** nil {
+	if _, err := Load(path); err == nil {
 		t.Fatal("load accepted negative rpm")
 	}
 }
@@ -248,7 +248,7 @@ models = ["m1"]
 key = "sk-test-empty-model"
 models = [""]
 `)
-	if _, err := Load(path); err ***REMOVED*** nil {
+	if _, err := Load(path); err == nil {
 		t.Fatal("load accepted empty models entry")
 	}
 }

@@ -153,11 +153,11 @@ func loadConfig(cfgPath string) *config.Config {
 // configEntry returns the [[oauth.accounts]] entry for this provider/account,
 // if the config declares one.
 func (o *opts) configEntry() (config.OAuthAccount, bool) {
-	if o.cfg ***REMOVED*** nil || o.provider ***REMOVED*** "" {
+	if o.cfg == nil || o.provider == "" {
 		return config.OAuthAccount{}, false
 	}
 	for _, a := range o.cfg.OAuthAccounts() {
-		if a.Provider ***REMOVED*** o.provider && a.Account ***REMOVED*** o.account {
+		if a.Provider == o.provider && a.Account == o.account {
 			return a, true
 		}
 	}
@@ -176,7 +176,7 @@ func resolveDataDir(flagDir, cfgPath string) string {
 	if d := strings.TrimSpace(flagDir); d != "" {
 		return d
 	}
-	if cfg, err := config.Load(configPath(cfgPath)); err ***REMOVED*** nil && cfg.Server.DataDir != "" {
+	if cfg, err := config.Load(configPath(cfgPath)); err == nil && cfg.Server.DataDir != "" {
 		return cfg.Server.DataDir
 	} else if err != nil && configExists(configPath(cfgPath)) {
 		fmt.Fprintf(os.Stderr, "onegw oauth: ignoring %s (%v)\n", configPath(cfgPath), err)
@@ -205,13 +205,13 @@ func configPath(flagPath string) string {
 
 func configExists(path string) bool {
 	_, err := os.Stat(path)
-	return err ***REMOVED*** nil
+	return err == nil
 }
 
 // key is the token-store key: identical on the CLI and gateway sides
 // (provider/account, gateway's provider name).
 func (o *opts) key() (string, error) {
-	if o.provider ***REMOVED*** "" {
+	if o.provider == "" {
 		return "", fmt.Errorf("-provider is required")
 	}
 	return o.provider + "/" + o.account, nil
@@ -226,10 +226,10 @@ func (o *opts) key() (string, error) {
 func (o *opts) profile() (oauth.Provider, error) {
 	entry, haveEntry := o.configEntry()
 	svc := o.service
-	if svc ***REMOVED*** "" && haveEntry {
+	if svc == "" && haveEntry {
 		svc = entry.Service
 	}
-	if svc ***REMOVED*** "" {
+	if svc == "" {
 		svc = o.provider
 	}
 	p, ok := oauth.Lookup(svc)
@@ -273,7 +273,7 @@ func (o *opts) profile() (oauth.Provider, error) {
 // stdout regardless, so the login never depends on this working.
 func openBrowser(url string) error {
 	name := os.Getenv("BROWSER")
-	if name ***REMOVED*** "" {
+	if name == "" {
 		switch runtime.GOOS {
 		case "darwin":
 			name = "open"
@@ -318,7 +318,7 @@ func cmdLogin(args []string) int {
 		p.Name, o.dataDir, p.DeviceCodeURL)
 	tok, err := mgr.Login(ctx, oauth.AccountSpec{Key: key, Provider: p}, func(ds oauth.DeviceStart) {
 		url := ds.VerificationURLComplete
-		if url ***REMOVED*** "" {
+		if url == "" {
 			url = ds.VerificationURL
 		}
 		if ds.UserCode != "" && ds.UserCode != ds.DeviceCode {
@@ -350,7 +350,7 @@ func cmdLogin(args []string) int {
 	}
 	fmt.Printf("Stored token for %s in %s (%s; refresh: %s)\n",
 		key, o.dataDir+"/oauth-tokens.json", expiry, refresh)
-	if tok.RefreshToken ***REMOVED*** "" {
+	if tok.RefreshToken == "" {
 		fmt.Println("This service does not issue refresh tokens — re-run login when it expires.")
 	}
 	return 0
@@ -363,7 +363,7 @@ func cmdList(args []string) int {
 	}
 	mgr := oauth.NewManager(oauth.NewTokenStore(o.dataDir))
 	keys := mgr.Store().Keys()
-	if len(keys) ***REMOVED*** 0 {
+	if len(keys) == 0 {
 		fmt.Printf("no oauth tokens stored in %s/oauth-tokens.json\n", o.dataDir)
 		return 0
 	}
@@ -381,7 +381,7 @@ func cmdList(args []string) int {
 				state = "expires soon"
 			}
 		}
-		if tok.RefreshToken ***REMOVED*** "" && !tok.ExpiresAt.IsZero() && time.Until(tok.ExpiresAt) <= 0 {
+		if tok.RefreshToken == "" && !tok.ExpiresAt.IsZero() && time.Until(tok.ExpiresAt) <= 0 {
 			state += " (re-login required)"
 		}
 		fmt.Printf("%-30s %s\n", k, state)

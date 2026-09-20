@@ -15,7 +15,7 @@ func TestValidateStickyDuration(t *testing.T) {
 			Auth:      Auth{KeyList: []AuthKey{{Key: "sk-1"}}},
 			Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", Sticky: bad, Models: []string{"m"}}},
 		}
-		if err := c.Validate(); err ***REMOVED*** nil {
+		if err := c.Validate(); err == nil {
 			t.Fatalf("sticky %q must be rejected", bad)
 		}
 	}

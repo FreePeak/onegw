@@ -51,7 +51,7 @@ const hotResyncInterval = time.Second
 // NewTokenStore opens the token store under dataDir. An empty or "memory"
 // dataDir keeps tokens in RAM only.
 func NewTokenStore(dataDir string) *TokenStore {
-	if dataDir ***REMOVED*** "" || dataDir ***REMOVED*** "memory" {
+	if dataDir == "" || dataDir == "memory" {
 		return &TokenStore{toks: map[string]Token{}, now: time.Now}
 	}
 	return &TokenStore{
@@ -76,7 +76,7 @@ type tokenFile struct {
 // the newer UpdatedAt, so a stale disk snapshot never rolls back a live
 // refresh. Callers hold mu.
 func (s *TokenStore) syncLocked() error {
-	if s.path ***REMOVED*** "" {
+	if s.path == "" {
 		return nil
 	}
 	fi, err := os.Stat(s.path)
@@ -87,7 +87,7 @@ func (s *TokenStore) syncLocked() error {
 	if err != nil {
 		return err
 	}
-	if s.loaded && fi.ModTime().Equal(s.modTime) && fi.Size() ***REMOVED*** s.size {
+	if s.loaded && fi.ModTime().Equal(s.modTime) && fi.Size() == s.size {
 		return nil // unchanged since our last read/write
 	}
 	b, err := os.ReadFile(s.path)
@@ -128,7 +128,7 @@ func mergeNewer(dst, src map[string]Token) {
 // so a stale writer in another process can never roll back a fresher
 // token that landed since its last read. Callers hold mu.
 func (s *TokenStore) persistLocked() error {
-	if s.path ***REMOVED*** "" {
+	if s.path == "" {
 		return nil
 	}
 	if err := s.syncLocked(); err != nil {
@@ -148,7 +148,7 @@ func (s *TokenStore) persistLocked() error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		return err
 	}
-	if fi, err := os.Stat(s.path); err ***REMOVED*** nil {
+	if fi, err := os.Stat(s.path); err == nil {
 		s.modTime = fi.ModTime()
 		s.size = fi.Size()
 	}

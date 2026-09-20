@@ -30,7 +30,7 @@ func TestWakeLogsFailedCheck(t *testing.T) {
 	s := NewService(func() Settings { return Settings{Interval: 86400, Repo: "r"} })
 	s.wake()
 
-	if st := s.Snapshot(); st.LastError ***REMOVED*** "" {
+	if st := s.Snapshot(); st.LastError == "" {
 		t.Fatal("failed check must be recorded in Status.LastError")
 	}
 	if out := buf.String(); !strings.Contains(out, "onegw update: periodic check failed") || !strings.Contains(out, "HTTP 500") {

@@ -126,7 +126,7 @@ func TestApplyRollbackOnFailedTakeover(t *testing.T) {
 	f := newApplyFixture(t)
 	f.probePid = 999 // never names the spawned pid: takeover never proves
 	_, err := Run(context.Background(), f.opt(t))
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "never took over") {
+	if err == nil || !strings.Contains(err.Error(), "never took over") {
 		t.Fatalf("want takeover failure, got %v", err)
 	}
 	// The old binary must be back on the path and no drain may have
@@ -147,7 +147,7 @@ func TestApplyRollbackOnFastCrash(t *testing.T) {
 	f := newApplyFixture(t)
 	f.spawnExits = errors.New("exit status 1") // child dies instantly
 	_, err := Run(context.Background(), f.opt(t))
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "never took over") {
+	if err == nil || !strings.Contains(err.Error(), "never took over") {
 		t.Fatalf("want takeover failure on crash, got %v", err)
 	}
 	got, _ := os.ReadFile(f.execPath)
@@ -163,7 +163,7 @@ func TestApplyRollbackOnSpawnError(t *testing.T) {
 	f := newApplyFixture(t)
 	f.spawnErr = errors.New("permission denied")
 	_, err := Run(context.Background(), f.opt(t))
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "permission denied") {
+	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("want spawn failure, got %v", err)
 	}
 	got, _ := os.ReadFile(f.execPath)
@@ -177,7 +177,7 @@ func TestApplyRefusesHandoffWithoutPassword(t *testing.T) {
 	o := f.opt(t)
 	o.AdminPassword = ""
 	_, err := Run(context.Background(), o)
-	if err ***REMOVED*** nil || !strings.Contains(err.Error(), "admin password") {
+	if err == nil || !strings.Contains(err.Error(), "admin password") {
 		t.Fatalf("want password refusal, got %v", err)
 	}
 	// Nothing moved.

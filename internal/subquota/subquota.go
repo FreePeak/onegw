@@ -55,7 +55,7 @@ func Dialects() []string {
 // ValidDialect reports whether name is a subscription quota dialect.
 func ValidDialect(name string) bool {
 	for _, d := range Dialects() {
-		if d ***REMOVED*** name {
+		if d == name {
 			return true
 		}
 	}
@@ -176,10 +176,10 @@ func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(con
 	if every <= 0 {
 		every = pollEvery
 	}
-	if client ***REMOVED*** nil {
+	if client == nil {
 		client = &http.Client{Timeout: probeTimeout}
 	}
-	if now ***REMOVED*** nil {
+	if now == nil {
 		now = time.Now
 	}
 	t := &Tracker{
@@ -199,7 +199,7 @@ func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(con
 
 // All returns the latest snapshots ordered by provider then account.
 func (t *Tracker) All() []Snapshot {
-	if t ***REMOVED*** nil {
+	if t == nil {
 		return nil
 	}
 	t.mu.Lock()
@@ -219,7 +219,7 @@ func (t *Tracker) All() []Snapshot {
 
 // Stop ends the loop; idempotent.
 func (t *Tracker) Stop() {
-	if t ***REMOVED*** nil {
+	if t == nil {
 		return
 	}
 	t.once.Do(func() { close(t.stop) })
@@ -229,7 +229,7 @@ func (t *Tracker) Stop() {
 // account) keys the new target set still has (hot reload keeps the
 // dashboard warm between trackers).
 func (t *Tracker) Inherit(o *Tracker) {
-	if t ***REMOVED*** nil || o ***REMOVED*** nil {
+	if t == nil || o == nil {
 		return
 	}
 	prefixes := make(map[string]struct{}, len(t.targets))
@@ -330,20 +330,20 @@ func (t *Tracker) parkIfExhausted(tgt Target, snap Snapshot) {
 
 // probeHTTP fetches one target and decodes it per dialect.
 func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
-	if tgt.Dialect ***REMOVED*** CommandCode {
+	if tgt.Dialect == CommandCode {
 		// Multi-endpoint dialect (OmniRoute fetches whoami + credits +
 		// subscriptions + summary); URL is a BASE, not one endpoint.
 		return t.probeCommandCode(ctx, tgt)
 	}
 
-	if tgt.Dialect ***REMOVED*** Cursor {
+	if tgt.Dialect == Cursor {
 		// No other dialect authenticates by cookie or derives a query
 		// parameter from the credential, so it cannot ride the bearer probe.
 		return t.probeCursor(ctx, tgt)
 	}
 
 	url := tgt.URL
-	if url ***REMOVED*** "" {
+	if url == "" {
 		url = DefaultURL(tgt.Dialect)
 	}
 	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: tgt.Dialect, URL: url, FetchedAt: t.now()}
@@ -354,7 +354,7 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 	}
 	req.Header.Set("Authorization", "Bearer "+tgt.AcctKey)
 	req.Header.Set("Accept", "application/json")
-	if tgt.Dialect ***REMOVED*** GrokCli {
+	if tgt.Dialect == GrokCli {
 		// OmniRoute's grokQuotaFetcher fingerprint (x-grok-client-mode:
 		// cli is what the endpoint keys its response shape on).
 		req.Header.Set("x-grok-client-mode", "cli")
@@ -387,17 +387,17 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 // parseOpenCodeGo decodes 9router's verified OpenCode Zen Go shape:
 // {"usage":{"rolling":{"percent":13,"resetsAt":"..."},"weekly":{...},"monthly":{...}}}
 func parseOpenCodeGo(body []byte, status int) ([]Window, string) {
-	if status ***REMOVED*** http.StatusUnauthorized {
+	if status == http.StatusUnauthorized {
 		return nil, "OpenCode Go authentication failed. Check the API key."
 	}
-	if status ***REMOVED*** http.StatusForbidden {
+	if status == http.StatusForbidden {
 		var e struct {
 			Error struct {
 				Type string `json:"type"`
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(body, &e)
-		if e.Error.Type ***REMOVED*** "EntitlementError" {
+		if e.Error.Type == "EntitlementError" {
 			return nil, "OpenCode Go subscription required for this API key."
 		}
 		return nil, "OpenCode Go access forbidden for this API key."
@@ -425,7 +425,7 @@ func parseOpenCodeGo(body []byte, status int) ([]Window, string) {
 	}
 	windows := make([]Window, 0, 3)
 	for _, period := range periods {
-		if len(period.raw) ***REMOVED*** 0 {
+		if len(period.raw) == 0 {
 			continue
 		}
 		var q struct {
@@ -441,7 +441,7 @@ func parseOpenCodeGo(body []byte, status int) ([]Window, string) {
 		}
 		windows = append(windows, Window{Name: period.name, Used: pct, Resets: asReset(q.ResetsAt)})
 	}
-	if len(windows) ***REMOVED*** 0 {
+	if len(windows) == 0 {
 		return nil, "OpenCode Go usage response did not contain valid quota data."
 	}
 	return windows, ""
@@ -455,7 +455,7 @@ func parseOpenCodeGo(body []byte, status int) ([]Window, string) {
 // unit 3 = session window (number hours), unit 6 = weekly; TOKENS_LIMIT and
 // CREDIT_LIMIT are both percent-based.
 func parseZai(body []byte, status int) ([]Window, string, string) {
-	if status ***REMOVED*** http.StatusUnauthorized {
+	if status == http.StatusUnauthorized {
 		return nil, "", "GLM API key invalid or expired."
 	}
 	if status != http.StatusOK {
@@ -494,20 +494,20 @@ func parseZai(body []byte, status int) ([]Window, string, string) {
 		}
 		key := "Limit (" + strconv.Itoa(limit.Number) + ")"
 		switch {
-		case limit.Unit ***REMOVED*** 3:
+		case limit.Unit == 3:
 			n := limit.Number
 			if n <= 0 {
 				n = 5
 			}
 			key = "Session (" + strconv.Itoa(n) + "h)"
-		case limit.Unit ***REMOVED*** 6:
+		case limit.Unit == 6:
 			key = "Weekly (7d)"
-		case limit.Type ***REMOVED*** "TOKENS_LIMIT":
+		case limit.Type == "TOKENS_LIMIT":
 			key = "Tokens"
 		}
 		windows = append(windows, Window{Name: key, Used: pct, Resets: asReset(limit.NextResetTime)})
 	}
-	if len(windows) ***REMOVED*** 0 {
+	if len(windows) == 0 {
 		return nil, "", "GLM quota response did not contain valid limit data."
 	}
 	plan := "Unknown"
@@ -526,7 +526,7 @@ func parseZai(body []byte, status int) ([]Window, string, string) {
 // enriches but never fails the probe.
 func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 	base := tgt.URL
-	if base ***REMOVED*** "" {
+	if base == "" {
 		base = DefaultURL(CommandCode)
 	}
 	base = strings.TrimSuffix(base, "/")
@@ -554,13 +554,13 @@ func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 	// whoami is optional: it only scopes the billing queries to an org
 	// (OmniRoute continues without orgId on any failure).
 	q := ""
-	if _, body, err := get("/alpha/whoami"); err ***REMOVED*** nil {
+	if _, body, err := get("/alpha/whoami"); err == nil {
 		var who struct {
 			Org *struct {
 				ID string `json:"id"`
 			} `json:"org"`
 		}
-		if json.Unmarshal(body, &who) ***REMOVED*** nil && who.Org != nil && strings.TrimSpace(who.Org.ID) != "" {
+		if json.Unmarshal(body, &who) == nil && who.Org != nil && strings.TrimSpace(who.Org.ID) != "" {
 			q = "?orgId=" + url.QueryEscape(strings.TrimSpace(who.Org.ID))
 		}
 	}
@@ -570,12 +570,12 @@ func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 	// vendor's own default period is the billing period (live-verified:
 	// periodBasis "billing-period", identical with or without ?since).
 	spend := 0.0
-	if _, body, err := get("/alpha/usage/summary" + q); err ***REMOVED*** nil {
+	if _, body, err := get("/alpha/usage/summary" + q); err == nil {
 		var sum struct {
 			TotalCost           float64 `json:"totalCost"`
 			TotalMonthlyCredits float64 `json:"totalMonthlyCredits"`
 		}
-		if json.Unmarshal(body, &sum) ***REMOVED*** nil {
+		if json.Unmarshal(body, &sum) == nil {
 			spend = sum.TotalCost
 			if spend <= 0 {
 				spend = sum.TotalMonthlyCredits
@@ -597,14 +597,14 @@ func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 
 	// Subscriptions enrich the plan label and the credits reset; a missing
 	// subscription (team orgs, rotated keys) must not fail the probe.
-	if _, body, err := get("/alpha/billing/subscriptions" + q); err ***REMOVED*** nil {
+	if _, body, err := get("/alpha/billing/subscriptions" + q); err == nil {
 		var sub struct {
 			Data struct {
 				PlanID           string `json:"planId"`
 				CurrentPeriodEnd any    `json:"currentPeriodEnd"`
 			} `json:"data"`
 		}
-		if json.Unmarshal(body, &sub) ***REMOVED*** nil {
+		if json.Unmarshal(body, &sub) == nil {
 			if p := commandCodePlanLabel(sub.Data.PlanID); p != "" {
 				plan = p
 			}
@@ -613,7 +613,7 @@ func (t *Tracker) probeCommandCode(ctx context.Context, tgt Target) Snapshot {
 				// fill it when the vendor's credits call didn't already
 				// give that window its own reset.
 				for i := range snap.Windows {
-					if snap.Windows[i].Name ***REMOVED*** creditsWindow && snap.Windows[i].Resets ***REMOVED*** nil {
+					if snap.Windows[i].Name == creditsWindow && snap.Windows[i].Resets == nil {
 						snap.Windows[i].Resets = reset
 					}
 				}
@@ -640,7 +640,7 @@ const creditsWindow = "Credits (monthly)"
 // spend+remaining, OmniRoute's totalCost math. The weekly window above IS
 // exhausted (used >= cap) — the shape that parks the account.
 func parseCommandCode(body []byte, status int, spend float64) ([]Window, string, string) {
-	if status ***REMOVED*** http.StatusUnauthorized || status ***REMOVED*** http.StatusForbidden {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return nil, "", "CommandCode API key was rejected — reconnect or rotate the key."
 	}
 	if status != http.StatusOK {
@@ -710,16 +710,16 @@ func parseCommandCode(body []byte, status int, spend float64) ([]Window, string,
 		switch {
 		case spend+remaining <= 0:
 			credits.Used = 100 // nothing granted and nothing spent: drained
-		case remaining ***REMOVED*** 0:
+		case remaining == 0:
 			credits.Used = 100 // drained pool parks until the vendor refills
 		default:
 			// Floor: the fraction never reaches 1, so spend alone can
-			// never fabricate the drained park — only remaining ***REMOVED*** 0 does.
+			// never fabricate the drained park — only remaining == 0 does.
 			credits.Used = int(spend / (spend + remaining) * 100)
 		}
 		windows = append(windows, credits)
 	}
-	if len(windows) ***REMOVED*** 0 {
+	if len(windows) == 0 {
 		return nil, "", "CommandCode credits response did not contain valid quota data."
 	}
 	return windows, "Command Code", ""
@@ -745,7 +745,7 @@ func commandCodePlanLabel(planID string) string {
 	}
 	id := strings.TrimPrefix(planID, "individual-")
 	id = strings.TrimPrefix(id, "team-")
-	if id ***REMOVED*** planID || id ***REMOVED*** "" {
+	if id == planID || id == "" {
 		return "" // unrecognized shape: keep the default label
 	}
 	parts := strings.Split(id, "-")
@@ -807,7 +807,7 @@ func grokPlanLabel(jwt string) string {
 // parks the account.
 func parseGrokCli(token string, body []byte, status int) ([]Window, string, string) {
 	plan := grokPlanLabel(token)
-	if status ***REMOVED*** http.StatusUnauthorized || status ***REMOVED*** http.StatusForbidden {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return nil, plan, "Grok session token rejected — re-run: onegw-oauth login -provider xai"
 	}
 	if status != http.StatusOK {
@@ -829,7 +829,7 @@ func parseGrokCli(token string, body []byte, status int) ([]Window, string, stri
 		return nil, plan, "Grok billing response is not valid JSON."
 	}
 	raw := data.Config.CreditUsagePercent
-	if raw ***REMOVED*** nil {
+	if raw == nil {
 		raw = data.Config.CreditUsagePercent2
 	}
 	used, ok := grokPercent(raw)
@@ -872,7 +872,7 @@ func grokLegacyPercent(body []byte) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	if limit ***REMOVED*** 0 {
+	if limit == 0 {
 		return 100, true
 	}
 	used, ok := grokPercent(grokUnwrapVal(data.Config.Used))
@@ -979,7 +979,7 @@ func grokReset(v any) *time.Time {
 // keychain token gets 401 (measured 2026-09-14), unlike the old /api/usage.
 func (t *Tracker) probeCursor(ctx context.Context, tgt Target) Snapshot {
 	base := tgt.URL
-	if base ***REMOVED*** "" {
+	if base == "" {
 		base = DefaultURL(Cursor)
 	}
 	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: Cursor, URL: base, FetchedAt: t.now()}
@@ -1031,7 +1031,7 @@ func cursorUserID(jwt string) (string, string) {
 		return "", "cursor: session JWT claims are not valid JSON"
 	}
 	uid := strings.TrimSpace(claims.Sub)
-	if uid ***REMOVED*** "" {
+	if uid == "" {
 		return "", "cursor: session JWT carries no sub claim"
 	}
 	if _, after, found := strings.Cut(uid, "|"); found {
@@ -1088,12 +1088,12 @@ func parseCursor(body []byte, status int) ([]Window, string, string) {
 	if err := json.Unmarshal(body, &top); err != nil {
 		return nil, "", "Cursor usage response is not valid JSON."
 	}
-	if top.MembershipType ***REMOVED*** "" && top.BillingCycleEnd ***REMOVED*** "" {
+	if top.MembershipType == "" && top.BillingCycleEnd == "" {
 		return nil, "", "Cursor usage response carried no summary meters."
 	}
 	var resets *time.Time
 	if s := strings.TrimSpace(top.BillingCycleEnd); s != "" {
-		if ts, err := time.Parse(time.RFC3339, s); err ***REMOVED*** nil {
+		if ts, err := time.Parse(time.RFC3339, s); err == nil {
 			resets = &ts
 		}
 	}
@@ -1152,10 +1152,10 @@ func asReset(v any) *time.Time {
 		return resetFromUnits(x)
 	case string:
 		s := strings.TrimSpace(x)
-		if s ***REMOVED*** "" {
+		if s == "" {
 			return nil
 		}
-		if n, err := strconv.ParseFloat(s, 64); err ***REMOVED*** nil {
+		if n, err := strconv.ParseFloat(s, 64); err == nil {
 			return resetFromUnits(n)
 		}
 		t, err := time.Parse(time.RFC3339, s)

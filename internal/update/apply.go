@@ -34,7 +34,7 @@ type Spawned struct {
 
 // Kill terminates the spawned process (rollback path).
 func (s *Spawned) Kill() error {
-	if s ***REMOVED*** nil || s.p ***REMOVED*** nil {
+	if s == nil || s.p == nil {
 		return nil
 	}
 	return s.p.Kill()
@@ -77,15 +77,15 @@ const DefaultRepo = "FreePeak/onegw"
 // it is the one bound to the port; only then is the old pid drained.
 func Run(ctx context.Context, opt Opt) (*Release, error) {
 	out := opt.Out
-	if out ***REMOVED*** nil {
+	if out == nil {
 		out = os.Stderr
 	}
 	repo := opt.Repo
-	if repo ***REMOVED*** "" {
+	if repo == "" {
 		repo = DefaultRepo
 	}
 	cur := opt.Current
-	if cur ***REMOVED*** "" {
+	if cur == "" {
 		cur = Version()
 	}
 	client := &Client{Base: opt.Base, Repo: repo}
@@ -108,7 +108,7 @@ func Run(ctx context.Context, opt Opt) (*Release, error) {
 	}
 
 	execPath := opt.ExecPath
-	if execPath ***REMOVED*** "" {
+	if execPath == "" {
 		exe, err := os.Executable()
 		if err != nil {
 			return nil, fmt.Errorf("update: cannot resolve own binary path: %w", err)
@@ -143,29 +143,29 @@ func Run(ctx context.Context, opt Opt) (*Release, error) {
 	}
 
 	listen := opt.Listen
-	if listen ***REMOVED*** "" {
+	if listen == "" {
 		listen = os.Getenv("ONEGW_LISTEN")
 	}
-	if listen ***REMOVED*** "" {
+	if listen == "" {
 		return nil, fmt.Errorf("update: cannot determine the listen address to hand off (set [server] listen or ONEGW_LISTEN)")
 	}
-	if opt.AdminPassword ***REMOVED*** "" {
+	if opt.AdminPassword == "" {
 		return nil, fmt.Errorf("update: refusing the handoff without an admin password to verify the new process with; binary left unstaged")
 	}
 	argv := opt.Argv
-	if len(argv) ***REMOVED*** 0 {
+	if len(argv) == 0 {
 		argv = os.Args
 	}
 	oldPID := opt.OldPID
-	if oldPID ***REMOVED*** 0 {
+	if oldPID == 0 {
 		oldPID = os.Getpid()
 	}
 	spawn := opt.Spawn
-	if spawn ***REMOVED*** nil {
+	if spawn == nil {
 		spawn = spawnDetached
 	}
 	probeURL := opt.ProbeURL
-	if probeURL ***REMOVED*** nil {
+	if probeURL == nil {
 		probeURL = defaultProbeURL
 	}
 	handoffTimeout := 60 * time.Second
@@ -195,7 +195,7 @@ func Run(ctx context.Context, opt Opt) (*Release, error) {
 		return nil, fmt.Errorf("update: new binary never took over %s; rolled back to %s (old gateway still running)", listen, cur)
 	}
 	signal := opt.Signal
-	if signal ***REMOVED*** nil {
+	if signal == nil {
 		signal = func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
 	}
 	if err := signal(oldPID); err != nil && !errors.Is(err, syscall.ESRCH) {
@@ -241,7 +241,7 @@ func smokeRun(path string) error {
 // defaultProbeURL maps a listen address to the /admin/update probe URL.
 func defaultProbeURL(listen string) string {
 	host, port, err := net.SplitHostPort(listen)
-	if err != nil || host ***REMOVED*** "" || host ***REMOVED*** "0.0.0.0" || host ***REMOVED*** "::" || host ***REMOVED*** "*" {
+	if err != nil || host == "" || host == "0.0.0.0" || host == "::" || host == "*" {
 		host = "127.0.0.1"
 	}
 	if err != nil { // no port — nothing sensible to probe
@@ -283,7 +283,7 @@ func waitServing(ctx context.Context, spawned *Spawned, url, password string, ti
 }
 
 func probeServing(hc *http.Client, url, password string, wantPid int) bool {
-	if url ***REMOVED*** "" {
+	if url == "" {
 		return false
 	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -305,7 +305,7 @@ func probeServing(hc *http.Client, url, password string, wantPid int) bool {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body); err != nil {
 		return false
 	}
-	return body.Pid ***REMOVED*** wantPid
+	return body.Pid == wantPid
 }
 
 // probeTransport disables keep-alive: a pooled connection stays pinned

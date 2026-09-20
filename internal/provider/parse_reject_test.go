@@ -25,7 +25,7 @@ func TestDoRewritesParseReject400ToRetryable502(t *testing.T) {
 	p.Set(def)
 
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.3-flash", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("Do: want error")
 	}
 	if apiErr.Status != 502 {
@@ -57,7 +57,7 @@ func TestDoKeepsGenuineSchema400Terminal(t *testing.T) {
 	p.Set(def)
 
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.3-flash", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("Do: want error")
 	}
 	if apiErr.Status != 400 || apiErr.Type != "invalid_request_error" {

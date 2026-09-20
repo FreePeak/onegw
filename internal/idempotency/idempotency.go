@@ -74,7 +74,7 @@ type Result struct {
 }
 
 func (r *Result) clone() *Result {
-	if r ***REMOVED*** nil {
+	if r == nil {
 		return nil
 	}
 	c := *r
@@ -222,7 +222,7 @@ func (c *Cache) Finish(scope, key string, bodyHash []byte, res *Result) {
 	if e.complete {
 		return // defensive: Finish is documented as exactly-once
 	}
-	if res ***REMOVED*** nil || res.Gone || res.Status ***REMOVED*** 0 || res.Status ***REMOVED*** 499 {
+	if res == nil || res.Gone || res.Status == 0 || res.Status == 499 {
 		// 499 is the ORIGIN's client hanging up: the recorded outcome
 		// exists only because that connection died. Replaying it to a
 		// waiter — typically a watchdog retry that is here precisely to
@@ -248,7 +248,7 @@ func (c *Cache) Finish(scope, key string, bodyHash []byte, res *Result) {
 func (c *Cache) enforce() {
 	for len(c.items) > c.cap || c.bytes > TotalBodyBudget {
 		victim := c.evictable()
-		if victim ***REMOVED*** nil {
+		if victim == nil {
 			return // everything left is in flight; caps are transiently exceeded
 		}
 		c.remove(victim)

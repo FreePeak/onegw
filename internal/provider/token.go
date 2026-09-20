@@ -23,7 +23,7 @@ type managerToken struct {
 }
 
 func (m managerToken) Token() string {
-	if m.resolver ***REMOVED*** nil {
+	if m.resolver == nil {
 		return ""
 	}
 	return m.resolver(m.key)
@@ -63,7 +63,7 @@ func (a *Account) bearerToken() string {
 // OpenCode's Anthropic-only catalog (union-alpha) authenticates like
 // Anthropic even though the kind is still opencode.
 func applyAuth(h http.Header, k Kind, tok, model string) {
-	if AnthropicOnlyModel(model) && (k ***REMOVED*** KindOpenCode || k ***REMOVED*** KindOpenCodeFree) {
+	if AnthropicOnlyModel(model) && (k == KindOpenCode || k == KindOpenCodeFree) {
 		h.Del("Authorization")
 		h.Set("x-api-key", tok)
 		h.Set("anthropic-version", "2023-06-01")

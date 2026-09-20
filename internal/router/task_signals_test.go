@@ -36,7 +36,7 @@ func TestCollectSignalsOpenAI(t *testing.T) {
 	if !sig.HeavyKW {
 		t.Fatal("debug/refactor/investigate must trip HeavyKW")
 	}
-	if sig.PromptChars ***REMOVED*** 0 {
+	if sig.PromptChars == 0 {
 		t.Fatal("prompt chars must count")
 	}
 	// The size + effort signals classify heavy.
@@ -166,7 +166,7 @@ func TestExecuteWithCollectedSignals(t *testing.T) {
 	res := mustResolve(t, r, "stack")
 	var first string
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if first ***REMOVED*** "" {
+		if first == "" {
 			first = def.Name + "/" + model
 		}
 		return "ok", nil

@@ -90,7 +90,7 @@ func TestSeriesValueOps(t *testing.T) {
 
 func TestArityMismatchPanics(t *testing.T) {
 	defer func() {
-		if recover() ***REMOVED*** nil {
+		if recover() == nil {
 			t.Fatal("wrong label arity must panic")
 		}
 	}()
@@ -100,7 +100,7 @@ func TestArityMismatchPanics(t *testing.T) {
 
 func TestDuplicateFamilyPanics(t *testing.T) {
 	defer func() {
-		if recover() ***REMOVED*** nil {
+		if recover() == nil {
 			t.Fatal("duplicate family registration must panic")
 		}
 	}()

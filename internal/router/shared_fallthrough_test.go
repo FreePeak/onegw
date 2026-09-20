@@ -30,7 +30,7 @@ func TestExecuteSharedConcurrencyFallsThroughImmediately(t *testing.T) {
 	calls := map[string]int{}
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls[def.Name]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, &types.APIError{Status: 429, Type: "upstream_error",
 				Message: "The request rate exceeds the current model Concurrency limit 1200. Please reduce the request frequency or contact Tencent Cloud support to request a higher limit."}
 		}
@@ -61,7 +61,7 @@ func TestExecuteSharedConcurrencyDirectRouteSurfacesWithRetryAfter(t *testing.T)
 			Message: "The request rate exceeds the current model Concurrency limit 1200."}
 	}
 	got := r.Execute(context.Background(), res, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 429 || !got.SharedConcurrency() {
+	if got == nil || got.Status != 429 || !got.SharedConcurrency() {
 		t.Fatalf("direct route must surface the shared-wall 429, got %+v", got)
 	}
 	if got.RetryAfter != "2" {
@@ -87,7 +87,7 @@ func TestExecuteSharedTPMWallFallsThroughImmediately(t *testing.T) {
 	calls := map[string]int{}
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls[def.Name]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, &types.APIError{Status: 429, Type: "upstream_error",
 				Message: "The request rate exceeds the current model TPM limit 340000000."}
 		}
@@ -118,7 +118,7 @@ func TestExecuteOrdinary429StillRetriesSameTarget(t *testing.T) {
 		return nil, &types.APIError{Status: 429, Type: "upstream_error",
 			Message: "rate limit exceeded, key sk-x"}
 	}
-	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got ***REMOVED*** nil || !strings.Contains(got.Message, "rate limit") {
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got == nil || !strings.Contains(got.Message, "rate limit") {
 		t.Fatalf("expected the 429 to surface: %+v", got)
 	}
 	if calls != 2 { // MaxAttempts
@@ -162,7 +162,7 @@ func TestExecuteAdmissionWallFallsThroughImmediately(t *testing.T) {
 			calls := map[string]int{}
 			caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 				calls[def.Name]++
-				if def.Name ***REMOVED*** "p1" {
+				if def.Name == "p1" {
 					return nil, tc.err
 				}
 				return "ok", nil
@@ -201,7 +201,7 @@ func TestExecuteAdmissionWallDirectRouteSurfacesWithRetryAfter(t *testing.T) {
 				return nil, tc.err
 			}
 			got := r.Execute(context.Background(), res, caller, func(a any) {})
-			if got ***REMOVED*** nil || got.Status != tc.code || !got.SharedConcurrency() {
+			if got == nil || got.Status != tc.code || !got.SharedConcurrency() {
 				t.Fatalf("direct route must surface the admission wall, got %+v", got)
 			}
 			if got.RetryAfter != "2" {
@@ -229,7 +229,7 @@ func TestExecuteWindowed429StampsStatedWindowRetryAfter(t *testing.T) {
 			Message: "You have reached the request limit[z-ai/glm-5.3-free]: Maximum 8 requests within 1 minutes."}
 	}
 	got := r.Execute(context.Background(), res, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 429 {
+	if got == nil || got.Status != 429 {
 		t.Fatalf("expected the 429 to surface, got %+v", got)
 	}
 	if got.RetryAfter != "60" {

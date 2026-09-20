@@ -59,7 +59,7 @@ func TestByteBudgetExhaustionWaitsThenFails(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if err := b.Acquire(ctx, 1024); err ***REMOVED*** nil {
+	if err := b.Acquire(ctx, 1024); err == nil {
 		t.Fatal("expected exhaustion error under full budget")
 	}
 	b.Release(4 * 1024)

@@ -52,7 +52,7 @@ function tokSeries(s){
     // color-mix keeps the fill theme-aware
     fill: s.fill ? `color-mix(in srgb, ${s.color} 18%, transparent)` : undefined,
     points: {show: false},
-    value: (u, v, si, i) => v ***REMOVED*** null ? '' : kmb(s.layer[i])};
+    value: (u, v, si, i) => v == null ? '' : kmb(s.layer[i])};
 }
 function draw(id, series, title){
   const el = document.getElementById(id);

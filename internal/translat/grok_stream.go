@@ -67,7 +67,7 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 		}
 	}
 	partStart := func(id, itemType string) {
-		if st.itemTypes ***REMOVED*** nil {
+		if st.itemTypes == nil {
 			st.itemTypes = map[string]string{}
 		}
 		st.itemTypes[id] = itemType
@@ -87,7 +87,7 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 		start()
 		out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: obj.Delta})
 	case "response.output_item.added":
-		if obj.Item ***REMOVED*** nil {
+		if obj.Item == nil {
 			return nil, nil
 		}
 		partStart(obj.Item.ID, obj.Item.Type)
@@ -110,12 +110,12 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 		// The wire field is "delta"; some compatible upstreams use
 		// "arguments" — accept either.
 		args := orDefault(obj.Delta, obj.Arguments)
-		if args ***REMOVED*** "" {
+		if args == "" {
 			return nil, nil
 		}
 		out = append(out, StreamEvent{Kind: EvDelta, Index: idx, PartType: types.PartToolUse, ToolArgs: args})
 	case "response.output_item.done":
-		if obj.Item ***REMOVED*** nil {
+		if obj.Item == nil {
 			return nil, nil
 		}
 		switch obj.Item.Type {
@@ -136,19 +136,19 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 				if u.InputTokensDetails != nil {
 					usage.CacheReadTokens = u.InputTokensDetails.CachedTokens
 				}
-				if usage.CacheReadTokens ***REMOVED*** 0 {
+				if usage.CacheReadTokens == 0 {
 					usage.CacheReadTokens = u.CachedTokens // Kimi top level
 				}
 				if u.OutputTokensDetails != nil {
 					usage.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
 				}
-				if usage.InputTokens ***REMOVED*** 0 && usage.OutputTokens ***REMOVED*** 0 {
+				if usage.InputTokens == 0 && usage.OutputTokens == 0 {
 					usage = nil
 				}
 			}
 		}
 		stop := types.StopEndTurn
-		if obj.Type ***REMOVED*** "response.incomplete" {
+		if obj.Type == "response.incomplete" {
 			stop = types.StopMaxTokens
 		}
 		if obj.Response != nil && obj.Response.Error != nil && obj.Response.Error.Message != "" {
@@ -174,7 +174,7 @@ func decodeResponsesStreamEvent(ev sseEvent, st *responsesStreamState) ([]Stream
 }
 
 func (st *responsesStreamState) toolIndexFor(id string) int {
-	if st.toolIdx ***REMOVED*** nil {
+	if st.toolIdx == nil {
 		st.toolIdx = map[string]int{}
 	}
 	if idx, ok := st.toolIdx[id]; ok {

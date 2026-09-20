@@ -42,7 +42,7 @@ func postLogin(t *testing.T, h http.Handler, password string) *httptest.Response
 
 func sessionCookieOf(w *httptest.ResponseRecorder) *http.Cookie {
 	for _, c := range w.Result().Cookies() {
-		if c.Name ***REMOVED*** sessionCookie && c.Value != "" {
+		if c.Name == sessionCookie && c.Value != "" {
 			return c
 		}
 	}
@@ -81,7 +81,7 @@ func TestFourFailedLoginsDoNotBlock(t *testing.T) {
 	// The block only triggers on the fifth failure: the fifth attempt with
 	// the correct password still logs in.
 	w := postLogin(t, h, "admin")
-	if w.Code != http.StatusSeeOther || sessionCookieOf(w) ***REMOVED*** nil {
+	if w.Code != http.StatusSeeOther || sessionCookieOf(w) == nil {
 		t.Fatalf("correct login after 4 failures: status %d, want redirect + session cookie", w.Code)
 	}
 }

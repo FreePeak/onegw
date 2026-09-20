@@ -66,7 +66,7 @@ func loginForm(t *testing.T, h http.Handler, password string) (*http.Cookie, int
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	for _, c := range w.Result().Cookies() {
-		if c.Name ***REMOVED*** sessionCookie && c.Value != "" {
+		if c.Name == sessionCookie && c.Value != "" {
 			return c, w.Code
 		}
 	}
@@ -85,7 +85,7 @@ func TestLoginSetsCookieAndGrantsAccess(t *testing.T) {
 	_, h := newAdminSrv(t, "")
 
 	c, code := loginForm(t, h, "admin")
-	if code != http.StatusSeeOther || c ***REMOVED*** nil {
+	if code != http.StatusSeeOther || c == nil {
 		t.Fatalf("login: code %d cookie %v", code, c)
 	}
 	// Header path still works.
@@ -141,7 +141,7 @@ func TestLogoutDropsSession(t *testing.T) {
 	srv, h := newAdminSrv(t, "")
 	_ = srv
 	c, code := loginForm(t, h, "admin")
-	if c ***REMOVED*** nil || code != http.StatusSeeOther {
+	if c == nil || code != http.StatusSeeOther {
 		t.Fatal("login failed")
 	}
 	r := httptest.NewRequest(http.MethodPost, "/admin/logout", nil)
@@ -150,7 +150,7 @@ func TestLogoutDropsSession(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("logout: %d", w.Code)
 	}
-	if srv.sessions.count() != 0 || srv ***REMOVED*** nil {
+	if srv.sessions.count() != 0 || srv == nil {
 		t.Fatalf("session survived logout: %d", srv.sessions.count())
 	}
 }
@@ -583,10 +583,10 @@ func TestTodayChartHourly(t *testing.T) {
 	lh2 := localNoon.Add(-3 * time.Hour).Format("15") // "09"
 	i1, i2 := 0, 0
 	for i, l := range cd.Days {
-		if l ***REMOVED*** lh1 {
+		if l == lh1 {
 			i1 = i
 		}
-		if l ***REMOVED*** lh2 {
+		if l == lh2 {
 			i2 = i
 		}
 	}
@@ -717,10 +717,10 @@ func TestChartDayModeLocalBuckets(t *testing.T) {
 	wantB := b.Format("2006-01-02")
 	var gotA, gotB int64 = -1, -1
 	for i, d := range cd.Days {
-		if d ***REMOVED*** wantA {
+		if d == wantA {
 			gotA = cd.Requests[i]
 		}
-		if d ***REMOVED*** wantB {
+		if d == wantB {
 			gotB = cd.Requests[i]
 		}
 	}
@@ -742,7 +742,7 @@ func TestRetentionPrunesOldRollups(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := srv.pruneOnce()
-	if err != nil || n ***REMOVED*** 0 {
+	if err != nil || n == 0 {
 		t.Fatalf("pruneOnce: %d rows, err %v", n, err)
 	}
 	left, err := srv.st.QueryRange("2000-01-01", today)
@@ -750,11 +750,11 @@ func TestRetentionPrunesOldRollups(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range left {
-		if r.Model ***REMOVED*** "ancient" {
+		if r.Model == "ancient" {
 			t.Fatal("retention window did not delete the ancient row")
 		}
 	}
-	if len(left) ***REMOVED*** 0 {
+	if len(left) == 0 {
 		t.Fatal("prune deleted today's rows too")
 	}
 }

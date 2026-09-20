@@ -55,7 +55,7 @@ func TestSetFlushIntervalResetsCadence(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	flushes := 0
-	for flushes ***REMOVED*** 0 {
+	for flushes == 0 {
 		flushes = sink.count()
 		if time.Now().After(deadline) {
 			t.Fatal("flush interval change did not take effect within 2s")

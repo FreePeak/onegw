@@ -56,7 +56,7 @@ func (s *Server) handleAdminSectionsGet(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		adminError(w, http.StatusServiceUnavailable, "no config loaded")
 		return
 	}
@@ -69,10 +69,10 @@ func (s *Server) handleAdminSectionsGet(w http.ResponseWriter, r *http.Request) 
 			// "not set in the file" — the gateway then uses the built-in
 			// default, so GET reports that rather than the empty sentinel.
 			// Secrets (def "") and empty-def strings (export_url) stay "".
-			if (v ***REMOVED*** "" && sp.def != "") || (sp.kind ***REMOVED*** kindInt && v ***REMOVED*** "0" && sp.def != "0") {
+			if (v == "" && sp.def != "") || (sp.kind == kindInt && v == "0" && sp.def != "0") {
 				v = sp.def
 			}
-			if sp.kind ***REMOVED*** kindSec {
+			if sp.kind == kindSec {
 				if v != "" {
 					v = "••••••"
 				}
@@ -107,7 +107,7 @@ func (s *Server) handleAdminSectionsPut(w http.ResponseWriter, r *http.Request) 
 		adminError(w, http.StatusBadRequest, "unknown section "+req.Section)
 		return
 	}
-	if len(req.Settings) ***REMOVED*** 0 {
+	if len(req.Settings) == 0 {
 		adminError(w, http.StatusBadRequest, "settings are empty")
 		return
 	}
@@ -123,7 +123,7 @@ func (s *Server) handleAdminSectionsPut(w http.ResponseWriter, r *http.Request) 
 			adminError(w, http.StatusBadRequest, key+": "+err.Error())
 			return
 		}
-		if line ***REMOVED*** "" && sp.kind ***REMOVED*** kindSec {
+		if line == "" && sp.kind == kindSec {
 			continue // secrets are keep-on-blank / masked-echo: never cleared here
 		}
 		edits = append(edits, sectionEdit{sp.header, key, line})
@@ -152,7 +152,7 @@ func (sp sectionSpec) render(raw json.RawMessage) (string, error) {
 		if json.Unmarshal(raw, &b) != nil {
 			return "", fmt.Errorf("must be true/false")
 		}
-		if b ***REMOVED*** (sp.def ***REMOVED*** "true") {
+		if b == (sp.def == "true") {
 			return "", nil
 		}
 		return strconv.FormatBool(b), nil
@@ -161,7 +161,7 @@ func (sp sectionSpec) render(raw json.RawMessage) (string, error) {
 		if json.Unmarshal(raw, &n) != nil {
 			return "", fmt.Errorf("must be a number")
 		}
-		if n.String() ***REMOVED*** "0" || n.String() ***REMOVED*** sp.def {
+		if n.String() == "0" || n.String() == sp.def {
 			return "", nil
 		}
 		return n.String(), nil
@@ -170,7 +170,7 @@ func (sp sectionSpec) render(raw json.RawMessage) (string, error) {
 		if json.Unmarshal(raw, &s) != nil {
 			return "", fmt.Errorf("must be a string")
 		}
-		if s ***REMOVED*** "" || s ***REMOVED*** "••••••" || (sp.kind != kindSec && s ***REMOVED*** sp.def) {
+		if s == "" || s == "••••••" || (sp.kind != kindSec && s == sp.def) {
 			return "", nil
 		}
 		return strconv.Quote(s), nil

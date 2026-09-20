@@ -134,12 +134,12 @@ type rsResponse struct {
 // ---------------------------------------------------------------------------
 
 func decodeRSContent(raw json.RawMessage) []types.Part {
-	if len(raw) ***REMOVED*** 0 || string(raw) ***REMOVED*** "null" {
+	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
 	var plain string
-	if err := json.Unmarshal(raw, &plain); err ***REMOVED*** nil {
-		if plain ***REMOVED*** "" {
+	if err := json.Unmarshal(raw, &plain); err == nil {
+		if plain == "" {
 			return nil
 		}
 		return []types.Part{{Type: types.PartText, Text: plain}}
@@ -210,16 +210,16 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 		// The extended ladder above high is per-model (AcceptXHigh):
 		// everywhere else max|xhigh clamp down to high (grok 400s on max).
 		if AcceptXHigh(u.Model) {
-			if eff ***REMOVED*** "max" {
+			if eff == "max" {
 				eff = "xhigh" // clamp down to this family's ceiling, never up
 			}
 			req.Reasoning = &rsReasoning{Effort: eff, Summary: "auto"}
-		} else if eff ***REMOVED*** "max" || eff ***REMOVED*** "xhigh" {
+		} else if eff == "max" || eff == "xhigh" {
 			req.Reasoning = &rsReasoning{Effort: "high", Summary: "auto"}
 		} else {
 			req.Reasoning = &rsReasoning{Effort: eff, Summary: "auto"}
 		}
-	} else if u.ReasoningEffort ***REMOVED*** "" && u.Thinking != nil && u.Thinking.BudgetTokens > 0 {
+	} else if u.ReasoningEffort == "" && u.Thinking != nil && u.Thinking.BudgetTokens > 0 {
 		req.Reasoning = &rsReasoning{Effort: budgetToEffort(u.Thinking.BudgetTokens), Summary: "auto"}
 	}
 	var sb strings.Builder
@@ -272,7 +272,7 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 				}
 				items = append(items, rsItem{Type: "message", Role: "user", Content: b})
 			}
-			if len(texts) ***REMOVED*** 0 && !hasToolResult(m) {
+			if len(texts) == 0 && !hasToolResult(m) {
 				b, _ := json.Marshal([]rsContent{{Type: "input_text", Text: ""}})
 				items = append(items, rsItem{Type: "message", Role: "user", Content: b})
 			}
@@ -310,7 +310,7 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 		}
 	}
 	// System text gathered mid-loop lands in instructions.
-	if sb.Len() > 0 && req.Instructions ***REMOVED*** "" {
+	if sb.Len() > 0 && req.Instructions == "" {
 		req.Instructions = sb.String()
 	}
 	req.Input = marshalRSInput(items)
@@ -333,7 +333,7 @@ func EncodeResponsesRequest(u *types.ChatRequest) ([]byte, error) {
 
 func hasToolResult(m *types.Message) bool {
 	for _, p := range m.Content {
-		if p.Type ***REMOVED*** types.PartToolResult {
+		if p.Type == types.PartToolResult {
 			return true
 		}
 	}
@@ -341,7 +341,7 @@ func hasToolResult(m *types.Message) bool {
 }
 
 func marshalRSInput(items []rsItem) json.RawMessage {
-	if len(items) ***REMOVED*** 0 {
+	if len(items) == 0 {
 		b, _ := json.Marshal([]rsItem{{Type: "message", Role: "user", Content: mustJSON([]rsContent{{Type: "input_text", Text: "..."}})}})
 		return b
 	}
@@ -353,7 +353,7 @@ func marshalRSInput(items []rsItem) json.RawMessage {
 }
 
 func encodeRSTools(defs []types.Tool) []rsToolDef {
-	if len(defs) ***REMOVED*** 0 {
+	if len(defs) == 0 {
 		return nil
 	}
 	out := make([]rsToolDef, 0, len(defs))
@@ -369,7 +369,7 @@ func encodeRSTools(defs []types.Tool) []rsToolDef {
 }
 
 func encodeRSTextFormat(rf *types.ResponseFormat) *rsTextFmt {
-	if rf ***REMOVED*** nil {
+	if rf == nil {
 		return nil
 	}
 	switch rf.Type {
@@ -414,7 +414,7 @@ func DecodeResponsesResponse(body []byte) (*types.ChatResponse, error) {
 		return nil, fmt.Errorf("responses response: %w", err)
 	}
 	out := &types.ChatResponse{ID: r.ID, Model: r.Model}
-	if r.Status ***REMOVED*** "failed" {
+	if r.Status == "failed" {
 		msg := "responses request failed"
 		if r.Error != nil {
 			msg = r.Error.Message
@@ -427,7 +427,7 @@ func DecodeResponsesResponse(body []byte) (*types.ChatResponse, error) {
 		switch it.Type {
 		case "message":
 			for _, c := range decodeRSContent(it.Content) {
-				if c.Type ***REMOVED*** types.PartText && c.Text != "" {
+				if c.Type == types.PartText && c.Text != "" {
 					texts = append(texts, c.Text)
 				}
 			}
@@ -459,7 +459,7 @@ func DecodeResponsesResponse(body []byte) (*types.ChatResponse, error) {
 func mapRSStop(status string, inc *struct {
 	Reason string `json:"reason"`
 }) string {
-	if status ***REMOVED*** "incomplete" && inc != nil {
+	if status == "incomplete" && inc != nil {
 		switch inc.Reason {
 		case "max_output_tokens":
 			return types.StopMaxTokens
@@ -472,21 +472,21 @@ func mapRSStop(status string, inc *struct {
 
 func rsUsageToUnified(u *rsUsage) types.Usage {
 	in := u.InputTokens
-	if in ***REMOVED*** 0 {
+	if in == 0 {
 		in = u.PromptTokens // legacy alias
 	}
 	out := u.OutputTokens
-	if out ***REMOVED*** 0 {
+	if out == 0 {
 		out = u.CompletionTokens // legacy alias
 	}
 	unified := types.Usage{InputTokens: in, OutputTokens: out, UpstreamFormat: string(FmtResponses)}
 	if u.InputTokensDetails != nil {
 		unified.CacheReadTokens = u.InputTokensDetails.CachedTokens
 	}
-	if unified.CacheReadTokens ***REMOVED*** 0 {
+	if unified.CacheReadTokens == 0 {
 		unified.CacheReadTokens = u.CacheReadInputTokens // legacy alias
 	}
-	if unified.CacheReadTokens ***REMOVED*** 0 {
+	if unified.CacheReadTokens == 0 {
 		unified.CacheReadTokens = u.CachedTokens // Kimi-style top level
 	}
 	if u.OutputTokensDetails != nil {

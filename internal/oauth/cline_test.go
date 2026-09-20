@@ -65,7 +65,7 @@ func TestClineProfileWiresBothFlows(t *testing.T) {
 	}
 	var listed bool
 	for _, n := range Providers() {
-		if n ***REMOVED*** "cline" {
+		if n == "cline" {
 			listed = true
 		}
 	}
@@ -112,7 +112,7 @@ func TestClineSessionDropsPKCEAndCarriesStateInThePath(t *testing.T) {
 	}
 	// Two logins must not collide.
 	other, _ := newClineSession(p, "http://127.0.0.1:56121/callback")
-	if other.State ***REMOVED*** sess.State {
+	if other.State == sess.State {
 		t.Error("two sessions share a state token")
 	}
 }
@@ -208,7 +208,7 @@ func TestClineRefreshIsCamelCaseJSONAtItsOwnEndpoint(t *testing.T) {
 		bodies = append(bodies, b)
 		paths = append(paths, r.URL.Path)
 		resp := `{"success":true,"data":{"accessToken":"jwt-new"}}`
-		if r.URL.Path ***REMOVED*** "/with-rotation" {
+		if r.URL.Path == "/with-rotation" {
 			resp = `{"success":true,"data":{"accessToken":"jwt-new","refreshToken":"rt-new","expiresAt":"2026-09-16T00:00:00Z"}}`
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -335,7 +335,7 @@ func TestClineDeviceFlowRegistersTheWorkOSPair(t *testing.T) {
 				`"verification_uri":"https://api.workos.com/activate","expires_in":300,"interval":1}`)
 		case "/authenticate":
 			polls++
-			if polls ***REMOVED*** 1 {
+			if polls == 1 {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = io.WriteString(w, `{"error":"authorization_pending"}`)
 				return

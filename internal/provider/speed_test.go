@@ -56,7 +56,7 @@ func TestNextAccountPrefersFastest(t *testing.T) {
 	// Round-robin pointer at "slow" (index 0): the old first-open pick
 	// would serve slow; speed steering must skip to fast.
 	a, ready := p.next("")
-	if a ***REMOVED*** nil || a.Name != "fast" {
+	if a == nil || a.Name != "fast" {
 		t.Fatalf("got %v ready=%v, want fast", a, ready)
 	}
 
@@ -80,7 +80,7 @@ func TestNextAccountFastestSkipsCooling(t *testing.T) {
 	// Bench the fast account: the slower one must take over.
 	p.cool(&Account{Name: "fast", APIKey: "key-fast"}, 30*time.Second)
 	a, ready := p.next("")
-	if a ***REMOVED*** nil || a.Name != "slow" {
+	if a == nil || a.Name != "slow" {
 		t.Fatalf("got %v ready=%v, want slow", a, ready)
 	}
 }

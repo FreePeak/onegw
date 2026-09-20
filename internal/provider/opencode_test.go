@@ -22,7 +22,7 @@ func TestOpencodeSessionDerivation(t *testing.T) {
 	if a != opencodeSession("", "key-a") {
 		t.Fatal("derived session must be stable for the same key")
 	}
-	if b := opencodeSession("", "key-b"); a ***REMOVED*** b {
+	if b := opencodeSession("", "key-b"); a == b {
 		t.Fatal("different keys must derive different sessions")
 	}
 	if !strings.HasPrefix(a, "ses_") || len(a) != len("ses_")+32 {
@@ -32,7 +32,7 @@ func TestOpencodeSessionDerivation(t *testing.T) {
 	if got := opencodeSession("   ", "key-a"); got != a {
 		t.Fatalf("whitespace client session = %q, want derived fallback", got)
 	}
-	if got := opencodeSession(strings.Repeat("x", maxOpenCodeSessionLen+1), "key-a"); got ***REMOVED*** strings.Repeat("x", maxOpenCodeSessionLen+1) {
+	if got := opencodeSession(strings.Repeat("x", maxOpenCodeSessionLen+1), "key-a"); got == strings.Repeat("x", maxOpenCodeSessionLen+1) {
 		t.Fatal("overlong client session must be rejected, not forwarded")
 	}
 }
@@ -58,7 +58,7 @@ func TestDoOpencodeHeaders(t *testing.T) {
 	if gotAuth != "Bearer oc-test" {
 		t.Fatalf("Authorization = %q, want bearer key", gotAuth)
 	}
-	if gotSession ***REMOVED*** "" || len(gotSession) != len("ses_")+32 || !strings.HasPrefix(gotSession, "ses_") {
+	if gotSession == "" || len(gotSession) != len("ses_")+32 || !strings.HasPrefix(gotSession, "ses_") {
 		t.Fatalf("X-Opencode-Session = %q, want derived ses_<32 hex>", gotSession)
 	}
 	if want := "/v1/chat/completions"; gotPath != want {

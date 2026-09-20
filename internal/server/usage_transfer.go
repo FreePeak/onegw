@@ -30,23 +30,23 @@ import (
 // Ephemeral (unpersisted) when there is no data dir.
 func nodeID(dataDir string) string {
 	host, err := os.Hostname()
-	if err != nil || host ***REMOVED*** "" {
+	if err != nil || host == "" {
 		host = "onegw"
 	}
 	host = strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r ***REMOVED*** '-', r ***REMOVED*** '.':
+			r == '-', r == '.':
 			return r
 		default:
 			return '-'
 		}
 	}, host)
-	if dataDir ***REMOVED*** "" || dataDir ***REMOVED*** "memory" {
+	if dataDir == "" || dataDir == "memory" {
 		return host + "-" + randHex6()
 	}
 	path := filepath.Join(dataDir, "node_id")
-	if b, err := os.ReadFile(path); err ***REMOVED*** nil {
+	if b, err := os.ReadFile(path); err == nil {
 		if id := strings.TrimSpace(string(b)); id != "" {
 			return id
 		}
@@ -76,7 +76,7 @@ func (s *Server) handleUsageExport(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
 		return
 	}
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"error":"no persistent store"}`))
 		return
@@ -108,7 +108,7 @@ func (s *Server) handleUsageExport(w http.ResponseWriter, r *http.Request) {
 			return errStopExport
 		}
 		n++
-		if flusher != nil && n%256 ***REMOVED*** 0 {
+		if flusher != nil && n%256 == 0 {
 			flusher.Flush()
 		}
 		return nil
@@ -138,10 +138,10 @@ func exportDayRange(r *http.Request) (from, to string, err error) {
 	const layout = "2006-01-02"
 	today := time.Now().UTC().Format(layout)
 	from, to = r.URL.Query().Get("from"), r.URL.Query().Get("to")
-	if from ***REMOVED*** "" {
+	if from == "" {
 		from = today
 	}
-	if to ***REMOVED*** "" {
+	if to == "" {
 		to = today
 	}
 	f, ferr := time.Parse(layout, from)
@@ -174,7 +174,7 @@ func (s *Server) handleUsageImport(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
 		return
 	}
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"error":"no persistent store"}`))
 		return
@@ -202,10 +202,10 @@ func (s *Server) handleUsageImport(w http.ResponseWriter, r *http.Request) {
 	var mergeErr error
 	batch := make([]store.RollupRow, 0, 256)
 	merge := func() {
-		if mergeErr != nil || len(batch) ***REMOVED*** 0 {
+		if mergeErr != nil || len(batch) == 0 {
 			return
 		}
-		if err := s.st.MergeRows(batch, header.Kind ***REMOVED*** "delta"); err != nil {
+		if err := s.st.MergeRows(batch, header.Kind == "delta"); err != nil {
 			mergeErr = err
 			return
 		}
@@ -217,7 +217,7 @@ func (s *Server) handleUsageImport(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			return
 		}
-		if row.Node ***REMOVED*** "" {
+		if row.Node == "" {
 			row.Node = header.Node
 		}
 		batch = append(batch, row)

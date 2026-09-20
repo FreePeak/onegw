@@ -59,7 +59,7 @@ func TestBurstWallSecondAccountParksModel(t *testing.T) {
 	// leave the model alone (a wrong guess costs one benched key, not a
 	// parked lane).
 	_, err1 := def.Do(context.Background(), &def.Accounts[0], "qwen3.8-flash", nil, bytes.NewReader([]byte(`{}`)), false)
-	if err1 ***REMOVED*** nil || err1.SharedConcurrency() {
+	if err1 == nil || err1.SharedConcurrency() {
 		t.Fatalf("first empty-body 429 must stay per-key, got %+v", err1)
 	}
 	if d := time.Until(findSlot(def.pool, "a1").cooldown); d <= 0 || d > coolBase {
@@ -71,7 +71,7 @@ func TestBurstWallSecondAccountParksModel(t *testing.T) {
 
 	// Second DISTINCT account within the window: burst proven.
 	_, err2 := def.Do(context.Background(), &def.Accounts[1], "qwen3.8-flash", nil, bytes.NewReader([]byte(`{}`)), false)
-	if err2 ***REMOVED*** nil || !err2.SharedConcurrency() {
+	if err2 == nil || !err2.SharedConcurrency() {
 		t.Fatalf("second distinct account within window must classify shared, got %+v", err2)
 	}
 	// The trigger's key is healthy: no ladder bench on it.
@@ -100,17 +100,17 @@ func TestBurstWallWindowResetsAndExpires(t *testing.T) {
 	t.Cleanup(func() { def.pool.now = time.Now })
 
 	// Same account twice inside the window: per-key strikes, no burst.
-	if _, err := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false); err ***REMOVED*** nil || err.SharedConcurrency() {
+	if _, err := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false); err == nil || err.SharedConcurrency() {
 		t.Fatalf("first strike must stay per-key, got %+v", err)
 	}
 	cur = cur.Add(time.Second)
-	if _, err := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false); err ***REMOVED*** nil || err.SharedConcurrency() {
+	if _, err := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false); err == nil || err.SharedConcurrency() {
 		t.Fatalf("same-account strike must stay per-key, got %+v", err)
 	}
 	// Past the window: the old sight is stale, so a distinct account
 	// records fresh evidence rather than proving a burst.
 	cur = cur.Add(wallWindow + time.Second)
-	if _, err := def.Do(context.Background(), &def.Accounts[1], "m", nil, bytes.NewReader([]byte(`{}`)), false); err ***REMOVED*** nil || err.SharedConcurrency() {
+	if _, err := def.Do(context.Background(), &def.Accounts[1], "m", nil, bytes.NewReader([]byte(`{}`)), false); err == nil || err.SharedConcurrency() {
 		t.Fatalf("stale sight must not prove a burst, got %+v", err)
 	}
 	if benched, _ := def.ModelBenched("m"); benched {
@@ -118,14 +118,14 @@ func TestBurstWallWindowResetsAndExpires(t *testing.T) {
 	}
 	// The fresh sight (a2) plus a distinct account inside the new window
 	// completes the burst.
-	if _, err := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false); err ***REMOVED*** nil || !err.SharedConcurrency() {
+	if _, err := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false); err == nil || !err.SharedConcurrency() {
 		t.Fatalf("fresh cross-account pair must prove the burst, got %+v", err)
 	}
 	// A proven burst RESETS the sight: the immediate next 429 — even from
 	// a different account — starts a new evidence cycle instead of
 	// latching onto the previous one.
 	cur = cur.Add(time.Second)
-	if _, err := def.Do(context.Background(), &def.Accounts[1], "m", nil, bytes.NewReader([]byte(`{}`)), false); err ***REMOVED*** nil || err.SharedConcurrency() {
+	if _, err := def.Do(context.Background(), &def.Accounts[1], "m", nil, bytes.NewReader([]byte(`{}`)), false); err == nil || err.SharedConcurrency() {
 		t.Fatalf("burst must reset the evidence window, got %+v", err)
 	}
 }
@@ -179,7 +179,7 @@ func TestOKKeepsFreshBenchClearsStaleBench(t *testing.T) {
 		t.Fatalf("post-success ladder must restart at coolBase, got bench=%v", d)
 	}
 	// And the account stays skipped while benched.
-	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a2" {
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a2" {
 		t.Fatalf("benched a1 must not be picked, got %+v", got)
 	}
 }
@@ -197,7 +197,7 @@ func TestWordingWallParksOnSecondSight(t *testing.T) {
 
 	// First sight: shared classification, no park — the replay rides it out.
 	_, err1 := def.Do(context.Background(), &def.Accounts[0], "m", nil, bytes.NewReader([]byte(`{}`)), false)
-	if err1 ***REMOVED*** nil || !err1.SharedConcurrency() {
+	if err1 == nil || !err1.SharedConcurrency() {
 		t.Fatalf("wording wall must classify shared, got %+v", err1)
 	}
 	if benched, _ := def.ModelBenched("m"); benched {
@@ -207,7 +207,7 @@ func TestWordingWallParksOnSecondSight(t *testing.T) {
 	// Second strike INSIDE the window (same or different account — the
 	// wording already proves the lane shared): park.
 	_, err2 := def.Do(context.Background(), &def.Accounts[1], "m", nil, bytes.NewReader([]byte(`{}`)), false)
-	if err2 ***REMOVED*** nil || !err2.SharedConcurrency() {
+	if err2 == nil || !err2.SharedConcurrency() {
 		t.Fatalf("second strike must stay shared, got %+v", err2)
 	}
 	benched, ready := def.ModelBenched("m")

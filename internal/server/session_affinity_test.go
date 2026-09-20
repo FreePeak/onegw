@@ -92,7 +92,7 @@ func TestDerivedSessionHeaderViaConfig(t *testing.T) {
 	if len(*seen) != 2 {
 		t.Fatalf("calls=%d", len(*seen))
 	}
-	if (*seen)[0] ***REMOVED*** "" || (*seen)[0] != (*seen)[1] {
+	if (*seen)[0] == "" || (*seen)[0] != (*seen)[1] {
 		t.Fatalf("derived id not stable per key: %v", *seen)
 	}
 	if !strings.HasPrefix((*seen)[0], "ses_") {
@@ -115,7 +115,7 @@ func TestDerivedSessionHeaderViaConfig(t *testing.T) {
 func TestSessionHeaderValidation(t *testing.T) {
 	cfg := makeCfg(t, "sk-client", "", false, providerSpec{name: "p1", up: "http://127.0.0.1:1", model: "m1"})
 	cfg.Providers[0].SessionHeader = "x grok conv id"
-	if err := cfg.Validate(); err ***REMOVED*** nil {
+	if err := cfg.Validate(); err == nil {
 		t.Fatal("invalid header name must fail Validate")
 	}
 	cfg.Providers[0].SessionHeader = "x-grok-conv-id"

@@ -115,12 +115,12 @@ func normalizeToolBlocks(body []byte) []byte {
 			switch b["type"] {
 			case "tool_use":
 				name, _ := b["name"].(string)
-				if name ***REMOVED*** "" {
+				if name == "" {
 					name = unknownToolName
 					b["name"] = name
 					changed = true
 				}
-				if id, _ := b["id"].(string); id ***REMOVED*** "" {
+				if id, _ := b["id"].(string); id == "" {
 					b["id"] = "toolu_" + name
 					changed = true
 				}

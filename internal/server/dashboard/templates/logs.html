@@ -44,11 +44,11 @@
     pauseBtn.textContent = paused ? 'resume' : 'pause';
     if (!paused) rebuild(); // backfill rows that arrived while paused
   };
-  function cls(e){ return e.kind ***REMOVED***= 'task_routing' ? 'code-2xx' : e.kind ***REMOVED***= 'speed_order' ? 'code-4xx' : e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
-  function kfmt(n){ if(n***REMOVED***null||n***REMOVED***=0)return '0'; if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M'; if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return String(n); }
+  function cls(e){ return e.kind === 'task_routing' ? 'code-2xx' : e.kind === 'speed_order' ? 'code-4xx' : e.kind ? 'code-err' : (e.code >= 500 ? 'code-5xx' : e.code >= 400 ? 'code-4xx' : 'code-2xx'); }
+  function kfmt(n){ if(n==null||n===0)return '0'; if(n>=1e9)return (n/1e9).toFixed(1)+'B'; if(n>=1e6)return (n/1e6).toFixed(1)+'M'; if(n>=1e3)return (n/1e3).toFixed(1)+'K'; return String(n); }
   function route(e){ return e.provider ? e.provider + '/' + e.model : (e.model || '(unresolved)'); }
   function short(s){ return s.length > 140 ? s.slice(0, 140) + '…' : s; }
-  function esc(s){ const d = document.createElement('div'); d.textContent = s ***REMOVED*** null ? '' : String(s); return d.innerHTML; }
+  function esc(s){ const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
   function escq(s){ return esc(s).replace(/"/g, '&quot;'); } // attribute-safe (title="")
   function matches(e){
     const q = filter.value.trim().toLowerCase();
@@ -88,10 +88,10 @@
       '<td class="num mono">' + kfmt(e.saved) + '</td>' +
       '<td class="err mono">' + (e.err ? '<span title="' + escq(e.err) + '">' + esc(short(e.err)) + '</span>' : '') + '</td>';
     const det = document.createElement('tr');
-    det.className = e.kind ***REMOVED***= 'speed_order' ? 'det warn-det' : 'det';
+    det.className = e.kind === 'speed_order' ? 'det warn-det' : 'det';
     det.style.display = 'none';
     det.innerHTML = '<td colspan="13"><div class="detbody mono">' + detText(e) + '</div></td>';
-    row.onclick = () => { det.style.display = det.style.display ***REMOVED***= 'none' ? '' : 'none'; };
+    row.onclick = () => { det.style.display = det.style.display === 'none' ? '' : 'none'; };
     frag.appendChild(row);
     frag.appendChild(det);
     return frag;

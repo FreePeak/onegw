@@ -173,7 +173,7 @@ func TestDoBenchesModelOn403NotAccount(t *testing.T) {
 		Accounts: []Account{{Name: "a", APIKey: "k1"}}}
 	NewPool().Set(def)
 
-	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr ***REMOVED*** nil || apiErr.Status != 403 {
+	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr == nil || apiErr.Status != 403 {
 		t.Fatalf("got %v, want the 403 relayed", apiErr)
 	}
 	if benched, ready := def.ModelBenched("blocked"); !benched || ready.IsZero() {
@@ -201,7 +201,7 @@ func TestDoBenchesModelOn404ModelNotFound(t *testing.T) {
 	def := &Def{Name: "p", Kind: KindOpenAI, BaseURL: srv.URL,
 		Accounts: []Account{{Name: "a", APIKey: "k1"}}}
 	NewPool().Set(def)
-	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr ***REMOVED*** nil || apiErr.Status != 404 {
+	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr == nil || apiErr.Status != 404 {
 		t.Fatalf("got %v, want the 404 relayed", apiErr)
 	}
 	if benched, _ := def.ModelBenched("blocked"); !benched {
@@ -212,7 +212,7 @@ func TestDoBenchesModelOn404ModelNotFound(t *testing.T) {
 	def2 := &Def{Name: "p2", Kind: KindOpenAI, BaseURL: srv2.URL,
 		Accounts: []Account{{Name: "a", APIKey: "k1"}}}
 	NewPool().Set(def2)
-	if apiErr := doModel(t, def2, &def2.Accounts[0], "blocked"); apiErr ***REMOVED*** nil || apiErr.Status != 404 {
+	if apiErr := doModel(t, def2, &def2.Accounts[0], "blocked"); apiErr == nil || apiErr.Status != 404 {
 		t.Fatalf("got %v, want the 404 relayed", apiErr)
 	}
 	if benched, _ := def2.ModelBenched("blocked"); benched {
@@ -227,7 +227,7 @@ func TestDoDoesNotBenchModelOn429(t *testing.T) {
 	def := &Def{Name: "p", Kind: KindOpenAI, BaseURL: srv.URL,
 		Accounts: []Account{{Name: "a", APIKey: "k1"}}}
 	NewPool().Set(def)
-	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr ***REMOVED*** nil || apiErr.Status != 429 {
+	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr == nil || apiErr.Status != 429 {
 		t.Fatalf("got %v, want the 429 relayed", apiErr)
 	}
 	if benched, _ := def.ModelBenched("blocked"); benched {
@@ -249,7 +249,7 @@ func TestModelBenchTTLKnobAppliesToRefusalPath(t *testing.T) {
 	def.Rotation = RotationPolicy{BenchTTL: time.Minute}
 	NewPool().Set(def)
 
-	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr ***REMOVED*** nil {
+	if apiErr := doModel(t, def, &def.Accounts[0], "blocked"); apiErr == nil {
 		t.Fatal("want the 403 relayed")
 	}
 	benched, ready := def.ModelBenched("blocked")

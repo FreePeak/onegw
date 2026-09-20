@@ -51,7 +51,7 @@ func TestCursorUUIDv5IsStable(t *testing.T) {
 	if len(a) != 36 || a[14] != '5' {
 		t.Fatalf("uuidv5 shape wrong: %q (version nibble at [14] must be 5)", a)
 	}
-	if c := cursorUUIDv5("tok-other"); c ***REMOVED*** a {
+	if c := cursorUUIDv5("tok-other"); c == a {
 		t.Fatal("different tokens must map to different session ids")
 	}
 }
@@ -81,7 +81,7 @@ func TestPBRoundtrip(t *testing.T) {
 
 func TestPBDecodeRejectsBadWireType(t *testing.T) {
 	// Wire type 3 (start-group) is unsupported: schema drift must error.
-	if _, err := pbDecode([]byte{0x0b}); err ***REMOVED*** nil {
+	if _, err := pbDecode([]byte{0x0b}); err == nil {
 		t.Fatal("wire type 3 must fail decode")
 	}
 }
@@ -235,7 +235,7 @@ func TestEncodeCursorChatRequestCarriesTools(t *testing.T) {
 	// Messages on field 1 (user content), tools on field 34.
 	msgs := 0
 	for _, fd := range req {
-		if fd.Num ***REMOVED*** 1 {
+		if fd.Num == 1 {
 			msgs++
 		}
 	}
@@ -291,7 +291,7 @@ func TestCursorAgentEventsTextAndUsage(t *testing.T) {
 	if gotText != "PONG" {
 		t.Fatalf("text delta: %q", gotText)
 	}
-	if usage ***REMOVED*** nil || usage.InputTokens != 11859 || usage.OutputTokens != 6 {
+	if usage == nil || usage.InputTokens != 11859 || usage.OutputTokens != 6 {
 		t.Fatalf("usage: %+v", usage)
 	}
 }
@@ -336,10 +336,10 @@ func TestCursorChatEventsToolCallStream(t *testing.T) {
 	var sawStart bool
 	var sawArgs string
 	for _, e := range events {
-		if e.Kind ***REMOVED*** EvPartStart && e.ToolName ***REMOVED*** "get_weather" && e.ToolID ***REMOVED*** "call_1" {
+		if e.Kind == EvPartStart && e.ToolName == "get_weather" && e.ToolID == "call_1" {
 			sawStart = true
 		}
-		if e.Kind ***REMOVED*** EvDelta && e.PartType ***REMOVED*** types.PartToolUse {
+		if e.Kind == EvDelta && e.PartType == types.PartToolUse {
 			sawArgs += e.ToolArgs
 		}
 	}
@@ -358,7 +358,7 @@ func TestCursorChatEventsToolCallStream(t *testing.T) {
 	var cont string
 	idx := -1
 	for _, e := range events {
-		if e.Kind ***REMOVED*** EvDelta && e.PartType ***REMOVED*** types.PartToolUse {
+		if e.Kind == EvDelta && e.PartType == types.PartToolUse {
 			cont += e.ToolArgs
 			idx = e.Index
 		}
@@ -380,10 +380,10 @@ func TestCursorChatEventsToolCallStream(t *testing.T) {
 	events = CursorChatEvents(frame3, "claude-4.5-haiku", st)
 	var text, thinking string
 	for _, e := range events {
-		if e.Kind ***REMOVED*** EvDelta && e.PartType ***REMOVED*** types.PartText {
+		if e.Kind == EvDelta && e.PartType == types.PartText {
 			text += e.Text
 		}
-		if e.Kind ***REMOVED*** EvDelta && e.PartType ***REMOVED*** types.PartThinking {
+		if e.Kind == EvDelta && e.PartType == types.PartThinking {
 			thinking += e.Thinking
 		}
 	}
@@ -465,7 +465,7 @@ func TestCursorSSEStreamEmptyIsError(t *testing.T) {
 	}())), "claude-4.5-sonnet", true, nil)
 	buf := make([]byte, 4096)
 	_, err := stream.Read(buf)
-	if err ***REMOVED*** nil {
+	if err == nil {
 		t.Fatal("empty stream must error")
 	}
 	if !strings.Contains(err.Error(), "empty response") {

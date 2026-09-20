@@ -43,7 +43,7 @@ func metricsFailingStub(status int) *httptest.Server {
 func parseMetrics(body string) map[string]int64 {
 	out := map[string]int64{}
 	for _, line := range strings.Split(body, "\n") {
-		if line ***REMOVED*** "" || strings.HasPrefix(line, "#") {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		name, rest, _ := strings.Cut(line, " ")
@@ -63,7 +63,7 @@ var metricsLineRegexp = regexp.MustCompile(
 func assertMetricsBodyWellFormed(t *testing.T, body string) {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
-		if line ***REMOVED*** "" || strings.HasPrefix(line, "#") {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		if !metricsLineRegexp.MatchString(line) {
@@ -220,7 +220,7 @@ func TestMetricsGaugesReflectInflightAndBudget(t *testing.T) {
 	// Wait until request 1 holds the whole budget (margin > cap → clamp).
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if held, _ := srv.cur().budget.Stats(); held ***REMOVED*** 4096 {
+		if held, _ := srv.cur().budget.Stats(); held == 4096 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -229,7 +229,7 @@ func TestMetricsGaugesReflectInflightAndBudget(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	// While the budget is held: inflight 1, held ***REMOVED*** cap.
+	// While the budget is held: inflight 1, held == cap.
 	w := do(t, h, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	vals := parseMetrics(w.Body.String())
 	if vals["onegw_inflight"] != 1 {

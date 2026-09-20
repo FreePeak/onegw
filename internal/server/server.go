@@ -149,10 +149,10 @@ func New(cfg *config.Config) (*Server, error) {
 // An empty host (":port"), "0.0.0.0", or "::" is NOT loopback.
 func loopbackListen(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
-	if err != nil || host ***REMOVED*** "" {
+	if err != nil || host == "" {
 		return false
 	}
-	if host ***REMOVED*** "localhost" {
+	if host == "localhost" {
 		return true
 	}
 	ip := net.ParseIP(host)
@@ -218,7 +218,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
 				key := a.APIKey
-				if key ***REMOVED*** "" {
+				if key == "" {
 					// Inherit the provider-level credential. `api_key =` and
 					// ONEGW_PROVIDER_<NAME>_KEY both land on p.APIKey, which
 					// used to be read ONLY when the config declared no account
@@ -262,7 +262,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		// restart — the failure mode #99 is about.
 		for i := range def.Accounts {
 			a := &def.Accounts[i]
-			if a.APIKey ***REMOVED*** "" && a.OAuthToken ***REMOVED*** nil && kind != provider.KindSearXNG && kind != provider.KindOpenCodeFree {
+			if a.APIKey == "" && a.OAuthToken == nil && kind != provider.KindSearXNG && kind != provider.KindOpenCodeFree {
 				log.Printf("onegw: provider %s account %q has no credential (no api_key, no provider-level key, no [[oauth.accounts]] entry) — requests routed to it carry an empty bearer", def.Name, a.Name)
 			}
 		}
@@ -270,7 +270,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		// Materialize the kind's default catalog onto the config copy so
 		// routing AND every surface that reads cfg.Providers (models list,
 		// dashboard) agree.
-		if len(p.Models) ***REMOVED*** 0 {
+		if len(p.Models) == 0 {
 			p.Models = provider.DefaultModels(kind)
 		}
 	}
@@ -336,12 +336,12 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	// seed from the store and inherit live state across hot reloads.
 	limits := make(map[string]quota.Limits, len(cfg.Providers))
 	for _, p := range cfg.Providers {
-		if p.QuotaWindow ***REMOVED*** "" {
+		if p.QuotaWindow == "" {
 			continue
 		}
 		l := quota.Limits{Window: p.QuotaWindow, LimitTokens: p.QuotaLimitTokens, LimitRequests: p.QuotaLimitRequests}
 		if p.QuotaResetAnchor != "" {
-			if a, err := time.Parse(time.RFC3339, p.QuotaResetAnchor); err ***REMOVED*** nil {
+			if a, err := time.Parse(time.RFC3339, p.QuotaResetAnchor); err == nil {
 				l.Anchor = a
 			}
 		}
@@ -398,7 +398,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 
 // oldStateQuota returns the previous snapshot's quota tracker, or nil.
 func oldStateQuota(old *state) *quota.Tracker {
-	if old ***REMOVED*** nil {
+	if old == nil {
 		return nil
 	}
 	return old.quota
@@ -406,7 +406,7 @@ func oldStateQuota(old *state) *quota.Tracker {
 
 // oldStateSub returns the previous snapshot's subscription tracker, or nil.
 func oldStateSub(old *state) *subquota.Tracker {
-	if old ***REMOVED*** nil {
+	if old == nil {
 		return nil
 	}
 	return old.subq
@@ -433,7 +433,7 @@ func (s *Server) Reload(cfg *config.Config) {
 // deliberate evidence, so exit does not remove it (#42).
 func (s *Server) StampOwner() {
 	st := s.cur()
-	if st ***REMOVED*** nil {
+	if st == nil {
 		return
 	}
 	info := owner.Capture(st.cfg.Server.Listen, s.configPath(), s.start)
@@ -544,11 +544,11 @@ func (s *Server) handleSystemOne(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGemini(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/v1beta/models/")
 	model, method, ok := strings.Cut(rest, ":")
-	if !ok || model ***REMOVED*** "" || r.Method != http.MethodPost {
+	if !ok || model == "" || r.Method != http.MethodPost {
 		writeErr(w, translat.FmtGemini, errAPI(400, "invalid_request", "expected POST /v1beta/models/{model}:generateContent"))
 		return
 	}
-	isStream := method ***REMOVED*** "streamGenerateContent"
+	isStream := method == "streamGenerateContent"
 	if method != "generateContent" && !isStream {
 		writeErr(w, translat.FmtGemini, errAPI(404, "not_found", "unknown method "+method))
 		return
@@ -615,7 +615,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		attempts++
 		return s.attempt(ctx, def, acct, m, translat.FmtGemini, body, stream, w, savedTokens, r.Header, ak, attempts)
 	}, func(v any) {})
-	if execErr != nil && w.Header().Get("Content-Type") ***REMOVED*** "" {
+	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, translat.FmtGemini, execErr)
 	}
 }
@@ -705,7 +705,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	// combo degrades to recent context instead of dying. Safe to rewrite
 	// body here: the Execute Caller closure reads it per attempt, and
 	// Content-Type is still empty, so nothing has reached the client.
-	if execErr != nil && execErr.ContextWindowExceeded() && w.Header().Get("Content-Type") ***REMOVED*** "" {
+	if execErr != nil && execErr.ContextWindowExceeded() && w.Header().Get("Content-Type") == "" {
 		window, measured, ok := execErr.ContextWindowOverflow()
 		if !ok {
 			window = overflowFallbackWindow
@@ -718,7 +718,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 			execErr = st.router.Execute(execCtx, res, call, func(v any) {})
 		}
 	}
-	if execErr != nil && w.Header().Get("Content-Type") ***REMOVED*** "" {
+	if execErr != nil && w.Header().Get("Content-Type") == "" {
 		writeErr(w, clientFmt, execErr)
 	}
 }
@@ -875,14 +875,14 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	if apiErr != nil {
 		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
 		if apiErr.PaymentRequired() {
-			if def.Kind ***REMOVED*** provider.KindOpenAIResponses {
+			if def.Kind == provider.KindOpenAIResponses {
 				// The Grok Build proxy's 402 is its WEEKLY credit pool
 				// running dry — self-recovering, not a billing death — so
 				// cool the account briefly and keep it in rotation (9router's
 				// grok-cli treats 402 the same way). Terminal #80 invalidation
 				// would strand a healthy subscription until manual re-enable.
 				def.Cool(acct, grok402Cooldown)
-			} else if def.Kind ***REMOVED*** provider.KindCline && apiErr.CreditWall() {
+			} else if def.Kind == provider.KindCline && apiErr.CreditWall() {
 				// Cline's 402 names a BALANCE, not a dead credential, and the
 				// account keeps serving its free lane right through it: measured
 				// 2026-09-16, `deepseek/deepseek-v4.1-flash` answered
@@ -907,7 +907,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 				s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
 			}
 			apiErr.Fallbackable = true
-		} else if apiErr.Status ***REMOVED*** 401 && apiErr.Type ***REMOVED*** "authentication_error" {
+		} else if apiErr.Status == 401 && apiErr.Type == "authentication_error" {
 			// Stale credential at request time (cursor returns this
 			// when the account row has no key; the runtime can clear
 			// a static key when the stored token expires). Cool the
@@ -987,7 +987,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 	// Inspect the head (bounded): an in-200 error event is answered as a
 	// real HTTP error before any bytes reach the client.
 	var head []byte
-	if upstreamFmt ***REMOVED*** translat.FmtCommandCode {
+	if upstreamFmt == translat.FmtCommandCode {
 		var herr *types.APIError
 		var err error
 		head, herr, err = translat.InspectCommandCodeHead(res.Resp.Body)
@@ -1114,11 +1114,11 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 			// Re-attach the inspected head so no events are lost.
 			src = io.MultiReader(bytes.NewReader(head), src)
 		}
-		if upstreamFmt ***REMOVED*** clientFmt {
+		if upstreamFmt == clientFmt {
 			sn := usage.NewSniffer(src, 0)
 			_, cerr := io.Copy(flushWriter{w, flush}, sn)
 			flush()
-			if cerr != nil && ctx.Err() ***REMOVED*** nil {
+			if cerr != nil && ctx.Err() == nil {
 				// Upstream died (or the idle breaker killed a half-open
 				// post-suspend socket) mid-relay: headers are committed,
 				// so end the stream with an honest terminal error frame —
@@ -1158,7 +1158,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				// Headers (and likely translated events) are already on
 				// the wire: no retry may follow this attempt.
 				herr.StreamCommitted = true
-				if stream && ctx.Err() ***REMOVED*** nil {
+				if stream && ctx.Err() == nil {
 					// Same honesty as the passthrough branch: a translated
 					// stream cut by upstream death (or the idle breaker)
 					// gets a named terminal frame, not just a close.
@@ -1173,7 +1173,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 	}
 	rec.UpstreamFormat = string(upstreamFmt)
-	if rec.InputTokens ***REMOVED*** 0 && rec.OutputTokens ***REMOVED*** 0 {
+	if rec.InputTokens == 0 && rec.OutputTokens == 0 {
 		rec.Estimated = true
 		rec.InputTokens = int64(reqBodyLen) / 4
 	}
@@ -1243,23 +1243,23 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 // ---------------------------------------------------------------------------
 
 // authorize authenticates the request and returns the matched key policy.
-// ok=false means the 401 response was written. ak***REMOVED***nil with ok***REMOVED***true is
+// ok=false means the 401 response was written. ak==nil with ok==true is
 // the open gateway (no keys configured).
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (*config.AuthKey, bool) {
 	keys := s.cur().cfg.Auth.KeyList
-	if len(keys) ***REMOVED*** 0 {
+	if len(keys) == 0 {
 		return nil, true
 	}
 	auth := r.Header.Get("Authorization")
 	key := strings.TrimPrefix(auth, "Bearer ")
-	if key ***REMOVED*** "" {
+	if key == "" {
 		key = r.Header.Get("x-api-key")
 	}
-	if key ***REMOVED*** "" {
+	if key == "" {
 		key = r.Header.Get("x-goog-api-key") // native Gemini clients authenticate with this
 	}
 	for i := range keys {
-		if keys[i].Key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(keys[i].Key)) ***REMOVED*** 1 {
+		if keys[i].Key != "" && subtle.ConstantTimeCompare([]byte(key), []byte(keys[i].Key)) == 1 {
 			return &keys[i], true
 		}
 	}
@@ -1287,7 +1287,7 @@ func (s *Server) withRecovery(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				log.Printf("panic serving %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
-				if w.Header().Get("Content-Type") ***REMOVED*** "" {
+				if w.Header().Get("Content-Type") == "" {
 					writeErr(w, translat.FmtOpenAI, errAPI(500, "internal", fmt.Sprintf("panic: %v", rec)))
 				}
 			}
@@ -1308,7 +1308,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	var models []model
 	seen := map[string]bool{}
 	add := func(id string) {
-		if id ***REMOVED*** "" || seen[id] {
+		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
@@ -1319,7 +1319,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		if p.Disabled {
 			continue // paused: not advertised, direct hits answer 503
 		}
-		if p.Kind ***REMOVED*** "searxng" {
+		if p.Kind == "searxng" {
 			// Virtual search surface: any "<name>/<x>" model string
 			// routes to it; advertise the canonical id so agent CLIs
 			// can discover it via /v1/models.
@@ -1371,13 +1371,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // or an open gateway (no admin_password configured).
 func (s *Server) adminOK(r *http.Request) bool {
 	pw := s.cur().cfg.Server.AdminPassword
-	if pw ***REMOVED*** "" {
+	if pw == "" {
 		return true
 	}
-	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Password")), []byte(pw)) ***REMOVED*** 1 {
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Password")), []byte(pw)) == 1 {
 		return true
 	}
-	if c, err := r.Cookie(sessionCookie); err ***REMOVED*** nil {
+	if c, err := r.Cookie(sessionCookie); err == nil {
 		return s.sessions.valid(c.Value, pw)
 	}
 	return false
@@ -1411,10 +1411,10 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	// default reads the live since-last-flush window. Totals are computed
 	// from the same rows as the table so the header and table can never
 	// disagree (tracker totals are process-lifetime, not a time window).
-	if r.URL.Query().Get("source") ***REMOVED*** "store" && s.st != nil {
+	if r.URL.Query().Get("source") == "store" && s.st != nil {
 		days := 1
 		if v := r.URL.Query().Get("days"); v != "" {
-			if n, err := strconv.Atoi(v); err ***REMOVED*** nil && n > 0 && n < 366 {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 366 {
 				days = n
 			}
 		}
@@ -1426,7 +1426,7 @@ func (s *Server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"error":"store query failed"}`))
 			return
 		}
-		if rows ***REMOVED*** nil {
+		if rows == nil {
 			rows = []store.UsageRow{}
 		}
 		var totReq, totIn, totOut, totSaved int64
@@ -1505,7 +1505,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 }
 
 func buildUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
-	if upstream ***REMOVED*** client {
+	if upstream == client {
 		var err error
 		body, err = rewriteModel(body, upstreamModel)
 		if err != nil {
@@ -1547,7 +1547,7 @@ func buildUpstreamBody(upstream, client translat.Format, body []byte, upstreamMo
 // rewriteModel surgically replaces the top-level "model" string in a raw
 // JSON body, preserving every other byte of structure (json.Number decode).
 func rewriteModel(body []byte, model string) ([]byte, error) {
-	if model ***REMOVED*** "" {
+	if model == "" {
 		return body, nil
 	}
 	var root map[string]any
@@ -1556,7 +1556,7 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 	if err := dec.Decode(&root); err != nil {
 		return body, nil // not an object; forward verbatim
 	}
-	if cur, _ := root["model"].(string); cur ***REMOVED*** model || cur ***REMOVED*** "" {
+	if cur, _ := root["model"].(string); cur == model || cur == "" {
 		return body, nil
 	}
 	root["model"] = model
@@ -1593,11 +1593,11 @@ func normalizeRoles(body []byte) ([]byte, error) {
 			if !ok {
 				continue
 			}
-			if m["role"] ***REMOVED*** "developer" {
+			if m["role"] == "developer" {
 				m["role"] = "system"
 				changed = true
 			}
-			if m["role"] ***REMOVED*** "assistant" {
+			if m["role"] == "assistant" {
 				if v, ok := m["reasoning"]; ok {
 					if s, isStr := v.(string); isStr && s != "" {
 						if _, has := m["reasoning_content"]; !has {
@@ -1663,7 +1663,7 @@ const reasoningEchoPlaceholder = "(context elided)"
 // present-but-unusable reasoning_details still counts as missing.
 // Returns body unchanged unless something was filled.
 func synthesizeReasoningEcho(body []byte, model string, def *provider.Def) []byte {
-	if def ***REMOVED*** nil || !def.ReasoningEchoModel(model) {
+	if def == nil || !def.ReasoningEchoModel(model) {
 		return body
 	}
 	var root map[string]any
@@ -1673,7 +1673,7 @@ func synthesizeReasoningEcho(body []byte, model string, def *provider.Def) []byt
 		return body // not an object; forward verbatim
 	}
 	msgs, ok := root["messages"].([]any)
-	if !ok || len(msgs) ***REMOVED*** 0 {
+	if !ok || len(msgs) == 0 {
 		return body
 	}
 	last, ok := msgs[len(msgs)-1].(map[string]any)
@@ -1777,10 +1777,10 @@ func coerceEffort(effort, model string) string {
 // "use low, high, or max" instruction. Kept deliberately narrow — a
 // plain invalid-request 400 must not be classified as one.
 func alwaysThinking400(e *types.APIError) bool {
-	if e ***REMOVED*** nil || e.Status != 400 {
+	if e == nil || e.Status != 400 {
 		return false
 	}
-	if e.Code ***REMOVED*** "1210" {
+	if e.Code == "1210" {
 		return true
 	}
 	msg := e.Message
@@ -1808,7 +1808,7 @@ func alwaysThinking400(e *types.APIError) bool {
 // rotation carries no thinking mode at all). Same shape family as
 // alwaysThinking400: deliberately narrow, status-gated.
 func noThinkingConflict400(e *types.APIError) bool {
-	if e ***REMOVED*** nil || e.Status != 400 {
+	if e == nil || e.Status != 400 {
 		return false
 	}
 	return strings.Contains(e.Message, "reasoning_effort") &&
@@ -1840,7 +1840,7 @@ func noThinkingConflict400(e *types.APIError) bool {
 //     disable-drop. Disable forms never decode into the unified struct, so
 //     there is nothing else to strip.
 func adaptThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provider.Def) {
-	if def ***REMOVED*** nil {
+	if def == nil {
 		return
 	}
 	if def.NoThinkingModel(upstreamModel) {
@@ -1876,7 +1876,7 @@ func adaptThinkingUnified(u *types.ChatRequest, upstreamModel string, def *provi
 // dropped so the upstream default (thinking on) applies. Knobs are never
 // added. Returns body unchanged when not applicable.
 func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
-	if def ***REMOVED*** nil {
+	if def == nil {
 		return body
 	}
 	noThink := def.NoThinkingModel(model)
@@ -1906,7 +1906,7 @@ func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
 				}
 			}
 		} else if eff := def.DefaultEffortFor(model); eff != "" &&
-			root["thinking"] ***REMOVED*** nil && root["enable_thinking"] ***REMOVED*** nil {
+			root["thinking"] == nil && root["enable_thinking"] == nil {
 			// Same rule as the unified path: only when the client expressed
 			// no thinking preference at all (default_effort is off by
 			// default). Measured 2026-09-11 on glm-5.3-flash: unset → max
@@ -1919,7 +1919,7 @@ func adaptThinkingBody(body []byte, model string, def *provider.Def) []byte {
 			if v, ok := root[key]; ok {
 				switch tv := v.(type) {
 				case map[string]any:
-					if t, _ := tv["type"].(string); t ***REMOVED*** "disabled" {
+					if t, _ := tv["type"].(string); t == "disabled" {
 						delete(root, key)
 						changed = true
 					}
@@ -1971,7 +1971,7 @@ func peekModel(body []byte) string {
 	var probe struct {
 		Model string `json:"model"`
 	}
-	if err := json.Unmarshal(body, &probe); err ***REMOVED*** nil {
+	if err := json.Unmarshal(body, &probe); err == nil {
 		return probe.Model
 	}
 	return ""

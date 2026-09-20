@@ -17,19 +17,19 @@ func TestOpenCodeFreeDefaults(t *testing.T) {
 		t.Fatalf("free base = %q, want https://opencode.ai/zen/v1", got)
 	}
 	models := DefaultModels(KindOpenCodeFree)
-	if len(models) ***REMOVED*** 0 {
+	if len(models) == 0 {
 		t.Fatal("free kind must ship a curated catalog")
 	}
 	var hasBigPickle bool
 	for _, m := range models {
-		if m ***REMOVED*** "big-pickle" {
+		if m == "big-pickle" {
 			hasBigPickle = true
 		}
 	}
 	if !hasBigPickle {
 		t.Fatalf("free catalog missing big-pickle: %v", models)
 	}
-	if DefaultModels(KindOpenCode) ***REMOVED*** nil {
+	if DefaultModels(KindOpenCode) == nil {
 		t.Fatal("paid Go catalog must stay")
 	}
 	// Per-model routing (advisor follow-up, live-probed 2026-09-12: the
@@ -122,7 +122,7 @@ func TestDoOpenCodeFreeKeyless(t *testing.T) {
 	if gotSession != openCodeFreeSession("", "default") {
 		t.Fatalf("off-shape client session survived: %q", gotSession)
 	}
-	if gotBodyModel ***REMOVED*** "" {
+	if gotBodyModel == "" {
 		t.Fatal("body never reached stub")
 	}
 }
@@ -134,7 +134,7 @@ func TestOpenCodeFreeSession(t *testing.T) {
 	if a != openCodeFreeSession("", "default") {
 		t.Fatalf("derivation not stable: %q", a)
 	}
-	if b := openCodeFreeSession("", "second"); a ***REMOVED*** b {
+	if b := openCodeFreeSession("", "second"); a == b {
 		t.Fatalf("distinct accounts share a session: %q", a)
 	}
 	for _, s := range []string{a, openCodeFreeSession("", "second")} {

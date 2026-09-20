@@ -57,7 +57,7 @@ func sumAt(w *[windowSeconds]bucket, now int64) (int64, int64) {
 	oldest := int64(0)
 	for i := range w {
 		b := &w[i]
-		if b.v ***REMOVED*** 0 {
+		if b.v == 0 {
 			continue
 		}
 		if now-b.sec >= windowSeconds {
@@ -65,7 +65,7 @@ func sumAt(w *[windowSeconds]bucket, now int64) (int64, int64) {
 			continue
 		}
 		sum += b.v
-		if oldest ***REMOVED*** 0 || b.sec < oldest {
+		if oldest == 0 || b.sec < oldest {
 			oldest = b.sec
 		}
 	}
@@ -96,7 +96,7 @@ func (l *Limiter) AllowRPM(key string, rpm int) (ok bool, retry int) {
 	e := l.get(key)
 	sum, oldest := sumAt(&e.req, now)
 	if sum >= int64(rpm) {
-		if oldest ***REMOVED*** 0 {
+		if oldest == 0 {
 			oldest = now
 		}
 		return false, maxInt(1, int(oldest+windowSeconds-now))
@@ -123,7 +123,7 @@ func (l *Limiter) TPMBlocked(key string, tpm int) (blocked bool, retry int) {
 	if sum < int64(tpm) {
 		return false, 0
 	}
-	if oldest ***REMOVED*** 0 {
+	if oldest == 0 {
 		oldest = now
 	}
 	return true, maxInt(1, int(oldest+windowSeconds-now))

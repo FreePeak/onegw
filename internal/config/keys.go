@@ -38,11 +38,11 @@ func (k *AuthKey) Label() string { return keyLabel(k) }
 // passes through untouched. Flat keys become unlimited entries. Idempotent:
 // Raw is cleared once translated.
 func (a *Auth) decodeKeys(md toml.MetaData) error {
-	if a.Raw ***REMOVED*** nil {
+	if a.Raw == nil {
 		return nil
 	}
 	var flat []string
-	if err := md.PrimitiveDecode(*a.Raw, &flat); err ***REMOVED*** nil {
+	if err := md.PrimitiveDecode(*a.Raw, &flat); err == nil {
 		a.KeyList = make([]AuthKey, len(flat))
 		for i, k := range flat {
 			a.KeyList[i] = AuthKey{Key: k}
@@ -65,7 +65,7 @@ func validateKeys(keys []AuthKey) error {
 	seen := map[string]bool{}
 	for i := range keys {
 		k := &keys[i]
-		if k.Key ***REMOVED*** "" {
+		if k.Key == "" {
 			return fmt.Errorf("auth.keys entry %d missing key", i)
 		}
 		if seen[k.Key] {
@@ -76,7 +76,7 @@ func validateKeys(keys []AuthKey) error {
 			return fmt.Errorf("auth key %s has negative rpm/tpm", keyLabel(k))
 		}
 		for _, m := range k.Models {
-			if m ***REMOVED*** "" {
+			if m == "" {
 				return fmt.Errorf("auth key %s has empty models entry", keyLabel(k))
 			}
 		}

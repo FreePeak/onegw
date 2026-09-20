@@ -62,7 +62,7 @@ func (d *Def) doSystemOne(ctx context.Context, acct *Account, model string, body
 		defer resp.Body.Close()
 		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		apiErr := decodeUpstreamError(d.Kind, limited, resp.StatusCode)
-		if apiErr ***REMOVED*** nil {
+		if apiErr == nil {
 			apiErr = errAPI(resp.StatusCode, "upstream_error", string(limited))
 		}
 		return nil, apiErr

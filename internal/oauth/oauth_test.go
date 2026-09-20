@@ -179,7 +179,7 @@ func TestDeviceFlowEndToEnd(t *testing.T) {
 	if tok.ExpiresAt.IsZero() {
 		t.Fatal("expiry not set from expires_in")
 	}
-	if len(prompts) != 1 || prompts[0].UserCode != "ABCD-WXYZ" || prompts[0].VerificationURL ***REMOVED*** "" {
+	if len(prompts) != 1 || prompts[0].UserCode != "ABCD-WXYZ" || prompts[0].VerificationURL == "" {
 		t.Fatalf("prompt payload wrong: %+v", prompts)
 	}
 	// Start request carries client_id, scope, and extra fields; poll
@@ -187,7 +187,7 @@ func TestDeviceFlowEndToEnd(t *testing.T) {
 	f.mu.Lock()
 	startForm, tokenForm := f.lastStartForm, f.lastTokenForm
 	f.mu.Unlock()
-	if startForm["client_id"] != "test-client-id" || startForm["scope"] ***REMOVED*** "" || startForm["referrer"] != "grok-build" {
+	if startForm["client_id"] != "test-client-id" || startForm["scope"] == "" || startForm["referrer"] != "grok-build" {
 		t.Fatalf("start form wrong: %v", startForm)
 	}
 	if tokenForm["grant_type"] != "urn:ietf:params:oauth:grant-type:device_code" || tokenForm["device_code"] != "DEV-123" {
@@ -251,7 +251,7 @@ func TestDeviceFlowExpiryAndDenial(t *testing.T) {
 		mgr := NewManager(NewTokenStore("memory"))
 		mgr.SetCheckEvery(time.Hour)
 		_, err := mgr.Login(context.Background(), AccountSpec{Key: "xai/a", Provider: xaiLike(srv.URL)}, nil)
-		if err ***REMOVED*** nil || errors.Is(err, ErrPending) {
+		if err == nil || errors.Is(err, ErrPending) {
 			t.Fatalf("unknown error must abort, got %v", err)
 		}
 	})
@@ -264,7 +264,7 @@ func TestDeviceFlowExpiryAndDenial(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		_, err := mgr.Login(ctx, AccountSpec{Key: "xai/a", Provider: xaiLike(srv.URL)}, nil)
-		if err ***REMOVED*** nil {
+		if err == nil {
 			t.Fatal("want ctx error")
 		}
 	})
@@ -295,7 +295,7 @@ func TestRefreshBeforeExpiry(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if tok, _ := store.Get(spec.Key); tok.AccessToken ***REMOVED*** "at-1" {
+		if tok, _ := store.Get(spec.Key); tok.AccessToken == "at-1" {
 			// Refreshed: the refresh grant used the stored refresh token
 			// and rotation persisted the NEW one.
 			f.mu.Lock()
@@ -428,7 +428,7 @@ func TestRefreshFailureCoolsAndKeepsOldToken(t *testing.T) {
 
 	var cooled atomic.Int64
 	mgr.Cooler = func(key string) {
-		if key ***REMOVED*** spec.Key {
+		if key == spec.Key {
 			cooled.Add(1)
 		}
 	}
@@ -436,10 +436,10 @@ func TestRefreshFailureCoolsAndKeepsOldToken(t *testing.T) {
 	defer mgr.Stop()
 
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && cooled.Load() ***REMOVED*** 0 {
+	for time.Now().Before(deadline) && cooled.Load() == 0 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if cooled.Load() ***REMOVED*** 0 {
+	if cooled.Load() == 0 {
 		t.Fatal("failed refresh never cooled the account")
 	}
 	// The stale token stays: better one wrong request than dropping the
@@ -647,7 +647,7 @@ func TestKiloDialectEndToEnd(t *testing.T) {
 	if tok.AccessToken != "kc-token-1" || tok.RefreshToken != "" {
 		t.Fatalf("kilo token wrong: %+v", tok)
 	}
-	if prompt.VerificationURL ***REMOVED*** "" || prompt.DeviceCode != "KILO-CODE-1" {
+	if prompt.VerificationURL == "" || prompt.DeviceCode != "KILO-CODE-1" {
 		t.Fatalf("kilo prompt wrong: %+v", prompt)
 	}
 	if starts.Load() != 1 || polls.Load() < 2 {
@@ -709,7 +709,7 @@ func TestLookupAndPollerSelection(t *testing.T) {
 	if _, ok := Lookup("nope"); ok {
 		t.Fatal("Lookup accepted unknown provider")
 	}
-	if p, ok := Lookup("xai"); !ok || p.ClientID ***REMOVED*** "" || p.DeviceCodeURL ***REMOVED*** "" || p.Scope ***REMOVED*** "" {
+	if p, ok := Lookup("xai"); !ok || p.ClientID == "" || p.DeviceCodeURL == "" || p.Scope == "" {
 		t.Fatalf("xai profile incomplete: %+v", p)
 	}
 	if fmt.Sprint(Providers()) != "[cline clinepass kilocode xai]" {

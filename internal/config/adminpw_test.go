@@ -48,7 +48,7 @@ func TestAdminPasswordGeneratedOnceThenReadBack(t *testing.T) {
 		t.Fatal("unconfigured first boot must report a generated password")
 	}
 	pw := first.Server.AdminPassword
-	if pw ***REMOVED*** "" || pw ***REMOVED*** "admin" {
+	if pw == "" || pw == "admin" {
 		t.Fatalf("generated password %q is the fallback", pw)
 	}
 	if !first.AdminPasswordGenerated() {
@@ -173,10 +173,10 @@ func TestAdminPasswordUnwritableDataDirStillGenerates(t *testing.T) {
 	if !gen {
 		t.Fatalf("read-only data dir skipped generation (err=%v)", perr)
 	}
-	if perr ***REMOVED*** nil {
+	if perr == nil {
 		t.Fatal("persist failure must be reported")
 	}
-	if cfg.Server.AdminPassword ***REMOVED*** "" || cfg.Server.AdminPassword ***REMOVED*** "admin" {
+	if cfg.Server.AdminPassword == "" || cfg.Server.AdminPassword == "admin" {
 		t.Fatalf("password fell back to the default: %q", cfg.Server.AdminPassword)
 	}
 	_ = os.Chmod(dir, 0o700)

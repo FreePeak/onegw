@@ -156,7 +156,7 @@ func Lookup(name string) (Provider, bool) {
 // PollerFor builds a Poller for p using the given HTTP client (nil =
 // default).
 func PollerFor(p Provider, hc *http.Client) Poller {
-	if hc ***REMOVED*** nil {
+	if hc == nil {
 		hc = http.DefaultClient
 	}
 	if p.ClineFlow {
@@ -202,7 +202,7 @@ func (r rfc8628) Start(ctx context.Context) (*DeviceStart, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("%s device start: %w", r.p.Name, err)
 	}
-	if raw.DeviceCode ***REMOVED*** "" || raw.VerificationURI ***REMOVED*** "" {
+	if raw.DeviceCode == "" || raw.VerificationURI == "" {
 		return nil, fmt.Errorf("%s device start: missing device_code/verification_uri", r.p.Name)
 	}
 	return &DeviceStart{
@@ -259,7 +259,7 @@ func (r rfc8628) Poll(ctx context.Context, deviceCode string) (*Token, error) {
 		// 4xx without a known error field: malformed or rejected — fatal.
 		return nil, fmt.Errorf("%s token poll HTTP %d: %s", r.p.Name, status, truncate(body))
 	}
-	if raw.AccessToken ***REMOVED*** "" {
+	if raw.AccessToken == "" {
 		return nil, fmt.Errorf("%s token poll: no access_token in response", r.p.Name)
 	}
 	tok := Token{AccessToken: raw.AccessToken, RefreshToken: raw.RefreshToken, Scope: raw.Scope}
@@ -323,7 +323,7 @@ type kiloStart struct {
 
 func (k kiloPoller) Start(ctx context.Context) (*DeviceStart, error) {
 	startURL := k.p.StartTokenURL
-	if startURL ***REMOVED*** "" {
+	if startURL == "" {
 		startURL = k.p.TokenURL
 	}
 	body, err := postFormJSON(ctx, k.hc, startURL, url.Values{})
@@ -334,7 +334,7 @@ func (k kiloPoller) Start(ctx context.Context) (*DeviceStart, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("kilo device start: %w", err)
 	}
-	if raw.Code ***REMOVED*** "" || raw.VerificationURL ***REMOVED*** "" {
+	if raw.Code == "" || raw.VerificationURL == "" {
 		return nil, fmt.Errorf("kilo device start: missing code/verificationUrl")
 	}
 	return &DeviceStart{
@@ -377,7 +377,7 @@ func (k kiloPoller) Poll(ctx context.Context, deviceCode string) (*Token, error)
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("%w: kilo poll: %v", ErrTransient, err)
 	}
-	if raw.Status != "approved" || raw.Token ***REMOVED*** "" {
+	if raw.Status != "approved" || raw.Token == "" {
 		return nil, ErrPending
 	}
 	return &Token{AccessToken: raw.Token}, nil

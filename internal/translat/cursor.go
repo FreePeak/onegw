@@ -153,7 +153,7 @@ func pbDecode(data []byte) ([]pbField, error) {
 // pbGet returns the first occurrence of a field number.
 func pbGet(fields []pbField, num int) (pbField, bool) {
 	for _, f := range fields {
-		if f.Num ***REMOVED*** num {
+		if f.Num == num {
 			return f, true
 		}
 	}
@@ -201,10 +201,10 @@ func wrapConnectFrame(payload []byte) []byte {
 // decompressConnectFrame inflates a compressed frame body (gzip, with a raw
 // deflate fallback for the TRAILER-variant frames Cursor occasionally emits).
 func decompressConnectFrame(payload []byte) ([]byte, error) {
-	if zr, err := gzip.NewReader(bytes.NewReader(payload)); err ***REMOVED*** nil {
+	if zr, err := gzip.NewReader(bytes.NewReader(payload)); err == nil {
 		raw, err := io.ReadAll(zr)
 		zr.Close()
-		if err ***REMOVED*** nil {
+		if err == nil {
 			return raw, nil
 		}
 	}
@@ -220,7 +220,7 @@ func readConnectFrames(r io.Reader, yield func(payload []byte) error) error {
 	var hdr [5]byte
 	for {
 		if _, err := io.ReadFull(r, hdr[:]); err != nil {
-			if err ***REMOVED*** io.EOF || err ***REMOVED*** io.ErrUnexpectedEOF {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil
 			}
 			return err
@@ -327,7 +327,7 @@ func hexUUID(s string) ([]byte, error) {
 		default:
 			continue
 		}
-		if j%2 ***REMOVED*** 0 {
+		if j%2 == 0 {
 			v[j/2] |= lo << 4
 		} else {
 			v[j/2] |= lo
@@ -363,7 +363,7 @@ func sha256Hex(s string) string {
 // pairs (the caller Set()s them). Machine id: explicit config value, else
 // the token-derived fallback. Ghost mode always on (privacy mode).
 func CursorHeaders(token, machineID string) []string {
-	if machineID ***REMOVED*** "" {
+	if machineID == "" {
 		machineID = CursorMachineIDFallback(token)
 	}
 	return []string{
@@ -443,7 +443,7 @@ func CursorAgentNeedsReply(payload []byte) bool {
 		return false
 	}
 	if f, ok := pbGet(fields, 2); ok { // exec_server_request
-		if ef, eerr := pbDecode(f.Value); eerr ***REMOVED*** nil {
+		if ef, eerr := pbDecode(f.Value); eerr == nil {
 			if _, isCtx := pbGet(ef, 10); isCtx {
 				return true
 			}
@@ -464,9 +464,9 @@ func CursorAgentEvents(payload []byte) []StreamEvent {
 	}
 	var out []StreamEvent
 	if f, ok := pbGet(fields, 1); ok { // interaction_update
-		if uf, uerr := pbDecode(f.Value); uerr ***REMOVED*** nil {
+		if uf, uerr := pbDecode(f.Value); uerr == nil {
 			if t, ok := pbGet(uf, 1); ok { // text message
-				if tf, terr := pbDecode(t.Value); terr ***REMOVED*** nil {
+				if tf, terr := pbDecode(t.Value); terr == nil {
 					if delta := pbFirst(tf, 1); delta != "" {
 						out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: delta})
 					}
@@ -478,7 +478,7 @@ func CursorAgentEvents(payload []byte) []StreamEvent {
 		}
 	}
 	if f, ok := pbGet(fields, 2); ok { // exec_server_request
-		if ef, eerr := pbDecode(f.Value); eerr ***REMOVED*** nil {
+		if ef, eerr := pbDecode(f.Value); eerr == nil {
 			if _, isCtx := pbGet(ef, 10); !isCtx {
 				out = append(out, StreamEvent{Kind: EvError, Err: &types.APIError{
 					Status:  502,
@@ -504,7 +504,7 @@ func readAgentUsage(b []byte) *types.Usage {
 	if v, ok := pbGet(f, 2); ok {
 		u.OutputTokens = int64(v.Num64)
 	}
-	if u.InputTokens ***REMOVED*** 0 && u.OutputTokens ***REMOVED*** 0 {
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
 		return nil
 	}
 	return u
@@ -522,7 +522,7 @@ func cursorUpstreamErr(err error) StreamEvent {
 // multi-turn context rides in the prompt, exactly like 9router's
 // buildAgentRunFrame history encoding flattens it.
 func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
-	if len(u.Messages) ***REMOVED*** 0 {
+	if len(u.Messages) == 0 {
 		return nil, fmt.Errorf("cursor: empty messages")
 	}
 	var sys, convo []string
@@ -539,10 +539,10 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 			}
 		case types.RoleTool:
 			name := m.Name
-			if name ***REMOVED*** "" {
+			if name == "" {
 				name = m.ToolCallID
 			}
-			if name ***REMOVED*** "" {
+			if name == "" {
 				name = "result"
 			}
 			convo = append(convo, "Tool "+name+": "+m.FlattenText())
@@ -553,7 +553,7 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 		}
 	}
 	userText := strings.Join(convo, "\n\n")
-	if userText ***REMOVED*** "" {
+	if userText == "" {
 		userText = "Continue."
 	}
 	if len(sys) > 0 {
@@ -610,7 +610,7 @@ func cursorThinkingLevel(effort string) uint64 {
 // roles map user→USER, everything else→ASSISTANT (9router encodeRequest
 // wire behavior, verified upstream-tolerant). Tool defs ride as MCP blobs.
 func EncodeCursorChatRequest(u *types.ChatRequest) ([]byte, error) {
-	if len(u.Messages) ***REMOVED*** 0 {
+	if len(u.Messages) == 0 {
 		return nil, fmt.Errorf("cursor: empty messages")
 	}
 	hasTools := len(u.Tools) > 0
@@ -712,7 +712,7 @@ func encodeMcpTool(name, desc, schema string) []byte {
 	if desc != "" {
 		t = pbString(t, 2, desc)
 	}
-	if schema ***REMOVED*** "" || schema ***REMOVED*** "null" {
+	if schema == "" || schema == "null" {
 		schema = `{"type":"object"}`
 	}
 	t = pbString(t, 3, schema)
@@ -745,22 +745,22 @@ func decodeToolCall(b []byte) (*cursorToolCall, error) {
 		tc.ID = strings.SplitN(string(v.Value), "\n", 2)[0]
 	}
 	if v, ok := pbGet(f, 27); ok { // MCPParams
-		if mp, merr := pbDecode(v.Value); merr ***REMOVED*** nil {
+		if mp, merr := pbDecode(v.Value); merr == nil {
 			if t, ok := pbGet(mp, 1); ok { // tools[0]
-				if tool, terr := pbDecode(t.Value); terr ***REMOVED*** nil {
+				if tool, terr := pbDecode(t.Value); terr == nil {
 					tc.Name = pbFirst(tool, 1)
 					tc.Args = pbFirst(tool, 3)
 				}
 			}
 		}
 	}
-	if tc.Name ***REMOVED*** "" {
+	if tc.Name == "" {
 		tc.Name = pbFirst(f, 9)
 	}
-	if tc.Args ***REMOVED*** "" {
+	if tc.Args == "" {
 		tc.Args = pbFirst(f, 10)
 	}
-	if tc.ID ***REMOVED*** "" || tc.Name ***REMOVED*** "" {
+	if tc.ID == "" || tc.Name == "" {
 		return nil, nil // incomplete fragment; skip
 	}
 	return tc, nil
@@ -789,7 +789,7 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 		}
 	}
 	if f, ok := pbGet(fields, 1); ok { // ClientSideToolV2Call
-		if tc, terr := decodeToolCall(f.Value); terr ***REMOVED*** nil && tc != nil {
+		if tc, terr := decodeToolCall(f.Value); terr == nil && tc != nil {
 			start()
 			if idx, seen := st.toolIdx[tc.ID]; seen {
 				if tc.Args != "" {
@@ -798,7 +798,7 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 			} else {
 				idx := st.next
 				st.next++
-				if st.toolIdx ***REMOVED*** nil {
+				if st.toolIdx == nil {
 					st.toolIdx = map[string]int{}
 				}
 				st.toolIdx[tc.ID] = idx
@@ -810,13 +810,13 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 		}
 	}
 	if f, ok := pbGet(fields, 2); ok { // StreamUnifiedChatResponse
-		if rf, rerr := pbDecode(f.Value); rerr ***REMOVED*** nil {
+		if rf, rerr := pbDecode(f.Value); rerr == nil {
 			if t, ok := pbGet(rf, 1); ok && len(t.Value) > 0 {
 				start()
 				out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: string(t.Value)})
 			}
 			if t, ok := pbGet(rf, 25); ok { // thinking {1: text}
-				if tf, terr := pbDecode(t.Value); terr ***REMOVED*** nil {
+				if tf, terr := pbDecode(t.Value); terr == nil {
 					if d, ok := pbGet(tf, 1); ok && len(d.Value) > 0 {
 						start()
 						out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: string(d.Value)})
@@ -836,7 +836,7 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 // (payload starting with '{'). resource_exhausted maps to 429; everything
 // else surfaces as 400 api_error (9router createErrorResponse semantics).
 func CursorJSONError(payload []byte) (*types.APIError, bool) {
-	if len(payload) ***REMOVED*** 0 || payload[0] != '{' {
+	if len(payload) == 0 || payload[0] != '{' {
 		return nil, false
 	}
 	var jerr struct {
@@ -868,10 +868,10 @@ func CursorJSONError(payload []byte) (*types.APIError, bool) {
 			break
 		}
 	}
-	if msg ***REMOVED*** "" {
+	if msg == "" {
 		return nil, false
 	}
-	if jerr.Error.Code ***REMOVED*** "resource_exhausted" {
+	if jerr.Error.Code == "resource_exhausted" {
 		return &types.APIError{Status: 429, Type: "rate_limit_error", Code: "rate_limited", Message: msg}, true
 	}
 	return &types.APIError{Status: 400, Type: "api_error", Message: msg}, true
@@ -881,13 +881,13 @@ func CursorJSONError(payload []byte) (*types.APIError, bool) {
 // JSON error shape {"error":{code,message,details}}) into an APIError.
 func DecodeCursorError(body []byte, status int) *types.APIError {
 	if ae, ok := CursorJSONError(body); ok {
-		if ae.Status ***REMOVED*** 400 && status >= 400 {
+		if ae.Status == 400 && status >= 400 {
 			ae.Status = status
 		}
 		return ae
 	}
 	msg := strings.TrimSpace(string(body))
-	if msg ***REMOVED*** "" {
+	if msg == "" {
 		msg = fmt.Sprintf("cursor upstream error (status %d)", status)
 	}
 	if len(msg) > 512 {
@@ -926,7 +926,7 @@ func cursorSSE(sb *strings.Builder, id string, created int64, model string, delt
 	if usage != nil {
 		c["usage"] = usage
 	}
-	if raw, err := json.Marshal(c); err ***REMOVED*** nil {
+	if raw, err := json.Marshal(c); err == nil {
 		sb.WriteString("data: ")
 		sb.Write(raw)
 		sb.WriteString("\n\n")

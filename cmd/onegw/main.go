@@ -42,7 +42,7 @@ func main() {
 			usage(os.Stdout)
 			os.Exit(0)
 		default:
-			if classifyArg(arg) ***REMOVED*** argUnknown {
+			if classifyArg(arg) == argUnknown {
 				// An unknown bare word used to fall through to runGateway: a
 				// typo — or the `onegw oauth login …` form before this
 				// subcommand existed — started a SECOND gateway process, which
@@ -104,7 +104,7 @@ func runGateway() {
 	flag.Parse()
 
 	path := *cfgPath
-	if path ***REMOVED*** "" {
+	if path == "" {
 		if v := os.Getenv("ONEGW_CONFIG"); v != "" {
 			path = v
 		} else {
@@ -114,7 +114,7 @@ func runGateway() {
 
 	cfg, err := config.Load(path)
 	if err != nil {
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) && *cfgPath ***REMOVED*** "" && os.Getenv("ONEGW_CONFIG") ***REMOVED*** "" {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) && *cfgPath == "" && os.Getenv("ONEGW_CONFIG") == "" {
 			// No config file given and none present: run with defaults
 			// (still serves /admin; providers come from env or later edits).
 			cfg = &config.Config{}
@@ -134,8 +134,8 @@ func runGateway() {
 		// child repeats this function's own "no config present -> defaults"
 		// resolution instead of failing on a path that vanished.
 		forward := ""
-		if st, serr := os.Stat(path); serr ***REMOVED*** nil && st.Mode().IsRegular() {
-			if abs, aerr := filepath.Abs(path); aerr ***REMOVED*** nil {
+		if st, serr := os.Stat(path); serr == nil && st.Mode().IsRegular() {
+			if abs, aerr := filepath.Abs(path); aerr == nil {
 				forward = abs
 			}
 		}
@@ -280,16 +280,16 @@ func logAdminPassword(cfg *config.Config) {
 // for the whole upstream round-trip. The default 48 MiB budget keeps the
 // historic 90 MiB ceiling (100 MB RSS envelope).
 func applyMemoryTuning(cfg *config.Config) {
-	if os.Getenv("GOMEMLIMIT") ***REMOVED*** "" {
+	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(heapLimitBytes(cfg.Server.BufferCap))
 	}
-	if os.Getenv("GOGC") ***REMOVED*** "" {
+	if os.Getenv("GOGC") == "" {
 		// Slightly more aggressive GC than the default 100 keeps the heap
 		// tight; throughput impact is negligible for a proxy workload.
 		debug.SetGCPercent(60)
 	}
 	// Cap OS threads to avoid thread explosion under many concurrent streams.
-	if os.Getenv("GOMAXPROCS") ***REMOVED*** "" {
+	if os.Getenv("GOMAXPROCS") == "" {
 		if n := runtime.NumCPU(); n > 4 {
 			runtime.GOMAXPROCS(4)
 		}

@@ -49,7 +49,7 @@ func TestResolveDirectAndCombo(t *testing.T) {
 	if res.Targets[1].Model != "claude-y" {
 		t.Fatalf("combo order wrong: %+v", res.Targets)
 	}
-	if _, err = r.Resolve("nope/zzz"); err ***REMOVED*** nil || err.Status != 404 {
+	if _, err = r.Resolve("nope/zzz"); err == nil || err.Status != 404 {
 		t.Fatalf("unknown provider should 404: %v", err)
 	}
 }
@@ -69,7 +69,7 @@ func TestExecuteFallbackOnQuota(t *testing.T) {
 	var servedModel string
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, &types.APIError{Status: 429, Type: "rate_limit_error", Message: "quota"}
 		}
 		servedModel = model
@@ -103,7 +103,7 @@ func TestExecuteBudgetTimeoutSkipsSameTargetRetry(t *testing.T) {
 	calls := map[string]int{}
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls[def.Name]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, &types.APIError{
 				Status: 504, Type: "upstream_timeout",
 				Message:           `Post "https://x/v1/chat/completions": net/http: timeout awaiting response headers`,
@@ -126,7 +126,7 @@ func TestExecuteBudgetTimeoutSkipsSameTargetRetry(t *testing.T) {
 		p1++
 		return nil, &types.APIError{Status: 504, Type: "upstream_timeout", Message: "budget", NoSameTargetRetry: true}
 	}
-	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got ***REMOVED*** nil || got.Status != 504 || got.Type != "upstream_timeout" {
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got == nil || got.Status != 504 || got.Type != "upstream_timeout" {
 		t.Fatalf("direct route must surface the budget-exhausted 504: %v", got)
 	}
 	if p1 != 1 {
@@ -145,7 +145,7 @@ func TestExecutePlainTimeoutStillRetries(t *testing.T) {
 		calls++
 		return nil, &types.APIError{Status: 504, Type: "upstream_timeout", Message: "gateway timeout"}
 	}
-	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got ***REMOVED*** nil || got.Status != 504 {
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got == nil || got.Status != 504 {
 		t.Fatalf("expected the 504 to surface: %v", got)
 	}
 	if calls != 2 { // MaxAttempts
@@ -169,7 +169,7 @@ func TestExecuteNoRetryOnBadRequest(t *testing.T) {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: "bad"}
 	}
 	err := r.Execute(context.Background(), res, caller, func(a any) {})
-	if err ***REMOVED*** nil || err.Status != 400 {
+	if err == nil || err.Status != 400 {
 		t.Fatalf("expected 400 passthrough: %v", err)
 	}
 	if calls != 1 {
@@ -186,7 +186,7 @@ func TestExecuteRetriesRegionLocked(t *testing.T) {
 	calls := 0
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls++
-		if calls ***REMOVED*** 1 {
+		if calls == 1 {
 			return nil, &types.APIError{Status: 403, Type: "RegionError", Message: "region"}
 		}
 		return "ok", nil
@@ -206,7 +206,7 @@ func TestExecuteErrorWhenAllFail(t *testing.T) {
 		return nil, &types.APIError{Status: 503, Type: "api_error", Message: "down"}
 	}
 	err := r.Execute(context.Background(), res, caller, func(a any) {})
-	if err ***REMOVED*** nil || err.Status != 503 {
+	if err == nil || err.Status != 503 {
 		t.Fatalf("expected last error: %v", err)
 	}
 	_ = errors.New
@@ -219,18 +219,18 @@ func TestExecuteFallbackableRetriesThenFallsThrough(t *testing.T) {
 		Targets: []Target{{Provider: "p1", Model: "m"}, {Provider: "p2", Model: "m"}},
 	}})
 	res, _ := r.Resolve("stack")
-	if res ***REMOVED*** nil {
+	if res == nil {
 		t.Fatal("resolve stack failed")
 	}
 	var calls [2]int
 	var served string
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		i := 0
-		if def.Name ***REMOVED*** "p2" {
+		if def.Name == "p2" {
 			i = 1
 		}
 		calls[i]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, &types.APIError{Status: 400, Type: "invalid_request_error", Fallbackable: true,
 				Message: "该模型始终思考，不支持关闭思考"}
 		}
@@ -263,7 +263,7 @@ func TestExecuteFallsThroughOnReasoningEcho400(t *testing.T) {
 		Targets: []Target{{Provider: "p1", Model: "deepseek/deepseek-v4-flash"}, {Provider: "p2", Model: "deepseek-v4-flash"}},
 	}})
 	res, _ := r.Resolve("free")
-	if res ***REMOVED*** nil {
+	if res == nil {
 		t.Fatal("resolve free failed")
 	}
 	echo := &types.APIError{Status: 400, Type: "AI_APICallError",
@@ -271,11 +271,11 @@ func TestExecuteFallsThroughOnReasoningEcho400(t *testing.T) {
 	var calls [2]int
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		i := 0
-		if def.Name ***REMOVED*** "p2" {
+		if def.Name == "p2" {
 			i = 1
 		}
 		calls[i]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, echo
 		}
 		return "ok", nil
@@ -294,7 +294,7 @@ func TestExecuteFallsThroughOnReasoningEcho400(t *testing.T) {
 	err := r2.Execute(context.Background(), res2, func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		return nil, echo
 	}, func(a any) {})
-	if err ***REMOVED*** nil || err.Status != 400 || err != echo {
+	if err == nil || err.Status != 400 || err != echo {
 		t.Fatalf("direct route must surface the 400 honestly, got %v", err)
 	}
 }
@@ -339,10 +339,10 @@ func TestExecuteFallsThroughOnCoolingPool(t *testing.T) {
 	// Single-target route: the cooling pool becomes 429 + Retry-After.
 	res1, _ := r.Resolve("p1/m1")
 	err := r.Execute(context.Background(), res1, caller, func(a any) {})
-	if err ***REMOVED*** nil || err.Status != 429 || err.Type != "provider_rate_limited" {
+	if err == nil || err.Status != 429 || err.Type != "provider_rate_limited" {
 		t.Fatalf("cooling pool: got %v, want 429 provider_rate_limited", err)
 	}
-	if err.RetryAfter ***REMOVED*** "" {
+	if err.RetryAfter == "" {
 		t.Fatal("Retry-After missing on cooling-pool 429")
 	}
 }
@@ -377,7 +377,7 @@ func TestExecuteGated403RotatesWholePool(t *testing.T) {
 		// Mirror Do's gated-403 handling: bench the account, then report
 		// the Fallbackable 403 (Execute must not see a benched-less 403).
 		// k1/k2 are the gated keys; k3/k9 serve.
-		if acct.APIKey ***REMOVED*** "k1" || acct.APIKey ***REMOVED*** "k2" {
+		if acct.APIKey == "k1" || acct.APIKey == "k2" {
 			def.Gated(acct)
 			return nil, &types.APIError{Status: 403, Type: "upstream_error", Fallbackable: true,
 				Message: "Access restricted. Deposit required to unlock premium models."}
@@ -401,8 +401,8 @@ func TestExecuteGated403RotatesWholePool(t *testing.T) {
 	r.SetModels([]string{"p3/m"})
 	res3, _ := r.Resolve("p3/m")
 	calls = 0
-	if err := r.Execute(context.Background(), res3, caller, func(a any) {}); err ***REMOVED*** nil ||
-		err.Status != 429 || err.Type != "provider_rate_limited" || err.RetryAfter ***REMOVED*** "" {
+	if err := r.Execute(context.Background(), res3, caller, func(a any) {}); err == nil ||
+		err.Status != 429 || err.Type != "provider_rate_limited" || err.RetryAfter == "" {
 		t.Fatalf("fully-gated pool: got %v, want 429 provider_rate_limited with Retry-After", err)
 	}
 	if calls != 2 {
@@ -417,7 +417,7 @@ func TestExecuteGated403RotatesWholePool(t *testing.T) {
 // instead of a 404 that would claim the route never existed.
 func TestExecuteSkipsDisabledProvider(t *testing.T) {
 	pool := newTestPool()
-	if d, ok := pool.Get("p1"); !ok || d ***REMOVED*** nil {
+	if d, ok := pool.Get("p1"); !ok || d == nil {
 		t.Fatal("p1 missing from test pool")
 	} else {
 		d.Disabled = true
@@ -450,7 +450,7 @@ func TestExecuteSkipsDisabledProvider(t *testing.T) {
 		t.Fatalf("disabled provider must still resolve (Execute gates, not Resolve): %v", err)
 	}
 	got := r.Execute(context.Background(), res1, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 503 || got.Type != "provider_disabled" {
+	if got == nil || got.Status != 503 || got.Type != "provider_disabled" {
 		t.Fatalf("direct disabled route: got %v, want 503 provider_disabled", got)
 	}
 	if calls != 1 {
@@ -463,7 +463,7 @@ func TestExecuteSkipsDisabledProvider(t *testing.T) {
 // not to the provider that can no longer serve.
 func TestResolveBareModelSkipsDisabled(t *testing.T) {
 	pool := newTestPool()
-	if d, ok := pool.Get("p1"); !ok || d ***REMOVED*** nil {
+	if d, ok := pool.Get("p1"); !ok || d == nil {
 		t.Fatal("p1 missing from test pool")
 	} else {
 		d.Disabled = true
@@ -496,7 +496,7 @@ func TestExecuteSkipsModelBenchedTarget(t *testing.T) {
 		atomic.AddInt32(&p1Hits, 1)
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(string(raw), `"model":"blocked"`) &&
-			r.Header.Get("Authorization") ***REMOVED*** "Bearer k1" {
+			r.Header.Get("Authorization") == "Bearer k1" {
 			w.WriteHeader(403)
 			_, _ = w.Write([]byte(`{"error":{"code":"1211","message":"Model access denied for model blocked.","type":"model_access_denied"}}`))
 			return
@@ -558,10 +558,10 @@ func TestExecuteSkipsModelBenchedTarget(t *testing.T) {
 	// still zero additional upstream calls.
 	resB, _ := r.Resolve("p1/blocked")
 	got := r.Execute(ctx, resB, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 503 || got.Type != "provider_model_benched" {
+	if got == nil || got.Status != 503 || got.Type != "provider_model_benched" {
 		t.Fatalf("direct benched route: got %v, want 503 provider_model_benched", got)
 	}
-	if got.RetryAfter ***REMOVED*** "" {
+	if got.RetryAfter == "" {
 		t.Fatal("Retry-After missing on provider_model_benched")
 	}
 	if hits := atomic.LoadInt32(&p1Hits); hits != 3 {
@@ -589,7 +589,7 @@ func TestExecuteStopsAfterStreamCommit(t *testing.T) {
 		return nil, &types.APIError{Status: 502, Type: "upstream_stream_interrupted", Message: "boom", StreamCommitted: true}
 	}
 	err := r.Execute(context.Background(), res, caller, func(a any) {})
-	if err ***REMOVED*** nil || err.Status != 502 {
+	if err == nil || err.Status != 502 {
 		t.Fatalf("expected 502 passthrough: %v", err)
 	}
 	if calls != 1 {

@@ -52,7 +52,7 @@ func (i *idleBreakReader) kill() {
 
 func (i *idleBreakReader) touch() {
 	i.mu.Lock()
-	if i.timer ***REMOVED*** nil {
+	if i.timer == nil {
 		i.timer = time.AfterFunc(upstreamBodyIdleLimit, i.kill)
 	} else {
 		i.timer.Reset(upstreamBodyIdleLimit)

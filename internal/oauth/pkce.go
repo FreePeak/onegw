@@ -109,7 +109,7 @@ func NewPKCE(p Provider, redirectURI string) (PKCESession, error) {
 		// OIDC replay binding. The id_token is not validated here (the bearer
 		// token is what onegw uses), so the nonce is sent and forgotten — the
 		// CLI sends one and xAI's authorize page expects the parameter.
-		if n, err := randomHex(16); err ***REMOVED*** nil {
+		if n, err := randomHex(16); err == nil {
 			q.Set("nonce", n)
 		}
 	}
@@ -123,7 +123,7 @@ func NewPKCE(p Provider, redirectURI string) (PKCESession, error) {
 // ExchangeCode trades the callback's `code` for a token. The caller already
 // matched `state` to this session, so it is not re-checked here.
 func (p Provider) ExchangeCode(ctx context.Context, hc *http.Client, code, redirectURI, verifier string) (*Token, error) {
-	if hc ***REMOVED*** nil {
+	if hc == nil {
 		hc = http.DefaultClient
 	}
 	if p.ClineFlow {
@@ -155,7 +155,7 @@ func (p Provider) ExchangeCode(ctx context.Context, hc *http.Client, code, redir
 	if status >= 400 {
 		return nil, fmt.Errorf("%s code exchange: HTTP %d: %s", p.Name, status, truncate(body))
 	}
-	if raw.AccessToken ***REMOVED*** "" {
+	if raw.AccessToken == "" {
 		return nil, fmt.Errorf("%s code exchange: no access_token in response", p.Name)
 	}
 	return &Token{

@@ -81,7 +81,7 @@ func TestNewKindEndpointJoining(t *testing.T) {
 
 func TestNewRequestUUIDShape(t *testing.T) {
 	a, b := newRequestUUID(), newRequestUUID()
-	if a ***REMOVED*** b {
+	if a == b {
 		t.Fatalf("uuids not unique: %s", a)
 	}
 	if len(a) != 36 || a[14] != '4' {

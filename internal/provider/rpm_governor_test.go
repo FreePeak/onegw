@@ -26,7 +26,7 @@ func TestRPMGovernorRotatesBeforeUpstreamLimit(t *testing.T) {
 	seen := map[string]int{}
 	for range 4 {
 		a, ready := p.next("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatalf("pick %d: pool empty, ready=%v", len(seen), ready)
 		}
 		seen[a.Name]++
@@ -44,7 +44,7 @@ func TestRPMGovernorRotatesBeforeUpstreamLimit(t *testing.T) {
 func TestRPMRefillReEnables(t *testing.T) {
 	p, cur := mkGovPool(t, []Account{{Name: "a", APIKey: "ka", RPM: 6}})
 	for range 2 { // burst
-		if a, _ := p.next(""); a ***REMOVED*** nil {
+		if a, _ := p.next(""); a == nil {
 			t.Fatal("burst pick blocked")
 		}
 	}
@@ -53,7 +53,7 @@ func TestRPMRefillReEnables(t *testing.T) {
 		t.Fatalf("ready = %v, want ~10s out", ready)
 	}
 	*cur = ready // advance to refill instant
-	if a, _ := p.next(""); a ***REMOVED*** nil {
+	if a, _ := p.next(""); a == nil {
 		t.Fatal("pick after refill blocked")
 	}
 }
@@ -91,10 +91,10 @@ func TestRPMWeightedSlotsShareBucket(t *testing.T) {
 	gov := 0
 	for range 6 {
 		a, _ := p.next("")
-		if a ***REMOVED*** nil {
+		if a == nil {
 			t.Fatal("pool empty")
 		}
-		if a.Name ***REMOVED*** "w" {
+		if a.Name == "w" {
 			gov++
 		}
 	}
@@ -107,7 +107,7 @@ func TestRPMWeightedSlotsShareBucket(t *testing.T) {
 func TestRPMZeroUncapped(t *testing.T) {
 	p, _ := mkGovPool(t, []Account{{Name: "a", APIKey: "ka"}})
 	for range 50 {
-		if a, _ := p.next(""); a ***REMOVED*** nil {
+		if a, _ := p.next(""); a == nil {
 			t.Fatal("uncapped account drained")
 		}
 	}

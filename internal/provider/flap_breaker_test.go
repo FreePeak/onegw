@@ -40,7 +40,7 @@ func doErr(t *testing.T, def *Def) *types.APIError {
 	t.Helper()
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.3-flash", nil,
 		bytes.NewReader([]byte(`{"model":"glm-5.3-flash","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("Do: want error")
 	}
 	return apiErr
@@ -81,7 +81,7 @@ func TestFlapBreakerOpensAfterConsecutiveEdgeFaults(t *testing.T) {
 	for range flapThreshold - 1 {
 		doErr(t, def)
 	}
-	if acct, _ := def.NextAccount(""); acct ***REMOVED*** nil {
+	if acct, _ := def.NextAccount(""); acct == nil {
 		t.Fatal("below threshold the pool must still serve")
 	}
 	doErr(t, def) // 4th consecutive fault trips
@@ -128,7 +128,7 @@ func TestFlapBreakerResetsOnSuccess(t *testing.T) {
 	// A single fresh fault now sits at 1 of 4 — no trip.
 	def.BaseURL = srv.URL
 	doErr(t, def)
-	if acct, _ := def.NextAccount(""); acct ***REMOVED*** nil {
+	if acct, _ := def.NextAccount(""); acct == nil {
 		t.Fatal("one fault after healing must not trip the breaker")
 	}
 }
@@ -148,7 +148,7 @@ func TestFlapBreakerHalfOpenThenReopens(t *testing.T) {
 	}
 	cur = cur.Add(flapOpen + time.Second) // window expired
 	acct, _ := def.NextAccount("")
-	if acct ***REMOVED*** nil {
+	if acct == nil {
 		t.Fatal("expired window must probe again")
 	}
 	doErr(t, def) // probe fails: 5th consecutive strike re-opens

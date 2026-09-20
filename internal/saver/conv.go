@@ -40,7 +40,7 @@ func (c *convEntry) known(fp uint64) bool {
 }
 
 func (c *convEntry) record(fp uint64) {
-	if c.fps ***REMOVED*** nil {
+	if c.fps == nil {
 		c.fps = make(map[uint64]struct{}, 8)
 	}
 	if _, ok := c.fps[fp]; ok {
@@ -55,7 +55,7 @@ func (c *convEntry) record(fp uint64) {
 // convGet returns the conversation entry for key, or nil when the
 // conversation has never been sent canonical.
 func (s *Saver) convGet(key uint64) *convEntry {
-	if key ***REMOVED*** 0 {
+	if key == 0 {
 		return nil
 	}
 	s.convMu.Lock()
@@ -66,19 +66,19 @@ func (s *Saver) convGet(key uint64) *convEntry {
 // convRecord marks the conversation as canonical-sent and remembers the
 // fingerprints of blocks compressed this pass.
 func (s *Saver) convRecord(key uint64, seen []uint64) {
-	if key ***REMOVED*** 0 {
+	if key == 0 {
 		return
 	}
 	s.convMu.Lock()
 	defer s.convMu.Unlock()
-	if s.convs ***REMOVED*** nil {
+	if s.convs == nil {
 		s.convs = make(map[uint64]*convEntry)
 	}
 	if _, ok := s.convs[key]; !ok && len(s.convs) >= convCap {
 		s.convs = make(map[uint64]*convEntry) // bounded: reset on overflow
 	}
 	ce := s.convs[key]
-	if ce ***REMOVED*** nil {
+	if ce == nil {
 		ce = &convEntry{}
 		s.convs[key] = ce
 	}
@@ -138,7 +138,7 @@ func conversationKey(format translat.Format, root map[string]any) uint64 {
 
 func firstMap(v any) map[string]any {
 	arr, ok := v.([]any)
-	if !ok || len(arr) ***REMOVED*** 0 {
+	if !ok || len(arr) == 0 {
 		return nil
 	}
 	m, _ := arr[0].(map[string]any)
@@ -149,7 +149,7 @@ func firstMap(v any) map[string]any {
 // literals verbatim, map keys sorted). Reports success; a nil or
 // unmarshalable value leaves the fingerprint unidentified.
 func hashJSONValue(h io.Writer, v any) bool {
-	if v ***REMOVED*** nil {
+	if v == nil {
 		return false
 	}
 	b, err := json.Marshal(v)
@@ -157,5 +157,5 @@ func hashJSONValue(h io.Writer, v any) bool {
 		return false
 	}
 	_, err = h.Write(b)
-	return err ***REMOVED*** nil
+	return err == nil
 }

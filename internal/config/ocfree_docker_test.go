@@ -24,7 +24,7 @@ func TestDockerDefaultPreconfigured(t *testing.T) {
 	if cfg.Providers[0].Kind != "opencode-free" {
 		t.Fatalf("kind: want opencode-free, got %q", cfg.Providers[0].Kind)
 	}
-	if len(cfg.Providers[0].Models) ***REMOVED*** 0 {
+	if len(cfg.Providers[0].Models) == 0 {
 		t.Fatal("opencode-free provider has no models")
 	}
 	if len(cfg.Combos) != 1 || cfg.Combos[0].Name != "free" {
@@ -55,10 +55,10 @@ func dockerTomlPath(t *testing.T) string {
 	}
 	for {
 		candidate := filepath.Join(wd, "docker", "onegw.default.toml")
-		if _, err := os.Stat(candidate); err ***REMOVED*** nil {
+		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
-		if wd ***REMOVED*** filepath.Dir(wd) {
+		if wd == filepath.Dir(wd) {
 			break
 		}
 		wd = filepath.Dir(wd)

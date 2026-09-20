@@ -215,7 +215,7 @@ func DecodeOpenAIRequest(body []byte) (*types.ChatRequest, error) {
 		var stops []string
 		if s := string(req.Stop); strings.HasPrefix(s, `"`) {
 			var one string
-			if err := json.Unmarshal(req.Stop, &one); err ***REMOVED*** nil {
+			if err := json.Unmarshal(req.Stop, &one); err == nil {
 				stops = []string{one}
 			}
 		} else if err := json.Unmarshal(req.Stop, &stops); err != nil {
@@ -290,12 +290,12 @@ func DecodeOpenAIRequest(body []byte) (*types.ChatRequest, error) {
 }
 
 func decodeOAUserContent(raw json.RawMessage) []types.Part {
-	if len(raw) ***REMOVED*** 0 || string(raw) ***REMOVED*** "null" {
+	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err ***REMOVED*** nil {
-		if s ***REMOVED*** "" {
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if s == "" {
 			return nil
 		}
 		return []types.Part{{Type: types.PartText, Text: s}}
@@ -311,10 +311,10 @@ func decodeOAUserContent(raw json.RawMessage) []types.Part {
 			parts = append(parts, types.Part{
 				Type:            types.PartText,
 				Text:            c.Text,
-				CacheBreakpoint: c.CacheControl != nil && c.CacheControl.Type ***REMOVED*** "ephemeral",
+				CacheBreakpoint: c.CacheControl != nil && c.CacheControl.Type == "ephemeral",
 			})
 		case "image_url":
-			if c.ImageURL ***REMOVED*** nil {
+			if c.ImageURL == nil {
 				continue
 			}
 			p := types.Part{Type: types.PartImage, URL: c.ImageURL.URL}
@@ -331,11 +331,11 @@ func decodeOAUserContent(raw json.RawMessage) []types.Part {
 
 // flattenOAContent renders string-or-parts OpenAI content as plain text.
 func flattenOAContent(raw json.RawMessage) string {
-	if len(raw) ***REMOVED*** 0 || string(raw) ***REMOVED*** "null" {
+	if len(raw) == 0 || string(raw) == "null" {
 		return ""
 	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err ***REMOVED*** nil {
+	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
 	var arr []oaContentText
@@ -344,7 +344,7 @@ func flattenOAContent(raw json.RawMessage) string {
 	}
 	var b strings.Builder
 	for _, c := range arr {
-		if c.Type ***REMOVED*** "text" && c.Text != "" {
+		if c.Type == "text" && c.Text != "" {
 			if b.Len() > 0 {
 				b.WriteByte('\n')
 			}
@@ -385,10 +385,10 @@ func reasoningEcho(m oaMessage) string {
 		var sb strings.Builder
 		for _, d := range details {
 			t := d.Text
-			if t ***REMOVED*** "" {
+			if t == "" {
 				t = d.Content
 			}
-			if t ***REMOVED*** "" && d.Type ***REMOVED*** "reasoning.summary" {
+			if t == "" && d.Type == "reasoning.summary" {
 				t = d.Summary
 			}
 			if t != "" {
@@ -428,7 +428,7 @@ func dataURL(p types.Part) string {
 // normalizeArgs ensures tool arguments are a JSON object (OpenAI sends a
 // string; Anthropic sends an object).
 func normalizeArgs(raw json.RawMessage) json.RawMessage {
-	if len(raw) ***REMOVED*** 0 {
+	if len(raw) == 0 {
 		return json.RawMessage("{}")
 	}
 	trimmed := strings.TrimSpace(string(raw))
@@ -440,7 +440,7 @@ func normalizeArgs(raw json.RawMessage) json.RawMessage {
 		return json.RawMessage("{}")
 	}
 	s = strings.TrimSpace(s)
-	if s ***REMOVED*** "" || s ***REMOVED*** "null" {
+	if s == "" || s == "null" {
 		return json.RawMessage("{}")
 	}
 	if !strings.HasPrefix(s, "{") {
@@ -450,14 +450,14 @@ func normalizeArgs(raw json.RawMessage) json.RawMessage {
 }
 
 func argsString(raw json.RawMessage) string {
-	if len(raw) ***REMOVED*** 0 {
+	if len(raw) == 0 {
 		return "{}"
 	}
 	return string(raw)
 }
 
 func setMeta(u *types.ChatRequest, k, v string) {
-	if u.Metadata ***REMOVED*** nil {
+	if u.Metadata == nil {
 		u.Metadata = map[string]string{}
 	}
 	u.Metadata[k] = v
@@ -522,7 +522,7 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 			}
 		}
 	}
-	if len(u.StopSequences) ***REMOVED*** 1 {
+	if len(u.StopSequences) == 1 {
 		req.Stop, _ = json.Marshal(u.StopSequences[0])
 	} else if len(u.StopSequences) > 1 {
 		req.Stop, _ = json.Marshal(u.StopSequences)
@@ -559,7 +559,7 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 			var toolResults []types.Part
 			var plain []types.Part
 			for _, p := range m.Content {
-				if p.Type ***REMOVED*** types.PartToolResult {
+				if p.Type == types.PartToolResult {
 					toolResults = append(toolResults, p)
 				} else {
 					plain = append(plain, p)
@@ -581,7 +581,7 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 				}
 				req.Messages = append(req.Messages, oc)
 			}
-			if len(plain) ***REMOVED*** 0 && len(toolResults) ***REMOVED*** 0 {
+			if len(plain) == 0 && len(toolResults) == 0 {
 				req.Messages = append(req.Messages, oaMessage{Role: "user", Name: m.Name, Content: mustJSON("")})
 			}
 		case types.RoleAssistant:
@@ -611,7 +611,7 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 			if reasoning != "" {
 				om.ReasoningContent = reasoning
 			}
-			if len(texts) ***REMOVED*** 1 {
+			if len(texts) == 1 {
 				om.Content = mustJSON(texts[0])
 			} else if len(texts) > 1 {
 				om.Content = mustJSON(strings.Join(texts, "\n"))
@@ -627,7 +627,7 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 			td.Function.Parameters = t.Schema
 			req.Tools = append(req.Tools, td)
 		}
-		if req.ToolChoice ***REMOVED*** nil {
+		if req.ToolChoice == nil {
 			req.ToolChoice = "auto"
 		}
 	}
@@ -640,10 +640,10 @@ func EncodeOpenAIRequest(u *types.ChatRequest) ([]byte, error) {
 }
 
 func encodeOAUserContent(parts []types.Part) json.RawMessage {
-	if len(parts) ***REMOVED*** 0 {
+	if len(parts) == 0 {
 		return nil
 	}
-	if len(parts) ***REMOVED*** 1 && parts[0].Type ***REMOVED*** types.PartText && !parts[0].CacheBreakpoint {
+	if len(parts) == 1 && parts[0].Type == types.PartText && !parts[0].CacheBreakpoint {
 		return mustJSON(parts[0].Text)
 	}
 	arr := make([]oaContentText, 0, len(parts))
@@ -663,7 +663,7 @@ func encodeOAUserContent(parts []types.Part) json.RawMessage {
 				URL    string `json:"url"`
 				Detail string `json:"detail,omitempty"`
 			}{URL: p.URL}
-			if p.URL ***REMOVED*** "" && len(p.Data) > 0 {
+			if p.URL == "" && len(p.Data) > 0 {
 				c.ImageURL.URL = dataURL(p)
 			}
 			arr = append(arr, c)
@@ -671,7 +671,7 @@ func encodeOAUserContent(parts []types.Part) json.RawMessage {
 			texts = false
 		}
 	}
-	if !texts && len(arr) ***REMOVED*** 0 {
+	if !texts && len(arr) == 0 {
 		return nil
 	}
 	return mustJSON(arr)
@@ -679,7 +679,7 @@ func encodeOAUserContent(parts []types.Part) json.RawMessage {
 
 func isToolResultMsg(m *types.Message) bool {
 	for _, p := range m.Content {
-		if p.Type ***REMOVED*** types.PartToolResult {
+		if p.Type == types.PartToolResult {
 			return true
 		}
 	}
@@ -705,7 +705,7 @@ func mustJSON(v any) json.RawMessage {
 }
 
 func orDefault(s, def string) string {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return def
 	}
 	return s
@@ -749,10 +749,10 @@ type oaError struct {
 // field doc above). Falls back to Message alone when an upstream nests
 // nothing, so every other vendor's decoding is unchanged.
 func (e oaError) detail() string {
-	if e.Metadata.Raw ***REMOVED*** "" {
+	if e.Metadata.Raw == "" {
 		return e.Message
 	}
-	if e.Metadata.LimitSource ***REMOVED*** "" {
+	if e.Metadata.LimitSource == "" {
 		return e.Message + " (" + e.Metadata.Raw + ")"
 	}
 	return e.Message + " (" + e.Metadata.Raw + "; limit_source " + e.Metadata.LimitSource + ")"
@@ -847,10 +847,10 @@ func oaUsageToUnified(u *oaUsage) types.Usage {
 	}
 	// DeepSeek shape: prompt_tokens = hit + miss; the hit is the cached
 	// subset (unified InputTokens is already inclusive upstream).
-	if out.CacheReadTokens ***REMOVED*** 0 && u.PromptCacheHitTokens > 0 {
+	if out.CacheReadTokens == 0 && u.PromptCacheHitTokens > 0 {
 		out.CacheReadTokens = u.PromptCacheHitTokens
 	}
-	if out.CacheReadTokens ***REMOVED*** 0 {
+	if out.CacheReadTokens == 0 {
 		out.CacheReadTokens = u.CachedTokens // Kimi top level
 	}
 	if u.CompletionTokensDetails != nil {
@@ -926,7 +926,7 @@ func DecodeOpenAIError(body []byte, status int) *types.APIError {
 	var e struct {
 		Error oaError `json:"error"`
 	}
-	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message ***REMOVED*** "" {
+	if err := json.Unmarshal(body, &e); err != nil || e.Error.Message == "" {
 		return &types.APIError{Status: status, Type: "upstream_error", Message: strings.TrimSpace(string(body))}
 	}
 	return &types.APIError{Status: status, Type: orDefault(e.Error.Type, "upstream_error"), Code: errCodeString(e.Error.Code), Message: e.Error.detail()}
@@ -935,7 +935,7 @@ func DecodeOpenAIError(body []byte, status int) *types.APIError {
 // EncodeError renders a unified error in the wire format expected by the
 // client surface.
 func EncodeError(f Format, e *types.APIError) []byte {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		e = &types.APIError{Status: 500, Type: "internal", Message: "unknown error"}
 	}
 	switch f {

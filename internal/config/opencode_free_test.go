@@ -12,11 +12,11 @@ func TestValidateOpenCodeFreeKeyless(t *testing.T) {
 	}
 	// ...while the paid kind still demands a credential.
 	paid := &Config{Providers: []ProviderCfg{{Name: "opencode", Kind: "opencode"}}}
-	if err := paid.Validate(); err ***REMOVED*** nil {
+	if err := paid.Validate(); err == nil {
 		t.Fatal("credential-less opencode (Go) must still be rejected")
 	}
 	bad := &Config{Providers: []ProviderCfg{{Name: "x", Kind: "opencode-freee"}}}
-	if err := bad.Validate(); err ***REMOVED*** nil {
+	if err := bad.Validate(); err == nil {
 		t.Fatal("unknown kind must be rejected")
 	}
 }

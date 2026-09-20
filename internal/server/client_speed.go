@@ -82,7 +82,7 @@ type deliveredTracker struct {
 // observe folds one completed request into the model's sample. out is the
 // winning attempt's output tokens; wall is handler-entry → relay end.
 func (t *deliveredTracker) observe(model string, out int64, wall, ttft time.Duration, now time.Time) {
-	if t ***REMOVED*** nil || model ***REMOVED*** "" || out < minDeliveredTok || wall <= 0 {
+	if t == nil || model == "" || out < minDeliveredTok || wall <= 0 {
 		return
 	}
 	if ttft < 0 {
@@ -90,11 +90,11 @@ func (t *deliveredTracker) observe(model string, out int64, wall, ttft time.Dura
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.m ***REMOVED*** nil {
+	if t.m == nil {
 		t.m = make(map[string]*deliveredSample)
 	}
 	s := t.m[model]
-	if s ***REMOVED*** nil {
+	if s == nil {
 		if len(t.m) >= maxDeliveredKeys {
 			return // cardinality cap: unknown models stop being tracked
 		}
@@ -106,7 +106,7 @@ func (t *deliveredTracker) observe(model string, out int64, wall, ttft time.Dura
 	r := 1 / ws // one completed request per its wall: req/s
 	c := v + r
 	tf := float64(ttft.Milliseconds())
-	if s.n ***REMOVED*** 0 || now.Sub(s.last) > deliveredStale {
+	if s.n == 0 || now.Sub(s.last) > deliveredStale {
 		s.tps, s.rps, s.combined, s.ttftMs = v, r, c, tf
 	} else {
 		s.tps = deliveredAlpha*v + (1-deliveredAlpha)*s.tps
@@ -121,14 +121,14 @@ func (t *deliveredTracker) observe(model string, out int64, wall, ttft time.Dura
 // rows snapshots every tracked model (map iteration order is irrelevant to
 // the render: gauges are keyed by model label).
 func (t *deliveredTracker) rows() []DeliveredRow {
-	if t ***REMOVED*** nil {
+	if t == nil {
 		return nil
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	out := make([]DeliveredRow, 0, len(t.m))
 	for m, s := range t.m {
-		if s.n ***REMOVED*** 0 {
+		if s.n == 0 {
 			continue
 		}
 		out = append(out, DeliveredRow{Model: m, TPS: s.tps, RPS: s.rps, Combined: s.combined, TTFTMs: s.ttftMs, Samples: s.n})

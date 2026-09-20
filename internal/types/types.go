@@ -262,7 +262,7 @@ func (u *Usage) Merge(o Usage) {
 }
 
 func (e *APIError) Error() string {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return "<nil>"
 	}
 	return fmt.Sprintf("%d %s: %s", e.Status, e.Type, e.Message)
@@ -270,7 +270,7 @@ func (e *APIError) Error() string {
 
 // Retryable reports whether the error class should trigger combo fallback.
 func (e *APIError) Retryable() bool {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return false
 	}
 	switch e.Status {
@@ -294,14 +294,14 @@ func (e *APIError) Retryable() bool {
 // OverQuota reports whether the error indicates quota/rate exhaustion, which
 // also marks the account cooling down.
 func (e *APIError) OverQuota() bool {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return false
 	}
-	if e.Status ***REMOVED*** 429 || e.Status ***REMOVED*** 529 {
+	if e.Status == 429 || e.Status == 529 {
 		return true
 	}
 	code := strings.ToLower(e.Code)
-	return code ***REMOVED*** "rate_limit_exceeded" || code ***REMOVED*** "quota_exceeded" ||
+	return code == "rate_limit_exceeded" || code == "quota_exceeded" ||
 		strings.Contains(strings.ToLower(e.Type), "rate_limit")
 }
 
@@ -316,10 +316,10 @@ func (e *APIError) OverQuota() bool {
 // keeps its #48 adaptive-ladder contract, and a generic 403 quota_exceeded
 // stays OverQuota-only, because those vendors recover on their own.
 func (e *APIError) PaymentRequired() bool {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return false
 	}
-	if e.Status ***REMOVED*** 402 {
+	if e.Status == 402 {
 		return true
 	}
 	// Vendors split the canonical signal across fields: some send
@@ -351,7 +351,7 @@ func (e *APIError) PaymentRequired() bool {
 // benching the account would kill working traffic, while the paid model that
 // just answered is unreachable for every key until credits are added.
 func (e *APIError) CreditWall() bool {
-	if e ***REMOVED*** nil || e.Status != 402 {
+	if e == nil || e.Status != 402 {
 		return false
 	}
 	probe := strings.ToLower(e.Code + " " + e.Type + " " + e.Message)
@@ -367,7 +367,7 @@ func (e *APIError) CreditWall() bool {
 // route). The account is unusable for the model regardless of retries on
 // the same credential, so callers cool it and rotate to another key.
 func (e *APIError) RegionLocked() bool {
-	return e != nil && e.Status ***REMOVED*** 403 && strings.Contains(strings.ToLower(e.Type), "region")
+	return e != nil && e.Status == 403 && strings.Contains(strings.ToLower(e.Type), "region")
 }
 
 // ModelScoped reports whether the upstream refusal indicts the MODEL on
@@ -389,7 +389,7 @@ func (e *APIError) RegionLocked() bool {
 // not a model verdict. Callers bench the model for a short window so the
 // router skips the target without burning the account pool.
 func (e *APIError) ModelScoped() bool {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return false
 	}
 	probe := strings.ToLower(e.Type + " " + e.Code + " " + e.Message)
@@ -423,7 +423,7 @@ var reasoningEchoRe = regexp.MustCompile(`(?i)reasoning_content.{0,80}must be pa
 // the GLM reasoning_effort 400 family ("use low, high or max") and
 // generic invalid_request 400s keep their terminal contract.
 func (e *APIError) ReasoningEchoRequired() bool {
-	return e != nil && e.Status ***REMOVED*** 400 && reasoningEchoRe.MatchString(e.Message)
+	return e != nil && e.Status == 400 && reasoningEchoRe.MatchString(e.Message)
 }
 
 // contextWindowRe matches the upstream's context-window overflow refusal:
@@ -462,7 +462,7 @@ var contextWindowRe = regexp.MustCompile(`(?i)context[_ ](length|window|limit)|m
 // would exile a healthy leg for one oversized request. A direct route (no next
 // target) still surfaces the 400 honestly.
 func (e *APIError) ContextWindowExceeded() bool {
-	return e != nil && e.Status ***REMOVED*** 400 && contextWindowRe.MatchString(e.Type+" "+e.Code+" "+e.Message)
+	return e != nil && e.Status == 400 && contextWindowRe.MatchString(e.Type+" "+e.Code+" "+e.Message)
 }
 
 // Dialects that carry BOTH numbers the overflow recovery needs — the model's
@@ -497,7 +497,7 @@ var dashscopeMaxRe = regexp.MustCompile(`(?i)range of input length should be \[\
 // number at all; callers then fall back to a conservative window.
 // Companion to ContextWindowExceeded — only trust it after that says yes.
 func (e *APIError) ContextWindowOverflow() (window, measured int, ok bool) {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return 0, 0, false
 	}
 	for _, re := range contextWindowNumbersRe {
@@ -518,12 +518,12 @@ func (e *APIError) ContextWindowOverflow() (window, measured int, ok bool) {
 		}
 	}
 	if m := dashscopeMaxRe.FindStringSubmatch(e.Message); m != nil {
-		if n, err := strconv.Atoi(m[1]); err ***REMOVED*** nil && n > 0 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
 			return n, 0, true
 		}
 	}
 	if m := windowOnlyRe.FindStringSubmatch(e.Message); m != nil {
-		if n, err := strconv.Atoi(m[1]); err ***REMOVED*** nil && n > 0 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
 			return n, 0, true
 		}
 	}
@@ -576,14 +576,14 @@ func (e *APIError) ContextWindowOverflow() (window, measured int, ok bool) {
 // A behaviour-proven SharedWall (provider burst detection on a
 // wording-less 429) short-circuits the text matching entirely.
 func (e *APIError) SharedConcurrency() bool {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return false
 	}
 	if e.SharedWall {
 		// No wording needed — see the SharedWall field doc.
 		return true
 	}
-	if e.Status ***REMOVED*** 503 {
+	if e.Status == 503 {
 		probe := strings.ToLower(e.Code + " " + e.Message)
 		return strings.Contains(probe, "cache-only admission") ||
 			strings.Contains(probe, "gateway overloaded") ||
@@ -637,7 +637,7 @@ func (e *APIError) SharedConcurrency() bool {
 // on the SECOND sight within wallWindow — wording proves the lane is
 // shared, the second strike proves it is sustained.
 func (e *APIError) ModelWall() bool {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return false
 	}
 	probe := strings.ToLower(e.Code + " " + e.Message)
@@ -664,11 +664,11 @@ var rateWindowRe = regexp.MustCompile(`(?i)maximum\s+\d+\s+requests?\s+within\s+
 // when no Retry-After header exists: bench the account for the stated
 // window and stamp it as the client Retry-After instead of guessing 10s.
 func (e *APIError) RateWindow() time.Duration {
-	if e ***REMOVED*** nil {
+	if e == nil {
 		return 0
 	}
 	m := rateWindowRe.FindStringSubmatch(e.Code + " " + e.Message)
-	if m ***REMOVED*** nil {
+	if m == nil {
 		return 0
 	}
 	n, err := strconv.Atoi(m[1])

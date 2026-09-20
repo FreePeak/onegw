@@ -135,7 +135,7 @@ func runImport(dbPath, out string, verbose bool) int {
 		psd := d.ProviderSpecificData
 		base := psd.BaseURL
 		node := psd.Node
-		if base ***REMOVED*** "" && d.APIKey ***REMOVED*** "" && d.AccessToken != "" {
+		if base == "" && d.APIKey == "" && d.AccessToken != "" {
 			// Bearer-token (OAuth) connection: import as a single-account
 			// provider when the upstream is known to accept the token as-is.
 			bt, known := bearerTokenProviders[r.Provider]
@@ -148,7 +148,7 @@ func runImport(dbPath, out string, verbose bool) int {
 				kind:      bt.kind,
 				baseURL:   bt.baseURL,
 				modelsURL: bt.modelsURL,
-				accts:     []account{{name: orDefault(r.Name, "default"), key: d.AccessToken, ok: d.TestStatus ***REMOVED*** "active", expires: jwtExp(d.AccessToken)}},
+				accts:     []account{{name: orDefault(r.Name, "default"), key: d.AccessToken, ok: d.TestStatus == "active", expires: jwtExp(d.AccessToken)}},
 			}
 			continue
 		}
@@ -156,7 +156,7 @@ func runImport(dbPath, out string, verbose bool) int {
 		if bk, ok := builtinKind[r.Provider]; ok {
 			kind, modelsURL = bk.kind, bk.modelsURL
 		}
-		if base ***REMOVED*** "" {
+		if base == "" {
 			if known, ok := builtinBaseURL[r.Provider]; ok {
 				base = known
 				node = r.Provider
@@ -170,11 +170,11 @@ func runImport(dbPath, out string, verbose bool) int {
 		}
 		key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(node, ".", "-"), " ", "-"))
 		g := groups[key]
-		if g ***REMOVED*** nil {
+		if g == nil {
 			g = &group{name: key, kind: kind, baseURL: base, modelsURL: modelsURL, nodeName: node}
 			groups[key] = g
 		}
-		g.accts = append(g.accts, account{name: orDefault(r.Name, "default"), key: d.APIKey, ok: d.TestStatus ***REMOVED*** "active"})
+		g.accts = append(g.accts, account{name: orDefault(r.Name, "default"), key: d.APIKey, ok: d.TestStatus == "active"})
 	}
 	if err := rows.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -194,10 +194,10 @@ func runImport(dbPath, out string, verbose bool) int {
 	// Gateway API keys: clients authenticate to onegw with these.
 	var keyList []string
 	krows, kerr := db.Query(`SELECT key FROM apiKeys WHERE isActive = 1`)
-	if kerr ***REMOVED*** nil {
+	if kerr == nil {
 		for krows.Next() {
 			var k string
-			if krows.Scan(&k) ***REMOVED*** nil && k != "" {
+			if krows.Scan(&k) == nil && k != "" {
 				keyList = append(keyList, k)
 			}
 		}
@@ -232,10 +232,10 @@ func runImport(dbPath, out string, verbose bool) int {
 		b.WriteString("\n")
 	}
 
-	if out ***REMOVED*** "" || verbose {
+	if out == "" || verbose {
 		os.Stdout.WriteString(b.String())
 	}
-	if out ***REMOVED*** "" {
+	if out == "" {
 		return 0
 	}
 	if err := os.WriteFile(out, []byte(b.String()), 0o600); err != nil {
@@ -250,18 +250,18 @@ func runImport(dbPath, out string, verbose bool) int {
 // account; returns nil on any failure (pass-through routing still works via
 // provider/model strings).
 func discoverModels(g *group) []string {
-	// modelsURL ***REMOVED*** "" on a non-openai kind means the upstream has no
+	// modelsURL == "" on a non-openai kind means the upstream has no
 	// discoverable /models endpoint (e.g. commandcode): skip discovery;
 	// pass-through routing still works via provider/model strings.
-	if g.baseURL ***REMOVED*** "" || len(g.accts) ***REMOVED*** 0 {
+	if g.baseURL == "" || len(g.accts) == 0 {
 		return nil
 	}
-	if g.modelsURL ***REMOVED*** "" && g.kind != "openai" {
+	if g.modelsURL == "" && g.kind != "openai" {
 		return nil
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	modelsURL := g.modelsURL
-	if modelsURL ***REMOVED*** "" {
+	if modelsURL == "" {
 		modelsURL = strings.TrimRight(g.baseURL, "/") + "/models"
 	}
 	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
@@ -281,7 +281,7 @@ func discoverModels(g *group) []string {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(body, &parsed) != nil || len(parsed.Data) ***REMOVED*** 0 {
+	if json.Unmarshal(body, &parsed) != nil || len(parsed.Data) == 0 {
 		return nil
 	}
 	var ids []string
@@ -302,7 +302,7 @@ func quoteJoin(ss []string) string {
 }
 
 func orDefault(s, def string) string {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return def
 	}
 	return s

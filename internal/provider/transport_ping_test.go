@@ -24,13 +24,13 @@ func TestNewHTTPClientEnablesH2HealthPings(t *testing.T) {
 	}
 	// Wiring: the transport must have been h2-configured (TLSNextProto
 	// populated) — that is what enables the ping loop below.
-	if tr.TLSNextProto ***REMOVED*** nil || len(tr.TLSNextProto) ***REMOVED*** 0 {
+	if tr.TLSNextProto == nil || len(tr.TLSNextProto) == 0 {
 		t.Fatal("transport not h2-configured: no health pings possible")
 	}
 	// Helper contract, on a fresh transport (ConfigureTransports is
 	// once-per-transport): pings must be armed and returned non-nil.
 	h2 := configureHTTP2(&http.Transport{})
-	if h2 ***REMOVED*** nil {
+	if h2 == nil {
 		t.Fatal("configureHTTP2 returned nil")
 	}
 	if h2.ReadIdleTimeout != 30*time.Second || h2.PingTimeout != 15*time.Second {

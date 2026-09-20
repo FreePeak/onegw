@@ -29,7 +29,7 @@ func TestExecuteChannelEmpty503FallsThroughAfterOneCall(t *testing.T) {
 	calls := map[string]int{}
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 		calls[def.Name]++
-		if def.Name ***REMOVED*** "p1" {
+		if def.Name == "p1" {
 			return nil, &types.APIError{Status: 503, Type: "api_error",
 				Message: "No available channel for model m1 under group default (distributor)"}
 		}
@@ -60,7 +60,7 @@ func TestExecuteChannelEmpty503DirectRouteSurfacesWithRetryAfter(t *testing.T) {
 			Message: "No available channel for model m1 under group default (distributor)"}
 	}
 	got := r.Execute(context.Background(), res, caller, func(a any) {})
-	if got ***REMOVED*** nil || got.Status != 503 || !got.SharedConcurrency() {
+	if got == nil || got.Status != 503 || !got.SharedConcurrency() {
 		t.Fatalf("direct route must surface the lane-empty 503, got %+v", got)
 	}
 	if got.RetryAfter != "2" {

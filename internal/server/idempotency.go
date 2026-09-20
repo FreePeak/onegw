@@ -25,15 +25,15 @@ import (
 func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		st := s.cur()
-		if st ***REMOVED*** nil || st.ido ***REMOVED*** nil {
+		if st == nil || st.ido == nil {
 			next(w, r)
 			return
 		}
 		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-		if key ***REMOVED*** "" {
+		if key == "" {
 			key = strings.TrimSpace(r.Header.Get("X-Request-Id"))
 		}
-		if key ***REMOVED*** "" {
+		if key == "" {
 			next(w, r)
 			return
 		}
@@ -72,7 +72,7 @@ func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFun
 				wctx, wcancel := boundedWait(r.Context(), st.cfg.IdempotencyTTLDur())
 				got := waiter.Wait(wctx)
 				wcancel()
-				if got ***REMOVED*** nil {
+				if got == nil {
 					// The client's deadline expired while coalescing:
 					// run the handler unrecorded; its upstream call
 					// aborts immediately on the dead context.
@@ -80,7 +80,7 @@ func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFun
 					return
 				}
 				if got.Gone {
-					if attempt ***REMOVED*** 0 {
+					if attempt == 0 {
 						continue // origin vanished: re-claim and execute
 					}
 					next(w, r)
@@ -125,7 +125,7 @@ func boundedWait(parent context.Context, ttl time.Duration) (context.Context, co
 func (s *Server) idempotencyBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	maxBody := s.cur().cfg.Server.MaxBody
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-	if err ***REMOVED*** nil && int64(len(body)) > maxBody {
+	if err == nil && int64(len(body)) > maxBody {
 		err = fmt.Errorf("body exceeds %d bytes", maxBody)
 	}
 	if err != nil {
@@ -145,10 +145,10 @@ func (e errorReader) Read([]byte) (int, error) { return 0, e.err }
 // so the idempotency scope namespaces clients the same way auth does.
 func credentialOf(r *http.Request) string {
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if key ***REMOVED*** "" {
+	if key == "" {
 		key = r.Header.Get("x-api-key")
 	}
-	if key ***REMOVED*** "" {
+	if key == "" {
 		key = r.Header.Get("x-goog-api-key")
 	}
 	return key

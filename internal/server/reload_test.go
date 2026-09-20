@@ -196,7 +196,7 @@ func TestRefusesOpenBindWithoutKeys(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Server.DataDir = "memory"
 	cfg.Server.Listen = "0.0.0.0:8080"
-	if _, err := New(cfg); err ***REMOVED*** nil {
+	if _, err := New(cfg); err == nil {
 		t.Fatal("non-loopback bind with no auth keys must be refused")
 	}
 	// Keys present, non-loopback: allowed.
@@ -206,7 +206,7 @@ func TestRefusesOpenBindWithoutKeys(t *testing.T) {
 	}
 	// Keys-only-whitespace/empty entries count as no keys.
 	cfg.Auth.KeyList = []config.AuthKey{{Key: ""}, {Key: "  "}}
-	if _, err := New(cfg); err ***REMOVED*** nil {
+	if _, err := New(cfg); err == nil {
 		t.Fatal("blank auth keys must be treated as none")
 	}
 }
@@ -229,7 +229,7 @@ func TestReloadBadConfigNeverApplied(t *testing.T) {
 	// config.Load and never reaches Reload.
 	bad := makeCfg(t, "key-one", "pw-one", false, providerSpec{name: "p1", up: up1.URL, model: "m1"})
 	bad.Providers[0].Kind = ""
-	if err := bad.Validate(); err ***REMOVED*** nil {
+	if err := bad.Validate(); err == nil {
 		t.Fatal("expected bad config to fail Validate (caller-side guard exists)")
 	}
 

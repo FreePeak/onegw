@@ -78,7 +78,7 @@ func retryForeverCombo(t *testing.T, p *provider.Pool, model string) (*Router, *
 func retryForeverErrsFrom() func(_ context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
 	attempts := 0
 	return func(_ context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if def.Name ***REMOVED*** "p2" {
+		if def.Name == "p2" {
 			return "p2", nil
 		}
 		attempts++
@@ -109,7 +109,7 @@ func TestExecuteRetryForeverStaysOnTarget(t *testing.T) {
 	var p1, p2 int
 	flips := retryForeverErrsFrom()
 	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if def.Name ***REMOVED*** "p2" {
+		if def.Name == "p2" {
 			p2++
 			return "p2", nil
 		}
@@ -144,7 +144,7 @@ func TestExecuteRetryForeverSurfacesRefusal(t *testing.T) {
 
 	var p2 int
 	caller := func(_ context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if def.Name ***REMOVED*** "p2" {
+		if def.Name == "p2" {
 			p2++
 			return "p2", nil
 		}
@@ -155,7 +155,7 @@ func TestExecuteRetryForeverSurfacesRefusal(t *testing.T) {
 		return nil, &types.APIError{Status: 403, Type: "access_denied", Message: "Deposit required"}
 	}
 	got := r.Execute(ctx, res, caller, func(any any) {})
-	if got ***REMOVED*** nil || got.Status != 403 {
+	if got == nil || got.Status != 403 {
 		t.Fatalf("403 from a retry_forever target must surface, got %v", got)
 	}
 	if p2 != 0 {
@@ -178,7 +178,7 @@ func TestExecuteRetryForeverWaitsOutCoolingPool(t *testing.T) {
 
 	var p1, p2 int
 	caller := func(_ context.Context, d *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if d.Name ***REMOVED*** "p2" {
+		if d.Name == "p2" {
 			p2++
 			return "p2", nil
 		}
@@ -202,7 +202,7 @@ func TestExecuteWithoutRetryForeverStillFallsThrough(t *testing.T) {
 
 	var p1, p2 int
 	caller := func(_ context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-		if def.Name ***REMOVED*** "p2" {
+		if def.Name == "p2" {
 			p2++
 			return "p2", nil
 		}
@@ -236,7 +236,7 @@ func TestExecuteRetryForeverBlocksOnCoolingPool(t *testing.T) {
 	go func() {
 		defer close(done)
 		caller := func(_ context.Context, d *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
-			if d.Name ***REMOVED*** "p2" {
+			if d.Name == "p2" {
 				p2++
 				return "p2", nil
 			}

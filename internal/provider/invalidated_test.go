@@ -26,7 +26,7 @@ func TestInvalidateRemovesAccountFromRotation(t *testing.T) {
 	// not resurrect a.
 	for i := 0; i < 6; i++ {
 		got, _ := def.NextAccount("")
-		if got ***REMOVED*** nil {
+		if got == nil {
 			t.Fatalf("round %d: pool reports empty while b is healthy", i)
 		}
 		if got.Name != "b" {
@@ -108,7 +108,7 @@ func TestBillingParoleReoffersTerminalAfterWindow(t *testing.T) {
 
 	// Past the window: the account is re-offered — this pick is the probe.
 	cur = cur.Add(BillingParole + time.Second)
-	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a" {
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a" {
 		t.Fatalf("past the parole window the account must be re-offered as a probe, got %+v", got)
 	}
 
@@ -124,14 +124,14 @@ func TestBillingParoleReoffersTerminalAfterWindow(t *testing.T) {
 	// the account returns to normal rotation.
 	cur = cur.Add(BillingParole + time.Second)
 	got, _ := def.NextAccount("")
-	if got ***REMOVED*** nil || got.Name != "a" {
+	if got == nil || got.Name != "a" {
 		t.Fatalf("the second window must re-offer the probe, got %+v", got)
 	}
 	def.pool.ok(a, cur.Add(-time.Second))
 	if names := def.Invalidated(); len(names) != 0 {
 		t.Fatalf("a successful probe must clear the terminal mark, got %v", names)
 	}
-	if got, _ := def.NextAccount(""); got ***REMOVED*** nil || got.Name != "a" {
+	if got, _ := def.NextAccount(""); got == nil || got.Name != "a" {
 		t.Fatal("a healed account must keep serving")
 	}
 }
@@ -192,7 +192,7 @@ func TestCarryInvalidatedSurvivesReloadButNotKeyRotation(t *testing.T) {
 	if rd.AllInvalidated() {
 		t.Fatal("a rotated api_key must start active")
 	}
-	if got, _ := rd.NextAccount(""); got ***REMOVED*** nil {
+	if got, _ := rd.NextAccount(""); got == nil {
 		t.Fatal("rotated credential must be offered")
 	}
 }

@@ -75,7 +75,7 @@ func (s *prefillSample) observe(inTokens int64, d time.Duration, now time.Time) 
 		return
 	}
 	v := float64(inTokens) / d.Seconds()
-	if s.n ***REMOVED*** 0 || now.Sub(s.last) > prefillStaleAfter {
+	if s.n == 0 || now.Sub(s.last) > prefillStaleAfter {
 		s.v = v
 	} else {
 		s.v = speedAlpha*v + (1-speedAlpha)*s.v
@@ -110,7 +110,7 @@ func (d *Def) ObservePrefill(model string, bucket int, tokens int64, dur time.Du
 	now := time.Now()
 	d.prefill.mu.Lock()
 	defer d.prefill.mu.Unlock()
-	if d.prefill.byModel ***REMOVED*** nil {
+	if d.prefill.byModel == nil {
 		d.prefill.byModel = make(map[string]*[prefillBuckets]prefillSample)
 	}
 	m, ok := d.prefill.byModel[model]
@@ -168,7 +168,7 @@ func (d *Def) PrefillRows() []PrefillRow {
 	for model, buckets := range d.prefill.byModel {
 		for b := range buckets {
 			s := &buckets[b]
-			if s.n ***REMOVED*** 0 {
+			if s.n == 0 {
 				continue
 			}
 			rows = append(rows, PrefillRow{Model: model, Bucket: BucketName(b), TPS: s.v, Samples: s.n})

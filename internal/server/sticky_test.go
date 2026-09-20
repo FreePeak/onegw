@@ -23,7 +23,7 @@ func keyRecordingStub(t *testing.T, seen *[]string, failKey string) *httptest.Se
 		*seen = append(*seen, key)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if key ***REMOVED*** failKey {
+		if key == failKey {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "boom"}})
 			return
@@ -96,7 +96,7 @@ func TestStickyAffinityPinsSameAccountPerIdentity(t *testing.T) {
 	if w := do(t, h, withSession(t, "sess-2")); w.Code != 200 {
 		t.Fatalf("request 4: %d %s", w.Code, w.Body.String())
 	}
-	if seen[2] != seen[3] || seen[2] ***REMOVED*** seen[0] {
+	if seen[2] != seen[3] || seen[2] == seen[0] {
 		t.Fatalf("second identity must pin the other account, saw %v", seen)
 	}
 }
@@ -144,7 +144,7 @@ func TestStickyOffKeepsPlainRotation(t *testing.T) {
 			t.Fatalf("request: %d", w.Code)
 		}
 	}
-	if seen[0] ***REMOVED*** seen[1] || seen[1] ***REMOVED*** seen[2] || seen[2] ***REMOVED*** seen[3] {
+	if seen[0] == seen[1] || seen[1] == seen[2] || seen[2] == seen[3] {
 		t.Fatalf("sticky off must rotate per request, saw %v", seen)
 	}
 }

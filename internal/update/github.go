@@ -87,7 +87,7 @@ func (c *Client) base() string {
 func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	url := fmt.Sprintf("%s/repos/%s/releases/latest", c.base(), c.Repo)
 	hc := c.HTTP
-	if hc ***REMOVED*** nil {
+	if hc == nil {
 		hc = &http.Client{Timeout: 20 * time.Second}
 	}
 	tok := resolveToken(c)
@@ -121,7 +121,7 @@ func (c *Client) Latest(ctx context.Context) (*Release, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
 		return nil, fmt.Errorf("update: decode release: %w", err)
 	}
-	if rel.Tag ***REMOVED*** "" {
+	if rel.Tag == "" {
 		return nil, fmt.Errorf("update: release for %s has no tag", c.Repo)
 	}
 	return &rel, nil
@@ -141,7 +141,7 @@ func issueGET(ctx context.Context, hc *http.Client, url, accept, tok string) (re
 	if err != nil {
 		return nil, false, err
 	}
-	if tok ***REMOVED*** "" || resp.StatusCode != http.StatusUnauthorized {
+	if tok == "" || resp.StatusCode != http.StatusUnauthorized {
 		return resp, false, nil
 	}
 	resp.Body.Close()
@@ -173,7 +173,7 @@ func doGET(ctx context.Context, hc *http.Client, url, accept, tok string) (*http
 func (rel *Release) SelectAsset(goos, goarch string) (*Asset, error) {
 	want := "onegw-" + goos + "-" + goarch
 	for i := range rel.Assets {
-		if rel.Assets[i].Name ***REMOVED*** want {
+		if rel.Assets[i].Name == want {
 			return &rel.Assets[i], nil
 		}
 	}
@@ -186,7 +186,7 @@ func assetNames(assets []Asset) string {
 	for _, a := range assets {
 		names = append(names, a.Name)
 	}
-	if len(names) ***REMOVED*** 0 {
+	if len(names) == 0 {
 		return "none"
 	}
 	return strings.Join(names, ", ")
@@ -198,7 +198,7 @@ func assetNames(assets []Asset) string {
 // truncated download must never replace a serving binary.
 func (a *Asset) Download(ctx context.Context, dst string) error {
 	dl := a.APIURL
-	if dl ***REMOVED*** "" {
+	if dl == "" {
 		dl = a.URL // test fixtures / mirrors without the API endpoint
 	}
 	hc := &http.Client{Timeout: 10 * time.Minute}

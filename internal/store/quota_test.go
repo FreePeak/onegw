@@ -45,7 +45,7 @@ func TestQuotaStateRoundTrip(t *testing.T) {
 		t.Fatalf("upsert must not duplicate rows, got %d", len(rows))
 	}
 	for _, r := range rows {
-		if r.Provider ***REMOVED*** "glm" && (r.UsedTokens != 50 || r.UsedRequests != 1) {
+		if r.Provider == "glm" && (r.UsedTokens != 50 || r.UsedRequests != 1) {
 			t.Fatalf("upsert did not replace: %+v", r)
 		}
 	}

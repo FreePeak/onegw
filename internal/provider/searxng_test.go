@@ -127,7 +127,7 @@ func TestSearchQueryFromPartsContent(t *testing.T) {
 func TestSearchNoUserMessageIs400(t *testing.T) {
 	d := searxDef("http://127.0.0.1:1")
 	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", nil, bytes.NewReader([]byte(`{"messages":[{"role":"assistant","content":"hi"}]}`)), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 400 || apiErr.Type != "invalid_request" {
+	if apiErr == nil || apiErr.Status != 400 || apiErr.Type != "invalid_request" {
 		t.Fatalf("no user message: got %v, want 400 invalid_request", apiErr)
 	}
 }
@@ -220,7 +220,7 @@ func TestSearchStreamingIsOpenAISSE(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &c); err != nil {
 			t.Fatalf("chunk decode: %v in %q", err, line)
 		}
-		if len(c.Choices) > 0 && c.Choices[0].FinishReason ***REMOVED*** "stop" {
+		if len(c.Choices) > 0 && c.Choices[0].FinishReason == "stop" {
 			sawStop = true
 			if tok, _ := c.Usage["completion_tokens"].(float64); tok < 1 {
 				t.Fatal("finish chunk missing usage")
@@ -236,7 +236,7 @@ func TestSearchUpstreamDownIsRetryable503(t *testing.T) {
 	// Nothing listens here → connection refused.
 	d := searxDef("http://127.0.0.1:1")
 	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", nil, bytes.NewReader(chatBody("q")), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
+	if apiErr == nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
 		t.Fatalf("down upstream: got %v, want 503 search_unavailable", apiErr)
 	}
 	if !apiErr.Retryable() {
@@ -249,7 +249,7 @@ func TestSearchUpstreamErrorIsRetryable503(t *testing.T) {
 		srv, _ := searxStub(t, 0, code)
 		d := searxDef(srv.URL)
 		_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", nil, bytes.NewReader(chatBody("q")), false)
-		if apiErr ***REMOVED*** nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
+		if apiErr == nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
 			t.Fatalf("upstream %d: got %v, want 503 search_unavailable", code, apiErr)
 		}
 		if !apiErr.Retryable() {
@@ -275,7 +275,7 @@ func TestSearchTimeout(t *testing.T) {
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("search timeout did not bound the call")
 	}
-	if apiErr ***REMOVED*** nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
+	if apiErr == nil || apiErr.Status != 503 || apiErr.Type != "search_unavailable" {
 		t.Fatalf("timeout: got %v, want 503 search_unavailable", apiErr)
 	}
 }
@@ -401,7 +401,7 @@ func TestSearchOversizedResponseIsRetryable502(t *testing.T) {
 	defer srv.Close()
 	d := searxDef(srv.URL)
 	_, apiErr := d.Do(context.Background(), &d.Accounts[0], "search/query", nil, bytes.NewReader(chatBody("q")), false)
-	if apiErr ***REMOVED*** nil || apiErr.Status != 502 || apiErr.Type != "search_bad_response" {
+	if apiErr == nil || apiErr.Status != 502 || apiErr.Type != "search_bad_response" {
 		t.Fatalf("oversized response: got %v, want 502 search_bad_response", apiErr)
 	}
 	if !apiErr.Retryable() {

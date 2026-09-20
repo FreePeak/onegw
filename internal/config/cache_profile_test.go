@@ -23,7 +23,7 @@ func TestValidateCacheProfile(t *testing.T) {
 			Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", Models: []string{"m"}, CacheProfile: bad}},
 		}
 		err := c.Validate()
-		if err ***REMOVED*** nil {
+		if err == nil {
 			t.Fatalf("cache_profile %q must be rejected", bad)
 		}
 		if !strings.Contains(err.Error(), "cache_profile") {

@@ -79,7 +79,7 @@ func Wait(ctx context.Context, p Poller, ds *DeviceStart, onPrompt func(DeviceSt
 	for {
 		tok, err := p.Poll(ctx, ds.DeviceCode)
 		switch {
-		case err ***REMOVED*** nil:
+		case err == nil:
 			return tok, nil
 		case errors.Is(err, ErrPending):
 		case errors.Is(err, ErrSlowDown):

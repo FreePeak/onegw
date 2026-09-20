@@ -9,7 +9,7 @@ import (
 func TestValidateRejectsNonHTTPExportURL(t *testing.T) {
 	for _, url := range []string{"ftp://agg:8080/x", "agg:8080/admin/usage/import", "file:///tmp/x"} {
 		c := &Config{Usage: UsageCfg{ExportURL: url}}
-		if err := c.Validate(); err ***REMOVED*** nil {
+		if err := c.Validate(); err == nil {
 			t.Fatalf("export_url %q must be rejected", url)
 		}
 	}
@@ -38,13 +38,13 @@ func TestValidateCheckInterval(t *testing.T) {
 		cfg := &Config{Update: UpdateCfg{CheckInterval: c.val}}
 		cfg.Defaults()
 		err := cfg.Validate()
-		if c.errSub ***REMOVED*** "" {
+		if c.errSub == "" {
 			if err != nil {
 				t.Errorf("check_interval %q: unexpected error %v", c.val, err)
 			}
 			continue
 		}
-		if err ***REMOVED*** nil || !strings.Contains(err.Error(), c.errSub) {
+		if err == nil || !strings.Contains(err.Error(), c.errSub) {
 			t.Errorf("check_interval %q: want error containing %q, got %v", c.val, c.errSub, err)
 		}
 	}
@@ -83,7 +83,7 @@ func TestValidateComboStrategy(t *testing.T) {
 	}
 	for _, s := range []string{"speed", "FASTEST", "auto", "size_aware", "sizeaware"} {
 		c := &Config{Providers: []ProviderCfg{{Name: "b", Kind: "openai", APIKey: "k"}}, Combos: []ComboCfg{{Name: "c", Targets: []string{"b/m"}, Strategy: s}}}
-		if err := c.Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "strategy") {
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "strategy") {
 			t.Fatalf("strategy %q must be rejected naming the knob: %v", s, err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestValidateRejectsDuplicateAccountName(t *testing.T) {
 			},
 		}}}
 	}
-	if err := mk("acct").Validate(); err ***REMOVED*** nil || !strings.Contains(err.Error(), "duplicate account") {
+	if err := mk("acct").Validate(); err == nil || !strings.Contains(err.Error(), "duplicate account") {
 		t.Fatalf("duplicate account name must be rejected, got %v", err)
 	}
 	if err := mk("").Validate(); err != nil {
@@ -129,7 +129,7 @@ func TestValidateQuotaWindow(t *testing.T) {
 	for _, w := range []string{"1month", "0h", "-48h", "weeklyy", "monthlyy"} {
 		c := &Config{Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", QuotaWindow: w, QuotaLimitRequests: 1}}}
 		err := c.Validate()
-		if err ***REMOVED*** nil || !strings.Contains(err.Error(), "quota_window") {
+		if err == nil || !strings.Contains(err.Error(), "quota_window") {
 			t.Errorf("quota_window %q must be rejected naming the knob, got %v", w, err)
 		}
 	}

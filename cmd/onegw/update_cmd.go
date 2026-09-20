@@ -85,7 +85,7 @@ func runUpdate(args []string) int {
 	}
 	_, err := update.Run(ctx, opt)
 	if err != nil {
-		if err ***REMOVED*** update.ErrUpToDate {
+		if err == update.ErrUpToDate {
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "onegw update: %v\n", err)
@@ -111,7 +111,7 @@ func updateViaAdmin(ctx context.Context, cfg *config.Config, inf owner.Info, che
 		printStatus(st)
 		return 0
 	}
-	if st.Latest ***REMOVED*** "" && st.Current != "" {
+	if st.Latest == "" && st.Current != "" {
 		// The gateway has not checked recently (interval off): ask IT to
 		// check with its own repo/env, then re-read the status.
 		if err := postCheck(ctx, url, pw); err != nil {
@@ -124,7 +124,7 @@ func updateViaAdmin(ctx context.Context, cfg *config.Config, inf owner.Info, che
 			return 1
 		}
 	}
-	if st.Latest ***REMOVED*** "" || st.Current ***REMOVED*** "" {
+	if st.Latest == "" || st.Current == "" {
 		// Old gateway without the update endpoint (404 → empty status):
 		// fall back to staging the binary at its on-disk path.
 		return stageForOwner(cfg, inf, force, yes)
@@ -159,11 +159,11 @@ func watchHandoff(ctx context.Context, url, pw string, oldPID int) int {
 	defer cancel()
 	for {
 		st, err := fetchStatus(ctx, url, pw)
-		if err ***REMOVED*** nil && st.Pid != 0 && st.Pid != oldPID {
+		if err == nil && st.Pid != 0 && st.Pid != oldPID {
 			fmt.Printf("updated to %s (new pid %d)\n", st.Current, st.Pid)
 			return 0
 		}
-		if err ***REMOVED*** nil && st.LastApply != "" {
+		if err == nil && st.LastApply != "" {
 			fmt.Fprintf(os.Stderr, "onegw update: %s\n", st.LastApply)
 			return 1
 		}
@@ -181,7 +181,7 @@ func watchHandoff(ctx context.Context, url, pw string, oldPID int) int {
 // decision was already made from the gateway's own status above, so the
 // CLI's own version stamp must not veto it.
 func stageForOwner(cfg *config.Config, inf owner.Info, force, yes bool) int {
-	if len(inf.Argv) ***REMOVED*** 0 || inf.Argv[0] ***REMOVED*** "" {
+	if len(inf.Argv) == 0 || inf.Argv[0] == "" {
 		fmt.Fprintln(os.Stderr, "onegw update: the running gateway predates the update endpoint and owner.json records no binary path; restart it once and re-run")
 		return 1
 	}
@@ -205,7 +205,7 @@ func stageForOwner(cfg *config.Config, inf owner.Info, force, yes bool) int {
 // that is not this process.
 func runningGateway(cfg *config.Config) (owner.Info, bool) {
 	inf, err := owner.Read(cfg.Server.DataDir)
-	if err != nil || inf.PID <= 0 || inf.PID ***REMOVED*** os.Getpid() {
+	if err != nil || inf.PID <= 0 || inf.PID == os.Getpid() {
 		return owner.Info{}, false
 	}
 	if err := syscall.Kill(inf.PID, 0); err != nil {
@@ -217,7 +217,7 @@ func runningGateway(cfg *config.Config) (owner.Info, bool) {
 // adminGet is the shared authenticated request for the admin endpoint.
 func adminDo(ctx context.Context, method, url, pw string, body []byte) (*http.Response, error) {
 	var rdr *bytes.Reader
-	if body ***REMOVED*** nil {
+	if body == nil {
 		rdr = bytes.NewReader(nil)
 	} else {
 		rdr = bytes.NewReader(body)
@@ -247,7 +247,7 @@ func fetchStatus(ctx context.Context, url, pw string) (update.Status, error) {
 		return update.Status{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode ***REMOVED*** http.StatusNotFound || resp.StatusCode ***REMOVED*** http.StatusMethodNotAllowed {
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return update.Status{}, nil
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -306,7 +306,7 @@ func printStatus(st update.Status) {
 }
 
 func orNone(s string) string {
-	if s ***REMOVED*** "" {
+	if s == "" {
 		return "(unknown)"
 	}
 	return s
@@ -317,23 +317,23 @@ func confirm(yes bool, prompt string) bool {
 		return true
 	}
 	fi, err := os.Stdin.Stat()
-	if err != nil || fi.Mode()&os.ModeCharDevice ***REMOVED*** 0 {
+	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		return true // non-interactive (agent/CI): proceed
 	}
-	if devNull, derr := os.Stat(os.DevNull); derr ***REMOVED*** nil && os.SameFile(fi, devNull) {
+	if devNull, derr := os.Stat(os.DevNull); derr == nil && os.SameFile(fi, devNull) {
 		return true // redirected /dev/null: scripted run
 	}
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
 	var ans string
 	fmt.Scanln(&ans)
-	return ans ***REMOVED*** "y" || ans ***REMOVED*** "Y" || ans ***REMOVED*** "yes"
+	return ans == "y" || ans == "Y" || ans == "yes"
 }
 
 // adminURL builds an http URL for a listen address, normalizing wildcard
 // hosts to loopback.
 func adminURL(listen, path string) string {
 	host, port, err := net.SplitHostPort(listen)
-	if err != nil || host ***REMOVED*** "" || host ***REMOVED*** "0.0.0.0" || host ***REMOVED*** "::" || host ***REMOVED*** "*" {
+	if err != nil || host == "" || host == "0.0.0.0" || host == "::" || host == "*" {
 		host = "127.0.0.1"
 	}
 	if err != nil {
@@ -347,7 +347,7 @@ func adminURL(listen, path string) string {
 // as the running gateway.
 func loadConfigForCLI(flagPath string) *config.Config {
 	path := flagPath
-	if path ***REMOVED*** "" {
+	if path == "" {
 		if v := os.Getenv("ONEGW_CONFIG"); v != "" {
 			path = v
 		} else {
@@ -356,7 +356,7 @@ func loadConfigForCLI(flagPath string) *config.Config {
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) && flagPath ***REMOVED*** "" && os.Getenv("ONEGW_CONFIG") ***REMOVED*** "" {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) && flagPath == "" && os.Getenv("ONEGW_CONFIG") == "" {
 			cfg = &config.Config{}
 			cfg.Defaults()
 			// The gateway booted the same way stores its generated password

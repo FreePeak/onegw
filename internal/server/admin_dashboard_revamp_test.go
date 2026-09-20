@@ -154,8 +154,8 @@ func TestKeysPatchWritesAndClearsOneAccountKey(t *testing.T) {
 	}](t, h, "/admin/config/keys")
 	found := false
 	for _, r := range got.Providers {
-		if r.Provider ***REMOVED*** "p1" && r.Account ***REMOVED*** "beta" {
-			found = r.Key ***REMOVED*** "sk-beta-new"
+		if r.Provider == "p1" && r.Account == "beta" {
+			found = r.Key == "sk-beta-new"
 		}
 	}
 	if !found {
@@ -246,7 +246,7 @@ func TestModelsAPIAdvertisesPassThrough(t *testing.T) {
 	}
 	// p3 declares no models, so it is either pass-through or serving the kind's
 	// built-in catalog — the flag must agree with the list it ships.
-	if p3 := byName["p3"]; p3.Passthrough != (len(p3.Configured) ***REMOVED*** 0) {
+	if p3 := byName["p3"]; p3.Passthrough != (len(p3.Configured) == 0) {
 		t.Fatalf("p3 passthrough flag disagrees with its list: %+v", p3)
 	}
 }
@@ -303,7 +303,7 @@ func TestModelFetchParsesUpstreamCatalog(t *testing.T) {
 	}
 	rows := getJSON[[]modelRowView](t, h, "/admin/api/v1/models")
 	for _, r := range rows {
-		if r.Provider ***REMOVED*** "p1" && strings.Join(r.Configured, ",") != "up-alpha,up-beta,zeta" {
+		if r.Provider == "p1" && strings.Join(r.Configured, ",") != "up-alpha,up-beta,zeta" {
 			t.Fatalf("reloaded p1 configured = %v", r.Configured)
 		}
 	}
@@ -328,7 +328,7 @@ func TestModelFetchReportsUpstreamFailure(t *testing.T) {
 	}
 	rows := getJSON[[]modelRowView](t, h, "/admin/api/v1/models")
 	for _, r := range rows {
-		if r.Provider ***REMOVED*** "p1" && r.Error ***REMOVED*** "" {
+		if r.Provider == "p1" && r.Error == "" {
 			t.Fatal("the row must carry the fetch error")
 		}
 	}
@@ -361,7 +361,7 @@ func TestEveryCopyPayloadIsReachable(t *testing.T) {
 func classesOf(t *testing.T, openTag string) []string {
 	t.Helper()
 	m := regexp.MustCompile(`class="([^"]*)"`).FindStringSubmatch(openTag)
-	if m ***REMOVED*** nil {
+	if m == nil {
 		return nil
 	}
 	return strings.Fields(m[1])

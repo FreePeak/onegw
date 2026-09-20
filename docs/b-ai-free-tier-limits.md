@@ -208,7 +208,7 @@ API users, **2.3 million total users**.
   contested token (theb.ai and others). The only third-party signal that surfaced at all is in
   GitHub PR threads, not blogs or forums; the two code-search hits for `"api.b.ai"`
   (`Rescenix/Yosuri`, `kslamph/multikey`) carry no rate constants — just an `io.LimitReader` and
-  a `hostOf(baseUrl) ***REMOVED***= "api.b.ai"` pool check — so no client in the reachable index holds
+  a `hostOf(baseUrl) === "api.b.ai"` pool check — so no client in the reachable index holds
   B.AI's numbers. Treat "no community reports found" as *unreachable*, not *nonexistent*.
 - **The `Concurrency limit 1200` / `TPM limit 340000000` numbers are relayed, not B.AI's own** —
   the wording names Tencent Cloud support `[INFERENCE]`.

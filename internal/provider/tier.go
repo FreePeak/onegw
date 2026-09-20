@@ -21,12 +21,12 @@ type ModelTier struct {
 // no tier matches (caller should use defaults).
 func (d *Def) Tier(model string) (ModelTier, bool) {
 	for i := range d.Tiers {
-		if d.Tiers[i].Model ***REMOVED*** model {
+		if d.Tiers[i].Model == model {
 			return d.Tiers[i], true
 		}
 	}
 	for i := range d.Tiers {
-		if ok, err := path.Match(d.Tiers[i].Model, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(d.Tiers[i].Model, model); err == nil && ok {
 			return d.Tiers[i], true
 		}
 	}

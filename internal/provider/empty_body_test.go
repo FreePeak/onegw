@@ -24,7 +24,7 @@ func TestDoNamesEmptyUpstreamErrorBody(t *testing.T) {
 	p.Set(def)
 
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.3-flash", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("Do: want error")
 	}
 	if apiErr.Status != 500 {
@@ -52,10 +52,10 @@ func TestDoKeepsRealErrorBodyShape(t *testing.T) {
 	p.Set(def)
 
 	_, apiErr := def.Do(t.Context(), &def.Accounts[0], "glm-5.3-flash", nil, bytes.NewReader([]byte(`{"model":"m","messages":[]}`)), false)
-	if apiErr ***REMOVED*** nil {
+	if apiErr == nil {
 		t.Fatal("Do: want error")
 	}
-	if apiErr.Type ***REMOVED*** "upstream_empty_body" {
+	if apiErr.Type == "upstream_empty_body" {
 		t.Fatalf("real error body must keep its decoded type, got %q", apiErr.Type)
 	}
 	if apiErr.Message != "boom" {

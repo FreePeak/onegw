@@ -57,7 +57,7 @@ func exportJSONL(t *testing.T, h http.Handler, pw, from, to string) string {
 func parseJSONL(t *testing.T, body string) (hdr exportHeader, rows []store.RollupRow) {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(body), "\n")
-	if len(lines) ***REMOVED*** 0 {
+	if len(lines) == 0 {
 		t.Fatal("empty export")
 	}
 	if err := json.Unmarshal([]byte(lines[0]), &hdr); err != nil {
@@ -105,7 +105,7 @@ func TestUsageExportDeterministicFilteredAndGated(t *testing.T) {
 
 	body := exportJSONL(t, h, "pw", yesterday, day)
 	hdr, rows := parseJSONL(t, body)
-	if hdr.Node ***REMOVED*** "" || hdr.Kind != "snapshot" {
+	if hdr.Node == "" || hdr.Kind != "snapshot" {
 		t.Fatalf("header wrong: %+v", hdr)
 	}
 	if len(rows) != 3 {
@@ -149,7 +149,7 @@ func TestUsageExportDeterministicFilteredAndGated(t *testing.T) {
 // rather than leaving the gate open.
 func TestAdminPasswordDefaultStillGates(t *testing.T) {
 	srv, cfg := newTransferServer(t, "")
-	if cfg.Server.AdminPassword ***REMOVED*** "" {
+	if cfg.Server.AdminPassword == "" {
 		t.Fatal("Defaults must not leave the admin password empty")
 	}
 	h := srv.Handler()
@@ -254,7 +254,7 @@ func TestUsageImportRejectsCorruptingRows(t *testing.T) {
 	}
 	_, rows := parseJSONL(t, exportJSONL(t, h, "pw", day, day))
 	for _, r := range rows {
-		if r.Model ***REMOVED*** "m" || r.Model ***REMOVED*** "m2" {
+		if r.Model == "m" || r.Model == "m2" {
 			t.Fatalf("rejected row leaked into store: %+v", r)
 		}
 	}
@@ -301,7 +301,7 @@ func TestUsageTwoInstanceRoundTripE2E(t *testing.T) {
 	_, rowsB := parseJSONL(t, exportJSONL(t, hB, "pw-b", "", ""))
 	var fromA, localB []store.RollupRow
 	for _, r := range rowsB {
-		if r.Node ***REMOVED*** rowsA[0].Node {
+		if r.Node == rowsA[0].Node {
 			fromA = append(fromA, r)
 		} else {
 			localB = append(localB, r)
@@ -364,7 +364,7 @@ func TestUsagePushToAggregator(t *testing.T) {
 			t.Fatal(rerr)
 		}
 		for _, row := range rows {
-			if row.Node ***REMOVED*** srvA.nodeID && row.Requests ***REMOVED*** 1 {
+			if row.Node == srvA.nodeID && row.Requests == 1 {
 				return // arrived, attributed to A's node
 			}
 		}

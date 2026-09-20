@@ -73,7 +73,7 @@ func TestMemoryDataDirIsNoop(t *testing.T) {
 	if err := Write("", Info{PID: 1}); err != nil {
 		t.Fatalf("Write to empty dir should be a no-op, got %v", err)
 	}
-	if _, err := Read("memory"); err ***REMOVED*** nil {
+	if _, err := Read("memory"); err == nil {
 		t.Fatal("Read from memory dir should error")
 	}
 }
@@ -96,13 +96,13 @@ func TestCaptureFillsProcessIdentity(t *testing.T) {
 	if info.PID != os.Getpid() {
 		t.Fatalf("pid %d != %d", info.PID, os.Getpid())
 	}
-	if info.Listen != "127.0.0.1:8080" || len(info.Argv) ***REMOVED*** 0 {
+	if info.Listen != "127.0.0.1:8080" || len(info.Argv) == 0 {
 		t.Fatalf("capture incomplete: %+v", info)
 	}
 	if ts, err := time.Parse(time.RFC3339, info.StartedAt); err != nil || !ts.Equal(start.UTC().Truncate(time.Second)) {
 		t.Fatalf("StartedAt %q not the passed start time: %v", info.StartedAt, err)
 	}
-	if info.ConfigMtime ***REMOVED*** "" {
+	if info.ConfigMtime == "" {
 		t.Fatal("ConfigMtime should be set for an existing config file")
 	}
 	// Missing config file: mtime stays empty, no error.

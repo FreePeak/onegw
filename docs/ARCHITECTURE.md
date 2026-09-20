@@ -9,7 +9,7 @@ client ──HTTP──▶ authorize ─▶ acquireForBody ─▶ readBody (MaxB
                                                  │
                     ┌────────────────────────────┤
                     ▼                            ▼
-   client fmt ***REMOVED*** upstream fmt          client fmt != upstream fmt
+   client fmt == upstream fmt          client fmt != upstream fmt
                     │                            │
         saver.ApplyRaw (same-format           Decode → unified → Encode
         surgical JSON walk,                   (translat)
@@ -17,7 +17,7 @@ client ──HTTP──▶ authorize ─▶ acquireForBody ─▶ readBody (MaxB
                     │                            ▼
                     └──────────┬─────────── provider.Def.Do
                                ▼
-              upstream fmt ***REMOVED*** client fmt?
+              upstream fmt == client fmt?
                  │yes              │no
                  ▼                 ▼
    byte-copy + usage sniffer   TranslateStream (event-wise)

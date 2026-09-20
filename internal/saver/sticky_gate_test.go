@@ -69,7 +69,7 @@ func belowFloorTool(t *testing.T, s *Saver) string {
 	incompressible := sb.String()
 	for pad := 1; pad < 64; pad++ {
 		text := bigTool(6) + strings.Repeat(incompressible, pad)
-		if s.Compress(text) ***REMOVED*** text {
+		if s.Compress(text) == text {
 			if un := s.compressFiltered(text, s.settings()); un != "" && len(un) < len(text) {
 				return text
 			}
@@ -94,7 +94,7 @@ func toolContentOf(t *testing.T, body []byte) string {
 		t.Fatalf("decode: %v", err)
 	}
 	for _, m := range root.Messages {
-		if m.Role ***REMOVED*** "tool" {
+		if m.Role == "tool" {
 			return m.Content
 		}
 	}
@@ -151,7 +151,7 @@ func TestStickyPerBlockAcrossTurns(t *testing.T) {
 	out2, saved2 := s.ApplyRaw(translat.FmtOpenAI, turn2)
 	if got := toolContentOf(t, out2); got != tool2 && saved2 <= 0 {
 		t.Fatalf("known block must keep its compressed form below the floor (saved=%d)", saved2)
-	} else if got ***REMOVED*** tool2 {
+	} else if got == tool2 {
 		t.Fatal("below-floor known block flipped back to raw: prefix busted at that block")
 	}
 }

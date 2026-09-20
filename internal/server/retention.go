@@ -10,7 +10,7 @@ package server
 import "time"
 
 func (s *Server) startRetention() {
-	if s.st ***REMOVED*** nil { // memory mode: nothing persisted, nothing to prune
+	if s.st == nil { // memory mode: nothing persisted, nothing to prune
 		return
 	}
 	s.retainStop = make(chan struct{})
@@ -32,11 +32,11 @@ func (s *Server) startRetention() {
 // pruneOnce deletes rollups older than the configured retention window.
 // Exposed for tests; returns the rows deleted.
 func (s *Server) pruneOnce() (int64, error) {
-	if s.st ***REMOVED*** nil {
+	if s.st == nil {
 		return 0, nil
 	}
 	st := s.cur()
-	if st ***REMOVED*** nil || st.cfg.Usage.RetentionDays <= 0 {
+	if st == nil || st.cfg.Usage.RetentionDays <= 0 {
 		return 0, nil
 	}
 	return s.st.Prune(st.cfg.Usage.RetentionDays)

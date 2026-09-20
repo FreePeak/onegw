@@ -146,7 +146,7 @@ func TestProviderEditAccountRPMRoundTrip(t *testing.T) {
 	// The live reloaded config must carry both (consumer-observable,
 	// same as a SIGHUP).
 	st := srv.cur().cfg.Providers[0]
-	if len(st.Accounts) ***REMOVED*** 0 || st.Accounts[0].Name != "acct1" || st.Accounts[0].RPM != 5 {
+	if len(st.Accounts) == 0 || st.Accounts[0].Name != "acct1" || st.Accounts[0].RPM != 5 {
 		t.Fatalf("reloaded config missing rpm 5 on acct1: %+v", st.Accounts)
 	}
 	if st.RPM != 6 {

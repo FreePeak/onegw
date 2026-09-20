@@ -290,7 +290,7 @@ func TestInjectCrossFormatTranslation(t *testing.T) {
 		t.Fatalf("system field missing directive: %s", probe.System)
 	}
 	for _, m := range probe.Messages {
-		if m.Role ***REMOVED*** "system" {
+		if m.Role == "system" {
 			t.Fatalf("system role leaked into anthropic wire messages")
 		}
 	}
@@ -332,7 +332,7 @@ func TestInjectIdempotentAcrossUpstreamRetries(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		*seen = b
 		attempts++
-		if attempts ***REMOVED*** 1 {
+		if attempts == 1 {
 			http.Error(w, `{"error":{"message":"boom","type":"server_error"}}`, http.StatusInternalServerError)
 			return
 		}

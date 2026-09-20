@@ -85,7 +85,7 @@ func (a *adminSessions) issue(pw string) string {
 		var oldest string
 		var oldestT time.Time
 		for k, v := range a.m {
-			if oldest ***REMOVED*** "" || v.exp.Before(oldestT) {
+			if oldest == "" || v.exp.Before(oldestT) {
 				oldest, oldestT = k, v.exp
 			}
 		}
@@ -119,7 +119,7 @@ func (a *adminSessions) valid(tok string, pw string) bool {
 		return false
 	}
 	want := sha256.Sum256([]byte(pw))
-	return subtle.ConstantTimeCompare(s.pwHash[:], want[:]) ***REMOVED*** 1
+	return subtle.ConstantTimeCompare(s.pwHash[:], want[:]) == 1
 }
 
 func (a *adminSessions) count() int {
@@ -141,7 +141,7 @@ func (g *loginGuard) blocked(ip string) (bool, time.Duration) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	f := g.m[ip]
-	if f ***REMOVED*** nil {
+	if f == nil {
 		return false, 0
 	}
 	if d := time.Until(f.blocked); d > 0 {
@@ -168,7 +168,7 @@ func (g *loginGuard) fail(ip string) {
 		}
 	}
 	f := g.m[ip]
-	if f ***REMOVED*** nil {
+	if f == nil {
 		f = &loginFails{}
 		g.m[ip] = f
 	}
@@ -190,7 +190,7 @@ func (g *loginGuard) pass(ip string) {
 // redirects back to /admin; failures re-render the login page.
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	pw := s.cur().cfg.Server.AdminPassword
-	if pw ***REMOVED*** "" {
+	if pw == "" {
 		// Nothing to authenticate; the console is open.
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
@@ -206,10 +206,10 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Password string `json:"password"`
 		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err ***REMOVED*** nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err == nil {
 			given = body.Password
 		}
-	} else if err := r.ParseForm(); err ***REMOVED*** nil {
+	} else if err := r.ParseForm(); err == nil {
 		given = r.PostFormValue("password")
 	}
 	if subtle.ConstantTimeCompare([]byte(given), []byte(pw)) != 1 {
@@ -228,7 +228,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(sessionCookie); err ***REMOVED*** nil {
+	if c, err := r.Cookie(sessionCookie); err == nil {
 		s.sessions.drop(c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -253,7 +253,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, errMsg string) {
 
 func isJSON(r *http.Request) bool {
 	ct := r.Header.Get("Content-Type")
-	return len(ct) >= 16 && ct[:16] ***REMOVED*** "application/json"
+	return len(ct) >= 16 && ct[:16] == "application/json"
 }
 
 func remoteIP(r *http.Request) string {

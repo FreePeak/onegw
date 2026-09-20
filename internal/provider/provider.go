@@ -161,7 +161,7 @@ var sessionAffinityHeaders = [...]string{
 // client-sent X-GROK-CONV-ID would miss a canonical Get). "" when absent.
 func clientHeader(h http.Header, name string) string {
 	for k, vs := range h {
-		if len(k) ***REMOVED*** len(name) && strings.EqualFold(k, name) && len(vs) > 0 {
+		if len(k) == len(name) && strings.EqualFold(k, name) && len(vs) > 0 {
 			return vs[0]
 		}
 	}
@@ -191,7 +191,7 @@ func ResponsesOnlyModel(model string) bool {
 // error"}}, while /v1/messages with x-api-key + anthropic-version +
 // x-opencode-session answers 200 in the Anthropic shape.
 func AnthropicOnlyModel(model string) bool {
-	return model ***REMOVED*** "union-alpha"
+	return model == "union-alpha"
 }
 
 // UpstreamFormat returns the wire format the routed model actually speaks
@@ -202,7 +202,7 @@ func AnthropicOnlyModel(model string) bool {
 // serve keyless on /zen/v1/responses), chat-completions for the open-weight
 // catalog.
 func (d *Def) UpstreamFormat(model string) translat.Format {
-	if d.Kind ***REMOVED*** KindOpenCode || d.Kind ***REMOVED*** KindOpenCodeFree {
+	if d.Kind == KindOpenCode || d.Kind == KindOpenCodeFree {
 		if AnthropicOnlyModel(model) {
 			return translat.FmtAnthropic
 		}
@@ -212,7 +212,7 @@ func (d *Def) UpstreamFormat(model string) translat.Format {
 	}
 	// Providers whose default wire is chat-completions can still hold ids the
 	// upstream serves only on /v1/responses (xAI's OAuth path: grok-4.5).
-	if d.Kind ***REMOVED*** KindOpenAI && d.ResponsesOnly(model) {
+	if d.Kind == KindOpenAI && d.ResponsesOnly(model) {
 		return translat.FmtOpenAIResponses
 	}
 	return d.Kind.Format()
@@ -223,7 +223,7 @@ func (d *Def) UpstreamFormat(model string) translat.Format {
 // "/"). An empty list keeps every model on the kind's default wire.
 func (d *Def) ResponsesOnly(model string) bool {
 	for _, pat := range d.ResponsesModels {
-		if ok, err := path.Match(pat, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
 		}
 	}
@@ -460,7 +460,7 @@ type Def struct {
 // unconditionally are touched, because on every other model an absent knob
 // means "do not think" and adding one would change the client's contract.
 func (d *Def) DefaultEffortFor(model string) string {
-	if d.DefaultEffort ***REMOVED*** "" {
+	if d.DefaultEffort == "" {
 		return ""
 	}
 	if !d.AlwaysThinkingModel(model) {
@@ -475,7 +475,7 @@ func (d *Def) DefaultEffortFor(model string) string {
 func (d *Def) LearnAlwaysThinking(model string) bool {
 	d.learnedMu.Lock()
 	defer d.learnedMu.Unlock()
-	if d.learnedAT ***REMOVED*** nil {
+	if d.learnedAT == nil {
 		d.learnedAT = make(map[string]struct{})
 	}
 	if _, ok := d.learnedAT[model]; ok {
@@ -490,7 +490,7 @@ func (d *Def) LearnAlwaysThinking(model string) bool {
 // learned always-thinking at runtime (see LearnAlwaysThinking).
 func (d *Def) AlwaysThinkingModel(model string) bool {
 	for _, pat := range d.AlwaysThinking {
-		if ok, err := path.Match(pat, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
 		}
 	}
@@ -506,7 +506,7 @@ func (d *Def) AlwaysThinkingModel(model string) bool {
 func (d *Def) LearnNoThinking(model string) bool {
 	d.learnedMu.Lock()
 	defer d.learnedMu.Unlock()
-	if d.learnedNT ***REMOVED*** nil {
+	if d.learnedNT == nil {
 		d.learnedNT = make(map[string]struct{})
 	}
 	if _, ok := d.learnedNT[model]; ok {
@@ -521,7 +521,7 @@ func (d *Def) LearnNoThinking(model string) bool {
 // no-thinking at runtime (see LearnNoThinking).
 func (d *Def) NoThinkingModel(model string) bool {
 	for _, pat := range d.NoThinking {
-		if ok, err := path.Match(pat, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
 		}
 	}
@@ -539,7 +539,7 @@ func (d *Def) NoThinkingModel(model string) bool {
 // synthesizeReasoningEcho).
 func (d *Def) ReasoningEchoModel(model string) bool {
 	for _, pat := range d.EchoReasoning {
-		if ok, err := path.Match(pat, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
 		}
 	}
@@ -556,7 +556,7 @@ func (d *Def) ReasoningEchoModel(model string) bool {
 // leg (see Router.Execute).
 func (d *Def) RetryForeverModel(model string) bool {
 	for _, pat := range d.RetryForever {
-		if ok, err := path.Match(pat, model); err ***REMOVED*** nil && ok {
+		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
 		}
 	}
@@ -572,7 +572,7 @@ func (d *Def) RetryForeverModel(model string) bool {
 func (d *Def) LearnReasoningEcho(model string) bool {
 	d.learnedMu.Lock()
 	defer d.learnedMu.Unlock()
-	if d.learnedRE ***REMOVED*** nil {
+	if d.learnedRE == nil {
 		d.learnedRE = make(map[string]struct{})
 	}
 	if _, ok := d.learnedRE[model]; ok {
@@ -663,7 +663,7 @@ func (d *Def) BenchModel(model string, ttl time.Duration) {
 	}
 	d.modelMu.Lock()
 	defer d.modelMu.Unlock()
-	if d.modelBench ***REMOVED*** nil {
+	if d.modelBench == nil {
 		d.modelBench = make(map[string]time.Time)
 	}
 	if len(d.modelBench) >= maxModelBenches {
@@ -680,7 +680,7 @@ func (d *Def) BenchModel(model string, ttl time.Duration) {
 			evict := ""
 			var evictAt time.Time
 			for m, until := range d.modelBench {
-				if evict ***REMOVED*** "" || until.Before(evictAt) {
+				if evict == "" || until.Before(evictAt) {
 					evict, evictAt = m, until
 				}
 			}
@@ -752,11 +752,11 @@ type htWindow struct {
 // modelMu; lock order htMu→modelMu must stay consistent — never invert).
 func (d *Def) noteHeaderTimeout(model string, now time.Time) {
 	d.htMu.Lock()
-	if d.htStrikes ***REMOVED*** nil {
+	if d.htStrikes == nil {
 		d.htStrikes = make(map[string]htWindow)
 	}
 	w := d.htStrikes[model]
-	if w.count ***REMOVED*** 0 || now.Sub(w.since) > headerTimeoutWindow {
+	if w.count == 0 || now.Sub(w.since) > headerTimeoutWindow {
 		w = htWindow{count: 1, since: now}
 	} else {
 		w.count++
@@ -780,7 +780,7 @@ func (d *Def) noteHeaderTimeout(model string, now time.Time) {
 // passthrough surface op ("embeddings", "stt", "tts").
 func (d *Def) AllowsPassthrough(op string) bool {
 	for _, p := range d.Passthrough {
-		if p ***REMOVED*** op {
+		if p == op {
 			return true
 		}
 	}
@@ -803,7 +803,7 @@ func NewPool() *Pool { return &Pool{byName: map[string]*Def{}} }
 
 // Set (re)registers a provider definition.
 func (p *Pool) Set(d *Def) {
-	if d.pool ***REMOVED*** nil {
+	if d.pool == nil {
 		d.pool = newAccountPool(d.Accounts, d.StickyTTL, d.RPM)
 		d.pool.policy = d.Rotation // #84: zero fields keep the package defaults
 		d.pool.selection, d.pool.headroom = d.Selection, d.Headroom
@@ -826,7 +826,7 @@ func (p *Pool) Replace(defs []*Def) {
 	byName := make(map[string]*Def, len(defs))
 	order := make([]string, 0, len(defs))
 	for _, d := range defs {
-		if d.pool ***REMOVED*** nil {
+		if d.pool == nil {
 			d.pool = newAccountPool(d.Accounts, d.StickyTTL, d.RPM)
 			d.pool.policy = d.Rotation // #84: zero fields keep the package defaults
 			d.pool.selection, d.pool.headroom = d.Selection, d.Headroom
@@ -989,7 +989,7 @@ func (d *Def) Base(acct *Account) string {
 		base = acct.BaseURL
 	}
 	base = strings.TrimRight(base, "/")
-	if base ***REMOVED*** "" {
+	if base == "" {
 		return d.Kind.DefaultBaseURL()
 	}
 	return base
@@ -1093,7 +1093,7 @@ const (
 // too: a smaller request to the same provider succeeds, so they never
 // strike. 4xx never strikes.
 func edgeFault(apiErr *types.APIError) bool {
-	if apiErr ***REMOVED*** nil || apiErr.Status < 500 ||
+	if apiErr == nil || apiErr.Status < 500 ||
 		apiErr.SharedConcurrency() || apiErr.NoSameTargetRetry {
 		return false
 	}
@@ -1127,7 +1127,7 @@ var htmlTitleRe = regexp.MustCompile(`(?is)<title>(.*?)</title>`)
 // a decoded body.
 func htmlErrPage(body []byte) (title string, ok bool) {
 	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) ***REMOVED*** 0 || trimmed[0] != '<' {
+	if len(trimmed) == 0 || trimmed[0] != '<' {
 		return "", false
 	}
 	if m := htmlTitleRe.FindSubmatch(trimmed); m != nil {
@@ -1349,7 +1349,7 @@ func (d *Def) benchTTL() time.Duration {
 }
 
 func newAccountPool(accts []Account, sticky time.Duration, sharedRPM int) *accountPool {
-	if len(accts) ***REMOVED*** 0 {
+	if len(accts) == 0 {
 		accts = []Account{{Name: "default"}}
 	}
 	p := &accountPool{ttl: sticky, now: time.Now, pickN: rand.IntN, runs: -1}
@@ -1392,7 +1392,7 @@ func (p *accountPool) nextRun() int {
 	if hi < lo {
 		hi = lo
 	}
-	if lo ***REMOVED*** hi {
+	if lo == hi {
 		return lo
 	}
 	return lo + p.pickN(hi-lo+1)
@@ -1417,7 +1417,7 @@ func (p *accountPool) endRunFor(a *Account) {
 		if p.accts[i].acct.Name != a.Name || p.accts[i].acct.APIKey != a.APIKey {
 			continue
 		}
-		if i ***REMOVED*** p.runs {
+		if i == p.runs {
 			p.endRun()
 		}
 		return
@@ -1475,7 +1475,7 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	if p.ttl > 0 && id != "" {
 		if pin, ok := p.sticky[id]; ok && now.Before(pin.expires) {
 			for i := range p.accts {
-				if s := &p.accts[i]; s.acct.Name ***REMOVED*** pin.name && s.acct.APIKey ***REMOVED*** pin.key {
+				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
 					if ok, _ := p.available(s, now); ok && p.sharedReady(now).IsZero() {
 						// The pin is a cache-warmth preference, not an
 						// admission right: a pinned account already
@@ -1487,7 +1487,7 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 						// there the pin would otherwise funnel every
 						// concurrent turn of every session onto ONE
 						// credential — the herd this pick rule breaks.
-						if s.live ***REMOVED*** 0 {
+						if s.live == 0 {
 							p.grant(s, now)
 							return &s.acct, time.Time{}
 						}
@@ -1553,7 +1553,7 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 // for a pick, else (non-zero) the refill instant. Consumes nothing — take()
 // runs in grant() so examined slots never spend the pool's budget.
 func (p *accountPool) sharedReady(now time.Time) time.Time {
-	if p.shared ***REMOVED*** nil {
+	if p.shared == nil {
 		return time.Time{}
 	}
 	if r := p.shared.refillAt(now); r.After(now) {
@@ -1588,7 +1588,7 @@ func (p *accountPool) begin(a *Account) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	s := p.slot(a)
-	if s ***REMOVED*** nil {
+	if s == nil {
 		return 0
 	}
 	s.live++
@@ -1609,11 +1609,11 @@ func (p *accountPool) end(a *Account) {
 // a copy rather than the pool's own instance (tests pass &def.Accounts[i],
 // the sticky-pin path looks slots up the same way).
 func (p *accountPool) slot(a *Account) *accountState {
-	if a ***REMOVED*** nil {
+	if a == nil {
 		return nil
 	}
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			return s
 		}
 	}
@@ -1646,7 +1646,7 @@ func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time
 	// clears the mark in ok(); a fresh billing refusal re-stamps the window
 	// in invalidate().
 	cool := !s.cooldown.IsZero() && !now.After(s.cooldown)
-	if s.bucket ***REMOVED*** nil {
+	if s.bucket == nil {
 		if cool {
 			return false, s.cooldown
 		}
@@ -1681,13 +1681,13 @@ func (p *accountPool) available(s *accountState, now time.Time) (bool, time.Time
 // bounds the wait. All slots of the account are touched — weighted pools
 // expand one account into several slots.
 func (p *accountPool) ok(a *Account, since time.Time) {
-	if p ***REMOVED*** nil || a ***REMOVED*** nil {
+	if p == nil || a == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			s.strikes = 0
 			if s.invalidated && s.invalidatedAt.Before(since) {
 				// Parole probe paid off (#80 follow-up): the upstream
@@ -1714,7 +1714,7 @@ func (p *accountPool) ok(a *Account, since time.Time) {
 // flapThreshold consecutive faults have struck. Not tied to an account:
 // the fault indicts the provider's edge, so every key counts once.
 func (p *accountPool) flapStrike() {
-	if p ***REMOVED*** nil {
+	if p == nil {
 		return
 	}
 	p.mu.Lock()
@@ -1732,7 +1732,7 @@ func (p *accountPool) flapStrike() {
 // inside a longer serving period must not accumulate toward the next trip.
 // Any successful account clears it: the edge fault was provider-wide.
 func (p *accountPool) flapHeal() {
-	if p ***REMOVED*** nil {
+	if p == nil {
 		return
 	}
 	p.mu.Lock()
@@ -1745,7 +1745,7 @@ func (p *accountPool) flapHeal() {
 // Retry-After) wins verbatim; otherwise the adaptive ladder benches for
 // coolBase << strikes, capped at coolCap.
 func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
-	if p ***REMOVED*** nil || a ***REMOVED*** nil {
+	if p == nil || a == nil {
 		return
 	}
 	p.mu.Lock()
@@ -1757,7 +1757,7 @@ func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
 	// semantics: a weighted pool cools as one.
 	cur := -1
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey && cur < 0 {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey && cur < 0 {
 			cur = s.strikes
 		}
 	}
@@ -1773,7 +1773,7 @@ func (p *accountPool) rateLimited(a *Account, retryAfter time.Duration) {
 	}
 	now := p.now()
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			s.strikes = cur + 1
 			if s.cooldown.Before(now) {
 				s.cooldown = now
@@ -1813,7 +1813,7 @@ type wallSight struct {
 // On a proven burst the sight resets, so a continuing wall must re-prove
 // itself for every park instead of latching on stale evidence.
 func (p *accountPool) wallStrike(model, acct string, text bool) bool {
-	if p ***REMOVED*** nil {
+	if p == nil {
 		return false
 	}
 	p.mu.Lock()
@@ -1824,7 +1824,7 @@ func (p *accountPool) wallStrike(model, acct string, text bool) bool {
 		delete(p.walls, model)
 		return true
 	}
-	if p.walls ***REMOVED*** nil {
+	if p.walls == nil {
 		p.walls = make(map[string]wallSight)
 	}
 	p.walls[model] = wallSight{acct: acct, at: now}
@@ -1833,10 +1833,10 @@ func (p *accountPool) wallStrike(model, acct string, text bool) bool {
 
 // pin records the identity → account affinity, keeping the map bounded.
 func (p *accountPool) pin(id string, a *Account, now time.Time) {
-	if p.ttl <= 0 || id ***REMOVED*** "" {
+	if p.ttl <= 0 || id == "" {
 		return
 	}
-	if p.sticky ***REMOVED*** nil {
+	if p.sticky == nil {
 		p.sticky = make(map[string]stickyPin)
 	}
 	if len(p.sticky) >= maxStickyPins {
@@ -1854,7 +1854,7 @@ func (p *accountPool) pin(id string, a *Account, now time.Time) {
 
 // unpin drops an identity's pin so the next next() rotates.
 func (p *accountPool) unpin(id string) {
-	if id ***REMOVED*** "" {
+	if id == "" {
 		return
 	}
 	p.mu.Lock()
@@ -1864,14 +1864,14 @@ func (p *accountPool) unpin(id string) {
 
 // cool marks an account cooling for d (quota exhausted).
 func (p *accountPool) cool(a *Account, d time.Duration) {
-	if p ***REMOVED*** nil || a ***REMOVED*** nil {
+	if p == nil || a == nil {
 		return
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := time.Now()
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			if s.cooldown.Before(now) {
 				s.cooldown = now
 			}
@@ -1893,14 +1893,14 @@ func (p *accountPool) cool(a *Account, d time.Duration) {
 // Returns true when the account was not already terminal, so callers log
 // once per invalidation instead of once per request.
 func (p *accountPool) invalidate(a *Account) bool {
-	if p ***REMOVED*** nil || a ***REMOVED*** nil {
+	if p == nil || a == nil {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	fresh := false
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			if !s.invalidated {
 				s.invalidated = true
 				fresh = true
@@ -1916,14 +1916,14 @@ func (p *accountPool) invalidate(a *Account) bool {
 }
 
 func (p *accountPool) revalidate(a *Account) bool {
-	if p ***REMOVED*** nil || a ***REMOVED*** nil {
+	if p == nil || a == nil {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cleared := false
 	for i := range p.accts {
-		if s := &p.accts[i]; s.acct.Name ***REMOVED*** a.Name && s.acct.APIKey ***REMOVED*** a.APIKey {
+		if s := &p.accts[i]; s.acct.Name == a.Name && s.acct.APIKey == a.APIKey {
 			if s.invalidated {
 				s.invalidated = false
 				s.invalidatedAt = time.Time{}
@@ -1938,7 +1938,7 @@ func (p *accountPool) revalidate(a *Account) bool {
 }
 
 func (p *accountPool) invalidatedNames() []string {
-	if p ***REMOVED*** nil {
+	if p == nil {
 		return nil
 	}
 	p.mu.Lock()
@@ -1971,7 +1971,7 @@ func (d *Def) Invalidate(a *Account) bool { return d.pool.invalidate(a) }
 // unfunded 503's Retry-After uses it so a client that honors the hint
 // retries exactly when the gateway can serve it again.
 func (d *Def) SoonestParole() (time.Time, bool) {
-	if d ***REMOVED*** nil || d.pool ***REMOVED*** nil {
+	if d == nil || d.pool == nil {
 		return time.Time{}, false
 	}
 	d.pool.mu.Lock()
@@ -1998,7 +1998,7 @@ func (d *Def) Revalidate(a *Account) bool { return d.pool.revalidate(a) }
 // name exists or none was terminal.
 func (d *Def) RevalidateByName(name string) bool {
 	for i := range d.Accounts {
-		if d.Accounts[i].Name ***REMOVED*** name && d.pool.revalidate(&d.Accounts[i]) {
+		if d.Accounts[i].Name == name && d.pool.revalidate(&d.Accounts[i]) {
 			return true
 		}
 	}
@@ -2013,7 +2013,7 @@ func (d *Def) Invalidated() []string { return d.pool.invalidatedNames() }
 // is terminal — the case where a provider's whole billing relationship is
 // dead and the honest client answer is a billing error, not a rate limit.
 func (d *Def) AllInvalidated() bool {
-	if d.pool ***REMOVED*** nil || len(d.Accounts) ***REMOVED*** 0 {
+	if d.pool == nil || len(d.Accounts) == 0 {
 		return false
 	}
 	return len(d.pool.invalidatedNames()) >= len(d.Accounts)
@@ -2027,7 +2027,7 @@ func (d *Def) AllInvalidated() bool {
 // different credential and starts active — which is exactly the recovery
 // path an operator takes when they top a balance back up.
 func CarryInvalidated(old *Pool, fresh *Pool) {
-	if old ***REMOVED*** nil || fresh ***REMOVED*** nil {
+	if old == nil || fresh == nil {
 		return
 	}
 	old.mu.RLock()
@@ -2036,7 +2036,7 @@ func CarryInvalidated(old *Pool, fresh *Pool) {
 	defer fresh.mu.Unlock()
 	for name, od := range old.byName {
 		nd, ok := fresh.byName[name]
-		if !ok || od ***REMOVED*** nil || od.pool ***REMOVED*** nil || nd ***REMOVED*** nil || nd.pool ***REMOVED*** nil {
+		if !ok || od == nil || od.pool == nil || nd == nil || nd.pool == nil {
 			continue
 		}
 		term := make(map[string]time.Time, len(od.pool.accts))
@@ -2045,7 +2045,7 @@ func CarryInvalidated(old *Pool, fresh *Pool) {
 				term[s.acct.Name+"\x00"+s.acct.APIKey] = s.invalidatedAt
 			}
 		}
-		if len(term) ***REMOVED*** 0 {
+		if len(term) == 0 {
 			continue
 		}
 		for i := range nd.pool.accts {
@@ -2232,12 +2232,12 @@ func (d *Def) Path(op, model string) string {
 	}
 	switch d.Kind {
 	case KindAnthropic:
-		if op ***REMOVED*** "models" {
+		if op == "models" {
 			return "/v1/models"
 		}
 		return "/v1/messages"
 	case KindGemini:
-		if op ***REMOVED*** "models" {
+		if op == "models" {
 			return "/v1beta/models"
 		}
 		// model + method appended by caller (needs model name)
@@ -2245,12 +2245,12 @@ func (d *Def) Path(op, model string) string {
 	case KindOpenAIResponses:
 		// Grok CLI answers on the Responses endpoint only; its catalog is
 		// the usual /v1/models (OmniRoute + 9router grok-cli modelsUrl).
-		if op ***REMOVED*** "models" {
+		if op == "models" {
 			return "/v1/models"
 		}
 		return "/v1/responses"
 	case KindCommandCode:
-		if op ***REMOVED*** "models" {
+		if op == "models" {
 			return "/v1/models"
 		}
 		return "" // base_url IS the /alpha/generate endpoint
@@ -2265,7 +2265,7 @@ func (d *Def) Path(op, model string) string {
 		// (ResponsesOnlyModel; the free tier's muse-spark-*-free
 		// included — live-probed 2026-09-12), everything else on
 		// /v1/chat/completions.
-		if op ***REMOVED*** "models" {
+		if op == "models" {
 			return "/v1/models"
 		}
 		if AnthropicOnlyModel(model) {
@@ -2276,10 +2276,10 @@ func (d *Def) Path(op, model string) string {
 		}
 		return "/v1/chat/completions"
 	default:
-		if op ***REMOVED*** "models" {
+		if op == "models" {
 			return "/v1/models"
 		}
-		if d.Kind ***REMOVED*** KindOpenAI && d.ResponsesOnly(model) {
+		if d.Kind == KindOpenAI && d.ResponsesOnly(model) {
 			return "/v1/responses" // xAI's native Responses endpoint
 		}
 		return "/v1/chat/completions"
@@ -2359,13 +2359,13 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		}
 		url = fmt.Sprintf("%s/models/%s:%s%s", joinURL(base, "/v1beta"), model, method, qs)
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-		if err ***REMOVED*** nil {
+		if err == nil {
 			req.Header.Set("x-goog-api-key", acct.APIKey)
 		}
 	default:
 		url = joinURL(base, d.Path("chat", model))
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-		if err ***REMOVED*** nil {
+		if err == nil {
 			// Kind-specific NON-credential headers (fingerprints, versions).
 			// Credentials are set once below via applyAuth (issue #2: also
 			// resolves OAuth tokens).
@@ -2447,7 +2447,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			// this and every other error shape happens once at the exit.
 			apiErr.Type = "upstream_html_error"
 			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an HTML error page%s", d.Name, resp.StatusCode, hint)
-		} else if len(limited) ***REMOVED*** 0 && apiErr.Message ***REMOVED*** "" && apiErr.Type ***REMOVED*** "upstream_error" {
+		} else if len(limited) == 0 && apiErr.Message == "" && apiErr.Type == "upstream_error" {
 			apiErr.Type = "upstream_empty_body"
 			apiErr.Message = fmt.Sprintf("upstream %s returned HTTP %d with an empty error body", d.Name, resp.StatusCode)
 		}
@@ -2520,7 +2520,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				// its scope — the ladder rides it verbatim.
 				if apiErr.RetryAfter != "" || !d.pool.wallStrike(model, acct.Name, false) {
 					dDur := coolDuration(resp.Header.Get("Retry-After"))
-					if dDur ***REMOVED*** 0 {
+					if dDur == 0 {
 						// No header hint: bench for the request-count window
 						// the body names ("Maximum 8 requests within 1
 						// minutes" — live tokenrouter 2026-09-09) instead of
@@ -2692,24 +2692,24 @@ func (d *Def) applySessionAffinity(up, client http.Header, apiKey string) {
 		if v := clientHeader(client, name); v != "" {
 			up.Set(name, v)
 			sent = true
-			if name ***REMOVED*** "x-grok-conv-id" || name ***REMOVED*** "x-grok-session-id" {
+			if name == "x-grok-conv-id" || name == "x-grok-session-id" {
 				grokSent = true
 			}
 		}
 	}
 	// Grok Build proxy: 9router's grok-cli executor ALWAYS sends
-	// x-grok-session-id ***REMOVED*** x-grok-conv-id from one resolved id
+	// x-grok-session-id == x-grok-conv-id from one resolved id
 	// (executors/grok-cli.js:376-380). When the client forwarded neither
 	// grok id, derive one stable per credential and set both names — the
 	// session_header knob is then never needed for this kind. Client-sent
 	// values keep winning (issue #36 contract): nothing is invented.
-	if d.Kind ***REMOVED*** KindOpenAIResponses && !grokSent {
+	if d.Kind == KindOpenAIResponses && !grokSent {
 		id := perKeySession("cache-affinity", apiKey)
 		up.Set("x-grok-conv-id", id)
 		up.Set("x-grok-session-id", id)
 		return
 	}
-	if sent || d.SessionHeader ***REMOVED*** "" {
+	if sent || d.SessionHeader == "" {
 		return
 	}
 	up.Set(d.SessionHeader, perKeySession("cache-affinity", apiKey))
@@ -2723,13 +2723,13 @@ func (d *Def) applySessionAffinity(up, client http.Header, apiKey string) {
 // flat 30s park would starve a healthy pool. A GARBAGE header is treated
 // the same: no usable hint, ladder decides.
 func coolDuration(retryAfter string) time.Duration {
-	if retryAfter ***REMOVED*** "" {
+	if retryAfter == "" {
 		return 0
 	}
-	if secs, err := time.ParseDuration(retryAfter + "s"); err ***REMOVED*** nil && secs > 0 {
+	if secs, err := time.ParseDuration(retryAfter + "s"); err == nil && secs > 0 {
 		return secs
 	}
-	if t, err := time.Parse(http.TimeFormat, retryAfter); err ***REMOVED*** nil {
+	if t, err := time.Parse(http.TimeFormat, retryAfter); err == nil {
 		if d := time.Until(t); d > 0 {
 			return d
 		}
@@ -2753,7 +2753,7 @@ func decodeUpstreamError(kind Kind, body []byte, status int) *types.APIError {
 // FetchModels lists upstream models in OpenAI `/v1/models` shape (best
 // effort; used by the /v1/models surface for kinds that support it).
 func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, error) {
-	if d.Kind ***REMOVED*** KindCursor {
+	if d.Kind == KindCursor {
 		// Cursor's AgentService/ChatService expose no model-listing
 		// RPC — ListModels, GetModels, GetCatalog all 404 when hit
 		// against both agent.api5.cursor.sh and api2.cursor.sh
@@ -2828,7 +2828,7 @@ const p2cSpeedRef = 100.0
 // from the pool's cursor). The default preserves the shipped behavior exactly:
 // fastest open slot, round-robin order among equal/no-data speeds.
 func (p *accountPool) pickSlot(open []int, now time.Time) int {
-	if len(open) ***REMOVED*** 1 {
+	if len(open) == 1 {
 		return open[0]
 	}
 	// Occupancy gate, applied to EVERY mode: per-key concurrency is ~1 on
@@ -2850,14 +2850,14 @@ func (p *accountPool) pickSlot(open []int, now time.Time) int {
 	// that already had a call in flight.
 	idle := make([]int, 0, len(open))
 	for _, i := range open {
-		if p.accts[i].live ***REMOVED*** minLive {
+		if p.accts[i].live == minLive {
 			idle = append(idle, i)
 		}
 	}
 	if len(idle) > 0 {
 		open = idle
 	}
-	if len(open) ***REMOVED*** 1 {
+	if len(open) == 1 {
 		return open[0]
 	}
 	switch p.selection {
@@ -2881,7 +2881,7 @@ func (p *accountPool) pickSlot(open []int, now time.Time) int {
 	case "strict-random":
 		return p.deckPick(open)
 	case "p2c":
-		if len(open) ***REMOVED*** 2 {
+		if len(open) == 2 {
 			return p.cheaper(open[0], open[1], now)
 		}
 		i := p.pickN(len(open))
@@ -2958,7 +2958,7 @@ func (p *accountPool) score(i int, now time.Time) float64 {
 func (p *accountPool) deckPick(open []int) int {
 	inOpen := func(i int) bool {
 		for _, o := range open {
-			if o ***REMOVED*** i {
+			if o == i {
 				return true
 			}
 		}
