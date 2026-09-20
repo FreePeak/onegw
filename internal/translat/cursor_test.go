@@ -413,6 +413,33 @@ func TestCursorJSONErrorRateLimit(t *testing.T) {
 	}
 }
 
+// A 200 + zero content frames + an error in the TRAILER frame is how Cursor
+// reports an unauthenticated session (and any other turn-level failure). The
+// trailer used to be skipped as opaque metadata, so the turn surfaced as the
+// misleading "empty response (model may be unavailable on this path)".
+// Live wire capture 2026-09-20 (api2 ChatService, composer-2.5).
+func TestCursorSSEStreamTrailerError(t *testing.T) {
+	trailer := []byte(`{"error":{"code":"unauthenticated","message":"Error","details":[{"debug":{"error":"ERROR_NOT_LOGGED_IN","details":{"title":"Authentication error","detail":"If you are logged in, try logging out and back in."}}}]}}`)
+	frame := wrapConnectFrame(trailer)
+	frame[0] = connectFlagTrailer
+
+	stream := CursorSSEStream(bytes.NewReader(frame), "composer-2.5", false, nil)
+	buf := make([]byte, 4096)
+	_, err := stream.Read(buf)
+	if err == nil {
+		t.Fatal("a trailer-carried error must surface as a reader error")
+	}
+	if !strings.Contains(err.Error(), "Authentication error") {
+		t.Fatalf("error must carry the upstream reason, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "empty response") {
+		t.Fatalf("trailer error must not degrade to the empty-response message: %v", err)
+	}
+	if ae, ok := err.(*types.APIError); !ok || ae.Status != 401 {
+		t.Fatalf("unauthenticated must map to 401 so the pool benches it, got %v", err)
+	}
+}
+
 func TestDecodeCursorErrorStatusLift(t *testing.T) {
 	// Non-200 body: status passes through.
 	ae := DecodeCursorError([]byte(`{"error":{"code":"unauthenticated","message":"bad token"}}`), 401)

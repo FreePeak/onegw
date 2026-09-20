@@ -239,7 +239,16 @@ func readConnectFrames(r io.Reader, yield func(payload []byte) error) error {
 			payload = raw
 		}
 		if flags&connectFlagTrailer != 0 {
-			continue // end-of-stream metadata, never content
+			// End-of-stream metadata. Normally `{}`, but Cursor also posts
+			// the turn's error here — an unauthenticated ChatService call
+			// returns 200 + a trailer frame carrying
+			// {"error":{"code":"unauthenticated",...}} and zero content
+			// frames (live 2026-09-20), which otherwise degrades into the
+			// misleading "empty response (model may be unavailable)".
+			if ae, ok := CursorJSONError(payload); ok {
+				return ae
+			}
+			continue
 		}
 		if err := yield(payload); err != nil {
 			return err
@@ -873,6 +882,12 @@ func CursorJSONError(payload []byte) (*types.APIError, bool) {
 	}
 	if jerr.Error.Code == "resource_exhausted" {
 		return &types.APIError{Status: 429, Type: "rate_limit_error", Code: "rate_limited", Message: msg}, true
+	}
+	if jerr.Error.Code == "unauthenticated" || jerr.Error.Code == "permission_denied" {
+		// An expired/rotated session token. 401 (not 400) so the pool benches
+		// the account and a combo falls through to a live sibling instead of
+		// reporting a caller-side error that is not the caller's fault.
+		return &types.APIError{Status: 401, Type: "authentication_error", Message: msg}, true
 	}
 	return &types.APIError{Status: 400, Type: "api_error", Message: msg}, true
 }

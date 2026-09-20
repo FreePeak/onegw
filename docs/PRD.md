@@ -1,3 +1,22 @@
+*Last updated: 2026-09-20 (cursor: a 200 + trailer-carried turn error surfaced as "empty response" — the real reason now reaches the caller, PR #127):*
+Cursor reports a turn-level failure in the Connect-RPC TRAILER frame: an unauthenticated
+`ChatService/StreamUnifiedChatWithTools` call returns **HTTP 200, zero content frames**, and a trailer
+carrying `{"error":{"code":"unauthenticated",..."debug":{"error":"ERROR_NOT_LOGGED_IN",...}}}`.
+`readConnectFrames` skipped every trailer as opaque end-of-stream metadata, so the turn produced
+nothing and fell through to the generic `!started` 502 — `cursor: empty response (model may be
+unavailable on this path)` — a *symptom* message that points at model/path routing and sent the
+investigation there (routing and encoder were both correct). The trailer payload now runs through
+`CursorJSONError` and becomes the stream error when it decodes (`{}`, the normal trailer, still
+skips), and `CursorJSONError` maps `unauthenticated`/`permission_denied` to **401
+authentication_error** so the pool benches the account and a combo falls through to a live sibling,
+matching every other kind (#121, #111). Live capture, same request bytes, three tokens on
+api2.cursor.sh: a 480-char `type=web` token → `ERROR_NOT_LOGGED_IN`; a 412-char `type=session` token →
+text + thinking in 77 frames; the IDE's 413-char `auth0|` `type=session` token (from
+`state.vscdb`) → 65 frames. Pinned by `TestCursorSSEStreamTrailerError`, which reproduced the exact
+reported symptom before the change. Config follow-up, not in this PR: the live `onegw.toml`
+`dashboard_token` is byte-identical to `api_key` (both `type=web`, both the same `grok|` subject) —
+the split PR #124 introduces exists so those stop being one credential; #124 is still a draft.
+
 *Last updated: 2026-09-20 (corrupt upstream streams: a vendor that splices invalid UTF-8 into its SSE JSON is now failed over at the gateway before the client sees a byte; this branch also repairs the tree-wide `==` redaction damage):*
 The `free` lane served raw invalid UTF-8 INSIDE its SSE JSON strings — 4 thinking blocks across 711
 xdev sessions render as mojibake, the "weird characters" a thinking box shows. The vendor's own
