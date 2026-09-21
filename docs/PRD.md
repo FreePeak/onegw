@@ -1,3 +1,64 @@
+*Last updated: 2026-09-21 (cursor composer: field-25 thinking was the answer — split on `</think>`):*
+Cursor's IDE composer family (`composer-2.5`, `composer-2`) rides ChatService and packs the
+visible answer into protobuf **field 25** (the thinking channel), not field 1 text: a single
+blob of `…reasoning…</think>…answer…`. onegw decoded every field-25 chunk as
+`PartThinking` → synthetic OpenAI `reasoning_content`, so clients showed the whole blob in the
+thinking box and an empty main answer. Live usage confirmed it: recent `composer-2.5` hours
+logged `output_tok=0` / `estimated=1` while `cursor/default` still produced real completion
+tokens. 9router already split on the last `</think>` and emitted only the suffix as `content`
+(`visibleComposerContentFromThinking`); the Go port took framing/routing (#108) but never the
+response split. `CursorChatEvents` now detects `composer*` model ids, accumulates field 25,
+and emits only the new post-tag suffix as `PartText` (thinking prefix dropped — no Anthropic
+thinking signature on this wire). Non-composer models keep field 25 as `PartThinking`. Pinned
+by `TestCursorComposerThinkingSplitsToContent`, `TestCursorNonComposerThinkingStaysThinking`,
+and `TestCursorSSEStreamComposerThinkingAsContent` (same vectors as 9router's
+`cursor-composer-thinking.test.js`).
+
+*Last updated: 2026-09-21 (`ONEGW_LISTEN` was documented but never read at startup — an isolated bring-up silently bound the live port):*
+The README ("Set `ONEGW_LISTEN` or `ONEGW_KEYS` to override") and `onegw help` both advertise `ONEGW_LISTEN`
+as a runtime override, but no startup path read it: `scripts/install.sh` only used the variable to *write* the
+config, and `internal/update/apply.go` reads it solely for the update handoff. `internal/config.Load` never
+consulted it, so the config's `[server] listen` always won. The failure mode is nasty rather than cosmetic —
+starting a scratch gateway with `ONEGW_LISTEN=127.0.0.1:18099` against the live config binds **8080**, the live
+port, exactly the split-traffic hazard the onegw rules forbid. Found while bring-up-testing the reasoning-loop
+fix on a scratch port; caught and stopped within ~40s with no traffic split.
+
+`Defaults()` now applies it the way `ONEGW_KEYS` overrides the auth keys (env beats the file, trimmed, a blank
+value is not an override), and the help text states which variables override and which merely supply a default
+(`ONEGW_DATA_DIR` is a documented *fallback* — the config's `data_dir` wins, and that was already correct).
+Verified live: a config declaring `listen = "127.0.0.1:18098"` started with `ONEGW_LISTEN=127.0.0.1:18099` bound
+18099, left 18098 vacant, and never touched the live listener. Pinned by `internal/config/listen_test.go`
+(override beats the file, whitespace trimmed, blank ignored, loopback default preserved when unset).
+
+*Last updated: 2026-09-21 (conversation-scoped account pin):* Account rotation was switching credentials mid-tool-loop (1–3 messages) because sticky defaulted off and `requestIdentity` only saw `X-Opencode-Session` or the auth-key label. A thinking signature / `tool_call` id from key A then replayed on key B, which 400'd or returned empty, and the client could not resume. `s:`/`c:` identities now pin for 15m even when `sticky` is unset (`convPinTTL`); `k:` still needs a sticky TTL so one client key does not herd every session onto one account. Identity order: session header, then grok/session headers, then a hash of the first user turn (stable across tool-result continuations), then the key label. Account-run yields to a conversation pin. Failures still unpin.
+
+*Last updated: 2026-09-21 (reasoning loops: the guard from #122 had never run — four independent defects, all fixed; a looping leg now dies at ~30-50% of the stream instead of burning the whole output cap):*
+A free-tier leg that degenerates into repeating text used to run until the upstream's output cap, handing the
+client a 32K `stopReason: length` wall. #122 shipped a guard for exactly this, and the symptom never changed —
+because the guard was **dead code**: `translat.NewLoopBreaker` had zero callers, no test, and no call site in
+`relayResponse`. Three further defects would have kept it silent even once wired: `hashUnit` ignored its
+`offset` argument (it always hashed `lines[0:period]`, so no window but the first was ever computed), the
+probed periods were `{1,2,4,8,16}` (the live cycle is 5), and `countCycle` counted stride-1 neighbours, which
+no multi-line cycle can satisfy.
+
+Two captures taken through the `free` combo (`dots-studio/dots-3-note-preview:free`, 327KB and 469KB; both
+burned the full 4000-token cap) settled the redesign: the first repeats five deltas in strict rotation, but the
+second **shuffles ~50 short fragments for ~940 lines** — at no period does a window repeat 20x back to back,
+yet its last 256 lines hold only 46 distinct and the top eight cover 84%. Cycle detection is the wrong signal;
+**diversity** is the right one. The rewritten guard windows the last 128 wire lines and trips when the window
+holds at least 4x more lines than distinct ones, after an 8KB floor. It is now wired into `relayResponse` for
+both the passthrough and cross-format streaming branches, closes the upstream body on trip, ends the stream
+with a terminal error frame, benches the leg where a sibling can serve the retry, and records
+`upstream_reasoning_loop` (the Prometheus label stays the coarse `upstream_error` bucket — label contract).
+
+Live proof on a scratch port, same loop-inducing prompt: **469,077 bytes / 34.4s → 58,980 bytes / 15.3s**,
+ending in `data: {"error":{"type":"upstream_error","message":"upstream reasoning loop"}}`; metrics show the
+attempt as `onegw_requests_total{code="502",provider="kilocode",model="kilo-auto/free"}`. `internal/translat/loop_test.go`
+covers strict cycles, loose (shuffled) cycles, a normal 600-line generation, normally duplicated code lines
+(`}` / `return nil`), a short stream below the evidence floor, upstream teardown, and chunk-boundary line
+carry — all false-positive cases stay unterminated. Deliberate ceiling, marked in the source: the window is
+the raw wire split on newlines, so a vendor that varies a per-chunk envelope field would raise the distinct
+count and hide the loop; the upgrade path is decoding each event through `newStreamDecoder`.
 *Last updated: 2026-09-21 (systemone provider plumbed end-to-end):* `POST /v1/systemone` is a single wire surface — `internal/provider/systemone.go` forwards the client body verbatim to upstream and `doSystemOne` hands the `{model, answers, usage}` answer straight back, no translation either way. The TypeSafe Jev envelope shapes (`systemOneResponse/Answer/Usage`, `DecodeSystemOneResponse`, `ToOpenAIChoiceText`) live in `internal/translat/systemone.go`, wired into `DecodeResponse` via `case translat.FmtSystemOne` in `internal/translat/stream.go` so a cross-format relay decodes instead of falling through to the OpenAI path. `provider.go` gained the three `KindSystemOne` cases (`ReasoningEchoModel` → configured echo model, `DefaultModels` → live Jev catalog, `FetchModels` → curated catalog, empty body is success). Verified: `go build ./...` clean, `internal/translat/systemone_test.go` 3 cases pass (full envelope, malformed fails closed, empty no-op).
 *Last updated: 2026-09-20 (cursor: a 200 + trailer-carried turn error surfaced as "empty response" — the real reason now reaches the caller, PR #127):*
 Cursor reports a turn-level failure in the Connect-RPC TRAILER frame: an unauthenticated

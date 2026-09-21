@@ -123,14 +123,17 @@ type UsageCfg struct {
 
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
-	Name     string   `toml:"name"`
-	Kind     string   `toml:"kind"` // openai | anthropic | gemini | opencode | opencode-free | searxng | openai-responses | commandcode | cursor
-	BaseURL  string   `toml:"base_url"`
-	APIKey   string   `toml:"api_key"` // convenience for single-account
-	Keys     []string `toml:"keys"`    // multi-key accounts, one account per key
-	Accounts []Acct   `toml:"accounts"`
-	Models   []string `toml:"models"` // advertised model ids
-	MaxConc  int      `toml:"max_concurrency"`
+	Name string `toml:"name"`
+	Kind string `toml:"kind"` // openai | anthropic | gemini | opencode | opencode-free | searxng | openai-responses | commandcode | cursor
+	// EvalStrategy is the T3 verdict driver for this provider
+	// ("jev-eval" activates it; "" = off). Only systemone Kind uses it.
+	EvalStrategy string   `toml:"eval_strategy"`
+	BaseURL      string   `toml:"base_url"`
+	APIKey       string   `toml:"api_key"` // convenience for single-account
+	Keys         []string `toml:"keys"`    // multi-key accounts, one account per key
+	Accounts     []Acct   `toml:"accounts"`
+	Models       []string `toml:"models"` // advertised model ids
+	MaxConc      int      `toml:"max_concurrency"`
 	// RPM is the provider-WIDE request budget (one shared token bucket
 	// gating every account, 0 = uncapped), for upstreams whose rate limit
 	// is per-user/per-model-lane rather than per-key (live tokenrouter
@@ -146,6 +149,10 @@ type ProviderCfg struct {
 	// the entry stays in the file so a toggle back on is instant.
 	Disabled    bool              `toml:"disabled"`
 	ExtraHeader map[string]string `toml:"extra_headers"`
+	// EvalCfgs is per-combo evaluator legs (T3): combo name -> list of legs,
+	// each leg a list of authored questions forwarded verbatim to
+	// /v1/systemone. nil = no evaluator legs.
+	EvalCfgs map[string][][]string `toml:"eval_cfgs"`
 	// AlwaysThinking lists model globs (path.Match; "*" does not cross
 	// "/") that reason unconditionally upstream and reject
 	// disable-thinking knobs; see README.
@@ -314,8 +321,8 @@ type RotationCfg struct {
 
 // Acct is one provider account.
 type Acct struct {
-	Name    string `toml:"name"`
-	APIKey  string `toml:"api_key"`
+	Name   string `toml:"name"`
+	APIKey string `toml:"api_key"`
 	// DashboardToken is a browser session token (the
 	// WorkosCursorSessionToken cookie value) used ONLY for
 	// cursor's cursor.com/api/usage-summary quota probe. It
@@ -326,8 +333,8 @@ type Acct struct {
 	// session and leave api_key as the upstream token
 	// (e.g. cursorAuth/accessToken from state.vscdb).
 	DashboardToken string `toml:"dashboard_token"`
-	BaseURL string `toml:"base_url"`
-	Weight  int    `toml:"weight"`
+	BaseURL        string `toml:"base_url"`
+	Weight         int    `toml:"weight"`
 	// RPM proactively caps upstream attempts per minute for this account
 	// (token bucket, 0 = uncapped) so the pool rotates before the
 	// upstream's per-account rate limit benches the key reactively.
@@ -492,6 +499,16 @@ func (c *Config) Defaults() {
 	if v := strings.TrimSpace(os.Getenv("ONEGW_TASK_ROUTING")); v != "" {
 		c.Server.TaskRouting = v
 	}
+	// ONEGW_LISTEN overrides [server] listen outright, the way ONEGW_KEYS
+	// overrides the auth keys. The README ("Set ONEGW_LISTEN or ONEGW_KEYS
+	// to override") and `onegw help` both promise this, but nothing read it
+	// while starting a gateway: install.sh only used the variable to WRITE
+	// the config, and update/apply.go only reads it for the update handoff.
+	// An isolated bring-up that set it therefore bound the config's port —
+	// which, pointed at the live config, is the live port.
+	if v := strings.TrimSpace(os.Getenv("ONEGW_LISTEN")); v != "" {
+		c.Server.Listen = v
+	}
 }
 
 // FlushEvery parses the flush interval.
@@ -517,6 +534,40 @@ func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
 // is enabled. Anything other than "on" (case-insensitive) is off.
 func (c *Config) TaskRoutingOn() bool {
 	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) == "on"
+}
+
+// EvalStrategy reports the T3 verdict strategy from the config.
+// "jev-eval" activates verdict-driven combo reorder; "" (off)
+// leaves routing byte-identical to pre-T3.
+func (c *Config) EvalStrategy() string {
+	for _, p := range c.Providers {
+		if strings.ToLower(p.Kind) == "systemone" {
+			return strings.ToLower(strings.TrimSpace(p.EvalStrategy))
+		}
+	}
+	return ""
+}
+
+// EvalCfgs returns per-combo evaluator legs (T3). nil/off
+// leaves routing byte-identical to pre-T3.
+func (c *Config) EvalCfgs() map[string][][]string {
+	cfgs := make(map[string][][]string)
+	for _, p := range c.Providers {
+		if strings.ToLower(p.Kind) != "systemone" {
+			continue
+		}
+		for name, legs := range p.EvalCfgs {
+			var qs [][]string
+			for _, leg := range legs {
+				qs = append(qs, leg)
+			}
+			cfgs[name] = qs
+		}
+	}
+	if len(cfgs) == 0 {
+		return nil
+	}
+	return cfgs
 }
 
 // IdempotencyTTLDur parses [server] idempotency_ttl; 0 means the feature

@@ -139,14 +139,14 @@ func TestTerminalKeyInvalidationOnBillingRefusal(t *testing.T) {
 		t.Fatalf("reset of a healthy account: want 409, got %d (%s)", w.Code, w.Body.String())
 	}
 
-	// Reset re-offers the account: round-robin must reach it again, and while
-	// the vendor still refuses it, it is re-invalidated (one more transition
-	// row) rather than retried forever.
-	w = do(t, h, authed(t, "p/m", "sk-test-gw"))
+	// Reset re-offers the account to a NEW conversation. The original
+	// "ping" thread stays pinned to live; a distinct first-user turn is
+	// a fresh identity and round-robin can land on the recovered key.
+	w = do(t, h, authedMsg(t, "p/m", "sk-test-gw", "after-reset-1"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("post-reset request 1: %d (%s)", w.Code, w.Body.String())
 	}
-	w = do(t, h, authed(t, "p/m", "sk-test-gw"))
+	w = do(t, h, authedMsg(t, "p/m", "sk-test-gw", "after-reset-2"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("post-reset request 2: %d (%s)", w.Code, w.Body.String())
 	}

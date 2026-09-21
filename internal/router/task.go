@@ -660,3 +660,25 @@ func firstNonEmpty(a, b string) string {
 	}
 	return b
 }
+
+// evalBodyKey carries the raw request body an evaluator leg
+// must send to TypeSafe's own /v1/systemone endpoint (T3):
+// collected once by the server (one copy per request) and
+// read by Execute via EvalBodyFrom, forwarded verbatim.
+type evalBodyKey struct{}
+
+// WithEvalBody tags ctx with the request body for an evaluator
+// leg. nil body = no evaluator (default).
+func WithEvalBody(ctx context.Context, body []byte) context.Context {
+	return context.WithValue(ctx, evalBodyKey{}, body)
+}
+
+// EvalBodyFrom extracts the tagged body; ok=false when absent
+// (T3 off, or a path that never collected it).
+func EvalBodyFrom(ctx context.Context) ([]byte, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	body, ok := ctx.Value(evalBodyKey{}).([]byte)
+	return body, ok
+}

@@ -59,16 +59,16 @@ func TestWiredStickyKeyAnchorsBufferedBody(t *testing.T) {
 		t.Fatalf("prompt_cache_key = %v, want s:conv-abc", got["prompt_cache_key"])
 	}
 
-	// An authenticated request without a session header still has the
-	// key-label identity, so injection continues with that key.
+	// An authenticated request without a session header still pins: the
+	// first user turn is the conversation identity (c:), not the key label.
 	if w := do(t, h, authClientKey(chatReq(t, "p1/m1"))); w.Code != 200 {
 		t.Fatalf("second request failed: %d", w.Code)
 	}
 	if len(*seen) != 2 {
 		t.Fatalf("upstream saw %d bodies", len(*seen))
 	}
-	if !strings.Contains((*seen)[1], `"prompt_cache_key":"k:`) {
-		t.Fatalf("key-label identity not used as cache key: %s", (*seen)[1])
+	if !strings.Contains((*seen)[1], `"prompt_cache_key":"c:`) {
+		t.Fatalf("conversation fingerprint not used as cache key: %s", (*seen)[1])
 	}
 }
 

@@ -34,6 +34,17 @@ func authed(t *testing.T, model, key string) *http.Request {
 	return r
 }
 
+func authedMsg(t *testing.T, model, key, content string) *http.Request {
+	t.Helper()
+	r := chatWithMessages(t, model, []any{
+		map[string]any{"role": "user", "content": content},
+	})
+	if key != "" {
+		r.Header.Set("Authorization", "Bearer "+key)
+	}
+	return r
+}
+
 func body(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var m map[string]any

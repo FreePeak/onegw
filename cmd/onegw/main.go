@@ -95,6 +95,8 @@ Usage:
 
 Flags are read from the environment too: ONEGW_CONFIG, ONEGW_LISTEN,
 ONEGW_KEYS, ONEGW_ADMIN_PASSWORD, ONEGW_PROVIDER_<NAME>_KEY, ONEGW_DATA_DIR.
+ONEGW_LISTEN, ONEGW_KEYS and ONEGW_ADMIN_PASSWORD override the config file;
+ONEGW_DATA_DIR only supplies a default when the config sets no data_dir.
 `)
 }
 

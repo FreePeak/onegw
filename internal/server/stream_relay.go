@@ -156,7 +156,7 @@ func (s *Server) proxyStream(w http.ResponseWriter, r *http.Request, clientFmt t
 	}
 	src := &countingReader{r: io.MultiReader(bytes.NewReader(relayPrefix), r.Body)}
 
-	id := requestIdentity(r.Header, ak)
+	id := requestIdentity(r.Header, ak, prefix)
 	acct, poolReady := def.NextAccount(id)
 	if acct == nil {
 		// Whole account pool cooling from upstream 429s: never send a

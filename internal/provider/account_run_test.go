@@ -152,3 +152,24 @@ func TestAccountRunEndsWhenItsAccountCools(t *testing.T) {
 		t.Fatalf("got %s want b (a cooling must end run)", got)
 	}
 }
+
+func TestAccountRunYieldsToConversationPin(t *testing.T) {
+	p, _, _ := mkRunPool(t, 20, 50,
+		Account{Name: "a", APIKey: "ka"},
+		Account{Name: "b", APIKey: "kb"},
+	)
+	first, _ := p.next("s:sess")
+	if first == nil {
+		t.Fatal("next: no account")
+	}
+	for range 5 {
+		got, _ := p.next("s:sess")
+		if got == nil || got.Name != first.Name {
+			t.Fatalf("conversation pin must outrank account-run, got %+v want %s", got, first.Name)
+		}
+	}
+	other, _ := p.next("s:other")
+	if other == nil || other.Name == first.Name {
+		t.Fatalf("a second conversation must rotate, got %+v", other)
+	}
+}
