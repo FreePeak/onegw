@@ -1162,11 +1162,12 @@ func htmlErrPage(body []byte) (title string, ok bool) {
 }
 
 // NextAccount picks the next available account (weighted round-robin with
-// adaptive rate-limit cooldowns). With a sticky TTL configured, the identity
-// (client session or auth-key label) is pinned to one account for the
-// window: the first pick rotates and pins, repeats within the window reuse
-// the pin, and expired or cooling pins rotate to the next account and
-// re-pin. Identity "" disables pinning.
+// adaptive rate-limit cooldowns). A conversation identity (s:/c: prefix)
+// is pinned to one account for convPinTTL even when sticky is unset, so a
+// tool-loop continuation stays on the credential that emitted the thinking
+// signature and tool_call ids. A k: identity still needs a sticky TTL.
+// Expired or cooling pins rotate to the next account and re-pin. Identity
+// "" disables pinning.
 //
 // When every account is cooling, NextAccount returns (nil, ready) where
 // ready is the soonest cooldown expiry — callers must NOT send an upstream
@@ -1271,18 +1272,24 @@ func (b *tokenBucket) refillAt(now time.Time) time.Time {
 	return now.Add(time.Duration((1 - b.tokens) / b.rate * float64(time.Second)))
 }
 
-// maxStickyPins bounds the affinity map. Identities are client session ids
-// and auth-key labels — normally a handful; the cap only matters against
-// runaway session ids. At the cap, expired pins are swept, then the map
-// resets (affinity is a cache, never load-bearing).
+// maxStickyPins bounds the affinity map. Identities are conversation ids
+// (s:/c:) plus optional sticky k: labels — normally a handful; the cap
+// only matters against runaway session ids. At the cap, expired pins are
+// swept, then the map resets (affinity is a cache, never load-bearing).
 const maxStickyPins = 4096
+
+// convPinTTL is how long a conversation identity (s:/c:) stays pinned when
+// the provider has no sticky window. Long enough to cover a thinking +
+// tool-loop chain (the 1–3 message client-break window); short enough that
+// an idle session does not lock a credential. sticky > 0 still wins.
+const convPinTTL = 15 * time.Minute
 
 type accountPool struct {
 	mu      sync.Mutex
 	accts   []accountState
 	rr      uint64
 	stopped bool
-	ttl     time.Duration // sticky affinity window; 0 = plain round-robin
+	ttl     time.Duration // sticky affinity window; 0 = conversation-only pins
 	sticky  map[string]stickyPin
 	now     func() time.Time // injectable clock (tests)
 
@@ -1393,10 +1400,10 @@ func newAccountPool(accts []Account, sticky time.Duration, sharedRPM int) *accou
 	return p
 }
 
-// next picks the account for this request. With a sticky TTL and a
-// non-empty identity, a live pin returns its account untouched; an
-// expired or cooling pin is dropped and rotation starts after that
-// account's slot, re-pinning the winner.
+// next picks the account for this request. A live pin for a conversation
+// identity (s:/c:), or any identity when sticky TTL is set, returns its
+// account; an expired or cooling pin is dropped and rotation starts after
+// that account's slot, re-pinning the winner.
 //
 // When every account is blocked — cooling, own-bucket drained, or the
 // shared provider budget empty (Def.RPM) — it returns (nil, ready) instead
@@ -1460,7 +1467,7 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	n := len(p.accts)
 	start := int(p.rr)
 	running := -1
-	if p.runActive() {
+	if p.runActive() && p.pinTTL(id) == 0 {
 		if p.runs >= 0 && p.runs < n && p.served < p.runMax {
 			if ok, _ := p.available(&p.accts[p.runs], now); ok {
 				running = p.runs
@@ -1493,7 +1500,7 @@ func (p *accountPool) next(id string) (*Account, time.Time) {
 	// would migrate the identity to whichever account served the
 	// concurrent request, and the pin exists for cache warmth.
 	keepPin := false
-	if p.ttl > 0 && id != "" {
+	if p.pinTTL(id) > 0 {
 		if pin, ok := p.sticky[id]; ok && now.Before(pin.expires) {
 			for i := range p.accts {
 				if s := &p.accts[i]; s.acct.Name == pin.name && s.acct.APIKey == pin.key {
@@ -1854,7 +1861,8 @@ func (p *accountPool) wallStrike(model, acct string, text bool) bool {
 
 // pin records the identity → account affinity, keeping the map bounded.
 func (p *accountPool) pin(id string, a *Account, now time.Time) {
-	if p.ttl <= 0 || id == "" {
+	ttl := p.pinTTL(id)
+	if ttl <= 0 {
 		return
 	}
 	if p.sticky == nil {
@@ -1870,7 +1878,23 @@ func (p *accountPool) pin(id string, a *Account, now time.Time) {
 			p.sticky = make(map[string]stickyPin)
 		}
 	}
-	p.sticky[id] = stickyPin{name: a.Name, key: a.APIKey, expires: now.Add(p.ttl)}
+	p.sticky[id] = stickyPin{name: a.Name, key: a.APIKey, expires: now.Add(ttl)}
+}
+
+// pinTTL is the affinity window for this identity. Conversation ids pin
+// even when sticky is unset (tool-loop continuity); k: labels still need
+// the configured sticky TTL so one client key does not herd onto one account.
+func (p *accountPool) pinTTL(id string) time.Duration {
+	if id == "" {
+		return 0
+	}
+	if len(id) >= 2 && (id[:2] == "s:" || id[:2] == "c:") {
+		if p.ttl > 0 {
+			return p.ttl
+		}
+		return convPinTTL
+	}
+	return p.ttl
 }
 
 // unpin drops an identity's pin so the next next() rotates.

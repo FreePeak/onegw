@@ -56,8 +56,10 @@ func TestOpencodeRotationAndSession(t *testing.T) {
 	}
 	// Bare model resolution: "glm-5.2" must route to the opencode provider
 	// even though the config lists no explicit models (default catalog).
-	for range 4 {
-		r := chatReq(t, "glm-5.2")
+	for i := range 4 {
+		r := chatWithMessages(t, "glm-5.2", []any{
+			map[string]any{"role": "user", "content": fmt.Sprintf("ping-%d", i)},
+		})
 		r.Header.Set("Authorization", "Bearer gw-key")
 		w := do(t, s.Handler(), r)
 		if w.Code != http.StatusOK {

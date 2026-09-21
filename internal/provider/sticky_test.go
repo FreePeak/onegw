@@ -47,9 +47,19 @@ func TestPlainRoundRobinUnchangedWithoutSticky(t *testing.T) {
 	if names[0] == names[1] || names[1] == names[2] {
 		t.Fatalf("plain RR should rotate: %v", names)
 	}
-	// With ttl=0 even a non-empty identity stays plain RR.
-	if pick(p, "sess").Name == pick(p, "sess").Name {
-		t.Fatal("ttl=0 must ignore identity")
+	// Unlabeled / k: identities still need a sticky TTL.
+	if pick(p, "k:client").Name == pick(p, "k:client").Name {
+		t.Fatal("ttl=0 must ignore k: identity")
+	}
+	// Conversation identities pin even with sticky unset.
+	first := pick(p, "s:sess")
+	for range 4 {
+		if got := pick(p, "s:sess"); got != first {
+			t.Fatalf("s: pin drifted: got %s want %s", got.Name, first.Name)
+		}
+	}
+	if got := pick(p, "c:abc"); got.Name == first.Name {
+		t.Fatal("distinct conversation identity should rotate")
 	}
 }
 
