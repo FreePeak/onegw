@@ -275,26 +275,16 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		if len(p.Models) == 0 {
 			p.Models = provider.DefaultModels(kind)
 		}
-		// A models entry that already carries the provider's own name is a
-		// config artifact, not a model id: it resolves to nothing (the route
-		// table stores it as "cursor/cursor/auto" while the router strips ONE
-		// prefix to "cursor/auto") AND it advertises that unusable string on
-		// /v1/models, which is how a client pins it (2026-09-21: a gateway on
-		// 127.0.0.1:8080 answered `400 AI Model Not Found` for the exact id it
-		// had published, while cursor/auto worked beside it). Drop the prefix
-		// once, loudly — the same convention the route table and the dashboard
-		// read, so routing and the advertised list agree again.
-		if prefix := p.Name + "/"; len(p.Models) > 0 {
-			cleaned := make([]string, 0, len(p.Models))
-			for _, m := range p.Models {
-				if rest, ok := strings.CutPrefix(m, prefix); ok && rest != "" {
-					log.Printf("onegw: provider %s: models entry %q dropped its redundant %q prefix (a prefixed entry advertises %s%s, which resolves to nothing)", p.Name, m, prefix, prefix, rest)
-					m = rest
-				}
-				cleaned = append(cleaned, m)
-			}
-			p.Models = cleaned
-		}
+		// NOTE (2026-09-21): do NOT normalize a "provider-prefixed" models
+		// entry here. An id may legitimately carry a segment equal to the
+		// provider's own name — OpenRouter's registry ships openrouter/free,
+		// openrouter/auto, openrouter/fusion — and the way to reach those is
+		// exactly the doubled advertised form (provider "openrouter" + model
+		// "openrouter/free"). Stripping it rewrote the model to "free", which
+		// the upstream answers with 404 "No endpoints available". The
+		// prefixed-entry confusion is handled where the model id is CONSUMED
+		// (translat.cursorRequestedModel drops a prefix before the wire) and
+		// the kind defaults are bare — not by guessing from the config.
 	}
 	rt := router.New(pool)
 	// Quota semantics own the cooling-pool answer: when the pool is empty
