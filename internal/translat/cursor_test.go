@@ -392,6 +392,117 @@ func TestCursorChatEventsToolCallStream(t *testing.T) {
 	}
 }
 
+// chatThinkingFrame builds one ChatService content frame with optional field-1
+// text and/or field-25 thinking (the composer answer channel).
+func chatThinkingFrame(text, thinking string) []byte {
+	var resp []byte
+	if text != "" {
+		resp = pbString(resp, 1, text)
+	}
+	if thinking != "" {
+		var th []byte
+		th = pbString(th, 1, thinking)
+		resp = pbBytes(resp, 25, th)
+	}
+	return pbBytes(nil, 2, resp)
+}
+
+func TestCursorComposerThinkingSplitsToContent(t *testing.T) {
+	// Live composer dialect (9router cursor-composer-thinking.test.js): the
+	// visible answer rides field 25 after </think>. Emitting the whole blob
+	// as reasoning_content left clients with an empty answer and a thinking
+	// box full of the real reply.
+	st := &CursorChatState{}
+	events := CursorChatEvents(chatThinkingFrame("", "private reasoning that must not leak</think>OK"), "composer-2.5", st)
+	var text, thinking string
+	for _, e := range events {
+		if e.Kind == EvDelta && e.PartType == types.PartText {
+			text += e.Text
+		}
+		if e.Kind == EvDelta && e.PartType == types.PartThinking {
+			thinking += e.Thinking
+		}
+	}
+	if text != "OK" {
+		t.Fatalf("composer visible content=%q, want OK", text)
+	}
+	if thinking != "" {
+		t.Fatalf("composer must not emit thinking parts, got %q", thinking)
+	}
+
+	// Streaming across frames: thinking first, then tag+partial answer, then rest.
+	st = &CursorChatState{}
+	var streamed string
+	for _, chunk := range []string{"private reasoning", " that must not leak</think>O", "K"} {
+		for _, e := range CursorChatEvents(chatThinkingFrame("", chunk), "composer-2.5-fast", st) {
+			if e.Kind == EvDelta && e.PartType == types.PartText {
+				streamed += e.Text
+			}
+			if e.Kind == EvDelta && e.PartType == types.PartThinking {
+				t.Fatalf("composer stream leaked thinking: %q", e.Thinking)
+			}
+		}
+	}
+	if streamed != "OK" {
+		t.Fatalf("streamed content=%q, want OK", streamed)
+	}
+
+	// Provider-prefixed id still matches.
+	st = &CursorChatState{}
+	events = CursorChatEvents(chatThinkingFrame("", "x</think>Y"), "cursor/composer-2", st)
+	text = ""
+	for _, e := range events {
+		if e.Kind == EvDelta && e.PartType == types.PartText {
+			text += e.Text
+		}
+	}
+	if text != "Y" {
+		t.Fatalf("prefixed composer content=%q, want Y", text)
+	}
+}
+
+func TestCursorNonComposerThinkingStaysThinking(t *testing.T) {
+	// Non-composer models keep field 25 as reasoning — never promote the
+	// post-</think> suffix into content (would invent an answer).
+	st := &CursorChatState{}
+	events := CursorChatEvents(chatThinkingFrame("", "private reasoning</think>SHOULD_NOT_APPEAR"), "gpt-5.3-codex", st)
+	var text, thinking string
+	for _, e := range events {
+		if e.Kind == EvDelta && e.PartType == types.PartText {
+			text += e.Text
+		}
+		if e.Kind == EvDelta && e.PartType == types.PartThinking {
+			thinking += e.Thinking
+		}
+	}
+	if text != "" {
+		t.Fatalf("non-composer invented content %q", text)
+	}
+	if thinking != "private reasoning</think>SHOULD_NOT_APPEAR" {
+		t.Fatalf("thinking=%q", thinking)
+	}
+}
+
+func TestCursorSSEStreamComposerThinkingAsContent(t *testing.T) {
+	// End-to-end: synthetic OpenAI SSE must carry content=OK and must not
+	// leak the thinking prefix into reasoning_content.
+	payload := chatThinkingFrame("", "private reasoning that must not leak</think>OK")
+	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(payload)), "composer-2.5", false, nil)
+	out := readAllString(t, stream)
+	if !strings.Contains(out, `"content":"OK"`) {
+		t.Fatalf("SSE must carry visible content: %s", out)
+	}
+	if strings.Contains(out, "private reasoning") {
+		t.Fatalf("SSE leaked thinking prefix: %s", out)
+	}
+	if strings.Contains(out, `"reasoning_content"`) {
+		t.Fatalf("composer SSE must not emit reasoning_content: %s", out)
+	}
+	if !strings.Contains(out, "data: [DONE]") {
+		t.Fatalf("SSE must end with [DONE]: %s", out)
+	}
+}
+
 func TestCursorJSONErrorRateLimit(t *testing.T) {
 	ae, ok := CursorJSONError([]byte(`{"error":{"code":"resource_exhausted","message":"quota"}}`))
 	if !ok {

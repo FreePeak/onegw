@@ -776,15 +776,46 @@ func decodeToolCall(b []byte) (*cursorToolCall, error) {
 }
 
 // CursorChatState carries per-stream decoder state: tool fragment ids map to
-// unified part indexes so arg fragments land on the right tool call.
+// unified part indexes so arg fragments land on the right tool call. For the
+// IDE composer family, field 25 carries thinking AND the visible answer in one
+// stream (split on the last </think>); thinkBuf/emitted track that split so
+// only new visible suffix bytes become PartText deltas.
 type CursorChatState struct {
-	started bool
-	toolIdx map[string]int
-	next    int
+	started  bool
+	toolIdx  map[string]int
+	next     int
+	thinkBuf string // composer field-25 accumulator
+	emitted  int    // bytes of visibleComposerContent already emitted as text
+}
+
+// cursorComposerModel reports the IDE composer family (composer-2.5,
+// composer-2, provider-prefixed forms). Those models pack the visible answer
+// into ChatService field 25 after a </think> tag — not field 1 text.
+func cursorComposerModel(model string) bool {
+	id := model
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		id = model[i+1:]
+	}
+	return strings.HasPrefix(strings.ToLower(id), "composer")
+}
+
+// visibleComposerContent returns the answer suffix after the last </think>
+// in a composer field-25 blob. Empty until the end tag appears (9router
+// visibleComposerContentFromThinking).
+func visibleComposerContent(thinking string) string {
+	const endTag = "</think>"
+	i := strings.LastIndex(thinking, endTag)
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimLeft(thinking[i+len(endTag):], " \t\r\n")
 }
 
 // CursorChatEvents decodes one ChatService StreamUnifiedChatResponseWithTools
 // payload: tool calls (field 1) and text/thinking (field 2.1 / 2.25.1).
+// Composer models: field 25 is split so only post-</think> text becomes
+// PartText; the thinking prefix is dropped (no signature for Anthropic
+// thinking blocks). Non-composer models keep field 25 as PartThinking.
 func CursorChatEvents(payload []byte, model string, st *CursorChatState) []StreamEvent {
 	fields, err := pbDecode(payload)
 	if err != nil {
@@ -827,8 +858,23 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 			if t, ok := pbGet(rf, 25); ok { // thinking {1: text}
 				if tf, terr := pbDecode(t.Value); terr == nil {
 					if d, ok := pbGet(tf, 1); ok && len(d.Value) > 0 {
-						start()
-						out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: string(d.Value)})
+						chunk := string(d.Value)
+						if cursorComposerModel(model) {
+							// Composer packs thinking + answer in field 25.
+							// Emit only the new visible suffix after </think>
+							// as content; never leak the thinking prefix.
+							st.thinkBuf += chunk
+							vis := visibleComposerContent(st.thinkBuf)
+							if len(vis) > st.emitted {
+								delta := vis[st.emitted:]
+								st.emitted = len(vis)
+								start()
+								out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: delta})
+							}
+						} else {
+							start()
+							out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: chunk})
+						}
 					}
 				}
 			}

@@ -1,3 +1,19 @@
+*Last updated: 2026-09-21 (cursor composer: field-25 thinking was the answer — split on `</think>`):*
+Cursor's IDE composer family (`composer-2.5`, `composer-2`) rides ChatService and packs the
+visible answer into protobuf **field 25** (the thinking channel), not field 1 text: a single
+blob of `…reasoning…</think>…answer…`. onegw decoded every field-25 chunk as
+`PartThinking` → synthetic OpenAI `reasoning_content`, so clients showed the whole blob in the
+thinking box and an empty main answer. Live usage confirmed it: recent `composer-2.5` hours
+logged `output_tok=0` / `estimated=1` while `cursor/default` still produced real completion
+tokens. 9router already split on the last `</think>` and emitted only the suffix as `content`
+(`visibleComposerContentFromThinking`); the Go port took framing/routing (#108) but never the
+response split. `CursorChatEvents` now detects `composer*` model ids, accumulates field 25,
+and emits only the new post-tag suffix as `PartText` (thinking prefix dropped — no Anthropic
+thinking signature on this wire). Non-composer models keep field 25 as `PartThinking`. Pinned
+by `TestCursorComposerThinkingSplitsToContent`, `TestCursorNonComposerThinkingStaysThinking`,
+and `TestCursorSSEStreamComposerThinkingAsContent` (same vectors as 9router's
+`cursor-composer-thinking.test.js`).
+
 *Last updated: 2026-09-21 (`ONEGW_LISTEN` was documented but never read at startup — an isolated bring-up silently bound the live port):*
 The README ("Set `ONEGW_LISTEN` or `ONEGW_KEYS` to override") and `onegw help` both advertise `ONEGW_LISTEN`
 as a runtime override, but no startup path read it: `scripts/install.sh` only used the variable to *write* the
