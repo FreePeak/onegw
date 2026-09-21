@@ -84,6 +84,12 @@ func builtinPresets() map[string]presetDoc {
 			Models: []string{"big-pickle", "mimo-v2.5-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "ling-3.0-flash-fin-free"},
 			Note:   "no auth at all",
 		},
+		"Xiaomi Mimo (token plan)": {
+			Kind:    "openai",
+			BaseURL: "https://token-plan-sgp.xiaomimimo.com/v1",
+			Models:  []string{"mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts", "mimo-v2.5-tts-voiceclone", "mimo-v2.5-tts-voicedesign"},
+			Note:    "paste your xiaomi api key on the account row",
+		},
 	}
 }
 
