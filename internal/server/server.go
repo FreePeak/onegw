@@ -5,7 +5,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -620,7 +622,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), d)
+	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak, body)), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -708,7 +710,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	// Estimated input size for combo steering (router/reorderBySpeed): the
 	// same 4-bytes-per-token estimate the usage path falls back to, good
 	// enough to pick the size bucket. Only steers ordering, never routing.
-	execCtx := withDelivery(router.WithInputSize(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak)), int64(len(body))/4), d)
+	execCtx := withDelivery(router.WithInputSize(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak, body)), int64(len(body))/4), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -814,16 +816,79 @@ func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIEr
 	return router.DefaultPoolEmptyError(def, ready)
 }
 
-// requestIdentity derives the sticky-account identity for a request: the
-// client session header when present, else the auth key label. Empty
-// disables affinity (plain round-robin). Takes the header map so
-// headerless callers (attempt tests) can pass a bare http.Header.
-func requestIdentity(h http.Header, ak *config.AuthKey) string {
+// requestIdentity derives the sticky-account identity for a request.
+// Conversation-scoped ids (s:/c:) pin even when sticky is unset so a
+// thinking + tool-loop continuation stays on one credential. k: (auth-key
+// label) still needs a sticky TTL — one client key must not herd every
+// session onto one account. Empty disables affinity (plain round-robin).
+// headerless callers (attempt tests) can pass a bare http.Header; body
+// may be nil.
+func requestIdentity(h http.Header, ak *config.AuthKey, body []byte) string {
 	if sid := h.Get(provider.OpenCodeSessionHeader); sid != "" {
 		return "s:" + sid
 	}
+	for _, name := range []string{"x-grok-conv-id", "x-grok-session-id", "x-session-id", "session_id"} {
+		if v := h.Get(name); v != "" {
+			return "s:" + v
+		}
+	}
+	if id := conversationFingerprint(body); id != "" {
+		return id
+	}
 	if ak != nil {
 		return "k:" + ak.Label()
+	}
+	return ""
+}
+
+// conversationFingerprint hashes the first user turn so a tool-loop
+// continuation (later messages appended) stays on the same identity even
+// when the client sent no session header. Empty when there is no usable
+// first-user text (passthrough, headerless tests).
+func conversationFingerprint(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var probe struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return ""
+	}
+	for _, m := range probe.Messages {
+		if m.Role != "user" {
+			continue
+		}
+		text := firstUserText(m.Content)
+		if text == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(text))
+		return "c:" + hex.EncodeToString(sum[:8])
+	}
+	return ""
+}
+
+func firstUserText(content any) string {
+	switch v := content.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []any:
+		for _, part := range v {
+			m, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			if t, _ := m["type"].(string); t != "" && t != "text" {
+				continue
+			}
+			if s, _ := m["text"].(string); s != "" {
+				return strings.TrimSpace(s)
+			}
+		}
 	}
 	return ""
 }
@@ -886,7 +951,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	// rewrite). sessionKey is the same identity sticky-account pinning
 	// uses; "" (no session header, no key label) skips sticky-key
 	// injection. clientHdr may be nil (headerless tests).
-	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak))
+	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak, body))
 	// X-OneGW-Decision rides the pre-body write: every pre-flight gate
 	// above answers WITHOUT touching w, so the attempt that finally
 	// commits headers is the one that stamps the header (combo fallback

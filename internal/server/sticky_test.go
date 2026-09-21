@@ -129,7 +129,7 @@ func TestStickyUnpinsAfterFailedAttempt(t *testing.T) {
 	}
 }
 
-func TestStickyOffKeepsPlainRotation(t *testing.T) {
+func TestStickyOffStillPinsConversation(t *testing.T) {
 	var seen []string
 	up := keyRecordingStub(t, &seen, "")
 	defer up.Close()
@@ -144,7 +144,82 @@ func TestStickyOffKeepsPlainRotation(t *testing.T) {
 			t.Fatalf("request: %d", w.Code)
 		}
 	}
-	if seen[0] == seen[1] || seen[1] == seen[2] || seen[2] == seen[3] {
-		t.Fatalf("sticky off must rotate per request, saw %v", seen)
+	if len(seen) != 4 || seen[0] != seen[1] || seen[1] != seen[2] || seen[2] != seen[3] {
+		t.Fatalf("session header must pin without sticky, saw %v", seen)
 	}
+}
+
+func TestConversationFingerprintPinsToolLoop(t *testing.T) {
+	var seen []string
+	up := keyRecordingStub(t, &seen, "")
+	defer up.Close()
+	srv, err := New(stickyCfg(t, up.URL, ""))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	h := srv.Handler()
+
+	first := chatWithMessages(t, "m1", []any{
+		map[string]any{"role": "user", "content": "look at foo.go"},
+	})
+	cont := chatWithMessages(t, "m1", []any{
+		map[string]any{"role": "user", "content": "look at foo.go"},
+		map[string]any{"role": "assistant", "content": nil, "tool_calls": []any{
+			map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"name": "Read", "arguments": "{}"}},
+		}},
+		map[string]any{"role": "tool", "tool_call_id": "call_1", "content": "package foo"},
+	})
+	other := chatWithMessages(t, "m1", []any{
+		map[string]any{"role": "user", "content": "a different task"},
+	})
+	for _, r := range []*http.Request{first, cont, other} {
+		r.Header.Set("Authorization", "Bearer sk-client")
+	}
+	if w := do(t, h, first); w.Code != 200 {
+		t.Fatalf("first: %d %s", w.Code, w.Body.String())
+	}
+	if w := do(t, h, cont); w.Code != 200 {
+		t.Fatalf("cont: %d %s", w.Code, w.Body.String())
+	}
+	if w := do(t, h, other); w.Code != 200 {
+		t.Fatalf("other: %d %s", w.Code, w.Body.String())
+	}
+	if len(seen) != 3 || seen[0] != seen[1] {
+		t.Fatalf("tool-loop continuation must reuse the first-turn account, saw %v", seen)
+	}
+	if seen[2] == seen[0] {
+		t.Fatalf("a different first user turn must rotate, saw %v", seen)
+	}
+}
+
+func TestAuthKeyIdentityStillRotatesWithoutSticky(t *testing.T) {
+	var seen []string
+	up := keyRecordingStub(t, &seen, "")
+	defer up.Close()
+	srv, err := New(stickyCfg(t, up.URL, ""))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	h := srv.Handler()
+
+	for range 4 {
+		r := chatWithMessages(t, "m1", []any{
+			map[string]any{"role": "assistant", "content": "no user turn"},
+		})
+		r.Header.Set("Authorization", "Bearer sk-client")
+		if w := do(t, h, r); w.Code != 200 {
+			t.Fatalf("request: %d", w.Code)
+		}
+	}
+	if seen[0] == seen[1] || seen[1] == seen[2] || seen[2] == seen[3] {
+		t.Fatalf("k: identity without sticky must rotate, saw %v", seen)
+	}
+}
+
+func chatWithMessages(t *testing.T, model string, messages []any) *http.Request {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"model": model, "messages": messages})
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	r.Header.Set("Content-Type", "application/json")
+	return r
 }
