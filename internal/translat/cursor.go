@@ -580,8 +580,14 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 // cursorRequestedModel maps a client model id onto the id Cursor's
 // AgentService recognizes. Cursor has no "auto" lane: both reference
 // implementations rewrite auto* → "default" before the wire, and live
-// evidence agrees — "cursor/auto" ends the turn with zero content (the
-// gateway surfaces it as 502 empty response) while "cursor/default" answers.
+// evidence agrees — "auto" ends the turn with zero content (the gateway
+// surfaces it as 502 empty response) while "default" answers.
+//
+// A PROVIDER PREFIX is meaningless upstream and must not ride the wire. An id
+// that reaches this builder still carrying one — "cursor/auto" from a direct
+// route entry, i.e. a client asking for the string /v1/models advertised
+// (2026-09-21) — made Cursor answer `400 AI Model Not Found`, which the gateway
+// relayed verbatim. Only the last path segment is a model id.
 //
 // The auto-{cost,balance,intelligence} preference cannot ride: it needs
 // Cursor's model_parameters sub-fields, which this builder does not emit, so
@@ -589,6 +595,9 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 // Upgrade path: add the ModelDetails parameter field numbers and emit
 // {id:"optimization", value:"cost"|"balance"|"intelligence"}.
 func cursorRequestedModel(model string) string {
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
 	switch model {
 	case "auto", "auto-cost", "auto-balance", "auto-intelligence":
 		return "default"

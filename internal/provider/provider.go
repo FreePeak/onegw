@@ -982,10 +982,11 @@ func DefaultModels(k Kind) []string {
 		// ends a turn with zero content if sent verbatim),
 		// default, the composer family (ChatService), and gpt-5.2
 		// (live-proven, PRD 12fd081). BARE ids on purpose: the
-		// server qualifies them with the provider name, so a
-		// "cursor/auto" entry advertised twice (2026-09-21 —
-		// /v1/models listed cursor/cursor/auto, a model no
-		// upstream answers) is what a prefixed id produces.
+		// server qualifies every advertised model with the provider
+		// name (server.go handleModels + the route table), so a
+		// prefixed entry here is what served a client-visible
+		// cursor/cursor/auto (2026-09-21) — an id nothing answers,
+		// and one an id pinning a configured setup keeps asking for.
 		// Operators wanting the live list set `models` explicitly
 		// — upstream rotates these ids without notice, exactly
 		// like OpenCode Zen.

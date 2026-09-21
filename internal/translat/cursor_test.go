@@ -178,6 +178,13 @@ func TestEncodeCursorAgentRequestRewritesAutoLane(t *testing.T) {
 		"auto-intelligence": "default",
 		"gpt-5.2":           "gpt-5.2",
 		"composer-2.5":      "composer-2.5",
+		// A PROVIDER PREFIX must not ride the wire: this id arrives via a
+		// direct route entry, i.e. a client asking for the string /v1/models
+		// advertises (live 2026-09-21 — cursor answered its own
+		// `400 AI Model Not Found` for it). Only the last segment is a model.
+		"cursor/auto":        "default",
+		"cursor/cursor/auto": "default",
+		"openrouter/gpt-5.2": "gpt-5.2",
 	} {
 		if got := wireModel(model); got != want {
 			t.Fatalf("agent wire: model %q said %q, want %q", model, got, want)
