@@ -1,5 +1,16 @@
+*Last updated: 2026-09-21 (self-update: the 10s smoke-run deadline killed a GOOD binary):*
+`onegw update` on a live v0.46.5 gateway failed with `downloaded binary failed its smoke run: signal: killed ()`
+and left a partial `<exec dir>/.onegw.new.part` behind. The download was fine — the v0.47.1 `onegw-darwin-arm64`
+asset matched its published sha256 and ran `onegw version` in 0.02s once warm — but `smokeRun` bounded the FIRST
+exec of the freshly written ~15 MB binary with a 10s context, and the first exec is exactly where macOS verifies
+the new Mach-O (I measured 0.4-1.6s cold on an idle box, and the gateway is normally busy downloading/inspecting
+right then). `exec.CommandContext` then killed the child, and a deadline kill is indistinguishable from an
+out-of-memory SIGKILL in the error string. `smokeDeadline` is now 60s and a `context.DeadlineExceeded` returns
+its own message naming the timeout, so an operator can tell a thrashed box from a bad download; the smoke run
+still fails closed before anything on disk moves. Regression test: `TestSmokeRunToleratesSlowFirstExec`
+(`internal/update/apply_test.go`).
+
 *Last updated: 2026-09-21 (Quota page: the subscription table is one row per provider/account, windows as columns):*
-The "Subscription quota" table rendered **one row per vendor window**, repeating the provider, account and plan
 on every row — opencode/harvey occupied three rows (Rolling, Weekly, Monthly) and cursor two, so an account
 never read as one account and the parked pill repeated down the column. It is now **one row per
 (provider, account) with one COLUMN per window**, each cell carrying its own bar, percent and reset instant
@@ -3146,8 +3157,9 @@ the issue):
   2026-09-08): background release checks (`[update] check_interval`,
   default 24h; `auto` opt-in apply), `/admin/update` status/check/apply
   endpoints, and a zero-drop self-handoff — download (sha256-verified) →
-  smoke-run → atomic swap with `.old` backup → SO_REUSEPORT overlap → the
-  new process must answer `/admin/update` with its own pid → drain old
+  smoke-run (60s deadline, `smokeDeadline` — a 10s bound killed a good
+  binary whose FIRST exec paid platform verification) → atomic swap with
+  `.old` backup → SO_REUSEPORT overlap → the
   pid; every failure rolls back with the old gateway still serving.
   Container deployments check + log and print host-side
   `docker pull`/recreate commands instead of self-applying (the image
