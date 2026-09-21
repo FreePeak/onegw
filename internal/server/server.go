@@ -275,6 +275,16 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		if len(p.Models) == 0 {
 			p.Models = provider.DefaultModels(kind)
 		}
+		// NOTE (2026-09-21): do NOT normalize a "provider-prefixed" models
+		// entry here. An id may legitimately carry a segment equal to the
+		// provider's own name — OpenRouter's registry ships openrouter/free,
+		// openrouter/auto, openrouter/fusion — and the way to reach those is
+		// exactly the doubled advertised form (provider "openrouter" + model
+		// "openrouter/free"). Stripping it rewrote the model to "free", which
+		// the upstream answers with 404 "No endpoints available". The
+		// prefixed-entry confusion is handled where the model id is CONSUMED
+		// (translat.cursorRequestedModel drops a prefix before the wire) and
+		// the kind defaults are bare — not by guessing from the config.
 	}
 	rt := router.New(pool)
 	// Quota semantics own the cooling-pool answer: when the pool is empty

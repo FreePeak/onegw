@@ -107,17 +107,32 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 		t.Fatalf("windows missing: %s", body)
 	}
 
-	// Dashboard page renders the subscription section, and renders it
-	// per-window: the parked zai account carries exactly one parked
-	// marker (account cell), the healthy opencode account none.
+	// Dashboard page renders the subscription section ONE ROW PER
+	// PROVIDER/ACCOUNT: the opencode account reports three windows, and
+	// they must land in a single row under three window COLUMN heads (the
+	// pre-2026-09-21 layout emitted one row per window, repeating the
+	// account and plan on each). The parked zai account carries exactly one
+	// parked marker (its account cell), the healthy opencode account none.
 	w = do(t, srv.Handler(), adminReq(t, "/admin/ui/quota"))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Subscription quota") {
 		t.Fatalf("quota page: %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "no quota windows") {
+	html := w.Body.String()
+	if !strings.Contains(html, "no quota windows") {
 		t.Fatal("local-window empty state must survive the page rework")
 	}
-	if n := strings.Count(w.Body.String(), ">parked<"); n != 1 {
+	if n := strings.Count(html, ">oc<"); n != 1 {
+		t.Fatalf("opencode account row count = %d, want exactly 1 (one row per provider/account)", n)
+	}
+	for _, col := range []string{">Rolling<", ">Weekly<", ">Monthly<", ">Session (5h)<"} {
+		if !strings.Contains(html, col) {
+			t.Fatalf("window column %s missing from the subscription table", col)
+		}
+	}
+	if !strings.Contains(html, `13% · in `) {
+		t.Fatalf("a window cell must carry percent AND reset inline, page: %s", html)
+	}
+	if n := strings.Count(html, ">parked<"); n != 1 {
 		t.Fatalf("parked marker count = %d, want exactly the parked zai account", n)
 	}
 
@@ -493,9 +508,9 @@ func TestSubTargetsCursorDashboardToken(t *testing.T) {
 		SubscriptionQuota: "cursor",
 		Accounts: []config.Acct{
 			{
-				Name:            "svc",
-				APIKey:          upstreamJWT,          // for upstream Bearer
-				DashboardToken:  dashboardJWT,          // for quota probe
+				Name:           "svc",
+				APIKey:         upstreamJWT,  // for upstream Bearer
+				DashboardToken: dashboardJWT, // for quota probe
 			},
 		},
 	}}

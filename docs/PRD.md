@@ -33,12 +33,39 @@ chunk-split streams rejoin; a healthy stream relays byte for byte) and `internal
 the fixtures those tests serve still reach the verdict. `go test ./internal/translat/ ./internal/router/
 ./internal/types/ ./internal/provider/` green.
 
+*Last updated: 2026-09-21 (Quota page: the subscription table is one row per provider/account, windows as columns):*
+The "Subscription quota" table rendered **one row per vendor window**, repeating the provider, account and plan
+on every row — opencode/harvey occupied three rows (Rolling, Weekly, Monthly) and cursor two, so an account
+never read as one account and the parked pill repeated down the column. It is now **one row per
+(provider, account) with one COLUMN per window**, each cell carrying its own bar, percent and reset instant
+inline (`68% · in 21.3 d`), so the separate "resets" column is gone.
+
+- `subRowView.Windows` became `map[string]subWinView` (window name → cell) and `subWindowColumns` derives the
+  column set as the union of window names across rows: known dialects first in their natural order (Rolling /
+  Session (5h) / Weekly / Weekly pool / Monthly / Credits (monthly) / included usage / included API usage), then
+  any unfamiliar name alphabetically — a new dialect renders instead of vanishing, and every row keeps the same
+  cell count so columns line up.
+- A window an account does not report renders `—` rather than shifting its siblings' cells; the probe-error row
+  keeps its colspan across the window columns and still shows the failure text plus the `probe failed` pill
+  (fail-open, unchanged).
+- Only the page template and its view struct changed: `/admin/api/v1/subscription` still serves the raw
+  per-window snapshots, and the local `quota_window` table above is untouched.
+
+Pinned by the extended `TestSubscriptionQuotaAPIPageAndPark` (exactly one `oc` row for three windows, the window
+column heads present, an inline `% · in` cell, one parked marker) — mutation-checked by asserting a column name
+that does not exist, which turns the test red.
 *Last updated: 2026-09-21 (cursor composer tool calls: a real invocation now reaches the client, and the advertised id stopped double-prefixing):*
 Two independent defects sat behind "the cursor model is not working", both reproduced live on a scratch port before touching master.
 
 **1. composer-2.5's tool calls were lost.** The IDE composer family is a ChatService TEXT model: asked to use a declared tool it does not return a `ClientSideToolV2Call` (field 1) — it WRITES a DeepSeek-style invocation into its visible answer, the post-`</think>` suffix of field 25. The gateway promotes that suffix to `content` (#131), so the sentinel markers reached the client as plain text and the call never existed; the client then echoed the literal marker text back, which is exactly the transcript in the report. `internal/translat/cursor_composer_tools.go` (new, ported from the read-only reference `OmniRoute/open-sse/utils/composerToolCalls.ts`) scans the visible text for `<｜tool▁calls▁begin｜>` blocks and returns the residual answer plus the declared calls; `CursorChatState.composerVisibleEvents` emits them as OpenAI `tool_calls` deltas. Two rules keep it honest: an UNCLOSED block is never parsed (a half-arrived invocation must not be fabricated) and its bytes are held back from content, together with a trailing fragment that could still grow into an opening marker (frames split markers mid-sequence). A ChatService turn that carried tool calls now also ends with `finish_reason: "tool_calls"` — that event existed only on the AgentService branch, so an agentic client keyed on the Agent-path finish ignored the call even when it arrived. Live after the fix, same request bytes: SSE `tool_calls` delta `run_terminal_cmd` / `{"command":"echo hello",...}` + `finish_reason: tool_calls`; non-streaming renders the same `tool_calls` message; a plain-text turn is unchanged (`content: PONG`, `finish_reason: stop`). Pinned by `internal/translat/cursor_composer_tools_test.go` (parse, multiple calls + residual, no markers, unterminated block stays text, ASCII-marker fallback, holdback, end-to-end SSE, chunk splits across the marker).
 
-**2. `/v1/models` advertised a double-prefixed cursor id.** `DefaultModels(KindCursor)` listed ids that were ALREADY `provider/model` shaped (`cursor/auto`, `cursor/default`) while `handleModels` qualifies every advertised model with its provider name — so a cursor provider served `cursor/cursor/auto`, an id no upstream answers. A client pinned to it got onegw's own `400 AI Model Not Found` and never reached Cursor. The defaults are bare now (`auto`, `default`, the composer family), matching every other kind's contract; `cursor/auto` and `cursor/default` still resolve, and both wire the same upstream `default` lane (`cursorRequestedModel`). The live operator config's `cursor/*` cells are bare for the same reason — no config change is needed.
+**2. A configured `models` entry that carried the provider prefix advertised an id nothing resolves.** `DefaultModels(KindCursor)` listed ids that were ALREADY `provider/model` shaped (`cursor/auto`, `cursor/default`) while `handleModels` qualifies every advertised model with its provider name — so a cursor provider served `cursor/cursor/auto`, an id no upstream answers. A client pinned to it got onegw's own `400 AI Model Not Found` and never reached Cursor, while `cursor/auto` worked beside it. Three layers now agree, because the default was not the only source of a prefixed entry:
+
+- `DefaultModels(KindCursor)` returns BARE ids (`auto`, `default`, the composer family), matching every other kind's contract and the comment's own wording; `cursor/auto` still resolves, so the id a client already has pinned keeps working.
+- The server normalizes a configured `models` entry that carries the provider's own name, logging it once (`provider cursor: models entry "cursor/auto" dropped its redundant "cursor/" prefix …`). The live config's `cursor/*` cells were the second source, and `openrouter/free` is the same artifact — the operator's config needs no edit.
+- `cursorRequestedModel` strips any remaining prefix before the wire (only the last segment is a model id), so an id that reaches the builder via a direct route entry can no longer make Cursor itself answer `400 AI Model Not Found`, which the gateway used to relay verbatim.
+
+**CORRECTION, same day, same layer — the second bullet above was WRONG and shipped in v0.46.6.** Normalizing a "provider-prefixed" models entry is not safe: an upstream model id may legitimately begin with a segment equal to the provider's own name. OpenRouter's registry ships `openrouter/free`, `openrouter/auto`, `openrouter/fusion`, and the only string that routes to them is the doubled advertised form (provider `openrouter` + model `openrouter/free`). The rewrite turned `openrouter/free` into `free` and every request answered `404 No endpoints available for openrouter/free` on the released binary — measured, with the pre-#134 build answering the same request 200. Reverted in the follow-up PR: the server no longer touches `models` entries, and the id-advertisement confusion is handled where the model id is CONSUMED (`cursorRequestedModel` drops a provider prefix before the wire, only the last path segment being a model id) plus bare kind defaults — neither of which guesses from a config string. `internal/server/prefixed_model_test.go` now pins the OPPOSITE invariant: a configured `openrouter/free` is advertised intact.
 
 *Last updated: 2026-09-21 (cursor SSE buffered until stream end — a client saw nothing for 10s; the `EvStart` case is a guard, not a fix):*
 `CursorSSEStream` wrote its SSE body into `sb` and flushed once, at stream end. Cursor's ChatService holds the
