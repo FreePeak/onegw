@@ -54,6 +54,23 @@ func waitSubSnapshots(t *testing.T, srv *Server, want int) {
 	}
 }
 
+// rowHTML slices the first <tr>…</tr> of the subscription table that
+// contains a `<b>provider</b>` cell, so a merged-column assertion can read
+// one row's windows without the union-header columns of the rest of the page.
+func rowHTML(html, provider string) string {
+	marker := "<b>" + provider + "</b>"
+	i := strings.Index(html, marker)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndex(html[:i], "<tr>")
+	end := strings.Index(html[i:], "</tr>")
+	if start < 0 || end < 0 {
+		return ""
+	}
+	return html[start : i+end+len("</tr>")]
+}
+
 func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 	// OpenCode Go stub: healthy account (13% rolling).
 	oc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,11 +125,10 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 	}
 
 	// Dashboard page renders the subscription section ONE ROW PER
-	// PROVIDER/ACCOUNT: the opencode account reports three windows, and
-	// they must land in a single row under three window COLUMN heads (the
-	// pre-2026-09-21 layout emitted one row per window, repeating the
-	// account and plan on each). The parked zai account carries exactly one
-	// parked marker (its account cell), the healthy opencode account none.
+	// PROVIDER/ACCOUNT with a single merged "quota" column: each row lists
+	// the windows that dialect reports (opencode → Rolling/Weekly/Monthly,
+	// zai → Session (5h)), instead of a union header where most cells were
+	// empty. The parked zai account carries exactly one parked marker.
 	w = do(t, srv.Handler(), adminReq(t, "/admin/ui/quota"))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Subscription quota") {
 		t.Fatalf("quota page: %d: %s", w.Code, w.Body.String())
@@ -124,10 +140,24 @@ func TestSubscriptionQuotaAPIPageAndPark(t *testing.T) {
 	if n := strings.Count(html, ">oc<"); n != 1 {
 		t.Fatalf("opencode account row count = %d, want exactly 1 (one row per provider/account)", n)
 	}
-	for _, col := range []string{">Rolling<", ">Weekly<", ">Monthly<", ">Session (5h)<"} {
-		if !strings.Contains(html, col) {
-			t.Fatalf("window column %s missing from the subscription table", col)
+	if n := strings.Count(html, ">quota</th>"); n != 1 {
+		t.Fatalf("merged quota column header count = %d, want exactly 1", n)
+	}
+	// The union window columns are gone: no per-window table header remains.
+	for _, col := range []string{">Rolling</th>", ">Weekly</th>", ">Monthly</th>", ">Session (5h)</th>"} {
+		if strings.Contains(html, col) {
+			t.Fatalf("union window column %s must be gone from the header", col)
 		}
+	}
+	// The opencode row lists its own windows in a single cell; the zai row
+	// lists only Session (5h).
+	ocRow := rowHTML(html, "oc")
+	if !strings.Contains(ocRow, ">Rolling<") || !strings.Contains(ocRow, ">Weekly<") || !strings.Contains(ocRow, ">Monthly<") {
+		t.Fatalf("opencode row must carry its own windows: %s", ocRow)
+	}
+	zRow := rowHTML(html, "z")
+	if !strings.Contains(zRow, ">Session (5h)<") {
+		t.Fatalf("zai row must carry its own window: %s", zRow)
 	}
 	if !strings.Contains(html, `13% · in `) {
 		t.Fatalf("a window cell must carry percent AND reset inline, page: %s", html)

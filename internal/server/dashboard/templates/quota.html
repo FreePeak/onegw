@@ -21,23 +21,22 @@
 
 <h2>Subscription quota <span class="text-mut">upstream-reported · polled every minute · one row per provider/account</span></h2>
 <div class="tblwrap">
-{{$cols := .Cols}}
 <table>
-<thead><tr><th>provider</th><th>account</th><th>plan</th>{{range $cols}}<th style="min-width:150px">{{.}}</th>{{end}}<th>state</th></tr></thead>
+<thead><tr><th>provider</th><th>account</th><th>plan</th><th style="min-width:320px">quota</th><th>state</th></tr></thead>
 <tbody>
 {{range $row := .Subs}}
 {{if $row.Err}}<tr>
   <td><b>{{$row.Provider}}</b></td><td>{{$row.Account}}</td><td class="text-mut">{{$row.Plan}}</td>
-  <td colspan="{{len $cols}}" class="text-mut" title="probed {{$row.Fetched}} via {{$row.Dialect}}">{{$row.Err}}</td>
+  <td class="text-mut" title="probed {{$row.Fetched}} via {{$row.Dialect}}">{{$row.Err}}</td>
   <td><span class="pill err">probe failed</span></td>
 </tr>{{else}}<tr>
   <td><b>{{$row.Provider}}</b></td>
   <td>{{$row.Account}}{{if $row.Exhausted}} <span class="pill err" title="gateway parks the whole account while any window is 100%">parked</span>{{end}}</td>
   <td>{{$row.Plan}}<span class="text-mut"> · {{$row.Dialect}}</span></td>
-  {{range $cols}}{{with index $row.Windows .}}<td title="{{.Name}}"><div class="bar"><i class="{{.BarClass}}" style="width:{{.Pct}}%"></i></div> <span class="num">{{.Pct}}%{{if .Resets}} · in {{.Resets}}{{end}}</span></td>{{else}}<td class="text-mut">—</td>{{end}}{{end}}
+  <td>{{range $row.Windows}}<div class="qwin"><span class="qname text-mut" title="{{.Name}}">{{.Name}}</span><div class="bar"><i class="{{.BarClass}}" style="width:{{.Pct}}%"></i></div><span class="num qval">{{.Pct}}%{{if .Resets}} · in {{.Resets}}{{end}}</span></div>{{else}}<span class="text-mut">—</span>{{end}}</td>
   <td>{{if $row.Exhausted}}<span class="pill err">exhausted</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
 </tr>{{end}}
-{{else}}<tr><td colspan="{{len $cols}}" class="empty">no subscription providers — set <code class="chip">subscription_quota</code> on a provider ("opencode-go", "zai", "zai-cn", "cursor" or "commandcode")</td></tr>{{end}}
+{{else}}<tr><td colspan="5" class="empty">no subscription providers — set <code class="chip">subscription_quota</code> on a provider ("opencode-go", "zai", "zai-cn", "cursor" or "commandcode")</td></tr>{{end}}
 </tbody>
 </table>
 </div>

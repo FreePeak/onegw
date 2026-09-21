@@ -351,6 +351,16 @@ html[data-theme="light"] { color-scheme: light; }
   .bar > i.warn { @apply bg-warn; }
   .bar > i.err { @apply bg-err; }
 
+  /* subscription quota: one merged cell per row — the vendor's own windows
+   * stacked as name | bar | value, so dialects that meter different things
+   * still read as a column (grid keeps the bars aligned between windows). */
+  .qwin {
+    @apply grid items-center gap-2 py-px;
+    grid-template-columns: minmax(70px, 130px) 1fr max-content;
+  }
+  .qwin > .qname { @apply truncate; }
+  .qwin > .qval { @apply whitespace-nowrap text-[11.5px]; }
+
   /* badges: template badge shapes (square-ish, outline status variants) */
   .pill {
     @apply inline-flex items-center gap-1 rounded border border-line bg-soft px-2 py-px

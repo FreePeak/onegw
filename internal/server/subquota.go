@@ -9,7 +9,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"time"
 
 	"onegw/internal/config"
@@ -18,12 +17,9 @@ import (
 
 // quotaPageView is the quota dashboard page's whole view: the local
 // reset-window table plus the upstream-reported subscription section.
-// Cols is the subscription table's window columns (the union across
-// accounts, in display order).
 type quotaPageView struct {
 	Windows []quotaRowView
 	Subs    []subRowView
-	Cols    []string
 }
 
 // subTargets derives one probe target per account of every provider that
@@ -159,17 +155,17 @@ type subWinView struct {
 
 type subRowView struct {
 	Provider, Account, Plan, Dialect string
-	Windows                          map[string]subWinView // window name -> cell
+	Windows                          []subWinView // the vendor's own windows, in its own order
 	Err                              string
 	Exhausted                        bool
 	Fetched                          string
 }
 
-// subViews renders one row per (provider, account): its plan plus one window
-// COLUMN per window the vendor reports (columns are the union across
-// accounts — one row can only line up under the others if every row has the
-// same cells), or the probe error (fail-open: stale or missing data is
-// shown, never hidden).
+// subViews renders one row per (provider, account): its plan plus the windows
+// THAT vendor reports, or the probe error (fail-open: stale or missing data
+// is shown, never hidden). Windows stay a per-row list rather than shared
+// table columns because no two dialects meter the same thing: a union header
+// listed every window name once and left most cells empty.
 func (s *Server) subViews() []subRowView {
 	out := []subRowView{}
 	now := time.Now()
@@ -186,7 +182,7 @@ func (s *Server) subViews() []subRowView {
 			Err:      snap.Err,
 			Fetched:  snap.FetchedAt.Format("15:04:05"),
 		}
-		wins := make(map[string]subWinView, len(snap.Windows))
+		wins := make([]subWinView, 0, len(snap.Windows))
 		for _, w := range snap.Windows {
 			wv := subWinView{Name: w.Name, Pct: w.Used}
 			switch {
@@ -200,46 +196,12 @@ func (s *Server) subViews() []subRowView {
 			if w.Resets != nil && w.Resets.After(now) {
 				wv.Resets = untilString(*w.Resets, now)
 			}
-			wins[w.Name] = wv
+			wins = append(wins, wv)
 		}
 		row.Windows = wins
 		out = append(out, row)
 	}
 	return out
-}
-
-// subWindowColumns lists the union of window names across rows in display
-// order — each one becomes a column of the subscription table. Known
-// dialects come first in their natural order (the vendor's own wording),
-// then any unfamiliar window name alphabetically, so a new dialect still
-// renders instead of vanishing.
-func subWindowColumns(rows []subRowView) []string {
-	seen := map[string]bool{}
-	for _, r := range rows {
-		for name := range r.Windows {
-			seen[name] = true
-		}
-	}
-	var out []string
-	take := func(name string) {
-		if seen[name] {
-			out = append(out, name)
-			delete(seen, name)
-		}
-	}
-	for _, name := range []string{
-		"Rolling", "Session (5h)", "5-hour window", "Weekly", "Weekly window",
-		"Weekly pool", "Monthly", "Monthly pool", "Credits (monthly)",
-		"included usage", "included API usage",
-	} {
-		take(name)
-	}
-	rest := make([]string, 0, len(seen))
-	for name := range seen {
-		rest = append(rest, name)
-	}
-	sort.Strings(rest)
-	return append(out, rest...)
 }
 
 // untilString renders a remaining duration the same way the local quota
