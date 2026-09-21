@@ -1068,12 +1068,13 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 			for _, e := range events {
 				switch e.Kind {
 				case EvStart:
-					// CursorChatEvents emits EvStart on the first tool/text
-					// frame of a turn. If the turn is a tool-only stream with
-					// no subsequent delta (live: a tool call whose args arrive
-					// in a later frame), EvStart is the only event the switch
-					// sees — without this case the role chunk is never written
-					// and the client gets zero output.
+					// CursorChatEvents emits EvStart once per stream (the
+					// first frame that carries text or a tool call). It is
+					// always followed in the same frame by the EvDelta or
+					// EvPartStart that triggered it, so this case is a
+					// redundant guard rather than a fix for a starved
+					// stream: it keeps the role chunk written even if a
+					// future decoder emits EvStart on its own.
 					start()
 					flush()
 				case EvDelta:

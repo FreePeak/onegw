@@ -8,6 +8,7 @@ package translat
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -675,4 +676,51 @@ func readAllString(t *testing.T, r interface{ Read([]byte) (int, error) }) strin
 		}
 	}
 	return sb.String()
+}
+
+func TestCursorSSEStreamFlushesBeforeStreamEnd(t *testing.T) {
+	// The load-bearing fix in CursorSSEStream is the incremental flush:
+	// Cursor's ChatService parks the connection on 10s keepalive frames,
+	// so a client that waits for stream end sees nothing until timeout.
+	// This test reads ONE chunk from the returned reader while the upstream
+	// frame source is still open. Without flush() the first chunk stays in
+	// the sb buffer and this read blocks until the source closes.
+	var tool []byte
+	tool = pbString(tool, 1, "get_weather")
+	var mcpParams []byte
+	mcpParams = pbBytes(mcpParams, 1, tool)
+	var call []byte
+	call = pbString(call, 3, "call_1")
+	call = pbBytes(call, 27, mcpParams)
+	var frame []byte
+	frame = pbBytes(frame, 1, call)
+
+	pr, pw := io.Pipe()
+	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil)
+
+	// Feed the tool frame but leave the pipe open: no EOF, no EvStop.
+	if _, err := pw.Write(wrapConnectFrame(frame)); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+	defer pw.Close()
+
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := stream.Read(buf)
+		if n == 0 && err != nil {
+			got <- ""
+			return
+		}
+		got <- string(buf[:n])
+	}()
+
+	select {
+	case chunk := <-got:
+		if !strings.Contains(chunk, "data: ") {
+			t.Fatalf("first chunk is not an SSE frame: %q", chunk)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no chunk within 3s while the upstream stream is still open: CursorSSEStream buffers until stream end (missing flush)")
+	}
 }
