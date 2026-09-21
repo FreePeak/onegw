@@ -978,14 +978,18 @@ func DefaultModels(k Kind) []string {
 		// Cursor has no upstream model-listing RPC — ListModels,
 		// GetModels, GetCatalog all 404 when hit against both
 		// cursor hosts (probed live 2026-09-15). Advertise the
-		// ids proven to route: cursor/auto (AgentService lane —
+		// ids proven to route: auto (the AgentService lane —
 		// ends a turn with zero content if sent verbatim),
-		// cursor/default, the composer family (ChatService),
-		// and gpt-5.2 (live-proven, PRD 12fd081). Operators
-		// wanting the live list set `models` explicitly —
-		// upstream rotates these ids without notice, exactly
+		// default, the composer family (ChatService), and gpt-5.2
+		// (live-proven, PRD 12fd081). BARE ids on purpose: the
+		// server qualifies them with the provider name, so a
+		// "cursor/auto" entry advertised twice (2026-09-21 —
+		// /v1/models listed cursor/cursor/auto, a model no
+		// upstream answers) is what a prefixed id produces.
+		// Operators wanting the live list set `models` explicitly
+		// — upstream rotates these ids without notice, exactly
 		// like OpenCode Zen.
-		return []string{"cursor/auto", "cursor/default", "composer-2.5",
+		return []string{"auto", "default", "composer-2.5",
 			"composer-2", "gpt-5.2", "gpt-5.5", "gpt-5.6", "claude-sonnet-4.5"}
 	case KindSystemOne:
 		// TypeSafe Jev has no upstream model-listing RPC:
@@ -2808,7 +2812,7 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		// working account. parseModelIDs reads the plain
 		// `{"models":[...]}` shape, which is the only one this
 		// helper emits.
-		return []byte(`{"models":["cursor/auto","cursor/default",
+		return []byte(`{"models":["auto","default",
 			"composer-2.5","composer-2","gpt-5.2","gpt-5.5",
 			"gpt-5.6","claude-sonnet-4.5"]}`), 200, nil
 	}
