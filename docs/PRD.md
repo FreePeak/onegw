@@ -1,3 +1,31 @@
+*Last updated: 2026-09-21 (reasoning loops: the guard from #122 had never run — four independent defects, all fixed; a looping leg now dies at ~30-50% of the stream instead of burning the whole output cap):*
+A free-tier leg that degenerates into repeating text used to run until the upstream's output cap, handing the
+client a 32K `stopReason: length` wall. #122 shipped a guard for exactly this, and the symptom never changed —
+because the guard was **dead code**: `translat.NewLoopBreaker` had zero callers, no test, and no call site in
+`relayResponse`. Three further defects would have kept it silent even once wired: `hashUnit` ignored its
+`offset` argument (it always hashed `lines[0:period]`, so no window but the first was ever computed), the
+probed periods were `{1,2,4,8,16}` (the live cycle is 5), and `countCycle` counted stride-1 neighbours, which
+no multi-line cycle can satisfy.
+
+Two captures taken through the `free` combo (`dots-studio/dots-3-note-preview:free`, 327KB and 469KB; both
+burned the full 4000-token cap) settled the redesign: the first repeats five deltas in strict rotation, but the
+second **shuffles ~50 short fragments for ~940 lines** — at no period does a window repeat 20x back to back,
+yet its last 256 lines hold only 46 distinct and the top eight cover 84%. Cycle detection is the wrong signal;
+**diversity** is the right one. The rewritten guard windows the last 128 wire lines and trips when the window
+holds at least 4x more lines than distinct ones, after an 8KB floor. It is now wired into `relayResponse` for
+both the passthrough and cross-format streaming branches, closes the upstream body on trip, ends the stream
+with a terminal error frame, benches the leg where a sibling can serve the retry, and records
+`upstream_reasoning_loop` (the Prometheus label stays the coarse `upstream_error` bucket — label contract).
+
+Live proof on a scratch port, same loop-inducing prompt: **469,077 bytes / 34.4s → 58,980 bytes / 15.3s**,
+ending in `data: {"error":{"type":"upstream_error","message":"upstream reasoning loop"}}`; metrics show the
+attempt as `onegw_requests_total{code="502",provider="kilocode",model="kilo-auto/free"}`. `internal/translat/loop_test.go`
+covers strict cycles, loose (shuffled) cycles, a normal 600-line generation, normally duplicated code lines
+(`}` / `return nil`), a short stream below the evidence floor, upstream teardown, and chunk-boundary line
+carry — all false-positive cases stay unterminated. Deliberate ceiling, marked in the source: the window is
+the raw wire split on newlines, so a vendor that varies a per-chunk envelope field would raise the distinct
+count and hide the loop; the upgrade path is decoding each event through `newStreamDecoder`.
+
 *Last updated: 2026-09-21 (systemone provider plumbed end-to-end):* `POST /v1/systemone` is a single wire surface — `internal/provider/systemone.go` forwards the client body verbatim to upstream and `doSystemOne` hands the `{model, answers, usage}` answer straight back, no translation either way. The TypeSafe Jev envelope shapes (`systemOneResponse/Answer/Usage`, `DecodeSystemOneResponse`, `ToOpenAIChoiceText`) live in `internal/translat/systemone.go`, wired into `DecodeResponse` via `case translat.FmtSystemOne` in `internal/translat/stream.go` so a cross-format relay decodes instead of falling through to the OpenAI path. `provider.go` gained the three `KindSystemOne` cases (`ReasoningEchoModel` → configured echo model, `DefaultModels` → live Jev catalog, `FetchModels` → curated catalog, empty body is success). Verified: `go build ./...` clean, `internal/translat/systemone_test.go` 3 cases pass (full envelope, malformed fails closed, empty no-op).
 *Last updated: 2026-09-20 (cursor: a 200 + trailer-carried turn error surfaced as "empty response" — the real reason now reaches the caller, PR #127):*
 Cursor reports a turn-level failure in the Connect-RPC TRAILER frame: an unauthenticated

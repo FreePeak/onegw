@@ -1155,6 +1155,14 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				return herr
 			}
 		}
+		// Reasoning-loop guard (2026-09-21): a free-tier model that
+		// repeats one block until the upstream output cap ends it. The
+		// repetition only becomes visible after KBs, so this can never
+		// fail the attempt over — it closes the upstream and ends the
+		// stream with an honest terminal error frame (headers and a wall
+		// of repeats are already on the wire by then).
+		lb := translat.NewLoopBreaker(src, res.Resp.Body)
+		src = lb
 		h := w.Header()
 		if stream {
 			h.Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -1229,6 +1237,21 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				return herr
 			}
 			rec = u
+		}
+		if lb.Looped() {
+			// The upstream was closed by the guard mid-loop. Headers and a
+			// wall of repeated text are already committed, so this attempt
+			// cannot be replaced: end the stream honestly and bench the leg
+			// where a sibling target can serve the next request.
+			herr := lb.LoopError()
+			if stream && ctx.Err() == nil {
+				writeStreamTerminalError(w, flush, clientFmt, "upstream reasoning loop")
+			}
+			if canFailOver {
+				def.BenchModel(model, 0)
+			}
+			s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
+			return herr
 		}
 		if guard != nil {
 			if j := guard.Junk(); j != nil {

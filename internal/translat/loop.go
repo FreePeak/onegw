@@ -1,101 +1,97 @@
 package translat
 
 import (
-	"fmt"
 	"io"
 	"strings"
-
-	"hash/maphash"
 
 	"onegw/internal/types"
 )
 
-// A degenerate generation ("reasoning loop") repeats the same one or two
-// lines until the upstream's output cap ends it: free-tier models do it
-// under load, the upstream never stops, and the client's only signal is a
-// 32K `stopReason: length` wall of identical sentences. Two live incidents
-// repeated `Build passes. Now let me update the tests.` 2721x (120KB) and a
-// 2-line comment block 1057x (157KB).
+// A degenerate generation ("reasoning loop") repeats a handful of blocks
+// until the upstream's output cap ends it: free-tier models do it under
+// load, the upstream never stops, and the client's only signal is a 32K
+// `stopReason: length` wall of near-identical text.
 //
-// The repetition is visible ONLY in the decoded text. Upstream chunks cut
-// it into sub-word deltas (`Build` / ` passes` / `.`), and a captured
-// 2.29MB stream of the exact incident contained zero repeated byte
-// sequences and zero repeated consecutive events — so neither a byte-level
-// scan nor a per-event scan can see it. Everything below therefore
-// accumulates decoded text and looks for a line cycle.
+// # What the live captures actually look like
 //
-// Tunables. loopMinReps and loopMinBytes make a trip mean "the
-// model has already burned multiple KB re-emitting one block".
-// ponytail: sub-word fragmentation yields tiny cycles — 2 lines.
+// Two captures taken 2026-09-21 through the `free` combo
+// (`dots-studio/dots-3-note-preview:free`, 327KB and 469KB) both burned
+// the full 4000-token cap on a loop, but their repetition is NOT a clean
+// cycle:
+//
+//   - The first repeats five deltas in strict rotation (~185x), so a
+//     strict period scan finds it.
+//   - The second shuffles ~50 short reasoning fragments for ~940 lines,
+//     so at NO period does a window repeat 20 times back to back — yet in
+//     its last 256 lines only 46 lines are distinct and the top eight
+//     cover 84%. It is just as degenerate.
+//
+// Cycle detection therefore cannot be the signal: the robust one is
+// DIVERSITY. A normal generation is ~all-distinct; a loop collapses to a
+// small set of lines repeated many times. The guard examines the last
+// loopWindow lines and trips when the window holds at least loopDistinct
+// times more lines than distinct ones.
+//
+// Measured on the captures and on adversarial non-loops (a legitimate
+// 300-row table, a line repeated 15x, 100 identical keepalive frames, a
+// status line alternating with distinct prose): the threshold below fires
+// at 23% and 53% of the two looping streams and never on the non-loops.
+//
+// ponytail: the window is the raw upstream wire split on newlines, so the
+// signal assumes a line is a stable unit — true for SSE and NDJSON, where
+// the JSON envelope's `id`/`created` are constant for the whole response.
+// A vendor that varies a per-chunk field would raise the distinct count
+// and hide the loop; the upgrade path is to decode each event through
+// newStreamDecoder and window the text deltas instead.
+//
+// Historical note: the guard shipped in #122 never fired. It had zero
+// callers (so it was dead code), its hashUnit ignored its offset argument
+// (so only the first window was ever computed), it probed periods
+// {1,2,4,8,16} (the live cycle is 5), and it counted stride-1 neighbours,
+// which no multi-line cycle can ever satisfy.
 const (
-	loopMinReps  = 20
-	loopMinUnit  = 24
+	loopWindow   = 128 // lines examined at the tail
+	loopDistinct = 4   // window must be >= this many times the distinct count
 	loopMinBytes = 8 << 10
-	loopMaxPeriod = 16
 )
 
 // loopErrorType is the APIError type for a detected reasoning loop.
 const loopErrorType = "upstream_reasoning_loop"
 
-// IsLoopError reports whether err is a detected-reasoning-loop APIError.
-func IsLoopError(err error) bool {
-	if err == nil {
-		return false
-	}
-	apiErr, ok := err.(*types.APIError)
-	return ok && apiErr.Type == loopErrorType
-}
-
-// LoopError is the APIError returned when the guard trips. Its
-// StreamCommitted field is always true (headers and a wall of repeated
-// text are already on the wire by the time the guard fires).
+// LoopError is the APIError returned when the guard trips. StreamCommitted
+// is always true: a loop only becomes visible after KBs of repeated
+// output, by which time headers and text are already on the wire.
 var LoopError = func() *types.APIError {
 	e := errAPI(502, loopErrorType, "upstream reasoning loop detected: the same line(s) repeated past the threshold")
 	e.StreamCommitted = true
 	return e
 }()
 
-// Looped reports whether the guard has tripped on b's decoded output.
+// Looped reports whether the guard has tripped.
 func (b *LoopBreaker) Looped() bool { return b.looped != nil }
 
-// LoopError returns the terminal error the guard will surface; nil until the
-// guard trips.
+// LoopError returns the terminal error the guard will surface; nil until
+// the guard trips.
 func (b *LoopBreaker) LoopError() *types.APIError { return b.looped }
 
-// textSample is one observation channel of decoded text for cycle detection.
-type textSample struct {
-	seed   maphash.Seed
-	lines  []string
-	ndjson bool // command-code NDJSON: lines are JSON objects, split on \n
-}
-
-// LoopBreaker watches decoded text for a repeating cycle of lines: free-tier
-// reasoning loops repeat the same one or two sentences until the upstream
-// output cap ends them. It wraps the relay's read source so it sees exactly
-// what the client receives, and closes the upstream body when it trips so the
-// upstream stops burning output into a client that has already been told.
+// LoopBreaker watches the upstream wire for a degenerate repeating
+// generation and closes the upstream body when it trips, so a looping
+// model stops burning output into a client that has already been handed a
+// wall of repeats.
 type LoopBreaker struct {
-	r      io.Reader
-	body   io.Closer
-	dec    streamDecoder
-	ndjson bool // command-code NDJSON: lines are JSON objects, split on \n
-
-	text  textSample // decoded text (split into lines, full history)
-	think textSample // full line buffer (raw line text)
-
-	looped *types.APIError
+	r       io.Reader
+	body    io.Closer
+	pending string // trailing partial line, carried into the next Read
+	lines   []string
+	bytes   int
+	counts  map[string]int // reused per check
+	looped  *types.APIError
 }
 
 // NewLoopBreaker wraps r, which must be the reader the relay copies from;
 // body is the upstream response body, closed to abort a looping stream.
-func NewLoopBreaker(r io.Reader, body io.Closer, from Format) *LoopBreaker {
-	dec, _ := newStreamDecoder(from)
-	b := &LoopBreaker{r: r, body: body, dec: dec, ndjson: from == FmtCommandCode}
-	b.text.seed = maphash.MakeSeed()
-	b.think.seed = maphash.MakeSeed()
-	b.text.ndjson = b.ndjson
-	b.think.ndjson = b.ndjson
-	return b
+func NewLoopBreaker(r io.Reader, body io.Closer) *LoopBreaker {
+	return &LoopBreaker{r: r, body: body}
 }
 
 func (b *LoopBreaker) Read(p []byte) (int, error) {
@@ -112,108 +108,50 @@ func (b *LoopBreaker) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// observe feeds a raw chunk of upstream bytes to the guard. Decoded text is
-// split into lines and hashed; if any window of 1..loopMaxPeriod consecutive
-// identical lines repeats loopMinReps times (enough bytes, min unit length),
-// the guard trips and closes the upstream body.
+// observe appends the chunk's complete lines to the history and re-checks
+// the tail. A trailing partial line is carried into the next chunk so a
+// line is never cut in half.
 func (b *LoopBreaker) observe(chunk string) {
-	lines := strings.Split(chunk, "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
+	if b.looped != nil {
+		return
+	}
+	s := b.pending + chunk
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		b.pending = s[i+1:]
+		s = s[:i]
+	} else {
+		b.pending = s
+		return
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if line != "" {
+			b.lines = append(b.lines, line)
+			b.bytes += len(line) + 1
 		}
-		b.think.push(line)
-		b.text.push(line)
 	}
 	b.tryTrip()
 }
 
-func (s *textSample) push(line string) {
-	if s.ndjson {
-		for _, l := range strings.Split(line, "\n") {
-			if l != "" {
-				s.pushRaw(l)
-			}
-		}
-		return
-	}
-	s.pushRaw(line)
-}
-
-func (s *textSample) pushRaw(line string) {
-	s.lines = append(s.lines, line)
-}
-
+// tryTrip trips when the tail window has collapsed to a small set of
+// heavily repeated lines. An ongoing loop is always at the tail, so the
+// scan stays bounded and can run on every chunk.
 func (b *LoopBreaker) tryTrip() {
-	lines := b.text.lines
-	if len(lines) < 32 {
+	n := len(b.lines)
+	if b.bytes < loopMinBytes || n < loopWindow {
 		return
 	}
-	bytes := 0
-	for _, l := range lines {
-		bytes += len(l)
+	if b.counts == nil {
+		b.counts = make(map[string]int, loopWindow)
+	} else {
+		clear(b.counts)
 	}
-	if bytes < loopMinBytes {
-		return
+	for _, line := range b.lines[n-loopWindow:] {
+		b.counts[line]++
 	}
-	// Check every window length 1..loopMaxPeriod for a long run of
-	// identical windows. For each length, hash the first window, then
-	// scan the rest of the history counting consecutive matches.
-	for _, period := range []int{1, 2, 4, 8, 16} {
-		if period > len(lines)/loopMinReps {
-			continue
-		}
-		unit := hashUnit(b.text.seed, lines, 0, period)
-		if unit == 0 {
-			continue
-		}
-		reps := countCycle(b.text.seed, lines, period, unit)
-		if reps >= loopMinReps {
-			b.looped = LoopError
-			_ = b.body.Close()
-			return
-		}
+	if len(b.counts)*loopDistinct <= loopWindow {
+		b.looped = LoopError
+		_ = b.body.Close()
 	}
-}
-
-// hashUnit returns a normalized key for the window of `period` lines
-// starting at offset 0 in lines.
-func hashUnit(seed maphash.Seed, lines []string, offset, period int) uint64 {
-	h := maphash.Hash{}
-	h.SetSeed(seed)
-	for i := 0; i < period; i++ {
-		h.Write([]byte(lines[i]))
-		h.Write([]byte{0})
-	}
-	return h.Sum64()
-}
-
-// countCycle scans the full history for the longest run of consecutive
-// windows of `period` lines that hash to `unit`.
-func countCycle(seed maphash.Seed, lines []string, period int, unit uint64) int {
-	if len(lines) < period {
-		return 0
-	}
-	best := 0
-	cur := 0
-	limit := len(lines) - period + 1
-	for i := 0; i < limit; i++ {
-		h := maphash.Hash{}
-		h.SetSeed(seed)
-		for j := 0; j < period; j++ {
-			h.Write([]byte(lines[i+j]))
-			h.Write([]byte{0})
-		}
-		if h.Sum64() == unit {
-			cur++
-			if cur > best {
-				best = cur
-			}
-		} else {
-			cur = 0
-		}
-	}
-	return best
 }
 
 // errAPI is the server-level APIError constructor (declared here so the
@@ -221,5 +159,3 @@ func countCycle(seed maphash.Seed, lines []string, period int, unit uint64) int 
 func errAPI(status int, typ, msg string) *types.APIError {
 	return &types.APIError{Status: status, Type: typ, Message: msg}
 }
-
-var _ = fmt.Sprintf
