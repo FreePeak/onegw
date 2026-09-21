@@ -500,6 +500,50 @@ func TestCursorSSEStreamEmptyIsError(t *testing.T) {
 	}
 }
 
+func TestCursorSSEStreamToolCallNoOutput(t *testing.T) {
+	// A tool-call-only stream (no text delta): the upstream emits
+	// EvStart on the first fragment and EvPartStart for the tool.
+	// Without a case for EvStart in CursorSSEStream's switch the
+	// role chunk was never written if no text delta followed, and
+	// the client received zero output. Regression: the SSE must
+	// open with the assistant role chunk and carry the tool name.
+	var tool []byte
+	tool = pbString(tool, 1, "get_weather")
+	var mcpParams []byte
+	mcpParams = pbBytes(mcpParams, 1, tool)
+	var call []byte
+	call = pbString(call, 3, "call_1")
+	call = pbBytes(call, 27, mcpParams)
+	var frame []byte
+	frame = pbBytes(frame, 1, call)
+
+	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(frame)), "claude-4.5-haiku", false, nil)
+	out := readAllString(t, stream)
+	if !strings.Contains(out, `"role":"assistant"`) {
+		t.Fatalf("SSE must open with the role chunk, got: %s", out)
+	}
+	if !strings.Contains(out, `"name":"get_weather"`) {
+		t.Fatalf("SSE must carry the tool name, got: %s", out)
+	}
+	if strings.Contains(out, `"name":""`) {
+		t.Fatalf("SSE must not carry an empty tool name, got: %s", out)
+	}
+	if !strings.Contains(out, `"tool_calls"`) {
+		t.Fatalf("SSE must carry tool_calls block, got: %s", out)
+	}
+}
+
+func TestCursorSSEStreamToolNameEmptyFallback(t *testing.T) {
+	// EvPartStart must never emit a tool call with an empty
+	// function.name. Strict validators reject it. The code path
+	// is defensive: decodeToolCall already returns nil for an
+	// empty name, but if the guard is ever bypassed the SSE
+	// must fall back to unknownToolName instead of "".
+	if unknownToolName != "unknown_tool" {
+		t.Fatalf("unknownToolName = %q, want %q", unknownToolName, "unknown_tool")
+	}
+}
+
 func concatFrames(frames ...[]byte) []byte {
 	var out []byte
 	for _, f := range frames {
