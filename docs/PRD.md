@@ -1,3 +1,4 @@
+*Last updated: 2026-09-21 (systemone provider plumbed end-to-end):* `POST /v1/systemone` is a single wire surface — `internal/provider/systemone.go` forwards the client body verbatim to upstream and `doSystemOne` hands the `{model, answers, usage}` answer straight back, no translation either way. The TypeSafe Jev envelope shapes (`systemOneResponse/Answer/Usage`, `DecodeSystemOneResponse`, `ToOpenAIChoiceText`) live in `internal/translat/systemone.go`, wired into `DecodeResponse` via `case translat.FmtSystemOne` in `internal/translat/stream.go` so a cross-format relay decodes instead of falling through to the OpenAI path. `provider.go` gained the three `KindSystemOne` cases (`ReasoningEchoModel` → configured echo model, `DefaultModels` → live Jev catalog, `FetchModels` → curated catalog, empty body is success). Verified: `go build ./...` clean, `internal/translat/systemone_test.go` 3 cases pass (full envelope, malformed fails closed, empty no-op).
 *Last updated: 2026-09-20 (cursor: a 200 + trailer-carried turn error surfaced as "empty response" — the real reason now reaches the caller, PR #127):*
 Cursor reports a turn-level failure in the Connect-RPC TRAILER frame: an unauthenticated
 `ChatService/StreamUnifiedChatWithTools` call returns **HTTP 200, zero content frames**, and a trailer
@@ -65,6 +66,13 @@ from `master`. Restored by cherry-picking the two commits, plus a gofmt pass. Th
 the numbering fix and the restore are separate PRs: the restore makes the next release a
 true superset of `v0.44.0` again, the numbering fix is workflow-only, and the two touch
 disjoint files so they merge in either order.
+**Follow-through (2026-09-21, this work):** the restore left the wire shapes in
+`internal/translat/systemone.go` (`systemOneResponse/Answer/Usage`, `DecodeSystemOneResponse`,
+`ToOpenAIChoiceText`) and the `case translat.FmtSystemOne` entry unconnected. Plumbed now:
+`DecodeResponse` (`stream.go`) maps `FmtSystemOne` to the new decoder, `provider.go` added the
+three `KindSystemOne` cases (`ReasoningEchoModel`, `DefaultModels`, `FetchModels`), and
+`internal/translat/systemone_test.go` covers the decoder. Upstream answers arrive in map order;
+tests assert part SETS, not order.
 
 **3. The `docker` job is red — owner-gated at GHCR, and now loud instead of fatal (mitigated,
 PR #118).** Still `denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`.

@@ -555,6 +555,20 @@ func (d *Def) ReasoningEchoModel(model string) bool {
 // own pre-first-byte budget, instead of falling through to the next combo
 // leg (see Router.Execute).
 func (d *Def) RetryForeverModel(model string) bool {
+	if d.Kind == KindSystemOne {
+		// TypeSafe Jev is not a normal LLM: it is a structured
+		// System One model (POST /v1/systemone, Choice/Score/Noul
+		// primitives), not a chat completions endpoint. It has no
+		// sibling model family to fall through to, no account pool
+		// that rotates meaningfully, and no retry_forever knob the
+		// operator would set — every model on this provider is the
+		// same endpoint with a different model field. The router
+		// must stay on this target through transient 5xx, shared
+		// walls and the gateway's own pre-first-byte budget, and
+		// surface a real refusal rather than downgrade. Treat every
+		// model on a systemone provider as retry_forever by default.
+		return true
+	}
 	for _, pat := range d.RetryForever {
 		if ok, err := path.Match(pat, model); err == nil && ok {
 			return true
@@ -973,6 +987,13 @@ func DefaultModels(k Kind) []string {
 		// like OpenCode Zen.
 		return []string{"cursor/auto", "cursor/default", "composer-2.5",
 			"composer-2", "gpt-5.2", "gpt-5.5", "gpt-5.6", "claude-sonnet-4.5"}
+	case KindSystemOne:
+		// TypeSafe Jev has no upstream model-listing RPC:
+		// GET /v1/models returns aliases, not the versioned
+		// ids clients send (jev-1.13.0 is accepted whether
+		// or not it appears in the list — docs.typesafe.ai/models).
+		// The live catalog lists jev-latest and jev-preview as aliases.
+		return []string{"jev-latest", "jev-preview"}
 	case KindCline:
 		return clineModels
 	}
@@ -2793,6 +2814,10 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		// Grok CLI fingerprint (same set as the chat path, minus the
 		// per-attempt chat ids; see setGrokFingerprint).
 		setGrokFingerprint(req.Header, "", false)
+	case KindSystemOne:
+		// TypeSafe Jev: GET /v1/models returns aliases, not the
+		// versioned ids clients send (docs.typesafe.ai/models).
+		return []byte(`{"models":["jev-latest","jev-preview"]}`), 200, nil
 	}
 	applyAuth(req.Header, d.Kind, acct.bearerToken(), "")
 	resp, err := client.Do(req)

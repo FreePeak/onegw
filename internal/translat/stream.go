@@ -185,6 +185,8 @@ func DecodeResponse(f Format, body []byte) (*types.ChatResponse, error) {
 		return DecodeResponsesResponse(body)
 	case FmtOpenAIResponses:
 		return DecodeGrokCliResponse(body)
+	case FmtSystemOne:
+		return DecodeSystemOneResponse(body)
 	default:
 		return DecodeOpenAIResponse(body)
 	}
