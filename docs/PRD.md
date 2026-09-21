@@ -1,3 +1,25 @@
+*Last updated: 2026-09-21 (cursor SSE buffered until stream end — a client saw nothing for 10s; the `EvStart` case is a guard, not a fix):*
+`CursorSSEStream` wrote its SSE body into `sb` and flushed once, at stream end. Cursor's ChatService holds the
+connection open on 10s keepalive frames *after* the turn's content, so "stream end" means "when the client gives
+up": a client saw a role header and then nothing. `flush()` now writes and resets `sb` as events are emitted.
+The first cut of that flush sat inside the `PartText` branch of the `EvDelta` switch, so a turn whose frames
+carried only `reasoning_content` — or only tool-arg fragments — still buffered: the stall the fix exists to
+remove, one part type over. `flush()` sits below the part-type switch so all three are delivered as emitted.
+
+Two smaller repairs ride along. `EvPartStart` wrote `"function":{"name":""}` when `decodeToolCall` returned an
+empty `Name` (frame with no MCPParams and no field 9); strict OpenAI-format validators reject that, so it falls
+back to `unknownToolName = "unknown_tool"`, the placeholder `gemini.go` and `server/toolblocks.go` already use.
+And the `EvStart` case: it is a guard, not a fix — `CursorChatEvents` emits `EvStart` once per stream, always
+in the same frame as the `EvDelta`/`EvPartStart` that triggered it (the one bare-`start()` path needs a prior
+frame, which already set `st.started`), so no stream could be starved by its absence; it is kept so the role
+chunk survives a future decoder that emits `EvStart` alone.
+
+Pinned by `TestCursorSSEStreamFlushesBeforeStreamEnd` and `TestCursorSSEStreamThinkingDeltaFlushes` (both read
+while the upstream pipe is still open, and both fail with the flush removed or restricted to text),
+`TestCursorSSEStreamToolCallNoOutput`, and `TestCursorSSEStreamToolNameEmptyFallback`. The verification that
+mattered here was negative, not positive: the PR's own `TestCursorSSEStreamToolCallNoOutput` passes with the
+`EvStart` case deleted, which is how the guard-not-a-fix finding surfaced.
+
 *Last updated: 2026-09-21 (cursor composer: field-25 thinking was the answer — split on `</think>`):*
 Cursor's IDE composer family (`composer-2.5`, `composer-2`) rides ChatService and packs the
 visible answer into protobuf **field 25** (the thinking channel), not field 1 text: a single
