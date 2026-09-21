@@ -42,14 +42,15 @@ const (
 	ZaiCN       = "zai-cn"      // GLM Coding Plan (China, bigmodel.cn)
 	CommandCode = "commandcode" // CommandCode /alpha billing (GOAT/Go/Pro plans)
 	GrokCli     = "grok-cli"    // SuperGrok shared weekly pool (cli-chat-proxy)
-	Cursor      = "cursor"      // Cursor subscription (cursor.com session API)
+	Cursor          = "cursor"            // Cursor subscription (cursor.com session API)
+	XiaomiTokenPlan = "xiaomi-tokenplan"  // Xiaomi MiMo token-plan (platform.xiaomimimo.com dashboard cookie)
 )
 
 // Dialects lists the accepted providers.subscription_quota values. It is the
 // single source of that list: config.Validate matches against it and quotes
 // it in its error, so a new dialect is registered in exactly one place.
 func Dialects() []string {
-	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor}
+	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor, XiaomiTokenPlan}
 }
 
 // ValidDialect reports whether name is a subscription quota dialect.
@@ -86,6 +87,12 @@ func DefaultURL(dialect string) string {
 		// Browser-dashboard usage-summary API — the whole meter state in one
 		// call, no query params (the session cookie identifies the account).
 		return "https://cursor.com/api/usage-summary"
+	case XiaomiTokenPlan:
+		// Xiaomi console tokenPlan usage API: needs both a userId cookie and a
+		// signed platform_serviceToken cookie (the upstream API key cannot reach
+		// this endpoint). Token Plan keys are region-specific; the console URL is
+		// global.
+		return "https://platform.xiaomimimo.com/api/v1/tokenPlan/usage"
 	}
 	return ""
 }
@@ -340,6 +347,10 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 		// No other dialect authenticates by cookie or derives a query
 		// parameter from the credential, so it cannot ride the bearer probe.
 		return t.probeCursor(ctx, tgt)
+	}
+
+	if tgt.Dialect == XiaomiTokenPlan {
+		return t.probeXiaomiTokenPlan(ctx, tgt)
 	}
 
 	url := tgt.URL
@@ -967,6 +978,110 @@ func grokReset(v any) *time.Time {
 // ---------------------------------------------------------------------------
 // Cursor (cursor.com session-cookie dashboard API)
 // ---------------------------------------------------------------------------
+
+// probeXiaomiTokenPlan fetches one Xiaomi MiMo token-plan account's monthly usage.
+// The endpoint is the Xiaomi developer console API (platform.xiaomimimo.com),
+// authenticated by a browser session cookie: userId=<id>; api-platform_serviceToken=<signed>.
+// The upstream API key (tp-...) cannot reach this endpoint. Contract verified
+// live 2026-09-21 against the operator's own token-plan subscription.
+func (t *Tracker) probeXiaomiTokenPlan(ctx context.Context, tgt Target) Snapshot {
+	base := tgt.URL
+	if base == "" {
+		base = DefaultURL(XiaomiTokenPlan)
+	}
+	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: XiaomiTokenPlan, URL: base, FetchedAt: t.now()}
+
+	// AcctKey carries the dashboard session cookie string: "userId=<id>; api-platform_serviceToken=...".
+	// The cookie MUST include both parts (userId alone gets 401; serviceToken alone gets 401).
+	cookie := strings.TrimSpace(tgt.AcctKey)
+	if cookie == "" {
+		snap.Err = "xiaomi-tokenplan: no dashboard session cookie — set dashboard_token to the platform.xiaomimimo.com session cookie (userId + api-platform_serviceToken)"
+		return snap
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base, nil)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+	resp, err := t.client.Do(req)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		snap.Err = "read xiaomi-tokenplan usage response: " + err.Error()
+		return snap
+	}
+	snap.Windows, snap.Plan, snap.Err = parseXiaomiTokenPlan(body, resp.StatusCode)
+	return snap
+}
+
+// parseXiaomiTokenPlan decodes platform.xiaomimimo.com/api/v1/tokenPlan/usage (live shape 2026-09-21):
+//
+//	{"code":0,"data":{"monthUsage":{"percent":0.12,"items":[{"name":"month_total_token","used":506037160,"limit":4100000000,"percent":0.12}]},"usage":{"percent":0.12,"items":[{"name":"plan_total_token",...}]}}}
+//
+// The monthly usage bar is the authoritative quota window.
+func parseXiaomiTokenPlan(body []byte, status int) ([]Window, string, string) {
+	switch status {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, "", "Xiaomi MiMo token-plan session cookie invalid or expired — re-export it from a browser platform.xiaomimimo.com session (needs both userId and api-platform_serviceToken cookies)."
+	default:
+		return nil, "", "Xiaomi MiMo token-plan usage API error (" + strconv.Itoa(status) + ")."
+	}
+	var data struct {
+		Code int `json:"code"`
+		Data struct {
+			MonthUsage struct {
+				Percent float64 `json:"percent"`
+				Items   []struct {
+					Name    string  `json:"name"`
+					Used    int64   `json:"used"`
+					Limit   int64   `json:"limit"`
+					Percent float64 `json:"percent"`
+				} `json:"items"`
+			} `json:"monthUsage"`
+			Usage struct {
+				Percent float64 `json:"percent"`
+				Items   []struct {
+					Name  string `json:"name"`
+					Used  int64  `json:"used"`
+					Limit int64  `json:"limit"`
+				} `json:"items"`
+			} `json:"usage"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, "", "Xiaomi MiMo token-plan usage response is not valid JSON."
+	}
+	if data.Code != 0 {
+		return nil, "", "Xiaomi MiMo token-plan usage API returned error code " + strconv.Itoa(data.Code) + "."
+	}
+	var resets *time.Time
+	if data.Data.MonthUsage.Percent > 0 {
+		// Monthly window: next UTC month boundary (1st 00:00 UTC).
+		now := time.Now().UTC()
+		y, m, _ := now.Date()
+		next := time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC)
+		resets = &next
+	}
+	windows := []Window{}
+	for _, item := range data.Data.MonthUsage.Items {
+		// Xiaomi API returns percent as 0.0-1.0 fraction (e.g. 0.12 = 12%).
+		pct, _ := asPercent(item.Percent * 100)
+		windows = append(windows, Window{Name: item.Name, Used: pct, Resets: resets})
+	}
+	if len(windows) == 0 {
+		return nil, "", "Xiaomi MiMo token-plan usage response carried no monthly usage items."
+	}
+	plan := "Xiaomi MiMo Token Plan"
+	return windows, plan, ""
+}
 
 // probeCursor fetches one Cursor account's meter state. The endpoint is the
 // browser dashboard's own API, so auth is a session cookie rather than a

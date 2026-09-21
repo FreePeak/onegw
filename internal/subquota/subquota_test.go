@@ -965,3 +965,113 @@ func TestProbeCursorEndToEnd(t *testing.T) {
 		t.Fatalf("snapshot = %+v", snaps[0])
 	}
 }
+
+
+// ---------------------------------------------------------------------------
+// Xiaomi Token Plan (platform.xiaomimimo.com)
+// ---------------------------------------------------------------------------
+
+func TestParseXiaomiTokenPlanHappy(t *testing.T) {
+	body := []byte(`{"code":0,"message":"","data":{"monthUsage":{"percent":0.1234,"items":[{"name":"month_total_token","used":506037160,"limit":4100000000,"percent":0.1234}]},"usage":{"percent":0.12,"items":[{"name":"plan_total_token","used":506037160,"limit":4100000000,"percent":0.12},{"name":"compensation_total_token","used":0,"limit":0,"percent":0}]}}}`)
+	windows, plan, errMsg := parseXiaomiTokenPlan(body, 200)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if plan != "Xiaomi MiMo Token Plan" {
+		t.Fatalf("plan = %q, want %q", plan, "Xiaomi MiMo Token Plan")
+	}
+	if len(windows) != 1 {
+		t.Fatalf("want 1 window, got %d: %+v", len(windows), windows)
+	}
+	if windows[0].Name != "month_total_token" || windows[0].Used != 12 {
+		t.Fatalf("window = %+v", windows[0])
+	}
+	if windows[0].Resets == nil || windows[0].Resets.IsZero() {
+		t.Fatal("monthly reset not parsed")
+	}
+	// Reset should be the 1st of next month UTC.
+	now := time.Now().UTC()
+	y, m, _ := now.Date()
+	wantReset := time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC)
+	if !windows[0].Resets.Equal(wantReset) {
+		t.Fatalf("reset = %v, want %v", windows[0].Resets, wantReset)
+	}
+}
+
+func TestParseXiaomiTokenPlanErrors(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{401, `{}`, "session cookie invalid or expired"},
+		{403, `{}`, "session cookie invalid or expired"},
+		{500, `{}`, "usage API error (500)"},
+		{200, `not json`, "not valid JSON"},
+		{200, `{"code":1}`, "error code 1"},
+		{200, `{"code":0,"data":{"monthUsage":{"items":[]}}}`, "no monthly usage items"},
+	}
+	for _, tc := range cases {
+		_, _, errMsg := parseXiaomiTokenPlan([]byte(tc.body), tc.status)
+		if !strings.Contains(errMsg, tc.want) {
+			t.Errorf("status=%d body=%s: got %q, want contains %q", tc.status, tc.body, errMsg, tc.want)
+		}
+	}
+}
+
+func TestProbeXiaomiTokenPlanEndToEnd(t *testing.T) {
+	var cookie string
+	cs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tokenPlan/usage" {
+			http.NotFound(w, r)
+			return
+		}
+		cookie = r.Header.Get("Cookie")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"monthUsage":{"percent":0.5,"items":[{"name":"month_total_token","used":2050000000,"limit":4100000000,"percent":0.5}]}}}`))
+	}))
+	defer cs.Close()
+
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "xiaomi", AcctName: "harvey", AcctKey: "userId=6837983321; api-platform_serviceToken=test-token", Dialect: XiaomiTokenPlan,
+		URL: cs.URL + "/api/v1/tokenPlan/usage"}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+
+	// 50% is not exhausted, so no park.
+	select {
+	case <-parked:
+		t.Fatal("a 50% pool should not park")
+	case <-time.After(2 * time.Second):
+		// expected
+	}
+
+	snaps := tr.All()
+	if len(snaps) != 1 || snaps[0].Err != "" {
+		t.Fatalf("probe failed: %+v", snaps)
+	}
+	if snaps[0].Plan != "Xiaomi MiMo Token Plan" || len(snaps[0].Windows) != 1 || snaps[0].Windows[0].Used != 50 {
+		t.Fatalf("snapshot = %+v", snaps[0])
+	}
+	if want := "userId=6837983321; api-platform_serviceToken=test-token"; cookie != want {
+		t.Fatalf("cookie = %q, want %q", cookie, want)
+	}
+}
+
+func TestProbeXiaomiTokenPlanExhaustedParks(t *testing.T) {
+	cs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"monthUsage":{"percent":1.0,"items":[{"name":"month_total_token","used":4100000000,"limit":4100000000,"percent":1.0}]}}}`))
+	}))
+	defer cs.Close()
+
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "xiaomi", AcctName: "harvey", AcctKey: "userId=6837983321; api-platform_serviceToken=expired", Dialect: XiaomiTokenPlan,
+		URL: cs.URL + "/api/v1/tokenPlan/usage"}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+
+	select {
+	case <-parked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a 100% exhausted pool must park the account")
+	}
+}
