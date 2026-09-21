@@ -102,6 +102,11 @@ func (fw flushWriter) Write(p []byte) (int, error) {
 // without a defined SSE error shape just get the close (their relays have
 // already logged and returned an APIError).
 func writeStreamTerminalError(w io.Writer, flush func(), f translat.Format, msg string) {
+	// A preceding newline separates the terminal error from any partial
+	// upstream frame still in the write buffer (e.g. a loop breaker that
+	// closed the body mid-SSE-event). Without it the client parser sees
+	// one garbled blob and reports MALFORMED_RESPONSE.
+	fmt.Fprint(w, "\n")
 	switch f {
 	case translat.FmtAnthropic:
 		fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"upstream_error\",\"message\":%q}}\n\n", msg)
