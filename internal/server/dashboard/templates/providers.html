@@ -141,7 +141,7 @@
       <div class="field">
         <label for="pf-sq">subscription quota <span class="text-mut/60">(upstream-reported)</span></label>
         <input id="pf-sq" name="subscription_quota" list="pf-sq-opts" type="text"
-               autocomplete="off" placeholder="off | grok-cli | opencode-go | zai | cursor | commandcode">
+               autocomplete="off" placeholder="off | grok-cli | opencode-go | zai | cursor | xiaomi-tokenplan | commandcode">
         <datalist id="pf-sq-opts">
           <option value=""></option>
           <option value="grok-cli"></option>
@@ -149,6 +149,7 @@
           <option value="zai"></option>
           <option value="zai-cn"></option>
           <option value="cursor"></option>
+          <option value="xiaomi-tokenplan"></option>
           <option value="commandcode"></option>
         </datalist>
       </div>
@@ -390,6 +391,9 @@ const PRESETS = {{.Presets}}||[];
     document.getElementById('pf-models').value = (d.models || []).join('\n');
     document.getElementById('pf-rmodels').value = (d.responses_models || []).join('\n');
     setSel(document.getElementById('pf-sq'), d.subscription_quota || '');
+    document.getElementById('pf-qw').value = d.quota_window || '';
+    document.getElementById('pf-qt').value = d.quota_limit_tokens || '';
+    document.getElementById('pf-qr').value = d.quota_limit_requests || '';
     accts.innerHTML = '';
     const row = acctRow(null);
     if (d.oauth_service) setSel(row.querySelector('.a-oauth'), d.oauth_service);
@@ -398,9 +402,12 @@ const PRESETS = {{.Presets}}||[];
   }
   presetSel.onchange = () => { if (presetSel.value) applyPreset(presetSel.value); };
   async function mirrorPreset(body) {
-    // Fire-and-keepalive: the dialog closes and reloads; the mirror must
-    // still land. A failure here is cosmetic (catalog staleness), never
-    // blocks the save that already succeeded.
+    const doc = {
+      kind: body.kind, base_url: body.base_url, models: body.models,
+      responses_models: body.responses_models, subscription_quota: body.subscription_quota,
+      quota_window: body.quota_window, quota_limit_tokens: body.quota_limit_tokens,
+      quota_limit_requests: body.quota_limit_requests,
+    };
     const doc = {
       kind: body.kind, base_url: body.base_url, models: body.models,
       responses_models: body.responses_models, subscription_quota: body.subscription_quota,

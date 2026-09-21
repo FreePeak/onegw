@@ -35,6 +35,9 @@ type presetDoc struct {
 	BaseURL           string   `json:"base_url,omitempty"`
 	Models            []string `json:"models,omitempty"`
 	ResponsesModels   []string `json:"responses_models,omitempty"`
+	QuotaWindow       string   `json:"quota_window,omitempty"`
+	QuotaLimitTokens  int64    `json:"quota_limit_tokens,omitempty"`
+	QuotaLimitReqs    int64    `json:"quota_limit_requests,omitempty"`
 	SubscriptionQuota string   `json:"subscription_quota,omitempty"`
 	// OAuthService, when set ("xai"), marks the subscription recipe: applying
 	// the preset gives the first account row that service so the Sign-in
@@ -85,10 +88,13 @@ func builtinPresets() map[string]presetDoc {
 			Note:   "no auth at all",
 		},
 		"Xiaomi Mimo (token plan)": {
-			Kind:    "openai",
-			BaseURL: "https://token-plan-sgp.xiaomimimo.com/v1",
-			Models:  []string{"mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts", "mimo-v2.5-tts-voiceclone", "mimo-v2.5-tts-voicedesign"},
-			Note:    "paste your xiaomi api key on the account row",
+			Kind:              "openai",
+			BaseURL:           "https://token-plan-sgp.xiaomimimo.com/v1",
+			Models:            []string{"mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts", "mimo-v2.5-tts-voiceclone", "mimo-v2.5-tts-voicedesign"},
+			QuotaWindow:       "monthly",
+			QuotaLimitTokens:  4_100_000_000,
+			SubscriptionQuota: "xiaomi-tokenplan",
+			Note:              "paste your xiaomi api key on the account row; set dashboard_token to the platform.xiaomimimo.com browser session cookie (userId + api-platform_serviceToken)",
 		},
 	}
 }

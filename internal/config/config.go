@@ -261,16 +261,20 @@ type ProviderCfg struct {
 	// subscription quota tracking (issue #79, ported from 9router's
 	// usage services and OmniRoute's quota preflight): "" (off) |
 	// "opencode-go" | "zai" | "zai-cn" | "commandcode" | "grok-cli" |
-	// "cursor". The gateway probes the vendor's own usage endpoint per
-	// account and parks accounts whose windows the vendor reports
-	// exhausted. cursor reads the browser dashboard's session-cookie summary
-	// API (cursor.com/api/usage-summary) with the account's own BROWSER
-	// session JWT, so it needs no extra credential (a CLI/agent token 401s
-	// on this endpoint); an account on an uncapped lane reports no
+	// "cursor" | "xiaomi-tokenplan". The gateway probes the vendor's own
+	// usage endpoint per account and parks accounts whose windows the vendor
+	// reports exhausted. cursor reads the browser dashboard's session-cookie
+	// summary API (cursor.com/api/usage-summary) with the account's own
+	// BROWSER session JWT, so it needs no extra credential (a CLI/agent token
+	// 401s on this endpoint); an account on an uncapped lane reports no
 	// cap and is tracked only, never parked. The account's
 	// dashboard_token (WorkosCursorSessionToken cookie value) is
 	// used for the quota probe; api_key remains the upstream Bearer
-	// token (e.g. cursorAuth/accessToken from state.vscdb). For commandcode,
+	// token (e.g. cursorAuth/accessToken from state.vscdb). xiaomi-tokenplan
+	// reads the Xiaomi developer console usage API (platform.xiaomimimo.com
+	// /api/v1/tokenPlan/usage) with the account's browser session cookie
+	// (userId + api-platform_serviceToken) set as dashboard_token; the
+	// upstream API key (tp-...) cannot reach this endpoint. For commandcode,
 	// SubscriptionURL overrides the API BASE (https://api.commandcode.ai)
 	// — the probe appends /alpha paths. Other dialects: SubscriptionURL
 	// overrides the full endpoint (self-hosted mirrors, tests).

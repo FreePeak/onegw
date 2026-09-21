@@ -232,6 +232,10 @@ kind = "opencode-free"            # base_url defaults to https://opencode.ai/zen
 # Xiaomi Mimo (token plan - https://xiaomimimo.com): OpenAI Chat Completions
 # wire with always_thinking + reasoning echo for mimo-v2.5*. Key via
 # env ONEGW_PROVIDER_XIAOMI_KEY, or paste into the account row.
+# subscription_quota = "xiaomi-tokenplan" enables monthly quota tracking
+# via the Xiaomi console usage API (platform.xiaomimimo.com/api/v1/tokenPlan/usage).
+# dashboard_token must be the browser session cookie (userId + api-platform_serviceToken);
+# the upstream API key (tp-...) cannot reach this endpoint.
 # [[providers]]
 # name = "xiaomi"
 # kind = "openai"
@@ -240,9 +244,13 @@ kind = "opencode-free"            # base_url defaults to https://opencode.ai/zen
 # always_thinking = ["mimo-v2.5*"]
 # echo_reasoning = ["mimo-v2.5*"]
 # rpm = 100
+# quota_window = "monthly"
+# quota_limit_tokens = 4100000000
+# subscription_quota = "xiaomi-tokenplan"
 # [[providers.accounts]]
 # name = "harvey"
 # api_key = ""                    # fill or use env ONEGW_PROVIDER_XIAOMI_KEY
+# dashboard_token = ""            # paste browser session cookie from platform.xiaomimimo.com
 
 
 # OpenAI Responses-wire upstream (e.g. orcarouter.ai): clients keep using
