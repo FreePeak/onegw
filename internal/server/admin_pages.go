@@ -1293,11 +1293,9 @@ func quotaViews(st *state) []quotaRowView {
 }
 
 func (s *Server) quotaPage(w http.ResponseWriter, r *http.Request) {
-	subs := s.subViews()
 	s.authedPage(w, r, "quota", "Quota", false, quotaPageView{
 		Windows: quotaViews(s.cur()),
-		Subs:    subs,
-		Cols:    subWindowColumns(subs),
+		Subs:    s.subViews(),
 	})
 }
 
