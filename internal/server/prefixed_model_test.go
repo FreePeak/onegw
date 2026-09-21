@@ -1,25 +1,30 @@
 package server
 
-// A provider's `models` entry sometimes already carries the provider's own name
-// ("cursor/auto" under [[providers]] name = "cursor"). The server qualifies
-// every advertised model with its provider name and the router strips exactly
-// one prefix, so such an entry resolves to nothing — and, worse, /v1/models
-// publishes the unusable doubled string, which is how a client pins it. That is
-// the reported 2026-09-21 symptom: the live gateway answered `400 AI Model Not
-// Found` for the exact id it had advertised, while cursor/auto worked beside it.
+// Regression guard (2026-09-21): a "provider-prefixed" models entry must NOT be
+// rewritten by the server. An upstream model id may legitimately begin with a
+// segment equal to the provider's own name — OpenRouter's registry ships
+// `openrouter/free`, `openrouter/auto`, `openrouter/fusion` — and the way to
+// route to those is exactly the doubled advertised form (provider "openrouter"
+// + model "openrouter/free").
+//
+// The id-advertisement confusion that motivated the normalization is handled
+// where the model id is CONSUMED (translat.cursorRequestedModel drops a provider
+// prefix before the wire) and by keeping kind defaults bare — neither of which
+// can tell a real upstream segment from a redundant one the way a blanket
+// string rewrite did. Live cost of getting this wrong: `openrouter/free` was
+// rewritten to `free` and every request answered
+// `404 No endpoints available for openrouter/free`.
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
-func TestPrefixedModelsEntryIsNormalized(t *testing.T) {
+func TestModelsEntryIsNotPrefixStripped(t *testing.T) {
 	cfg := makeCfg(t, "sk-client", "", false,
-		providerSpec{name: "cursor", up: "http://127.0.0.1:1", model: "cursor/auto"})
-	cfg.Providers[0].Kind = "cursor"
+		providerSpec{name: "openrouter", up: "http://127.0.0.1:1", model: "openrouter/free"})
 	s, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -39,14 +44,12 @@ func TestPrefixedModelsEntryIsNormalized(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
 	}
-	ids := make([]string, 0, len(list.Data))
-	for _, m := range list.Data {
-		ids = append(ids, m.ID)
-		if strings.HasPrefix(m.ID, "cursor/cursor/") {
-			t.Fatalf("advertised the unusable doubled id %q (all: %v)", m.ID, ids)
-		}
+	if len(list.Data) != 1 {
+		t.Fatalf("want exactly the configured entry, got %+v", list.Data)
 	}
-	if len(ids) != 1 || ids[0] != "cursor/auto" {
-		t.Fatalf("want [cursor/auto], got %v", ids)
+	// The advertised (doubled) form is the only string that routes: the router
+	// strips one provider prefix, leaving "openrouter/free" for the upstream.
+	if got := list.Data[0].ID; got != "openrouter/openrouter/free" {
+		t.Fatalf("advertised %q, want the model id left intact (%q)", got, "openrouter/openrouter/free")
 	}
 }
