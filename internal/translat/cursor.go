@@ -1088,8 +1088,12 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 						}, "", nil)
 					default:
 						cursorSSE(&sb, id, created, model, map[string]any{"content": e.Text}, "", nil)
-						flush()
 					}
+					// Every part type flushes, not just text: a thinking-only
+					// or tool-args-only turn would otherwise sit in sb until
+					// stream end, which is the stall this stream exists to
+					// avoid.
+					flush()
 				case EvPartStart:
 					start()
 					name := e.ToolName

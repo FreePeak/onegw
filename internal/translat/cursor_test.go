@@ -645,6 +645,50 @@ func TestCursorSSEStreamToolCallNoOutput(t *testing.T) {
 	}
 }
 
+func TestCursorSSEStreamThinkingDeltaFlushes(t *testing.T) {
+	// Every part type must flush, not just text. A turn whose first frames
+	// carry only reasoning_content (or only tool-arg fragments) would sit in
+	// the sb buffer until stream end — the exact stall incremental flushing
+	// exists to prevent. Cursor's ChatService holds the connection on 10s
+	// keepalives, so "until stream end" means "until the client times out".
+	var inner []byte
+	inner = pbString(inner, 1, "REASONING_CHUNK_XYZ")
+	var frame []byte
+	frame = pbBytes(frame, 2, pbBytes(nil, 25, inner))
+
+	pr, pw := io.Pipe()
+	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil)
+	if _, err := pw.Write(wrapConnectFrame(frame)); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+	defer pw.Close()
+
+	chunks := make(chan string, 8)
+	go func() {
+		buf := make([]byte, 65536)
+		for {
+			n, err := stream.Read(buf)
+			if n > 0 {
+				chunks <- string(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	var seen strings.Builder
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(seen.String(), "REASONING_CHUNK_XYZ") {
+		select {
+		case c := <-chunks:
+			seen.WriteString(c)
+		case <-deadline:
+			t.Fatalf("reasoning_content not delivered within 2s while the upstream stream is still open; got: %s", seen.String())
+		}
+	}
+}
+
 func TestCursorSSEStreamToolNameEmptyFallback(t *testing.T) {
 	// EvPartStart must never emit a tool call with an empty
 	// function.name. Strict validators reject it. The code path
