@@ -386,7 +386,7 @@ func (s *Server) patchConfigFile(mutate func(lines []string) ([]string, error)) 
 	if err != nil {
 		return nil, badConfigEdit{err}
 	}
-	if err := writeConfigAtomically(path, []byte(strings.Join(lines, "\n"))); err != nil {
+	if err := writeConfigAtomically(path, []byte(joinTomlLines(lines))); err != nil {
 		return nil, err
 	}
 	fresh, err := config.Load(path)
@@ -398,6 +398,21 @@ func (s *Server) patchConfigFile(mutate func(lines []string) ([]string, error)) 
 	}
 	s.Reload(fresh)
 	return fresh, nil
+}
+
+// joinTomlLines renders mutated lines back to file content, guaranteeing the
+// result ends in a newline. The line-based mutators append new blocks after
+// trimming the empty tail that strings.Split leaves for a trailing newline, and
+// a rendered block carries none of its own — so the "add at EOF" paths (a new
+// provider, a new combo, the models pin) used to write a config whose last key
+// had no terminating newline. Harmless to read, but it makes every later
+// append land on that line, and it is a text file no longer ending like one.
+func joinTomlLines(lines []string) string {
+	s := strings.Join(lines, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	return s
 }
 
 // writeConfigAtomically replaces path's content with edited — but only

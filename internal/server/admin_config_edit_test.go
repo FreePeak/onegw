@@ -763,3 +763,23 @@ func TestProviderEditOpenCodeFreeKind(t *testing.T) {
 		t.Fatalf("providers page missing the opencode-free kind option")
 	}
 }
+
+// A save must leave a text file that ends like one. The line-based mutators
+// trim the empty tail of strings.Split and append a block with no trailing
+// newline, so this is the check that pins the add-at-EOF paths (new provider,
+// new combo, models pin) to a newline-terminated config.
+func TestConfigEditKeepsTrailingNewline(t *testing.T) {
+	_, h, path := newTestServerFromFile(t, editTestToml)
+
+	for _, tc := range []struct{ target, body string }{
+		{"/admin/config/providers", `{"name":"p2","kind":"openai","api_key":"sk-x","models":["m2"]}`},
+		{"/admin/config/combos", `{"name":"c2","targets":["p1/m1"]}`},
+	} {
+		if w := adminCall(t, h, http.MethodPut, tc.target, tc.body, true); w.Code != http.StatusOK {
+			t.Fatalf("PUT %s: %d %s", tc.target, w.Code, w.Body.String())
+		}
+		if file := mustReadFile(t, path); !strings.HasSuffix(file, "\n") {
+			t.Fatalf("after PUT %s the file does not end in a newline:\n%q", tc.target, file)
+		}
+	}
+}

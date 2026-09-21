@@ -229,6 +229,22 @@ kind = "opencode-free"            # base_url defaults to https://opencode.ai/zen
                                   # muse-spark-*-free auto-routes to
                                   # /v1/responses like the Go tier)
 
+# Xiaomi Mimo (token plan - https://xiaomimimo.com): OpenAI Chat Completions
+# wire with always_thinking + reasoning echo for mimo-v2.5*. Key via
+# env ONEGW_PROVIDER_XIAOMI_KEY, or paste into the account row.
+# [[providers]]
+# name = "xiaomi"
+# kind = "openai"
+# base_url = "https://token-plan-sgp.xiaomimimo.com/v1"
+# models = ["mimo-v2.5", "mimo-v2.5-asr", "mimo-v2.5-pro", "mimo-v2.5-tts", "mimo-v2.5-tts-voiceclone", "mimo-v2.5-tts-voicedesign"]
+# always_thinking = ["mimo-v2.5*"]
+# echo_reasoning = ["mimo-v2.5*"]
+# rpm = 100
+# [[providers.accounts]]
+# name = "harvey"
+# api_key = ""                    # fill or use env ONEGW_PROVIDER_XIAOMI_KEY
+
+
 # OpenAI Responses-wire upstream (e.g. orcarouter.ai): clients keep using
 # /v1/chat/completions; onegw translates to {base_url}/responses.
 [[providers]]
