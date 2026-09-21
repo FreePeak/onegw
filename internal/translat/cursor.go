@@ -783,15 +783,22 @@ func decodeToolCall(b []byte) (*cursorToolCall, error) {
 
 // CursorChatState carries per-stream decoder state: tool fragment ids map to
 // unified part indexes so arg fragments land on the right tool call. For the
-// IDE composer family, field 25 carries thinking AND the visible answer in one
-// stream (split on the last </think>); thinkBuf/emitted track that split so
-// only new visible suffix bytes become PartText deltas.
+// IDE composer family, field 25 carries thinking AND the visible answer (with
+// any inline tool-call markers) in one stream — split on the last </think>;
+// thinkBuf/emitted track that split so only new visible suffix bytes become
+// PartText and tool-call deltas.
 type CursorChatState struct {
 	started  bool
 	toolIdx  map[string]int
 	next     int
 	thinkBuf string // composer field-25 accumulator
-	emitted  int    // bytes of visibleComposerContent already emitted as text
+	emitted  int    // residual-text bytes already emitted as content
+	// toolsSent is how many parsed inline calls have already been emitted; the
+	// remainder rides the next frame (Cursor appends a block at a time).
+	toolsSent int
+	// finish is the finish_reason the synthesizer ends the turn with:
+	// "tool_calls" once a tool call was emitted, else "stop".
+	finish string
 }
 
 // cursorComposerModel reports the IDE composer family (composer-2.5,
@@ -871,12 +878,7 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 							// as content; never leak the thinking prefix.
 							st.thinkBuf += chunk
 							vis := visibleComposerContent(st.thinkBuf)
-							if len(vis) > st.emitted {
-								delta := vis[st.emitted:]
-								st.emitted = len(vis)
-								start()
-								out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: delta})
-							}
+							out = append(out, st.composerVisibleEvents(vis, start)...)
 						} else {
 							start()
 							out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartThinking, Thinking: chunk})
@@ -886,6 +888,46 @@ func CursorChatEvents(payload []byte, model string, st *CursorChatState) []Strea
 			}
 		}
 	}
+	return out
+}
+
+// composerVisibleEvents turns composer visible text into events: the residual
+// answer text plus, once an invocation block closes, one EvPartStart + EvDelta
+// per parsed tool call. An agent CLI that passes tool schemas then gets a real
+// tool-call turn like any other model; without this the markers leak as content
+// and the call is lost. Args are complete on arrival (Cursor writes them whole,
+// no fragment merging), so each call is an atomic start+args pair rather than
+// the ChatService fragment dance.
+//
+// Text is emitted by BYTE OFFSET into the residual, which only ever grows while
+// the open block does not (a new block appends its residual after the previous
+// one) — so emitted stays a valid cursor for the whole turn.
+func (st *CursorChatState) composerVisibleEvents(vis string, start func()) []StreamEvent {
+	var out []StreamEvent
+	residual, calls, _ := composerScan(vis)
+	safe := residual[:composerPartialMarkerCut(residual)]
+	if len(safe) > st.emitted {
+		start()
+		out = append(out, StreamEvent{Kind: EvDelta, PartType: types.PartText, Text: safe[st.emitted:]})
+		st.emitted = len(safe)
+	}
+	if len(calls) == 0 {
+		// No CLOSED block yet. An open block (open >= 0) is mid-arrival and
+		// never parsed; a frame with no marker at all has nothing to call. The
+		// text holdback above covered the invocation bytes either way.
+		return out
+	}
+	st.finish = "tool_calls"
+	start()
+	for _, c := range calls[st.toolsSent:] {
+		idx := st.next
+		st.next++
+		out = append(out, StreamEvent{Kind: EvPartStart, Index: idx,
+			PartType: types.PartToolUse, ToolID: composerToolCallID(idx), ToolName: c.Name})
+		out = append(out, StreamEvent{Kind: EvDelta, Index: idx,
+			PartType: types.PartToolUse, ToolArgs: c.Args})
+	}
+	st.toolsSent = len(calls)
 	return out
 }
 
@@ -962,6 +1004,43 @@ func DecodeCursorError(body []byte, status int) *types.APIError {
 	}
 	return &types.APIError{Status: 502, Type: "upstream_error", Message: msg}
 }
+
+// composerToolName returns the name of the i-th parsed inline call ("" when it
+// cannot be decoded — the caller substitutes unknownToolName).
+func composerToolName(vis string, i int) string {
+	folded := composerMarkerFold.Replace(vis)
+	open := strings.Index(folded, composerCallsBegin)
+	if open < 0 {
+		return ""
+	}
+	closeIdx := strings.Index(folded[open:], composerCallsEnd)
+	if closeIdx < 0 {
+		return ""
+	}
+	block := folded[open+len(composerCallsBegin) : open+closeIdx]
+	n := 0
+	for {
+		cs := strings.Index(block, composerCallBegin)
+		if cs < 0 {
+			return ""
+		}
+		ce := strings.Index(block[cs:], composerCallEnd)
+		if ce < 0 {
+			return ""
+		}
+		body := block[cs+len(composerCallBegin) : cs+ce]
+		block = block[cs+ce+len(composerCallEnd):]
+		if n == i {
+			name, _ := composerCallArgs(body)
+			return name
+		}
+		n++
+	}
+}
+
+// composerToolCallID synthesizes the OpenAI-shaped id for an inline composer
+// call — Cursor's text dialect carries no id of its own.
+func composerToolCallID(idx int) string { return fmt.Sprintf("call_cursor_%d", idx) }
 
 // ---------------------------------------------------------------------------
 // Server stream hooks (unified plumbing)
@@ -1094,6 +1173,14 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 					// stream end, which is the stall this stream exists to
 					// avoid.
 					flush()
+					if !agent && e.PartType == types.PartToolUse {
+						// A ChatService turn that carried tool calls must end
+						// with finish_reason "tool_calls" (the client's agentic
+						// loop keys on it). Cursor raises no Stop event on that
+						// path — the stream is terminated by the caller — so
+						// remember it here, alongside any inline composer call.
+						chatSt.finish = "tool_calls"
+					}
 				case EvPartStart:
 					start()
 					name := e.ToolName
@@ -1160,10 +1247,14 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 			pw.CloseWithError(streamErr)
 			return
 		}
+		finish := chatSt.finish
+		if finish == "" {
+			finish = "stop"
+		}
 		if usage != nil {
-			cursorSSE(&sb, id, created, model, map[string]any{}, "stop", cursorUsageJSON(usage.InputTokens, usage.OutputTokens, false))
+			cursorSSE(&sb, id, created, model, map[string]any{}, finish, cursorUsageJSON(usage.InputTokens, usage.OutputTokens, false))
 		} else {
-			cursorSSE(&sb, id, created, model, map[string]any{}, "stop", nil)
+			cursorSSE(&sb, id, created, model, map[string]any{}, finish, nil)
 		}
 		sb.WriteString("data: [DONE]\n\n")
 		_, _ = io.Copy(pw, strings.NewReader(sb.String()))
