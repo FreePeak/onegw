@@ -1,3 +1,24 @@
+*Last updated: 2026-09-21 (Quota page: the subscription table is one row per provider/account, windows as columns):*
+The "Subscription quota" table rendered **one row per vendor window**, repeating the provider, account and plan
+on every row — opencode/harvey occupied three rows (Rolling, Weekly, Monthly) and cursor two, so an account
+never read as one account and the parked pill repeated down the column. It is now **one row per
+(provider, account) with one COLUMN per window**, each cell carrying its own bar, percent and reset instant
+inline (`68% · in 21.3 d`), so the separate "resets" column is gone.
+
+- `subRowView.Windows` became `map[string]subWinView` (window name → cell) and `subWindowColumns` derives the
+  column set as the union of window names across rows: known dialects first in their natural order (Rolling /
+  Session (5h) / Weekly / Weekly pool / Monthly / Credits (monthly) / included usage / included API usage), then
+  any unfamiliar name alphabetically — a new dialect renders instead of vanishing, and every row keeps the same
+  cell count so columns line up.
+- A window an account does not report renders `—` rather than shifting its siblings' cells; the probe-error row
+  keeps its colspan across the window columns and still shows the failure text plus the `probe failed` pill
+  (fail-open, unchanged).
+- Only the page template and its view struct changed: `/admin/api/v1/subscription` still serves the raw
+  per-window snapshots, and the local `quota_window` table above is untouched.
+
+Pinned by the extended `TestSubscriptionQuotaAPIPageAndPark` (exactly one `oc` row for three windows, the window
+column heads present, an inline `% · in` cell, one parked marker) — mutation-checked by asserting a column name
+that does not exist, which turns the test red.
 *Last updated: 2026-09-21 (cursor composer tool calls: a real invocation now reaches the client, and the advertised id stopped double-prefixing):*
 Two independent defects sat behind "the cursor model is not working", both reproduced live on a scratch port before touching master.
 
