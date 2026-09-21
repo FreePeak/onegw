@@ -250,6 +250,18 @@ type APIError struct {
 	// false: no byte of the discarded attempt reached the client. Never
 	// serialized.
 	CorruptStream bool `json:"-"`
+
+	// JunkReasoning marks an upstream stream whose DECODED reasoning text is
+	// symbol soup rather than language (translat.JunkGuard): the vendor's own
+	// decode fell apart and burned the output cap into garbage, which the
+	// client renders in its thinking box as mojibake and then sits through a
+	// run with no answer at all. The guard holds the stream head, so this
+	// verdict lands before any client byte: Router.Execute treats it as this
+	// target's failure and falls through, re-calling the model with the SAME
+	// request context on the next combo target instead of surfacing garbage.
+	// A direct route (no sibling) has nothing to re-call and answers the 502.
+	// StreamCommitted stays false. Never serialized.
+	JunkReasoning bool `json:"-"`
 }
 
 // Merge folds o into u keeping maxima (streams may repeat counts).

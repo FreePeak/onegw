@@ -1,3 +1,38 @@
+*Last updated: 2026-09-21 (junk reasoning: a leg whose decoded reasoning is symbol soup is now failed over before the first client byte, and the model is re-called with the same context):*
+The free lane can spend its whole output cap on garbage: the vendor's decode falls apart and the reasoning text
+stops being language, so xdev's thinking box paints mojibake and the run ends with no answer. `CorruptGuard`
+(2026-09-20) catches the version of that where the WIRE carries invalid UTF-8; the pasted field report
+(2026-09-21) is the other half — valid UTF-8 whose tokens are soup.
+
+`translat.JunkGuard` (internal/translat/junk.go) is the third guard in that family, alongside `CorruptGuard`
+(wire bytes) and `LoopBreaker` (repetition). It accumulates DECODED reasoning text out of the wire chunk —
+reading every vendor alias (`reasoning_content`, `reasoning`, `reasoning_text`), rejoining a JSON value split
+across two reads through a bounded carry — and trips on three measured shapes:
+`wordR < 0.92 && badR >= 0.25` (letters no longer sit in words and most tokens are punctuation: the
+`vvvvvvv` / comma-storm class), `badR >= 0.40 && symPer100 >= 10` (symbol runs dominate the bytes), and
+`meanTokenLetters < 2.6 && symPer100 >= 10` (fragmentation: the mixed-script soup). The thresholds were fitted
+against the session corpus — 45,017 reasoning blocks from 435 sessions — where the rule fires on 5 of 25,000
+sampled blocks >= 400 bytes (0.02%), all five genuine junk, while English, Mandarin, Vietnamese, Go source,
+commit-hash analysis and markdown tables stay clean. Deliberate ceiling, documented in the source and pinned by
+`TestJunkReasoningCeiling`: junk whose LETTERS still sit in word-like runs while its tokens mix scripts measures
+like bilingual reasoning, and no cheap lexical test separates the two; its symbol-soup half is caught, and the
+wire-level guard still owns the invalid-byte variant.
+
+The guard holds the stream head (`junkHoldBytes`, 32 KiB, mirroring `corruptHoldBytes`) and releases at the first
+content or tool-call delta, so a healthy lane pays nothing. `types.APIError.JunkReasoning` marks the verdict, and
+`Router.Execute` treats it exactly like `CorruptStream`: the attempt committed nothing, the leg is benched, and
+the request falls through to the next combo target — **the model is re-called with the same request context and
+the client sees one clean stream instead of soup followed by a second response**. Unlike the corrupt guard the
+hold also applies with NO sibling target: a direct route cannot re-call, but the 502 it now gets instead of the
+garbage is strictly better (the client's own retry is the re-call, and it no longer waits out the output cap).
+
+Verified: `internal/translat/junk_test.go` (live specimens trip; real reasoning, both languages and code do not;
+chunk-split streams rejoin; a healthy stream relays byte for byte) and `internal/server/junk_reasoning_test.go`
+(a sibling leg serves while the soup never reaches the client; a sibling-less route answers 502
+`upstream_reasoning_junk`; a healthy lane is untouched), plus `internal/server/junk_wiring_test.go` pinning that
+the fixtures those tests serve still reach the verdict. `go test ./internal/translat/ ./internal/router/
+./internal/types/ ./internal/provider/` green.
+
 *Last updated: 2026-09-21 (cursor composer tool calls: a real invocation now reaches the client, and the advertised id stopped double-prefixing):*
 Two independent defects sat behind "the cursor model is not working", both reproduced live on a scratch port before touching master.
 

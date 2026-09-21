@@ -1069,6 +1069,15 @@ const speedFloor = 200 * time.Millisecond
 // a lane that emits content or a tool call releases at that first token.
 const corruptHoldBytes = 32 << 10
 
+// junkHoldBytes is the head window the junk-reasoning guard withholds before
+// the first byte reaches a failover-capable client. Same size and same
+// argument as corruptHoldBytes: it must cover enough reasoning for the
+// verdict to be reachable (the guard's own evidence floor is 600 bytes of
+// decoded text), and it releases immediately at the first content or
+// tool-call delta, so a healthy lane pays nothing. Kept as its own constant
+// so the two guards can be tuned against their own live evidence.
+const junkHoldBytes = 32 << 10
+
 // textResponse reports whether an upstream response body is text this
 // gateway may validate as UTF-8. A binary surface (audio, image passthrough)
 // and a pre-compressed body are not a model's decode: every one of their
@@ -1235,6 +1244,38 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				return herr
 			}
 		}
+		var junkGuard *translat.JunkGuard
+		// Junk-reasoning guard (2026-09-21): the corrupt-stream guard's
+		// sibling one layer up. Where CorruptGuard rejects bytes that are
+		// not UTF-8, this one rejects VALID text whose tokens stopped
+		// being words — the vendor's decode fell apart and burned the
+		// output cap into symbol soup, which the client paints in its
+		// thinking box as mojibake and then sits through a run with no
+		// answer. A verdict discards the attempt and Router.Execute
+		// re-calls the model with the SAME request context on the next
+		// combo target (the fresh stream the report asked for).
+		//
+		// Unlike CorruptGuard this holds even with NO sibling target. A
+		// single-target route has nothing to re-call, but the 502 it gets
+		// instead of the soup is still strictly better than a stream of
+		// garbage: the client's own retry is the re-call, and it no longer
+		// has to sit through the whole cap first. The hold releases at the
+		// first content or tool-call delta, so a healthy lane pays nothing
+		// beyond the guard's own scan.
+		if textResponse(res.Resp) {
+			junkGuard = translat.NewJunkGuard(src, junkHoldBytes)
+			src = junkGuard
+			if herr := junkGuard.Prefetch(); herr != nil {
+				// Nothing written yet: discard the attempt, bench the
+				// leg, and let the router fall through to the next combo
+				// target (or surface the honest 502 when there is none).
+				if canFailOver {
+					def.BenchModel(model, 0)
+				}
+				s.m.upstreamErr(def.Name, model, acctName(res.Acct), herr)
+				return herr
+			}
+		}
 		// Reasoning-loop guard (2026-09-21): a free-tier model that
 		// repeats one block until the upstream output cap ends it. The
 		// repetition only becomes visible after KBs, so this can never
@@ -1341,6 +1382,18 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 				// serve them), record it for the dashboard, and leave this
 				// stream alone — aborting would truncate a stream the
 				// client is mid-read on.
+				if canFailOver {
+					def.BenchModel(model, 0)
+				}
+				s.m.upstreamErr(def.Name, model, acctName(res.Acct), j)
+			}
+		}
+		if junkGuard != nil {
+			if j := junkGuard.Junk(); j != nil {
+				// Late junk verdict: same contract as a late corrupt
+				// verdict — the bytes are on the wire, so this attempt
+				// cannot be replaced. Bench the leg where a sibling can
+				// serve the next request and record it for the dashboard.
 				if canFailOver {
 					def.BenchModel(model, 0)
 				}
