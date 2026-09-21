@@ -103,7 +103,11 @@ func (b *LoopBreaker) Read(p []byte) (int, error) {
 		return n, err
 	}
 	if b.looped != nil {
-		return n, io.EOF
+		// Drop the last partial upstream frame: the body was closed
+		// mid-event, so these bytes are a truncated SSE line that
+		// would splice with the terminal error frame and produce a
+		// MALFORMED_RESPONSE on the client parser.
+		return 0, io.EOF
 	}
 	return n, nil
 }
