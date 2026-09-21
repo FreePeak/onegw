@@ -1,3 +1,19 @@
+*Last updated: 2026-09-21 (`ONEGW_LISTEN` was documented but never read at startup — an isolated bring-up silently bound the live port):*
+The README ("Set `ONEGW_LISTEN` or `ONEGW_KEYS` to override") and `onegw help` both advertise `ONEGW_LISTEN`
+as a runtime override, but no startup path read it: `scripts/install.sh` only used the variable to *write* the
+config, and `internal/update/apply.go` reads it solely for the update handoff. `internal/config.Load` never
+consulted it, so the config's `[server] listen` always won. The failure mode is nasty rather than cosmetic —
+starting a scratch gateway with `ONEGW_LISTEN=127.0.0.1:18099` against the live config binds **8080**, the live
+port, exactly the split-traffic hazard the onegw rules forbid. Found while bring-up-testing the reasoning-loop
+fix on a scratch port; caught and stopped within ~40s with no traffic split.
+
+`Defaults()` now applies it the way `ONEGW_KEYS` overrides the auth keys (env beats the file, trimmed, a blank
+value is not an override), and the help text states which variables override and which merely supply a default
+(`ONEGW_DATA_DIR` is a documented *fallback* — the config's `data_dir` wins, and that was already correct).
+Verified live: a config declaring `listen = "127.0.0.1:18098"` started with `ONEGW_LISTEN=127.0.0.1:18099` bound
+18099, left 18098 vacant, and never touched the live listener. Pinned by `internal/config/listen_test.go`
+(override beats the file, whitespace trimmed, blank ignored, loopback default preserved when unset).
+
 *Last updated: 2026-09-21 (conversation-scoped account pin):* Account rotation was switching credentials mid-tool-loop (1–3 messages) because sticky defaulted off and `requestIdentity` only saw `X-Opencode-Session` or the auth-key label. A thinking signature / `tool_call` id from key A then replayed on key B, which 400'd or returned empty, and the client could not resume. `s:`/`c:` identities now pin for 15m even when `sticky` is unset (`convPinTTL`); `k:` still needs a sticky TTL so one client key does not herd every session onto one account. Identity order: session header, then grok/session headers, then a hash of the first user turn (stable across tool-result continuations), then the key label. Account-run yields to a conversation pin. Failures still unpin.
 
 *Last updated: 2026-09-21 (reasoning loops: the guard from #122 had never run — four independent defects, all fixed; a looping leg now dies at ~30-50% of the stream instead of burning the whole output cap):*

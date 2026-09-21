@@ -499,6 +499,16 @@ func (c *Config) Defaults() {
 	if v := strings.TrimSpace(os.Getenv("ONEGW_TASK_ROUTING")); v != "" {
 		c.Server.TaskRouting = v
 	}
+	// ONEGW_LISTEN overrides [server] listen outright, the way ONEGW_KEYS
+	// overrides the auth keys. The README ("Set ONEGW_LISTEN or ONEGW_KEYS
+	// to override") and `onegw help` both promise this, but nothing read it
+	// while starting a gateway: install.sh only used the variable to WRITE
+	// the config, and update/apply.go only reads it for the update handoff.
+	// An isolated bring-up that set it therefore bound the config's port —
+	// which, pointed at the live config, is the live port.
+	if v := strings.TrimSpace(os.Getenv("ONEGW_LISTEN")); v != "" {
+		c.Server.Listen = v
+	}
 }
 
 // FlushEvery parses the flush interval.
