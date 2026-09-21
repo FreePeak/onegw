@@ -542,19 +542,20 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 				// error write because the content type is set.
 				return err
 			}
-			if err.CorruptStream && !retryForever {
+			if (err.CorruptStream || err.JunkReasoning) && !retryForever {
 				// Corrupt upstream stream (translat.CorruptGuard; live
 				// 2026-09-20 free lane): the vendor's own decoder spliced
 				// invalid UTF-8 into its JSON, so every client downstream
-				// renders mojibake. The guard withheld the stream head, so
-				// this attempt committed NOTHING and the pair is already
-				// benched — and a broken decoder is broken for every
-				// account of this provider, so a same-target retry only
-				// re-burns the leg. Fall through to the next combo target;
-				// a direct route has no sibling and surfaces the 502.
-				// retry_forever keeps its contract (it waits a leg out
-				// instead of downgrading, benches included).
-				refusal = true // this leg is done: see the post-loop guard
+				// renders mojibake. Junk reasoning (translat.JunkGuard;
+				// live 2026-09-21) is the same corruption one layer up: the
+				// bytes are valid UTF-8, but the decoded text is symbol soup
+				// the client would paint in its thinking box. Both guards
+				// withheld the stream head, so this attempt committed
+				// NOTHING. A direct route has no sibling left to re-call the
+				// model: break out of the TARGET (not out of the request)
+				// so the post-loop refusal legs run and the verdict is
+				// surfaced. In a clean trend that break is never taken — a
+				// direct route's only failure cancels the target below.
 				break
 			}
 			// A hard refusal that is none of the verdicts below ends THIS
