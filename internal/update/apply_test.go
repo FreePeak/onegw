@@ -203,3 +203,41 @@ func TestApplyCheckOnlyLeavesDisk(t *testing.T) {
 		t.Fatalf("check-only must not touch the binary, got %q", got)
 	}
 }
+
+// TestSmokeRunToleratesSlowFirstExec is the regression for the update that
+// failed with "signal: killed ()": a good binary whose FIRST exec is slow
+// (macOS verifies a freshly written Mach-O; a loaded box stretches it) must
+// pass the smoke run, and a binary that never finishes must fail with the
+// timeout named — not with a bare "signal: killed" the operator cannot tell
+// from a crash.
+func TestSmokeRunToleratesSlowFirstExec(t *testing.T) {
+	old := smokeDeadline
+	t.Cleanup(func() { smokeDeadline = old })
+	path := filepath.Join(t.TempDir(), "slow")
+
+	// Comfortably inside the shipped deadline: a first exec that takes a
+	// noticeable moment (platform verification of a fresh 15 MB binary)
+	// must still pass, because that is exactly the window the old 10s
+	// bound closed on a loaded box.
+	smokeDeadline = 5 * time.Second
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nsleep 1\necho slow-but-ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := smokeRun(path); err != nil {
+		t.Fatalf("a slow first exec must pass the smoke run: %v", err)
+	}
+
+	// The same binary under a deadline it cannot meet: the check must
+	// still fail closed — and NAME the timeout, because a deadline kill
+	// and an out-of-memory SIGKILL are indistinguishable in the raw
+	// error ("signal: killed"), which is what made the original failure
+	// so hard to read.
+	smokeDeadline = 100 * time.Millisecond
+	err := smokeRun(path)
+	if err == nil {
+		t.Fatal("a binary that outlives the deadline must fail the smoke run")
+	}
+	if !strings.Contains(err.Error(), "timed out after 100ms") {
+		t.Fatalf("the timeout must be named, got %v", err)
+	}
+}

@@ -225,14 +225,33 @@ func swap(newPath, execPath string) error {
 	return nil
 }
 
+// smokeDeadline bounds the smoke run. A `version` print takes milliseconds
+// on a warm binary, but the FIRST exec of a freshly written 15 MB Mach-O /
+// ELF pays the platform's verification pass (macOS hashes the code
+// directory on first execution) and the whole box may be loaded from the
+// download we just finished. The original 10 s was thin enough to kill a
+// GOOD binary: `onegw update` on a live v0.46.5 gateway failed with
+// "downloaded binary failed its smoke run: signal: killed" — the same
+// string a context deadline and an out-of-memory SIGKILL both produce —
+// while re-running the identical download by hand passed. 60 s keeps the
+// check bounded and leaves room for cold-start verification under load.
+// A var, not a const, so tests can shrink it.
+var smokeDeadline = 60 * time.Second
+
 // smokeRun executes the downloaded binary's version subcommand: it must
 // start, print a version, and exit 0. A corrupt or wrong-platform
 // download fails here, before anything on disk moves.
 func smokeRun(path string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), smokeDeadline)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "version").CombinedOutput()
 	if err != nil {
+		// A deadline and a SIGKILL from the OS both surface as
+		// "signal: killed"; say which one this was, or the operator
+		// cannot tell a slow box from a bad download.
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("update: downloaded binary timed out after %s (no output — the machine may be thrashing; retry, or run the staged binary by hand to confirm)", smokeDeadline)
+		}
 		return fmt.Errorf("update: downloaded binary failed its smoke run: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
