@@ -8,6 +8,7 @@ package translat
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -611,6 +612,94 @@ func TestCursorSSEStreamEmptyIsError(t *testing.T) {
 	}
 }
 
+func TestCursorSSEStreamToolCallNoOutput(t *testing.T) {
+	// A tool-call-only stream (no text delta): the upstream emits
+	// EvStart on the first fragment and EvPartStart for the tool.
+	// Without a case for EvStart in CursorSSEStream's switch the
+	// role chunk was never written if no text delta followed, and
+	// the client received zero output. Regression: the SSE must
+	// open with the assistant role chunk and carry the tool name.
+	var tool []byte
+	tool = pbString(tool, 1, "get_weather")
+	var mcpParams []byte
+	mcpParams = pbBytes(mcpParams, 1, tool)
+	var call []byte
+	call = pbString(call, 3, "call_1")
+	call = pbBytes(call, 27, mcpParams)
+	var frame []byte
+	frame = pbBytes(frame, 1, call)
+
+	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(frame)), "claude-4.5-haiku", false, nil)
+	out := readAllString(t, stream)
+	if !strings.Contains(out, `"role":"assistant"`) {
+		t.Fatalf("SSE must open with the role chunk, got: %s", out)
+	}
+	if !strings.Contains(out, `"name":"get_weather"`) {
+		t.Fatalf("SSE must carry the tool name, got: %s", out)
+	}
+	if strings.Contains(out, `"name":""`) {
+		t.Fatalf("SSE must not carry an empty tool name, got: %s", out)
+	}
+	if !strings.Contains(out, `"tool_calls"`) {
+		t.Fatalf("SSE must carry tool_calls block, got: %s", out)
+	}
+}
+
+func TestCursorSSEStreamThinkingDeltaFlushes(t *testing.T) {
+	// Every part type must flush, not just text. A turn whose first frames
+	// carry only reasoning_content (or only tool-arg fragments) would sit in
+	// the sb buffer until stream end — the exact stall incremental flushing
+	// exists to prevent. Cursor's ChatService holds the connection on 10s
+	// keepalives, so "until stream end" means "until the client times out".
+	var inner []byte
+	inner = pbString(inner, 1, "REASONING_CHUNK_XYZ")
+	var frame []byte
+	frame = pbBytes(frame, 2, pbBytes(nil, 25, inner))
+
+	pr, pw := io.Pipe()
+	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil)
+	if _, err := pw.Write(wrapConnectFrame(frame)); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+	defer pw.Close()
+
+	chunks := make(chan string, 8)
+	go func() {
+		buf := make([]byte, 65536)
+		for {
+			n, err := stream.Read(buf)
+			if n > 0 {
+				chunks <- string(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	var seen strings.Builder
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(seen.String(), "REASONING_CHUNK_XYZ") {
+		select {
+		case c := <-chunks:
+			seen.WriteString(c)
+		case <-deadline:
+			t.Fatalf("reasoning_content not delivered within 2s while the upstream stream is still open; got: %s", seen.String())
+		}
+	}
+}
+
+func TestCursorSSEStreamToolNameEmptyFallback(t *testing.T) {
+	// EvPartStart must never emit a tool call with an empty
+	// function.name. Strict validators reject it. The code path
+	// is defensive: decodeToolCall already returns nil for an
+	// empty name, but if the guard is ever bypassed the SSE
+	// must fall back to unknownToolName instead of "".
+	if unknownToolName != "unknown_tool" {
+		t.Fatalf("unknownToolName = %q, want %q", unknownToolName, "unknown_tool")
+	}
+}
+
 func concatFrames(frames ...[]byte) []byte {
 	var out []byte
 	for _, f := range frames {
@@ -631,4 +720,51 @@ func readAllString(t *testing.T, r interface{ Read([]byte) (int, error) }) strin
 		}
 	}
 	return sb.String()
+}
+
+func TestCursorSSEStreamFlushesBeforeStreamEnd(t *testing.T) {
+	// The load-bearing fix in CursorSSEStream is the incremental flush:
+	// Cursor's ChatService parks the connection on 10s keepalive frames,
+	// so a client that waits for stream end sees nothing until timeout.
+	// This test reads ONE chunk from the returned reader while the upstream
+	// frame source is still open. Without flush() the first chunk stays in
+	// the sb buffer and this read blocks until the source closes.
+	var tool []byte
+	tool = pbString(tool, 1, "get_weather")
+	var mcpParams []byte
+	mcpParams = pbBytes(mcpParams, 1, tool)
+	var call []byte
+	call = pbString(call, 3, "call_1")
+	call = pbBytes(call, 27, mcpParams)
+	var frame []byte
+	frame = pbBytes(frame, 1, call)
+
+	pr, pw := io.Pipe()
+	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil)
+
+	// Feed the tool frame but leave the pipe open: no EOF, no EvStop.
+	if _, err := pw.Write(wrapConnectFrame(frame)); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+	defer pw.Close()
+
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := stream.Read(buf)
+		if n == 0 && err != nil {
+			got <- ""
+			return
+		}
+		got <- string(buf[:n])
+	}()
+
+	select {
+	case chunk := <-got:
+		if !strings.Contains(chunk, "data: ") {
+			t.Fatalf("first chunk is not an SSE frame: %q", chunk)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no chunk within 3s while the upstream stream is still open: CursorSSEStream buffers until stream end (missing flush)")
+	}
 }

@@ -37,6 +37,12 @@ import (
 	"onegw/internal/types"
 )
 
+// unknownToolName is the placeholder used for a tool call whose
+// upstream name could not be decoded. Matches the convention in
+// gemini.go (toolNameForMsgs) and server/toolblocks.go
+// (normalizeToolBlocks).
+const unknownToolName = "unknown_tool"
+
 // CursorClientVersion fingerprints the impersonated Cursor IDE build.
 // 9router pins 3.12.17 (their commit 6994cd1f); accepted upstream today.
 const CursorClientVersion = "3.12.17"
@@ -1038,6 +1044,17 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 				cursorSSE(&sb, id, created, model, map[string]any{"role": "assistant", "content": ""}, "", nil)
 			}
 		}
+		// flush writes the current sb buffer to the pipe and resets it,
+		// so the client sees each chunk as it is emitted instead of
+		// buffering until stream end. Cursor's ChatService keeps the
+		// connection open with 10s keepalive frames, so without this the
+		// client receives nothing until a timeout.
+		flush := func() {
+			if sb.Len() > 0 {
+				_, _ = io.Copy(pw, strings.NewReader(sb.String()))
+				sb.Reset()
+			}
+		}
 		ferr := ReadCursorFrames(frames, func(payload []byte) error {
 			if ae, ok := CursorJSONError(payload); ok {
 				return ae
@@ -1050,6 +1067,16 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 			}
 			for _, e := range events {
 				switch e.Kind {
+				case EvStart:
+					// CursorChatEvents emits EvStart once per stream (the
+					// first frame that carries text or a tool call). It is
+					// always followed in the same frame by the EvDelta or
+					// EvPartStart that triggered it, so this case is a
+					// redundant guard rather than a fix for a starved
+					// stream: it keeps the role chunk written even if a
+					// future decoder emits EvStart on its own.
+					start()
+					flush()
 				case EvDelta:
 					start()
 					switch e.PartType {
@@ -1062,14 +1089,29 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 					default:
 						cursorSSE(&sb, id, created, model, map[string]any{"content": e.Text}, "", nil)
 					}
+					// Every part type flushes, not just text: a thinking-only
+					// or tool-args-only turn would otherwise sit in sb until
+					// stream end, which is the stall this stream exists to
+					// avoid.
+					flush()
 				case EvPartStart:
 					start()
+					name := e.ToolName
+					if name == "" {
+						// decodeToolCall can return an empty Name when the
+						// upstream frame carries no MCPParams and no top-level
+						// name (field 9). An empty function.name is rejected
+						// by strict OpenAI-format validators (xai), so fall back
+						// to the same placeholder the Anthropic repair uses.
+						name = unknownToolName
+					}
 					cursorSSE(&sb, id, created, model, map[string]any{
 						"tool_calls": []any{map[string]any{
 							"index": e.Index, "id": e.ToolID, "type": "function",
-							"function": map[string]any{"name": e.ToolName, "arguments": ""},
+							"function": map[string]any{"name": name, "arguments": ""},
 						}},
 					}, "", nil)
+					flush()
 				case EvStop:
 					if e.Usage != nil {
 						usage = e.Usage
@@ -1088,6 +1130,7 @@ func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) 
 							cancel()
 						}
 						_, _ = io.Copy(pw, strings.NewReader(sb.String()))
+						sb.Reset()
 						pw.CloseWithError(nil)
 						return io.EOF
 					}
