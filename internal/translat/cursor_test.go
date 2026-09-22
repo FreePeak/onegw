@@ -533,7 +533,7 @@ func TestCursorSSEStreamComposerThinkingAsContent(t *testing.T) {
 	// End-to-end: synthetic OpenAI SSE must carry content=OK and must not
 	// leak the thinking prefix into reasoning_content.
 	payload := chatThinkingFrame("", "private reasoning that must not leak</think>OK")
-	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(payload)), "composer-2.5", false, nil)
+	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(payload)), "composer-2.5", false, nil, nil)
 	out := readAllString(t, stream)
 	if !strings.Contains(out, `"content":"OK"`) {
 		t.Fatalf("SSE must carry visible content: %s", out)
@@ -580,7 +580,7 @@ func TestCursorSSEStreamTrailerError(t *testing.T) {
 	frame := wrapConnectFrame(trailer)
 	frame[0] = connectFlagTrailer
 
-	stream := CursorSSEStream(bytes.NewReader(frame), "composer-2.5", false, nil)
+	stream := CursorSSEStream(bytes.NewReader(frame), "composer-2.5", false, nil, nil)
 	buf := make([]byte, 4096)
 	_, err := stream.Read(buf)
 	if err == nil {
@@ -627,7 +627,7 @@ func TestCursorSSEStreamAgentHappyPath(t *testing.T) {
 	stream := CursorSSEStream(bytes.NewReader(concatFrames(
 		wrapConnectFrame(frameA),
 		wrapConnectFrame(frameB),
-	)), "gpt-5.2", true, nil)
+	)), "gpt-5.2", true, nil, nil)
 	out := readAllString(t, stream)
 	if !strings.Contains(out, `"content":"PONG"`) {
 		t.Fatalf("SSE must carry the text delta: %s", out)
@@ -646,7 +646,7 @@ func TestCursorSSEStreamEmptyIsError(t *testing.T) {
 	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(func() []byte {
 		var msg []byte
 		return pbBytes(msg, 13, nil) // benign agent_error, no content
-	}())), "claude-4.5-sonnet", true, nil)
+	}())), "claude-4.5-sonnet", true, nil, nil)
 	buf := make([]byte, 4096)
 	_, err := stream.Read(buf)
 	if err == nil {
@@ -674,7 +674,7 @@ func TestCursorSSEStreamToolCallNoOutput(t *testing.T) {
 	var frame []byte
 	frame = pbBytes(frame, 1, call)
 
-	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(frame)), "claude-4.5-haiku", false, nil)
+	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(frame)), "claude-4.5-haiku", false, nil, nil)
 	out := readAllString(t, stream)
 	if !strings.Contains(out, `"role":"assistant"`) {
 		t.Fatalf("SSE must open with the role chunk, got: %s", out)
@@ -702,7 +702,7 @@ func TestCursorSSEStreamThinkingDeltaFlushes(t *testing.T) {
 	frame = pbBytes(frame, 2, pbBytes(nil, 25, inner))
 
 	pr, pw := io.Pipe()
-	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil)
+	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil, nil)
 	if _, err := pw.Write(wrapConnectFrame(frame)); err != nil {
 		t.Fatalf("write frame: %v", err)
 	}
@@ -785,7 +785,7 @@ func TestCursorSSEStreamFlushesBeforeStreamEnd(t *testing.T) {
 	frame = pbBytes(frame, 1, call)
 
 	pr, pw := io.Pipe()
-	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil)
+	stream := CursorSSEStream(pr, "claude-4.5-haiku", false, nil, nil)
 
 	// Feed the tool frame but leave the pipe open: no EOF, no EvStop.
 	if _, err := pw.Write(wrapConnectFrame(frame)); err != nil {
@@ -1029,4 +1029,86 @@ func chatMessage(t *testing.T, body []byte, i int) ([]pbField, bool) {
 		n++
 	}
 	return nil, false
+}
+
+// TestNormalizeToolNameAlias verifies that normalizeToolName maps composer
+// aliases (e.g. "Shell" → "bash") back to the original schema name.
+func TestNormalizeToolNameAlias(t *testing.T) {
+	st := &CursorChatState{
+		toolNames: map[string]string{
+			"bash":     "bash",
+			"read":     "read",
+			"glob":     "glob",
+			"web_fetch": "web_fetch",
+		},
+	}
+	tests := []struct {
+		in, want string
+	}{
+		{"bash", "bash"},           // exact match
+		{"Bash", "bash"},           // case-insensitive
+		{"read", "read"},           // exact
+		{"Read", "read"},           // case-insensitive
+		{"glob", "glob"},           // exact
+		{"Shell", "bash"},          // Cursor alias
+		{"shell", "bash"},          // Cursor alias lowercase
+		{"unknown", "unknown"},     // not in schema → pass-through
+		{"get_weather", "get_weather"}, // not in schema
+	}
+	for _, tc := range tests {
+		got := st.normalizeToolName(tc.in)
+		if got != tc.want {
+			t.Errorf("normalizeToolName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestNormalizeToolNameNilMap ensures a nil toolNames map passes through
+// all names unchanged (common path for non-composer models and tests).
+func TestNormalizeToolNameNilMap(t *testing.T) {
+	st := &CursorChatState{}
+	for _, name := range []string{"Shell", "bash", "Read", "anything"} {
+		got := st.normalizeToolName(name)
+		if got != name {
+			t.Errorf("nil map: normalizeToolName(%q) = %q, want %q", name, got, name)
+		}
+	}
+}
+
+// TestCursorToolDirectiveIncludesToolNames verifies the directive lists
+// exact tool names for composer models so the model cannot rename them.
+func TestCursorToolDirectiveIncludesToolNames(t *testing.T) {
+	u := &types.ChatRequest{
+		Model: "composer-2.5",
+		Tools: []types.Tool{
+			{Name: "bash", Description: "Run shell"},
+			{Name: "read", Description: "Read file"},
+			{Name: "grep", Description: "Search"},
+		},
+	}
+	directive := cursorToolDirective(u)
+	for _, name := range []string{"`bash`", "`read`", "`grep`"} {
+		if !strings.Contains(directive, name) {
+			t.Errorf("directive must list tool name %s, got:\n%s", name, directive)
+		}
+	}
+	if !strings.Contains(directive, "AVAILABLE TOOL NAMES") {
+		t.Error("directive must contain AVAILABLE TOOL NAMES header")
+	}
+}
+
+// TestCursorToolDirectiveNoNamesForNonComposer verifies the tool name list
+// is NOT added for non-composer models (auto, default, etc.) — it is a
+// composer-only heuristic line.
+func TestCursorToolDirectiveNoNamesForNonComposer(t *testing.T) {
+	u := &types.ChatRequest{
+		Model: "auto",
+		Tools: []types.Tool{
+			{Name: "bash", Description: "Run shell"},
+		},
+	}
+	directive := cursorToolDirective(u)
+	if strings.Contains(directive, "AVAILABLE TOOL NAMES") {
+		t.Error("non-composer model must not get tool name list in directive")
+	}
 }

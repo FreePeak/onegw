@@ -137,7 +137,7 @@ func (d *Def) doCursor(ctx context.Context, acct *Account, model string, body io
 	if closer != nil {
 		cancel = func() { _ = closer.Close() }
 	}
-	sse := translat.CursorSSEStream(frames, model, agent, cancel)
+	sse := translat.CursorSSEStream(frames, model, agent, cancel, buildCursorToolNameMap(u))
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Status:     "200 OK",
@@ -256,3 +256,18 @@ func SetCursorTLSOverrideForTest(cfg *tls.Config) { cursorTLSOverride = cfg }
 
 // ResetCursorTLSOverrideForTest clears the test TLS override.
 func ResetCursorTLSOverrideForTest() { cursorTLSOverride = nil }
+
+// buildCursorToolNameMap builds a lowercase→exact-name lookup from the
+// decoded request's tools. Used by CursorSSEStream to normalize composer
+// tool names (e.g. "Shell" → "bash") back to the original schema names
+// so the downstream CLI doesn't reject them as "unknown tool".
+func buildCursorToolNameMap(u *types.ChatRequest) map[string]string {
+	if len(u.Tools) == 0 {
+		return nil
+	}
+	m := make(map[string]string, len(u.Tools))
+	for _, t := range u.Tools {
+		m[strings.ToLower(t.Name)] = t.Name
+	}
+	return m
+}

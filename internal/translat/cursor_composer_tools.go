@@ -341,3 +341,67 @@ func isComposerFinalPartial(s string) bool {
 	}
 	return (strings.HasPrefix(rest, "\uFF5C") || rest[0] == '|') && !strings.Contains(rest, ">")
 }
+
+// sanitizeComposerHistory strips protocol-internal Composer markers from
+// assistant message content before it is sent back as conversation history.
+// Without this, when a session switches from a composer model (composer-2.5)
+// to a non-composer model (cursor/auto → default), the <final> sentinels and
+// inline tool-call blocks from previous turns poison the history, causing the
+// upstream AgentService/ChatService to reject the stream
+// (PI_AI_ERROR "upstream stream interrupted").
+//
+// Markers stripped:
+//   - <final> / <｜final｜> sentinels (wrapper)
+//   - <tool_calls_begin> … <tool_calls_end> inline invocation blocks
+//   - <thinking> tags
+func sanitizeComposerHistory(s string) string {
+	// Strip <final> sentinels (wrapper around the whole answer).
+	s = stripComposerFinal(s)
+	// Strip </thinking> tags.
+	s = strings.ReplaceAll(s, "</think>", "")
+	s = strings.ReplaceAll(s, "<｜thinking｜>", "")
+	// Strip inline tool-call blocks: from <tool_calls_begin> to <tool_calls_end>,
+	// including any text between them (tool names, args, separators).
+	// We scan for the begin marker and find the matching end marker.
+	for {
+		beginIdx := -1
+		// Search for the begin marker (folded).
+		for i := 0; i < len(s); i++ {
+			if ok, end := composerMarkerAt(s, i, []rune(composerCallsBegin)); ok {
+				beginIdx = i
+				_ = end
+				break
+			}
+			// Also check ASCII variant.
+			if ok, _ := composerMarkerAt(s, i, []rune("<|tool_calls_begin|>")); ok {
+				beginIdx = i
+				break
+			}
+		}
+		if beginIdx < 0 {
+			break
+		}
+		// Find the end marker after beginIdx.
+		endIdx := -1
+		beginEnd := beginIdx + len(composerCallsBegin)
+		for i := beginEnd; i < len(s); i++ {
+			if ok, end := composerMarkerAt(s, i, []rune(composerCallsEnd)); ok {
+				endIdx = end
+				_ = end
+				break
+			}
+			if ok, end := composerMarkerAt(s, i, []rune("<|tool_calls_end|>")); ok {
+				endIdx = end
+				break
+			}
+		}
+		if endIdx < 0 {
+			// No matching end — strip from begin to end of string.
+			s = s[:beginIdx]
+			break
+		}
+		// Remove the entire block including a trailing newline.
+		s = s[:beginIdx] + s[endIdx:]
+	}
+	return strings.TrimSpace(s)
+}

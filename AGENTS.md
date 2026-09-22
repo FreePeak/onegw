@@ -45,3 +45,12 @@ a success — do NOT surface "no models in the response" for Cursor.
 Check what is actually listening before restart: `lsof -i :8080 -sTCP:LISTEN`
 or `ps aux | grep onegw`. Confirm PID matches the running binary you
 expect before killing it.
+
+## 5. Never rebuild or restart the live onegw binary
+
+The operator manages the build and deploy lifecycle themselves (updating
+the version in onegw settings, triggering the rebuild). Agents must
+**never** run `go build`, `kill`, or any restart command against the
+live onegw process (`~/.local/bin/onegw` or the PID from `ps aux | grep onegw`).
+Config changes in `onegw.toml` are picked up on the operator's next
+reload — do not attempt to force a reload.
