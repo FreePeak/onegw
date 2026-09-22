@@ -1,0 +1,146 @@
+{{define "hdr"}}<span class="chip">playground</span>{{end}}
+{{define "content"}}
+<style>
+.pg-wrap{display:flex;flex-direction:column;height:calc(100vh - 120px);max-height:800px}
+.pg-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:10px}
+.pg-bar label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:2px}
+.pg-bar select,.pg-bar input,.pg-bar textarea{font-size:13px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-family:inherit}
+.pg-bar select{min-width:180px}
+.pg-bar textarea{resize:vertical;min-height:38px;max-height:80px;width:100%}
+.pg-bar .row{display:flex;gap:6px;align-items:end}
+.pg-params{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted);margin-bottom:8px}
+.pg-params label{display:flex;align-items:center;gap:4px}
+.pg-params input[type=range]{width:80px}
+.pg-params .val{min-width:28px;text-align:right;font-family:var(--fira);font-size:11px}
+.pg-chat{flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--card);min-height:300px}
+.pg-msg{max-width:85%;padding:8px 12px;border-radius:10px;font-size:13.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+.pg-msg.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:2px}
+.pg-msg.assistant{align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:2px}
+.pg-msg pre{background:var(--bg-alt,#1a1a2e);padding:8px;border-radius:6px;overflow-x:auto;font-size:12px;margin:6px 0}
+.pg-msg code{font-family:var(--fira);font-size:12px}
+.pg-msg p{margin:4px 0}
+.pg-input{display:flex;gap:6px;margin-top:8px}
+.pg-input textarea{flex:1;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--fg);font-family:inherit;resize:none;min-height:42px;max-height:120px}
+.pg-input button{padding:8px 16px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;font-size:13px;white-space:nowrap}
+.pg-input button:hover{opacity:.9}
+.pg-input button:disabled{opacity:.4;cursor:default}
+.pg-metrics{font-size:11px;color:var(--muted);text-align:right;padding:4px 0;font-family:var(--fira)}
+.pg-thinking{font-size:12px;color:var(--muted);font-style:italic;padding:4px 8px}
+</style>
+<div class="pg-wrap">
+  <div class="pg-bar">
+    <label>model
+      <select id="pg-model">
+        {{range .Providers}}{{range .Models}}
+        <option value="{{$.PName}}/{{.}}">{{$.PName}}/{{.}}</option>
+        {{end}}{{end}}
+      </select>
+    </label>
+    <label style="flex:1">system prompt
+      <textarea id="pg-sys" rows="1" placeholder="You are a helpful assistant."></textarea>
+    </label>
+  </div>
+  <div class="pg-params">
+    <label>temp <input type="range" id="pg-temp" min="0" max="2" step="0.1" value="0.7"><span class="val" id="pg-temp-v">0.7</span></label>
+    <label>max tokens <input type="range" id="pg-maxtok" min="64" max="16384" step="64" value="4096"><span class="val" id="pg-maxtok-v">4096</span></label>
+    <label>top_p <input type="range" id="pg-top-p" min="0" max="1" step="0.05" value="1"><span class="val" id="pg-top-p-v">1</span></label>
+  </div>
+  <div class="pg-chat" id="pg-chat">
+    <div style="color:var(--muted);font-size:13px;text-align:center;padding:40px 0">Select a model and start chatting.</div>
+  </div>
+  <div class="pg-metrics" id="pg-metrics"></div>
+  <div class="pg-input">
+    <textarea id="pg-msg" rows="1" placeholder="Type a message…" autofocus></textarea>
+    <button id="pg-send" onclick="pgSend()">Send</button>
+  </div>
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+(function(){
+  // Slider sync
+  var sliders=[['pg-temp','pg-temp-v'],['pg-maxtok','pg-maxtok-v'],['pg-top-p','pg-top-p-v']];
+  sliders.forEach(function(p){
+    var s=document.getElementById(p[0]),v=document.getElementById(p[1]);
+    if(s&&v) s.oninput=function(){v.textContent=s.value};
+  });
+  // Auto-resize textarea
+  var msg=document.getElementById('pg-msg');
+  if(msg) msg.onkeydown=function(e){
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();pgSend();}
+  };
+})();
+var pgHistory=[],pgAbort=null;
+function pgSend(){
+  var model=document.getElementById('pg-model').value;
+  var sys=document.getElementById('pg-sys').value.trim();
+  var msg=document.getElementById('pg-msg').value.trim();
+  if(!msg) return;
+  document.getElementById('pg-msg').value='';
+  var chat=document.getElementById('pg-chat');
+  // Clear placeholder
+  if(chat.children.length===1&&chat.children[0].style) chat.innerHTML='';
+  // User bubble
+  var ub=document.createElement('div');ub.className='pg-msg user';ub.textContent=msg;chat.appendChild(ub);
+  pgHistory.push({role:'user',content:msg});
+  // Assistant bubble
+  var ab=document.createElement('div');ab.className='pg-msg assistant';ab.textContent='…';chat.appendChild(ab);
+  chat.scrollTop=chat.scrollHeight;
+  // Build body
+  var messages=[];
+  if(sys) messages.push({role:'system',content:sys});
+  messages=messages.concat(pgHistory);
+  var body={model:model,messages:messages,stream:true,
+    temperature:parseFloat(document.getElementById('pg-temp').value),
+    max_tokens:parseInt(document.getElementById('pg-maxtok').value),
+    top_p:parseFloat(document.getElementById('pg-top-p').value)
+  };
+  // Metrics
+  var t0=Date.now(),firstChunk=true;
+  var metricsEl=document.getElementById('pg-metrics');
+  metricsEl.textContent='streaming…';
+  // Abort
+  document.getElementById('pg-send').disabled=true;
+  pgAbort=new AbortController();
+  fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body),signal:pgAbort.signal
+  }).then(function(res){
+    var reader=res.body.getReader(),dec=new TextDecoder(),buf='',content='';
+    function pump(){
+      return reader.read().then(function(r){
+        if(r.done){finish();return;}
+        buf+=dec.decode(r.value,{stream:true});
+        var lines=buf.split('\n');buf=lines.pop();
+        lines.forEach(function(line){
+          line=line.trim();
+          if(!line||!line.startsWith('data:'))return;
+          var d=line.slice(5).trim();
+          if(d==='[DONE]'){finish();return;}
+          try{var j=JSON.parse(d);
+            if(j.choices&&j.choices[0]&&j.choices[0].delta){
+              var c=j.choices[0].delta.content||'';
+              if(c){content+=c;ab.textContent=content;chat.scrollTop=chat.scrollHeight;
+                if(firstChunk){firstChunk=false;metricsEl.textContent='TTFT: '+(Date.now()-t0)+'ms';}
+              }
+            }
+          }catch(e){}
+        });
+        return pump();
+      });
+    }
+    return pump();
+  }).catch(function(e){
+    if(e.name!=='AbortError') ab.textContent='Error: '+e.message;
+  }).then(finish);
+  function finish(){
+    if(finish.done) return; finish.done=true;
+    pgAbort=null;
+    document.getElementById('pg-send').disabled=false;
+    var total=Date.now()-t0;
+    if(content) pgHistory.push({role:'assistant',content:content});
+    metricsEl.textContent=content?'done in '+total+'ms · '+content.length+' chars':'';
+    chat.scrollTop=chat.scrollHeight;
+  }
+}
+</script>
+{{end}}

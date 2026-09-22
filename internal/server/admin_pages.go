@@ -370,6 +370,8 @@ var navItems = []dashboard.NavItem{
 		Icon: `<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01"/><path d="M18 12h.01"/>`},
 	{ID: "tools", Href: "/admin/ui/tools", Label: "CLI Tools", Group: "Administer",
 		Icon: `<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>`},
+	{ID: "playground", Href: "/admin/ui/playground", Label: "Playground", Group: "Administer",
+		Icon: `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`},
 	{ID: "settings", Href: "/admin/ui/settings", Label: "Settings", Group: "Administer",
 		Icon: `<line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/>`},
 }
@@ -621,6 +623,8 @@ func (s *Server) handleAdminUI(w http.ResponseWriter, r *http.Request) {
 		s.logsPage(w, r)
 	case "tools":
 		s.toolsPage(w, r)
+	case "playground":
+		s.playgroundPage(w, r)
 	case "settings":
 		s.settingsPage(w, r)
 	default:
@@ -1444,6 +1448,27 @@ func (s *Server) toolsPage(w http.ResponseWriter, r *http.Request) {
 			"# if the hermes provider inherits the parent key")
 
 	s.authedPage(w, r, "tools", "CLI Tools", false, v)
+}
+
+// playgroundPage renders the chat playground for testing models.
+func (s *Server) playgroundPage(w http.ResponseWriter, r *http.Request) {
+	type provView struct {
+		PName  string
+		Models []string
+	}
+	var providers []provView
+	if st := s.cur(); st != nil {
+		for _, name := range st.pool.Names() {
+			if def, ok := st.pool.Get(name); ok && !def.Disabled {
+				models := def.Models
+				if len(models) == 0 {
+					models = []string{"(any)"}
+				}
+				providers = append(providers, provView{PName: def.Name, Models: models})
+			}
+		}
+	}
+	s.authedPage(w, r, "playground", "Playground", false, struct{ Providers []provView }{providers})
 }
 
 type settingsView struct {
