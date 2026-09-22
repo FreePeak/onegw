@@ -558,7 +558,7 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 			}
 		case types.RoleAssistant:
 			if t := m.FlattenText(); t != "" {
-				convo = append(convo, "Assistant: "+t)
+				convo = append(convo, "Assistant: "+sanitizeComposerHistory(t))
 			}
 		case types.RoleTool:
 			name := m.Name
@@ -744,6 +744,18 @@ func cursorToolDirective(u *types.ChatRequest) string {
 	// the rate from 69% → ~80%.
 	if cursorComposerModel(u.Model) {
 		b.WriteString("\nWhen calling a tool, emit the invocation block directly. Do NOT describe the call in prose — just write the tool name and arguments in the invocation format.")
+		// List the exact tool names so the model cannot rename them.
+		// Live A/B: composer-2.5 uses internal aliases ("Shell" for "bash",
+		// "Read" for "read") which DSH rejects as "unknown tool".
+		if len(u.Tools) > 0 {
+			b.WriteString("\nAVAILABLE TOOL NAMES (use these EXACT spellings, character-for-character):\n")
+			for i, t := range u.Tools {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString("`" + t.Name + "`")
+			}
+		}
 	}
 	switch tc := u.ToolChoice.(type) {
 	case types.ToolChoiceTool:
@@ -883,6 +895,13 @@ func EncodeCursorChatRequest(u *types.ChatRequest) ([]byte, error) {
 			role = cuRoleAssistant
 		}
 		content := textOf(m)
+		// Strip Composer-internal markers from assistant history so they
+		// don't poison subsequent requests to non-composer models (the
+		// <final> sentinel and inline tool blocks cause PI_AI_ERROR
+		// "upstream stream interrupted" when forwarded verbatim).
+		if m.Role == types.RoleAssistant {
+			content = sanitizeComposerHistory(content)
+		}
 		if i == firstUser {
 			content = prefix + "\n\n" + content
 		}
@@ -1053,6 +1072,51 @@ type CursorChatState struct {
 	// finish is the finish_reason the synthesizer ends the turn with:
 	// "tool_calls" once a tool call was emitted, else "stop".
 	finish string
+	// toolNames maps lowercase tool names from the original schema to their
+	// exact casing. The composer model often renames tools (e.g. "bash" →
+	// "Shell") based on its training data; without normalization DSH rejects
+	// them as "unknown tool". nil means no normalization (tests).
+	toolNames map[string]string
+}
+
+// normalizeToolName maps a composer-returned tool name back to the original
+// schema name. Match strategy:
+//  1. exact match (already correct)
+//  2. lowercase match via toolNames map
+//  3. Cursor-known alias: composer-2.5 hardcodes "Shell" for "bash" regardless
+//     of the actual schema name; if "bash" is in the schema, route "Shell" there.
+//
+// Returns the original name if no match is found.
+func (st *CursorChatState) normalizeToolName(name string) string {
+	if st.toolNames == nil {
+		return name
+	}
+	// Exact match.
+	if canonical, ok := st.toolNames[name]; ok {
+		return canonical
+	}
+	// Lowercase match.
+	lower := strings.ToLower(name)
+	if canonical, ok := st.toolNames[lower]; ok {
+		return canonical
+	}
+	// Cursor composer known aliases: the model hardcodes these names from its
+	// training regardless of the actual tool schema. If the aliased tool exists
+	// in the schema, redirect.
+	if alias, ok := cursorComposerToolAliases[lower]; ok {
+		if canonical, ok := st.toolNames[alias]; ok {
+			return canonical
+		}
+	}
+	return name
+}
+
+// cursorComposerToolAliases maps the lowercase form of names that
+// composer-2.5 hardcodes from its training data to the DSH schema name they
+// most commonly correspond to. The map value is the key to look up in the
+// toolNames map; if that lookup hits, the canonical name is returned.
+var cursorComposerToolAliases = map[string]string{
+	"shell": "bash", // composer calls the shell tool "Shell"
 }
 
 // cursorComposerModel reports the IDE composer family (composer-2.5,
@@ -1177,7 +1241,7 @@ func (st *CursorChatState) composerVisibleEvents(vis string, start func()) []Str
 		idx := st.next
 		st.next++
 		out = append(out, StreamEvent{Kind: EvPartStart, Index: idx,
-			PartType: types.PartToolUse, ToolID: composerToolCallID(idx), ToolName: c.Name})
+			PartType: types.PartToolUse, ToolID: composerToolCallID(idx), ToolName: st.normalizeToolName(c.Name)})
 		out = append(out, StreamEvent{Kind: EvDelta, Index: idx,
 			PartType: types.PartToolUse, ToolArgs: c.Args})
 	}
@@ -1329,13 +1393,14 @@ func cursorUsageJSON(in, out int64, estimated bool) map[string]any {
 // agent_error keepalives every 10s indefinitely (live-verified) — so the
 // gateway must tear the stream down itself; waiting for EOF hangs the
 // client response open forever.
-func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func()) io.Reader {
+func CursorSSEStream(frames io.Reader, model string, agent bool, cancel func(), toolNames map[string]string) io.Reader {
 	pr, pw := io.Pipe()
 	go func() {
 		var sb strings.Builder
 		id := "chatcmpl-cursor-" + cursorUUID()
 		created := time.Now().Unix()
 		var chatSt CursorChatState
+		chatSt.toolNames = toolNames
 		started := false
 		var usage *types.Usage
 		start := func() {

@@ -142,7 +142,7 @@ func TestCursorSSEStreamComposerInlineToolCall(t *testing.T) {
 	})
 	payload := chatThinkingFrame("", "musing about it\n</think>"+vis)
 
-	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(payload)), "composer-2.5", false, nil)
+	stream := CursorSSEStream(bytes.NewReader(wrapConnectFrame(payload)), "composer-2.5", false, nil, nil)
 	out := readAllString(t, stream)
 
 	if strings.Contains(out, "tool▁calls▁begin") {
@@ -270,5 +270,55 @@ func TestComposerStripFinalSentinel(t *testing.T) {
 	vis := visibleComposerContent("secret reasoning\n\n" + composerThinkEnd + "<" + fwPipe + "final" + fwPipe + ">OK<" + fwPipe + "/final" + fwPipe + ">")
 	if vis != "OK" {
 		t.Fatalf("visibleComposerContent leaked sentinel/reasoning: %q", vis)
+	}
+}
+
+// TestSanitizeComposerHistory verifies that protocol-internal Composer markers
+// are stripped from assistant history before it is sent back in a new request.
+// Without this, switching from composer-2.5 to cursor/auto/default causes
+// PI_AI_ERROR "upstream stream interrupted" because the upstream rejects the
+// poisoned history.
+func TestSanitizeComposerHistory(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{
+			name: "final sentinel only",
+			in:   "<\uFF5Cfinal\uFF5C>OK<\uFF5C/final\uFF5C>",
+			want: "OK",
+		},
+		{
+			name: "final sentinel ASCII",
+			in:   "<|final|>OK<|/final|>",
+			want: "OK",
+		},
+		{
+			name: "tool call block",
+			in:   "Here:\n" + composerCallsBegin + "\n" + composerCallBegin + "\nbash\n" + composerArgSep + "command\nls\n" + composerCallEnd + "\n" + composerCallsEnd,
+			want: "Here:",
+		},
+		{
+			name: "thinking tag",
+			in:   "</think>Answer",
+			want: "Answer",
+		},
+		{
+			name: "mixed: final + tool block",
+			in:   "<\uFF5Cfinal\uFF5C>Calling tool:\n" + composerCallsBegin + "\n" + composerCallBegin + "\nread\n" + composerArgSep + "path\nfoo.txt\n" + composerCallEnd + "\n" + composerCallsEnd + "<\uFF5C/final\uFF5C>",
+			want: "Calling tool:",
+		},
+		{
+			name: "plain text no markers",
+			in:   "Hello, I am a helpful assistant.",
+			want: "Hello, I am a helpful assistant.",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeComposerHistory(tc.in)
+			if got != tc.want {
+				t.Errorf("sanitizeComposerHistory(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
