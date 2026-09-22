@@ -1054,6 +1054,16 @@ func parseXiaomiTokenPlan(body []byte, status int) ([]Window, string, string) {
 					Limit int64  `json:"limit"`
 				} `json:"items"`
 			} `json:"usage"`
+			// Possible expiry fields — the API returns the plan's valid-until
+			// date but the exact field name varies. Try common patterns.
+			ExpireTime interface{} `json:"expireTime"`
+			EndTime    interface{} `json:"endTime"`
+			ValidUntil interface{} `json:"validUntil"`
+			TokenPlan  struct {
+				ExpireTime interface{} `json:"expireTime"`
+				EndTime    interface{} `json:"endTime"`
+				ValidUntil interface{} `json:"validUntil"`
+			} `json:"tokenPlan"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
@@ -1062,9 +1072,25 @@ func parseXiaomiTokenPlan(body []byte, status int) ([]Window, string, string) {
 	if data.Code != 0 {
 		return nil, "", "Xiaomi MiMo token-plan usage API returned error code " + strconv.Itoa(data.Code) + "."
 	}
+	// Parse the actual expiry from the API response instead of guessing the
+	// next calendar month boundary — Xiaomi token plans have a fixed validity
+	// period (e.g. 2026-10-21 23:59:59 UTC) that does not align with month
+	// boundaries.
 	var resets *time.Time
-	if data.Data.MonthUsage.Percent > 0 {
-		// Monthly window: next UTC month boundary (1st 00:00 UTC).
+	if t := parseExpiry(data.Data.ExpireTime); t != nil {
+		resets = t
+	} else if t := parseExpiry(data.Data.EndTime); t != nil {
+		resets = t
+	} else if t := parseExpiry(data.Data.ValidUntil); t != nil {
+		resets = t
+	} else if t := parseExpiry(data.Data.TokenPlan.ExpireTime); t != nil {
+		resets = t
+	} else if t := parseExpiry(data.Data.TokenPlan.EndTime); t != nil {
+		resets = t
+	} else if t := parseExpiry(data.Data.TokenPlan.ValidUntil); t != nil {
+		resets = t
+	} else if data.Data.MonthUsage.Percent > 0 {
+		// Fallback: next UTC month boundary (only when API omits expiry).
 		now := time.Now().UTC()
 		y, m, _ := now.Date()
 		next := time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC)
@@ -1081,6 +1107,56 @@ func parseXiaomiTokenPlan(body []byte, status int) ([]Window, string, string) {
 	}
 	plan := "Xiaomi MiMo Token Plan"
 	return windows, plan, ""
+}
+
+// parseExpiry tries to interpret an API expiry value as a time.Time.
+// Handles: float64 (Unix seconds or milliseconds), json.Number, and
+// string formats (ISO 8601, "YYYY-MM-DD HH:MM:SS").
+func parseExpiry(v interface{}) *time.Time {
+	if v == nil {
+		return nil
+	}
+	switch x := v.(type) {
+	case float64:
+		return parseUnixOrMs(x)
+	case json.Number:
+		f, err := x.Float64()
+		if err != nil {
+			return nil
+		}
+		return parseUnixOrMs(f)
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return nil
+		}
+		// Try ISO 8601.
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return &t
+		}
+		// Try "YYYY-MM-DD HH:MM:SS".
+		if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+			ut := t.UTC()
+			return &ut
+		}
+		// Try Unix timestamp as string.
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return parseUnixOrMs(f)
+		}
+	}
+	return nil
+}
+
+// parseUnixOrMs interprets a number as Unix seconds (<1e12) or milliseconds (>=1e12).
+func parseUnixOrMs(f float64) *time.Time {
+	var sec int64
+	if f > 1e12 {
+		sec = int64(f / 1000) // milliseconds
+	} else {
+		sec = int64(f)
+	}
+	t := time.Unix(sec, 0).UTC()
+	return &t
 }
 
 // probeCursor fetches one Cursor account's meter state. The endpoint is the
