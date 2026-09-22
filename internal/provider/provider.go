@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,11 @@ const (
 	// for non-streaming clients. See Kind.ForcedStream.
 	KindCline     Kind = "cline"     // Cline API (SSE-only OpenAI wire)
 	KindSystemOne Kind = "systemone" // TypeSafe Jev model (POST /v1/systemone, same wire on both sides)
+	// Mistral (api.mistral.ai) speaks OpenAI Chat Completions but rejects
+	// reasoning_content in assistant history messages (422 extra_forbidden).
+	// The gateway strips reasoning_content from request bodies before
+	// forwarding (see stripReasoningContent). See OmniRoute #6417.
+	KindMistral Kind = "mistral" // Mistral AI (OpenAI wire + body stripping)
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
@@ -248,6 +254,8 @@ func (k Kind) Format() translat.Format {
 	// decoded from the upstream's Connect-RPC protobuf, and searxng's
 	// doSearch returns a synthetic OpenAI completion, so every surface
 	// sees normal OpenAI shape from both kinds.
+	// KindMistral also falls through: Mistral speaks OpenAI Chat Completions
+	// natively; the only difference is request-body stripping (see Do()).
 	default:
 		return translat.FmtOpenAI
 	}
@@ -897,6 +905,8 @@ func (k Kind) DefaultBaseURL() string {
 		return "https://api.cline.bot/api"
 	case KindSystemOne:
 		return "" // no stock endpoint: base_url is required in config
+	case KindMistral:
+		return "https://api.mistral.ai/v1"
 	default:
 		return "https://api.openai.com"
 	}
@@ -2376,6 +2386,24 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		defer d.pool.end(acct)
 	}
 	base := d.Base(acct)
+	// Mistral rejects reasoning_content in assistant history messages with
+	// 422 extra_forbidden (OmniRoute #6417, live-probed 2026-09-20). Strip
+	// the field before forwarding. Only done for KindMistral; other
+	// OpenAI-compatible kinds pass bodies through untouched.
+	if d.Kind == KindMistral && body != nil {
+		raw, readErr := io.ReadAll(body)
+		if readErr == nil && len(raw) > 0 {
+			if stripped := stripReasoningContent(raw); stripped != nil {
+				body = bytes.NewReader(stripped)
+			} else {
+				body = bytes.NewReader(raw)
+			}
+		} else if readErr == nil {
+			body = bytes.NewReader(raw)
+		}
+		// readErr != nil: fall through with original body; the upstream
+		// will see the unmodified payload or a read error downstream.
+	}
 	var url string
 	var req *http.Request
 	var err error
@@ -3045,4 +3073,42 @@ func (d *Def) SetSelection(mode string, headroom func(acct string) (float64, boo
 		d.pool.headroom = headroom
 		d.pool.deck, d.pool.deckPos = nil, 0
 	}
+}
+
+// stripReasoningContent removes the reasoning_content field from assistant
+// messages in an OpenAI Chat Completions request body. Mistral's API
+// rejects requests containing reasoning_content in assistant history
+// messages with 422 extra_forbidden (OmniRoute #6417, live-probed
+// 2026-09-20). Returns nil if the field is absent (no copy needed).
+func stripReasoningContent(raw []byte) []byte {
+	// Fast path: if the body doesn't contain "reasoning_content" at all,
+	// skip the parse entirely. This covers the vast majority of requests.
+	if !bytes.Contains(raw, []byte(`"reasoning_content"`)) {
+		return nil
+	}
+	var req struct {
+		Messages []struct {
+			Role             string          `json:"role"`
+			ReasoningContent json.RawMessage `json:"reasoning_content,omitempty"`
+			Content          any             `json:"content,omitempty"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil // parse error: pass body through untouched
+	}
+	changed := false
+	for i := range req.Messages {
+		if req.Messages[i].Role == "assistant" && len(req.Messages[i].ReasoningContent) > 0 {
+			req.Messages[i].ReasoningContent = nil
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	out, err := json.Marshal(req)
+	if err != nil {
+		return nil
+	}
+	return out
 }
