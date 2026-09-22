@@ -1075,3 +1075,58 @@ func TestProbeXiaomiTokenPlanExhaustedParks(t *testing.T) {
 		t.Fatal("a 100% exhausted pool must park the account")
 	}
 }
+
+func TestParseXiaomiTokenPlanExpiryField(t *testing.T) {
+	// API response includes expireTime — parser must use it, not "next month boundary".
+	body := []byte(`{"code":0,"data":{"monthUsage":{"percent":0.29,"items":[{"name":"month_total_token","used":1200000000,"limit":4100000000,"percent":0.29}]},"expireTime":"2026-10-21T23:59:59Z"}}`)
+	windows, _, errMsg := parseXiaomiTokenPlan(body, 200)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if len(windows) != 1 {
+		t.Fatalf("want 1 window, got %d", len(windows))
+	}
+	if windows[0].Resets == nil {
+		t.Fatal("resets should not be nil when expireTime is present")
+	}
+	want := time.Date(2026, 10, 21, 23, 59, 59, 0, time.UTC)
+	if !windows[0].Resets.Equal(want) {
+		t.Fatalf("resets = %v, want %v", windows[0].Resets, want)
+	}
+}
+
+func TestParseXiaomiTokenPlanExpiryUnixMs(t *testing.T) {
+	// expireTime as Unix milliseconds (common in Chinese APIs).
+	// 1761100799000 ms = 2025-10-22T02:39:59Z
+	body := []byte(`{"code":0,"data":{"monthUsage":{"percent":0.5,"items":[{"name":"month_total_token","used":2050000000,"limit":4100000000,"percent":0.5}]},"expireTime":1761100799000}}`)
+	windows, _, errMsg := parseXiaomiTokenPlan(body, 200)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if windows[0].Resets == nil {
+		t.Fatal("resets should not be nil")
+	}
+	want := time.Date(2025, 10, 22, 2, 39, 59, 0, time.UTC)
+	if !windows[0].Resets.Equal(want) {
+		t.Fatalf("resets = %v, want %v", windows[0].Resets, want)
+	}
+}
+
+func TestParseXiaomiTokenPlanNoExpiryFallsBack(t *testing.T) {
+	// No expireTime field — fallback to next month boundary.
+	body := []byte(`{"code":0,"data":{"monthUsage":{"percent":0.1,"items":[{"name":"month_total_token","used":410000000,"limit":4100000000,"percent":0.1}]}}}`)
+	windows, _, errMsg := parseXiaomiTokenPlan(body, 200)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if windows[0].Resets == nil {
+		t.Fatal("resets should not be nil")
+	}
+	// Should be 1st of next month UTC.
+	now := time.Now().UTC()
+	y, m, _ := now.Date()
+	want := time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC)
+	if !windows[0].Resets.Equal(want) {
+		t.Fatalf("resets = %v, want %v (fallback to next month)", windows[0].Resets, want)
+	}
+}
