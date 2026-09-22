@@ -202,3 +202,73 @@ func TestCursorSSEStreamComposerChunkSplit(t *testing.T) {
 		}
 	}
 }
+
+// Hybrid marker spellings (ASCII pipe + full-width separator, and vice versa)
+// must parse like the canonical full-width form — OmniRoute tolerates them
+// defensively and a missed marker is a silently dropped tool call.
+func TestComposerParseMixedMarkerSpelling(t *testing.T) {
+	const (
+		ascPipe = "|"
+		fwPipe  = "\uFF5C"
+		ascSep  = "_"
+		fwSep   = "\u2581"
+	)
+	// <|tool_calls▁begin|> — ASCII pipes, full-width separator.
+	mixed1 := "<" + ascPipe + "tool" + fwSep + "calls" + fwSep + "begin" + ascPipe + ">" +
+		"<" + ascPipe + "tool" + fwSep + "call" + fwSep + "begin" + ascPipe + ">" +
+		"run_terminal_cmd" +
+		"<" + ascPipe + "tool" + fwSep + "sep" + ascPipe + ">" + "command\necho hi" +
+		"<" + ascPipe + "tool" + fwSep + "call" + fwSep + "end" + ascPipe + ">" +
+		"<" + ascPipe + "tool" + fwSep + "calls" + fwSep + "end" + ascPipe + ">"
+	// <｜tool_calls▁begin｜> — full-width pipes, ASCII separator.
+	mixed2 := "<" + fwPipe + "tool" + ascSep + "calls" + ascSep + "begin" + fwPipe + ">" +
+		"<" + fwPipe + "tool" + ascSep + "call" + ascSep + "begin" + fwPipe + ">" +
+		"get_weather" +
+		"<" + fwPipe + "tool" + ascSep + "sep" + fwPipe + ">" + "city\nHanoi" +
+		"<" + fwPipe + "tool" + ascSep + "call" + ascSep + "end" + fwPipe + ">" +
+		"<" + fwPipe + "tool" + ascSep + "calls" + ascSep + "end" + fwPipe + ">"
+	for i, text := range []string{mixed1, mixed2} {
+		residual, calls, _ := composerScan(text)
+		if len(calls) != 1 {
+			t.Fatalf("mixed[%d]: want 1 call, got %d", i, len(calls))
+		}
+		if residual != "" {
+			t.Fatalf("mixed[%d]: residual %q", i, residual)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(calls[0].Args), &got); err != nil {
+			t.Fatalf("mixed[%d]: args not JSON: %v", i, err)
+		}
+		if i == 1 && got["city"] != "Hanoi" {
+			t.Fatalf("mixed[%d]: city=%v", i, got["city"])
+		}
+	}
+}
+
+// The protocol-internal <final> wrapper around a composer visible answer must
+// never reach the client; a half-streamed opener holds the chunk back.
+func TestComposerStripFinalSentinel(t *testing.T) {
+	const fwPipe = "\uFF5C"
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"<" + fwPipe + "final" + fwPipe + ">OK<" + fwPipe + "/final" + fwPipe + ">", "OK"},
+		{"<|final|>OK<|/final|>", "OK"},
+		{"plain", "plain"},
+		{"<p>tag</p>", "<p>tag</p>"}, // not a sentinel: no pipe after "<"
+		{"<", ""},                    // partial opener: hold back
+		{"<" + fwPipe + "fin", ""},   // partial full-width opener: hold back
+	}
+	for _, c := range cases {
+		if got := stripComposerFinal(c.in); got != c.want {
+			t.Fatalf("stripComposerFinal(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	// The full pipeline: sentinel-wrapped visible content flows through
+	// visibleComposerContent with the marker junk removed.
+	vis := visibleComposerContent("secret reasoning\n\n" + composerThinkEnd + "<" + fwPipe + "final" + fwPipe + ">OK<" + fwPipe + "/final" + fwPipe + ">")
+	if vis != "OK" {
+		t.Fatalf("visibleComposerContent leaked sentinel/reasoning: %q", vis)
+	}
+}
