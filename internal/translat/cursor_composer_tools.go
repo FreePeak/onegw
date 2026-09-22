@@ -22,7 +22,11 @@ package translat
 // — the client then echoed the literal marker text back.
 //
 // Markers use full-width pipes (U+FF5C) and the small-triangle separator
-// (U+2581); the ASCII `<|tool_calls_begin|>` spelling is accepted defensively.
+// (U+2581); ASCII pipes/underscores and ANY mix of the two spellings parse
+// identically (composerMarkerAt folds each rune before comparing — OmniRoute
+// tolerates hybrids defensively and so do we). The visible answer may also
+// arrive wrapped in protocol-internal <final> sentinels (full-width or ASCII
+// pipes), which stripComposerFinal removes so they never reach the client.
 //
 // Ported from the read-only reference OmniRoute/open-sse/utils/
 // composerToolCalls.ts.
@@ -30,6 +34,7 @@ package translat
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 )
 
 // Composer marker fragments.
@@ -45,16 +50,44 @@ const (
 	composerThinkEnd = "</think>"
 )
 
-// composerMarkerFold normalizes the ASCII pipe spelling (`<|tool_calls_begin|>`)
-// onto the full-width form the parser scans for. Cursor has used both, and a
-// missed marker means a silently dropped tool call — the bug this file fixes.
-var composerMarkerFold = strings.NewReplacer(
-	"<|tool_calls_begin|>", composerCallsBegin,
-	"<|tool_calls_end|>", composerCallsEnd,
-	"<|tool_call_begin|>", composerCallBegin,
-	"<|tool_call_end|>", composerCallEnd,
-	"<|tool_sep|>", composerArgSep,
-)
+// composerCanonFold maps one rune onto the canonical marker spelling: ASCII
+// pipe (|) and underscore (_) become the full-width forms Cursor's markers
+// use (U+FF5C pipe, U+2581 separator), so <|tool_calls_begin|>, its
+// all-full-width twin, and every hybrid of the two all scan as the same
+// marker. A missed marker is a silently dropped tool call — the bug this
+// file exists to prevent.
+func composerCanonFold(r rune) rune {
+	switch r {
+	case '|':
+		return '\uFF5C'
+	case '_':
+		return '\u2581'
+	}
+	return r
+}
+
+// composerMarkerAt reports whether the canonical full-width marker begins at
+// byte offset i of s, tolerant of ASCII pipe/underscore spellings, and the
+// byte offset just past it. Scanning stays byte-based so a frame that splits
+// a multibyte rune mid-way never fabricates a match (DecodeRuneInString
+// yields RuneError for the broken tail, which no marker rune folds to).
+func composerMarkerAt(s string, i int, marker []rune) (bool, int) {
+	off := i
+	for j := range marker {
+		if off >= len(s) {
+			return false, i
+		}
+		r, sz := utf8.DecodeRuneInString(s[off:])
+		if r == utf8.RuneError && sz == 1 {
+			return false, i
+		}
+		if composerCanonFold(r) != marker[j] {
+			return false, i
+		}
+		off += sz
+	}
+	return true, off
+}
 
 // composerCall is one parsed inline invocation.
 type composerCall struct {
@@ -72,45 +105,78 @@ type composerCall struct {
 // must not be fabricated into a real one. Inside a closed block, a truncated
 // inner call is dropped rather than guessed at.
 func composerScan(text string) (string, []composerCall, int) {
-	folded := composerMarkerFold.Replace(text)
+	callsBegin := []rune(composerCallsBegin)
+	callsEnd := []rune(composerCallsEnd)
 	var b strings.Builder
 	var calls []composerCall
 	pos := 0
 	for {
-		open := strings.Index(folded[pos:], composerCallsBegin)
+		open := -1
+		beginEnd := pos
+		for i := pos; i < len(text); i++ {
+			if ok, end := composerMarkerAt(text, i, callsBegin); ok {
+				open = i
+				beginEnd = end
+				break
+			}
+		}
 		if open < 0 {
-			b.WriteString(folded[pos:])
+			b.WriteString(text[pos:])
 			return b.String(), calls, -1
 		}
-		open += pos
-		b.WriteString(folded[pos:open])
-		after := folded[open+len(composerCallsBegin):]
-		rel := strings.Index(after, composerCallsEnd)
-		if rel < 0 {
-			return b.String(), calls, open
+		b.WriteString(text[pos:open])
+		rel := -1
+		for i := beginEnd; i < len(text); i++ {
+			if ok, _ := composerMarkerAt(text, i, callsEnd); ok {
+				rel = i - beginEnd
+				break
+			}
 		}
-		calls = append(calls, composerCallsIn(after[:rel])...)
-		pos = open + len(composerCallsBegin) + rel + len(composerCallsEnd)
+		if rel < 0 {
+			return b.String(), calls, b.Len()
+		}
+		calls = append(calls, composerCallsIn(text[beginEnd:beginEnd+rel])...)
+		// Advance past the END marker's REAL bytes (ASCII spelling is shorter
+		// than the canonical full-width form; rel is anchored to the matcher).
+		_, endEnd := composerMarkerAt(text, beginEnd+rel, callsEnd)
+		pos = endEnd
 	}
 }
 
 // composerCallsIn parses every complete inner call of one outer block body.
 func composerCallsIn(block string) []composerCall {
+	callBegin := []rune(composerCallBegin)
+	callEnd := []rune(composerCallEnd)
 	var calls []composerCall
+	rest := block
 	for {
-		cs := strings.Index(block, composerCallBegin)
+		cs := -1
+		for i := 0; i < len(rest); i++ {
+			if ok, _ := composerMarkerAt(rest, i, callBegin); ok {
+				cs = i
+				break
+			}
+		}
 		if cs < 0 {
 			return calls
 		}
-		rest := block[cs+len(composerCallBegin):]
-		ce := strings.Index(rest, composerCallEnd)
+		_, afterCall := composerMarkerAt(rest, cs, callBegin)
+		body := rest[afterCall:]
+		ce := -1
+		for i := 0; i < len(body); i++ {
+			if ok, _ := composerMarkerAt(body, i, callEnd); ok {
+				ce = i
+				break
+			}
+		}
 		if ce < 0 {
 			return calls // truncated body: drop it rather than guess at one
 		}
-		block = rest[ce+len(composerCallEnd):]
-		if name, args := composerCallArgs(rest[:ce]); name != "" {
+		if name, args := composerCallArgs(body[:ce]); name != "" {
 			calls = append(calls, composerCall{Name: name, Args: args})
 		}
+		_, afterCallEnd := composerMarkerAt(body, ce, callEnd)
+		rest = body[afterCallEnd:]
 	}
 }
 
@@ -120,14 +186,35 @@ func composerCallsIn(block string) []composerCall {
 // Body shape: `tool_name\n<sep>arg_name\narg_value\n<sep>arg2\nvalue2`.
 // A segment with no newline is space-delimited (live captures do both).
 func composerCallArgs(body string) (name, args string) {
-	segs := strings.Split(strings.TrimSpace(body), composerArgSep)
+	sep := []rune(composerArgSep)
+	var segs []string
+	scan := strings.TrimSpace(body)
+	for {
+		idx := -1
+		for i := 0; i < len(scan); i++ {
+			if ok, _ := composerMarkerAt(scan, i, sep); ok {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			segs = append(segs, scan)
+			break
+		}
+		_, afterSep := composerMarkerAt(scan, idx, sep)
+		segs = append(segs, scan[:idx])
+		scan = scan[afterSep:]
+	}
+	if len(segs) == 0 {
+		return "", ""
+	}
 	name = strings.TrimSpace(segs[0])
 	if name == "" {
 		return "", ""
 	}
 	obj := map[string]any{}
 	for _, seg := range segs[1:] {
-		if seg == "" {
+		if strings.TrimSpace(seg) == "" {
 			continue
 		}
 		var argName, argValue string
@@ -176,14 +263,81 @@ func composerCoerceArg(raw string) any {
 
 // composerPartialMarkerCut returns the offset at which a trailing fragment that
 // could still grow into an opening marker begins (len(s) when there is none).
-// Frames split markers mid-sequence, and a leaked half-marker (`<｜tool▁cal`) shows
-// up as junk in the client's transcript, so the caller holds it back one frame.
-// A COMPLETE marker is not a fragment: composerScan reports it as an open block.
+// Frames split markers mid-sequence — in either spelling — and a leaked
+// half-marker shows up as junk in the client's transcript, so the caller holds
+// it back one frame. A COMPLETE marker is not a fragment: composerScan reports
+// it as an open block.
 func composerPartialMarkerCut(s string) int {
-	for n := min(len(s), len(composerCallsBegin)-1); n > 0; n-- {
-		if strings.HasSuffix(s, composerCallsBegin[:n]) {
-			return len(s) - n
+	for _, m := range []string{composerCallsBegin, composerCallBegin} {
+		for n := min(len(s), len(m)-1); n > 0; n-- {
+			if strings.HasSuffix(s, m[:n]) {
+				return len(s) - n
+			}
+		}
+		ascii := composerASCIISpelling(m)
+		for n := min(len(s), len(ascii)-1); n > 0; n-- {
+			if strings.HasSuffix(s, ascii[:n]) {
+				return len(s) - n
+			}
 		}
 	}
 	return len(s)
+}
+
+// composerASCIISpelling renders the ASCII-pipe/underscore form of a canonical
+// full-width marker (a 1:1 inverse of composerCanonFold), for partial-marker
+// holdback that must also cover the ASCII spellings.
+func composerASCIISpelling(m string) string {
+	var b strings.Builder
+	for _, r := range m {
+		switch r {
+		case '\uFF5C':
+			b.WriteByte('|')
+		case '\u2581':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// stripComposerFinal removes the protocol-internal <final> wrapper Cursor can
+// put around a composer visible answer — full-width or ASCII pipes
+// (decolua/9router#1316). A PARTIAL opening sentinel holds the whole chunk
+// back so a half-streamed "<" or "<|fin" never leaks as content.
+func stripComposerFinal(s string) string {
+	const openFull = "<\uFF5Cfinal\uFF5C>"
+	const openASCII = "<|final|>"
+	const closeFull = "<\uFF5C/final\uFF5C>"
+	const closeASCII = "<|/final|>"
+	switch {
+	case strings.HasPrefix(s, openFull):
+		s = s[len(openFull):]
+	case strings.HasPrefix(s, openASCII):
+		s = s[len(openASCII):]
+	case isComposerFinalPartial(s):
+		return ""
+	}
+	switch {
+	case strings.HasSuffix(s, closeFull):
+		s = s[:len(s)-len(closeFull)]
+	case strings.HasSuffix(s, closeASCII):
+		s = s[:len(s)-len(closeASCII)]
+	}
+	return strings.TrimSpace(s)
+}
+
+// isComposerFinalPartial reports whether s starts with a not-yet-complete
+// final sentinel ("<", "<|f" cut mid-stream) that the caller must hold back.
+// A "<" followed by anything but a pipe (e.g. "<div>") is NOT a sentinel.
+func isComposerFinalPartial(s string) bool {
+	if !strings.HasPrefix(s, "<") {
+		return false
+	}
+	rest := s[1:]
+	if rest == "" {
+		return true
+	}
+	return (strings.HasPrefix(rest, "\uFF5C") || rest[0] == '|') && !strings.Contains(rest, ">")
 }

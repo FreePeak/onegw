@@ -214,6 +214,44 @@ func TestEncodeCursorAgentRequestRewritesAutoLane(t *testing.T) {
 	}
 }
 
+// TestEncodeCursorAutoToolsRouteChatService pins the DSH-facing path: when
+// cursor/auto carries tools, the encoder must route to ChatService and rewrite
+// the model to "default" on the wire (auto is not a real Cursor id; sending it
+// verbatim ends the turn with zero content). Without this, a DSH tools request
+// hits AgentService which drops the schemas and returns a text-only answer.
+func TestEncodeCursorAutoToolsRouteChatService(t *testing.T) {
+	u := &types.ChatRequest{
+		Model: "auto",
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "hi"}}},
+		},
+		Tools: []types.Tool{{Name: "get_weather", Schema: []byte(`{"type":"object"}`)}},
+	}
+	body, err := EncodeCursorChatRequest(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ChatService wire: model rides in Model{1} under field 5.
+	f, err := pbDecode(body[5:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, _ := pbGet(f, 1)
+	cr, err := pbDecode(inner.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmf, _ := pbGet(cr, 5)
+	cmm, _ := pbDecode(cmf.Value)
+	if got := pbFirst(cmm, 1); got != "default" {
+		t.Fatalf("auto+tools ChatService wire model must be 'default', got %q", got)
+	}
+	// Tool defs must be present (field 34).
+	if _, ok := pbGet(cr, 34); !ok {
+		t.Fatal("ChatService tool defs (field 34) missing for auto+tools")
+	}
+}
+
 func TestEncodeCursorChatRequestCarriesTools(t *testing.T) {
 	u := &types.ChatRequest{
 		Model:    "claude-4.5-haiku",
@@ -774,4 +812,221 @@ func TestCursorSSEStreamFlushesBeforeStreamEnd(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("no chunk within 3s while the upstream stream is still open: CursorSSEStream buffers until stream end (missing flush)")
 	}
+}
+
+// TestEncodeCursorAgentRequestFoldsHoistedSystem pins the DECODER-shaped
+// system (hoisted into u.System, not Messages): without the fold the whole
+// system prompt was silently dropped on the AgentService lane (the old test
+// only covered a hand-built RoleSystem message — dead code).
+func TestEncodeCursorAgentRequestFoldsHoistedSystem(t *testing.T) {
+	u := &types.ChatRequest{
+		Model:  "gpt-5.2",
+		System: []types.Part{{Type: types.PartText, Text: "Be terse."}},
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "Reply PONG"}}},
+		},
+	}
+	body, err := EncodeCursorAgentRequest(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := pbDecode(body[5:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rrF, _ := pbGet(f, 1)
+	rr, _ := pbDecode(rrF.Value)
+	if _, has8 := pbGet(rr, 8); has8 {
+		t.Fatal("run request must NOT carry field 8")
+	}
+	conv, _ := pbGet(rr, 2)
+	ua, _ := pbDecode(conv.Value)
+	umf, _ := pbGet(ua, 1)
+	um, _ := pbDecode(umf.Value)
+	text := pbFirst(um, 1)
+	if !strings.Contains(text, "Be terse.") || !strings.Contains(text, "Reply PONG") {
+		t.Fatalf("hoisted system must fold into the user turn, got %q", text)
+	}
+}
+
+// TestEncodeCursorChatRequestFoldsSystemAndDirective covers the ChatService
+// lane: hoisted system + the tool-commit directive (RC3) must land in the
+// first plain user turn; tool_choice:"required" adds the MUST-call line; the
+// system prompt must NOT be lost (every other translator reads u.System; the
+// cursor encoder previously dropped it on both lanes).
+func TestEncodeCursorChatRequestFoldsSystemAndDirective(t *testing.T) {
+	u := &types.ChatRequest{
+		Model:  "composer-2.5",
+		System: []types.Part{{Type: types.PartText, Text: "You are a weather agent."}},
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "weather in Hanoi?"}}},
+		},
+		Tools:      []types.Tool{{Name: "get_weather", Schema: []byte(`{"type":"object"}`)}},
+		ToolChoice: types.ToolChoiceAny,
+	}
+	body, err := EncodeCursorChatRequest(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := chatMessage(t, body, 0)
+	if !ok {
+		t.Fatal("first message missing")
+	}
+	text := pbFirst(first, 1)
+	for _, want := range []string{
+		"You are a weather agent.",
+		"You are serving an OpenAI-compatible API request",
+		"MUST call at least one of the available tools now",
+		"weather in Hanoi?",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("first user turn must carry %q, got %q", want, text)
+		}
+	}
+
+	// No tools declared → no directive (a plain text turn stays clean).
+	u2 := &types.ChatRequest{
+		Model:    "composer-2.5",
+		Messages: []types.Message{{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "hi"}}}},
+	}
+	body2, err := EncodeCursorChatRequest(u2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, _ := chatMessage(t, body2, 0)
+	if s := pbFirst(m2, 1); strings.Contains(s, "You are serving an OpenAI-compatible") {
+		t.Fatalf("directive must not appear without tools, got %q", s)
+	}
+}
+
+// TestCursorToolDirectiveComposerOnlyLine verifies that the composer-only
+// "emit the invocation block" line appears for composer-2.5 but NOT for auto.
+// Without this nudge composer narrates "I will call the tool…" on ~31% of
+// turns; the line lifts it to ~80%.
+func TestCursorToolDirectiveComposerOnlyLine(t *testing.T) {
+	// Composer model: must contain the block-format instruction.
+	u := &types.ChatRequest{
+		Model:  "composer-2.5",
+		Tools:  []types.Tool{{Name: "get_weather", Schema: []byte(`{"type":"object"}`)}},
+		System: []types.Part{{Type: types.PartText, Text: "Be terse."}},
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "hi"}}},
+		},
+	}
+	directive := cursorToolDirective(u)
+	if !strings.Contains(directive, "emit the invocation block") {
+		t.Fatalf("composer-2.5 directive must contain the block-format line, got:\n%s", directive)
+	}
+	// Non-composer model: must NOT contain the block-format instruction.
+	u2 := &types.ChatRequest{
+		Model:  "auto",
+		Tools:  []types.Tool{{Name: "get_weather", Schema: []byte(`{"type":"object"}`)}},
+		Messages: []types.Message{
+			{Role: types.RoleUser, Content: []types.Part{{Type: types.PartText, Text: "hi"}}},
+		},
+	}
+	directive2 := cursorToolDirective(u2)
+	if strings.Contains(directive2, "emit the invocation block") {
+		t.Fatalf("auto directive must NOT contain the block-format line, got:\n%s", directive2)
+	}
+}
+
+// TestEncodeCursorChatRequestSendsToolResults pins RC1: a tool result from the
+// follow-up turn must ride as ConversationMessage.ToolResult (field 18) with a
+// full echo (call id, name, MCPResult body), not as unattached prose — that
+// was the agentic-loop breaker.
+func TestEncodeCursorChatRequestSendsToolResults(t *testing.T) {
+	u := &types.ChatRequest{
+		Model: "composer-2.5",
+		Messages: []types.Message{
+			{Role: types.RoleAssistant, Content: []types.Part{
+				{Type: types.PartToolUse, ID: "call_abc", Name: "get_weather", Args: []byte(`{"city":"Hanoi"}`)},
+			}},
+			{Role: types.RoleUser, Name: "get_weather", ToolCallID: "call_abc", Content: []types.Part{
+				{Type: types.PartToolResult, ToolUseID: "call_abc", Text: "sunny 32C"},
+			}},
+		},
+		Tools: []types.Tool{{Name: "get_weather", Schema: []byte(`{"type":"object"}`)}},
+	}
+	body, err := EncodeCursorChatRequest(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Second message: the tool result.
+	resultMsg, ok := chatMessage(t, body, 1)
+	if !ok {
+		t.Fatal("tool-result message missing")
+	}
+	if strings.Contains(pbFirst(resultMsg, 1), "sunny 32C") {
+		t.Fatal("tool result text must not ride the content field (it lives in field 18)")
+	}
+	trField, ok := pbGet(resultMsg, cuMsgToolResults)
+	if !ok {
+		t.Fatal("ConversationMessage.ToolResult (field 18) missing")
+	}
+	tr, err := pbDecode(trField.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pbFirst(tr, trCallID); got != "call_abc" {
+		t.Fatalf("tool_call_id: %q", got)
+	}
+	if got := pbFirst(tr, trName); got != "get_weather" {
+		t.Fatalf("tool_name: %q", got)
+	}
+	// field 8 = ClientSideToolV2Result {28: MCPResult{1: selected_tool, 2: result}}.
+	resField, _ := pbGet(tr, trResult)
+	res, err := pbDecode(resField.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := pbGet(res, cv2Tool); v.Num64 != clientSideToolV2 {
+		t.Fatalf("ClientSideToolV2Result.tool must be 19 (MCP), got %d", v.Num64)
+	}
+	mcpField, _ := pbGet(res, cv2MCPResult)
+	mcp, err := pbDecode(mcpField.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pbFirst(mcp, mcpResultSelected); got != "get_weather" {
+		t.Fatalf("selected_tool: %q", got)
+	}
+	if got := pbFirst(mcp, mcpResultContent); got != "sunny 32C" {
+		t.Fatalf("result: %q", got)
+	}
+	if got := pbFirst(res, cv2ResultCallID); got != "call_abc" {
+		t.Fatalf("ClientSideToolV2Result.call_id: %q", got)
+	}
+}
+
+// chatMessage decodes the i-th ConversationMessage of a ChatService request.
+func chatMessage(t *testing.T, body []byte, i int) ([]pbField, bool) {
+	t.Helper()
+	f, err := pbDecode(body[5:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, ok := pbGet(f, 1)
+	if !ok {
+		return nil, false
+	}
+	req, err := pbDecode(wrapped.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, fd := range req {
+		if fd.Num != 1 {
+			continue
+		}
+		if n == i {
+			msg, err := pbDecode(fd.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return msg, true
+		}
+		n++
+	}
+	return nil, false
 }

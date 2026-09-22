@@ -380,6 +380,36 @@ targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/dee
 # context = 200000
 # max_out = 64000
 
+# --- Cursor (no-account; AgentService + ChatService) -------------------------
+# kind = "cursor" translates OpenAI-format requests onto Cursor's Connect-RPC
+# endpoints. It needs NO api_key and NO accounts (onegw model discovery returns
+# a curated catalog — ListModels/GetModels return 404 upstream; model rows with
+# zero accounts short-circuit into the catalog, see AGENTS.md).
+#
+#   • text lane:  AgentService /agent.v1.AgentService/Run (h2 full-duplex)
+#   • tools lane: ChatService /aiserver.v1.ChatService/StreamUnifiedChatWithTools
+#                 (composer-* models; tools + follow-up tool results only work
+#                 here — 9router routes composer/auto there for the same reason)
+#
+# Routes by id: composer*/thinking ids -> ChatService (tools), anything else ->
+# AgentService. Model ids keep their bare last segment ("composer-2.5", or
+# "auto"/"default" for the agent lane).
+#
+# The translator folds your OpenAI `system` message into the first user turn
+# (both lanes; Cursor's protos have no system slot), prepends a tool-commit
+# directive when tools are declared (composer-2.5 otherwise narrates intent
+# and ends ~20% of tool turns without calling), sends follow-up tool results
+# as proper field-18 ToolResult blobs so the agentic loop survives, and strips
+# Cursor's protocol-internal <final> / <|final|> markers from streamed answers.
+#
+# [[providers]]
+# name = "cursor"
+# kind = "cursor"
+# models = [
+#   "composer-2.5",           # ChatService / tools lane
+#   "gpt-5.2-codex",          # AgentService text lane
+# ]
+#
 # --- OAuth device-flow accounts (issue #2) ----------------------------------
 # Subscription providers (xAI/Grok, Kilo Code) log in with a device flow:
 # `onegw-oauth login -provider xai -account main`. The token is stored in

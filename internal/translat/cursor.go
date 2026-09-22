@@ -541,6 +541,14 @@ func EncodeCursorAgentRequest(u *types.ChatRequest) ([]byte, error) {
 		return nil, fmt.Errorf("cursor: empty messages")
 	}
 	var sys, convo []string
+	// System is hoisted out of Messages in the unified model; without this the
+	// AgentService turn lost the whole system prompt (field 8 is forbidden, so
+	// it must fold into the user text — live-verified rule, see file header).
+	for _, p := range u.System {
+		if p.Type == types.PartText && strings.TrimSpace(p.Text) != "" {
+			sys = append(sys, p.Text)
+		}
+	}
 	for i := range u.Messages {
 		m := &u.Messages[i]
 		switch m.Role {
@@ -616,6 +624,168 @@ const (
 	cuModeAgent     = 2
 )
 
+// ---------------------------------------------------------------------------
+// ChatService tool-result encoding (9router cursorProtobuf.js constants,
+// cross-checked against cursor-api's Rust proto: ConversationMessage.ToolResult
+// rides field 18; the nested ClientSideToolV2Result + call echo link the
+// result back to the model's own invocation so the agentic loop survives a
+// follow-up request).
+// ---------------------------------------------------------------------------
+
+const (
+	cuMsgToolResults   = 18 // ConversationMessage.ToolResult (repeated)
+	trCallID           = 1  // ToolResult.tool_call_id
+	trName             = 2  // ToolResult.tool_name
+	trIndex            = 3  // ToolResult.tool_index
+	trRawArgs          = 5  // ToolResult.raw_args (original call arguments)
+	trResult           = 8  // ToolResult.result (ClientSideToolV2Result)
+	trToolCall         = 11 // ToolResult.tool_call (ClientSideToolV2Call echo)
+	clientSideToolV2   = 19 // CLIENT_SIDE_TOOL_V2.MCP
+	cv2Tool            = 1  // ClientSideToolV2*.tool (varint clientSideToolV2)
+	cv2MCPParams       = 27 // ClientSideToolV2Call.mcp_params
+	cv2CallID          = 3  // ClientSideToolV2Call.call_id
+	cv2Name            = 9  // ClientSideToolV2Call.name
+	cv2RawArgs         = 10 // ClientSideToolV2Call.raw_args
+	cv2ToolIndex       = 48 // ClientSideToolV2Call.tool_index
+	cv2MCPResult       = 28 // ClientSideToolV2Result.mcp_result
+	cv2ResultCallID    = 35 // ClientSideToolV2Result.call_id
+	cv2ResultToolIndex = 49 // ClientSideToolV2Result.tool_index
+	mcpResultSelected  = 1  // MCPResult.selected_tool
+	mcpResultContent   = 2  // MCPResult.result
+)
+
+// encodeMcpResult renders MCPResult {1: selected_tool, 2: result}.
+func encodeMcpResult(selectedTool, result string) []byte {
+	var r []byte
+	r = pbString(r, mcpResultSelected, selectedTool)
+	r = pbString(r, mcpResultContent, result)
+	return r
+}
+
+// encodeClientSideToolV2Result renders the result half of a tool turn:
+// {1: tool=19(MCP), 28: MCPResult, 35: call_id, 49: tool_index}.
+func encodeClientSideToolV2Result(callID, selectedTool, result string) []byte {
+	var b []byte
+	b = pbUvarint(b, cv2Tool, clientSideToolV2)
+	b = pbBytes(b, cv2MCPResult, encodeMcpResult(selectedTool, result))
+	b = pbString(b, cv2ResultCallID, callID)
+	b = pbUvarint(b, cv2ResultToolIndex, 1)
+	return b
+}
+
+// encodeMcpParamsForCall renders MCPParams.tools[0] {1: name, 3: raw_args,
+// 4: server "custom"} — the same nested shape encodeMcpTool declares upstream,
+// so the echoed call matches the original MCP tool blob.
+func encodeMcpParamsForCall(name, rawArgs string) []byte {
+	var t []byte
+	t = pbString(t, 1, name)
+	t = pbString(t, 3, rawArgs)
+	t = pbString(t, 4, "custom")
+	return pbBytes(nil, 1, t)
+}
+
+// encodeClientSideToolV2Call renders the call echo Cursor uses to correlate a
+// result with its invocation: {1: tool=19, 27: MCPParams, 3: call_id, 9: name,
+// 10: raw_args, 48: tool_index}.
+func encodeClientSideToolV2Call(callID, name, rawArgs string) []byte {
+	var b []byte
+	b = pbUvarint(b, cv2Tool, clientSideToolV2)
+	b = pbBytes(b, cv2MCPParams, encodeMcpParamsForCall(name, rawArgs))
+	b = pbString(b, cv2CallID, callID)
+	b = pbString(b, cv2Name, name)
+	b = pbString(b, cv2RawArgs, rawArgs)
+	b = pbUvarint(b, cv2ToolIndex, 1)
+	return b
+}
+
+// encodeToolResult renders one ConversationMessage.ToolResult: the call id +
+// name echoed plainly (unified names are already bare — no mcp_custom_ prefix
+// gymnastics needed), raw_args defaults to "{}" because a follow-up tool
+// message does not carry the original call's arguments, and the result body
+// rides field 8/11 so Cursor can continue the exact agentic turn.
+func encodeToolResult(name, callID, rawArgs, result string) []byte {
+	if callID == "" {
+		callID = name
+	}
+	if name == "" {
+		name = callID
+	}
+	if rawArgs == "" || rawArgs == "null" {
+		rawArgs = "{}"
+	}
+	var b []byte
+	b = pbString(b, trCallID, callID)
+	b = pbString(b, trName, name)
+	b = pbUvarint(b, trIndex, 1)
+	b = pbString(b, trRawArgs, rawArgs)
+	b = pbBytes(b, trResult, encodeClientSideToolV2Result(callID, name, result))
+	b = pbBytes(b, trToolCall, encodeClientSideToolV2Call(callID, name, rawArgs))
+	return b
+}
+
+// cursorToolDirective builds the tool-commit block prepended to the first
+// user turn whenever the request declares tools: OmniRoute's
+// TOOL_COMMIT_DIRECTIVE verbatim (without it, composer-2.5 narrates intent
+// and ends ~20% of tool turns without invoking — live A/B 56%→69% with it),
+// plus tool_choice and output-constraint lines Cursor's request proto has no
+// native field for (response_format / max_tokens / stop surface as prompt
+// rules — directToolChoiceHint / appendChatOptions port).
+func cursorToolDirective(u *types.ChatRequest) string {
+	var b strings.Builder
+	b.WriteString("You are serving an OpenAI-compatible API request and the client has provided executable tools.\n")
+	b.WriteString("When a tool is needed to answer (real-time data, web/search lookups, file or project operations), you MUST issue the actual tool call. Do NOT describe what you are about to do as prose and then stop — call the tool.\n")
+	b.WriteString("Answer directly only when no tool is needed.\n")
+	b.WriteString("Do not emit duplicate tool calls: call each operation once, then continue after the tool result is returned.\n")
+	b.WriteString("Never claim that tools are unavailable.")
+	// Composer-only: the IDE composer family does not return protobuf tool
+	// calls — it writes the invocation into visible text using marker blocks.
+	// Without this extra line, ~31% of turns end as narration ("I will call
+	// the tool…") without actually emitting a block. Live A/B: this nudges
+	// the rate from 69% → ~80%.
+	if cursorComposerModel(u.Model) {
+		b.WriteString("\nWhen calling a tool, emit the invocation block directly. Do NOT describe the call in prose — just write the tool name and arguments in the invocation format.")
+	}
+	switch tc := u.ToolChoice.(type) {
+	case types.ToolChoiceTool:
+		if tc.Name != "" {
+			b.WriteString("\n\nYou MUST call the `" + tc.Name + "` tool now and not any other tool.")
+		}
+	case types.ToolChoiceMode:
+		if tc == types.ToolChoiceAny {
+			b.WriteString("\n\nYou MUST call at least one of the available tools now; do not answer without calling a tool.")
+		}
+	}
+	if cons := cursorOutputConstraints(u); cons != "" {
+		b.WriteString("\n\nOUTPUT CONSTRAINTS:\n" + cons)
+	}
+	return b.String()
+}
+
+// cursorOutputConstraints renders max_tokens / stop / response_format as
+// prompt instructions (OmniRoute buildCursorOutputConstraints port).
+func cursorOutputConstraints(u *types.ChatRequest) string {
+	var cs []string
+	if u.MaxTokens > 0 {
+		cs = append(cs, fmt.Sprintf("Keep the answer within about %d output tokens.", u.MaxTokens))
+	}
+	if len(u.StopSequences) == 1 {
+		cs = append(cs, "Do not include any text at or after this stop sequence: "+u.StopSequences[0])
+	} else if len(u.StopSequences) > 1 {
+		cs = append(cs, "Stop before any of these sequences: "+strings.Join(u.StopSequences, ", "))
+	}
+	if u.ResponseFormat != nil {
+		switch u.ResponseFormat.Type {
+		case "json_object":
+			cs = append(cs, "Return a single valid JSON object and no surrounding prose or code fences.")
+		case "json_schema":
+			if u.ResponseFormat.Schema != nil {
+				cs = append(cs, "Return only valid JSON (no prose or code fences) matching this schema: "+string(u.ResponseFormat.Schema))
+			}
+		}
+	}
+	return strings.Join(cs, "\n")
+}
+
 // cursorThinkingLevel maps reasoning_effort onto the ChatService enum
 // (UNSPECIFIED/MEDIUM/HIGH — 9router THINKING_LEVEL).
 func cursorThinkingLevel(effort string) uint64 {
@@ -632,7 +802,14 @@ func cursorThinkingLevel(effort string) uint64 {
 // EncodeCursorChatRequest renders the unified request as ChatService bytes:
 // StreamUnifiedChatRequestWithTools {1: StreamUnifiedChatRequest}. Message
 // roles map user→USER, everything else→ASSISTANT (9router encodeRequest
-// wire behavior, verified upstream-tolerant). Tool defs ride as MCP blobs.
+// wire behavior, verified upstream-tolerant). Tool defs ride as MCP blobs
+// (field 34); tool RESULTS from prior turns ride as ConversationMessage
+// ToolResult blobs (field 18, 9router encodeToolResult shape) so the agentic
+// loop survives a follow-up request — without them Cursor sees the result as
+// unattached prose and repeats or abandons the call. System is hoisted out of
+// Messages in the unified model, so it is folded into the first plain user
+// turn (ChatService has no system slot), alongside the tool-commit directive
+// when tools are declared.
 func EncodeCursorChatRequest(u *types.ChatRequest) ([]byte, error) {
 	if len(u.Messages) == 0 {
 		return nil, fmt.Errorf("cursor: empty messages")
@@ -641,6 +818,56 @@ func EncodeCursorChatRequest(u *types.ChatRequest) ([]byte, error) {
 	mode := uint64(cuModeChat)
 	if hasTools {
 		mode = cuModeAgent
+	}
+
+	// textOf flattens only PartText parts: PartToolResult text rides field 18,
+	// never the content field (duplicating it muddies the model's context).
+	textOf := func(m *types.Message) string {
+		seen := false
+		var b strings.Builder
+		for _, p := range m.Content {
+			if p.Type != types.PartText {
+				continue
+			}
+			if seen {
+				b.WriteByte('\n')
+			}
+			seen = true
+			b.WriteString(p.Text)
+		}
+		return b.String()
+	}
+
+	// Fold hoisted system + the tool-commit directive into the FIRST plain
+	// user turn (OmniRoute TOOL_COMMIT_DIRECTIVE, live A/B 56%→69% tool calls:
+	// composer-2.5 otherwise narrates intent and ends ~20% of turns without
+	// invoking a declared tool).
+	prefix := ""
+	if len(u.System) > 0 {
+		var sys []string
+		for _, p := range u.System {
+			if p.Type == types.PartText && strings.TrimSpace(p.Text) != "" {
+				sys = append(sys, p.Text)
+			}
+		}
+		prefix = strings.Join(sys, "\n\n")
+	}
+	if hasTools {
+		if d := cursorToolDirective(u); d != "" {
+			if prefix != "" {
+				prefix += "\n\n"
+			}
+			prefix += d
+		}
+	}
+	firstUser := -1
+	if prefix != "" {
+		for i := range u.Messages {
+			if u.Messages[i].Role == types.RoleUser && textOf(&u.Messages[i]) != "" {
+				firstUser = i
+				break
+			}
+		}
 	}
 
 	var req []byte
@@ -652,16 +879,34 @@ func EncodeCursorChatRequest(u *types.ChatRequest) ([]byte, error) {
 	for i := range u.Messages {
 		m := &u.Messages[i]
 		role := uint64(cuRoleUser)
-		if m.Role != types.RoleUser {
+		if m.Role == types.RoleAssistant {
 			role = cuRoleAssistant
 		}
+		content := textOf(m)
+		if i == firstUser {
+			content = prefix + "\n\n" + content
+		}
 		var msg []byte
-		msg = pbString(msg, 1, m.FlattenText()) // content
-		msg = pbUvarint(msg, 2, role)           // role
+		msg = pbString(msg, 1, content) // content
+		msg = pbUvarint(msg, 2, role)   // role
 		id := cursorUUID()
 		msg = pbString(msg, 13, id) // message id
 		msg = pbUvarint(msg, 29, boolUint(hasTools))
 		msg = pbUvarint(msg, 47, mode)
+		for _, p := range m.Content {
+			if p.Type != types.PartToolResult {
+				continue
+			}
+			name := p.Name
+			if name == "" {
+				name = m.Name
+			}
+			callID := p.ToolUseID
+			if callID == "" {
+				callID = m.ToolCallID
+			}
+			msg = pbBytes(msg, cuMsgToolResults, encodeToolResult(name, callID, string(p.Args), p.Text))
+		}
 		req = pbBytes(req, 1, msg)
 		ids = append(ids, msgID{id: id, role: role})
 	}
@@ -830,7 +1075,7 @@ func visibleComposerContent(thinking string) string {
 	if i < 0 {
 		return ""
 	}
-	return strings.TrimLeft(thinking[i+len(endTag):], " \t\r\n")
+	return stripComposerFinal(strings.TrimLeft(thinking[i+len(endTag):], " \t\r\n"))
 }
 
 // CursorChatEvents decodes one ChatService StreamUnifiedChatResponseWithTools
@@ -1012,39 +1257,6 @@ func DecodeCursorError(body []byte, status int) *types.APIError {
 		msg = msg[:512]
 	}
 	return &types.APIError{Status: 502, Type: "upstream_error", Message: msg}
-}
-
-// composerToolName returns the name of the i-th parsed inline call ("" when it
-// cannot be decoded — the caller substitutes unknownToolName).
-func composerToolName(vis string, i int) string {
-	folded := composerMarkerFold.Replace(vis)
-	open := strings.Index(folded, composerCallsBegin)
-	if open < 0 {
-		return ""
-	}
-	closeIdx := strings.Index(folded[open:], composerCallsEnd)
-	if closeIdx < 0 {
-		return ""
-	}
-	block := folded[open+len(composerCallsBegin) : open+closeIdx]
-	n := 0
-	for {
-		cs := strings.Index(block, composerCallBegin)
-		if cs < 0 {
-			return ""
-		}
-		ce := strings.Index(block[cs:], composerCallEnd)
-		if ce < 0 {
-			return ""
-		}
-		body := block[cs+len(composerCallBegin) : cs+ce]
-		block = block[cs+ce+len(composerCallEnd):]
-		if n == i {
-			name, _ := composerCallArgs(body)
-			return name
-		}
-		n++
-	}
 }
 
 // composerToolCallID synthesizes the OpenAI-shaped id for an inline composer
