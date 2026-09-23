@@ -86,3 +86,28 @@ credential was ever exposed, say so plainly and recommend rotation at the
 issuer (signing out of the provider web session invalidates browser-session
 JWTs) instead of quietly rewriting history.
 
+## 7. A leak in an open PR: scrub the commits, never close the PR or the branch
+
+If a credential is found in an already-pushed PR, **keep the PR open and keep
+the branch alive**. Closing either does not un-publish anything: the blob stays
+in GitHub's object store, in forks and caches, and a closed PR loses the audit
+trail that shows the leak was found and fixed. Updating the commit and force
+pushing is the only action that actually removes the content from the branch ref.
+
+1. Rewrite the offending commit locally (`git commit --amend` on the tip, or
+   `git rebase -i` to reach an older commit). Do NOT create a "remove the secret"
+   commit — that leaves the secret in history.
+2. Push with `git push --force-with-lease`, never bare `--force`. On a linear
+   branch this is a fast-forward, so it carries no rewrite risk; the lease guard
+   stops the push if someone else moved the ref.
+3. Re-run the §6 audit against the **remote** state and the PR payload, not just
+   the local tree. Confirm `blobs containing a live credential: 0` before
+   reporting done.
+4. Still tell the user plainly what was exposed and **rotate it at the issuer**.
+   Force push removes the copy in the branch; it cannot un-compromise a secret
+   that already left the machine. Rotation is the actual fix.
+
+State the outcome honestly: if the audit finds nothing, say so and do not
+manufacture a rewrite. Perform no history surgery that removes nothing.
+
+
