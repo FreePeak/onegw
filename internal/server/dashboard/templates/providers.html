@@ -17,6 +17,7 @@
     <h3 class="normal-case text-[14px] tracking-[-0.01em] text-fg">{{.Name}}</h3>
     {{if .Disabled}}<span class="pill warn">off</span>{{end}}
     <span class="pill ml-auto">{{.Kind}}</span>{{if .Sticky}} <span class="pill">sticky {{.Sticky}}</span>{{end}}
+    {{if .Proxy}}<span class="pill" title="routes through the shared proxy pool">proxy</span>{{end}}
     {{if .TPS}}<span class="pill" title="decode-speed EWMA · {{range .Speeds}}{{.Account}} {{printf "%.0f" .TPS}} · {{end}}">{{printf "%.1f" .TPS}} tok/s</span>{{end}}
     {{if .Attention}}<span class="pill warn">{{.Attention}}</span>{{end}}
     <button class="rowact" data-edit="{{.Name}}" type="button" title="edit provider {{.Name}}" aria-label="edit provider {{.Name}}">
@@ -128,6 +129,16 @@
         <label for="pf-qr">quota limit · requests</label>
         <input id="pf-qr" name="quota_limit_requests" type="number" min="0" inputmode="numeric">
       </div>
+    </div>
+    </details>
+    <details class="acc mt-2" data-acc="edit:proxy">
+    <summary>proxy <span class="text-mut/60">· route through the shared pool (<a href="/admin/ui/proxies">Proxies page</a>)</span></summary>
+    <div class="field mt-2">
+      <label class="chip" style="display:inline-flex;align-items:center;gap:6px">
+        <input id="pf-proxy" name="proxy" type="checkbox" value="true">
+        <span>route this provider through the proxy pool</span>
+      </label>
+      <p class="msub" id="pf-proxynote"></p>
     </div>
     </details>
     <details class="acc mt-2" data-acc="edit:dialect">
@@ -277,6 +288,7 @@
 const PREFILL = {{.Edit}}||[];
 const SERVICES = {{.Services}}||[];
 const PRESETS = {{.Presets}}||[];
+window.PXYURLS = {{.ProxyURLs}}||[];
 (function(){
   const dlg = document.getElementById('pmodal'),
         form = document.getElementById('pform'),
@@ -335,6 +347,10 @@ const PRESETS = {{.Presets}}||[];
     presetSel.value = ''; presetSel.closest('.field').hidden = false;
     document.getElementById('pmodal-title').textContent = 'Add provider';
     document.getElementById('pf-name').disabled = false;
+    document.getElementById('pf-proxynote').textContent =
+      (window.PXYURLS && window.PXYURLS.length)
+        ? window.PXYURLS.length + ' prox' + (window.PXYURLS.length === 1 ? 'y' : 'ies') + ' in the pool — tick to route through them.'
+        : 'no proxy pool configured yet — ticking saves nothing until URLs exist on the Proxies page.';
     dlg.showModal();
   }
   function openEdit(name){
@@ -356,6 +372,11 @@ const PRESETS = {{.Presets}}||[];
     document.getElementById('pf-qw').value = p.quota_window || '';
     document.getElementById('pf-qt').value = p.quota_limit_tokens || '';
     document.getElementById('pf-qr').value = p.quota_limit_requests || '';
+    document.getElementById('pf-proxy').checked = !!p.proxy;
+    document.getElementById('pf-proxynote').textContent =
+      (window.PXYURLS && window.PXYURLS.length)
+        ? window.PXYURLS.length + ' prox' + (window.PXYURLS.length === 1 ? 'y' : 'ies') + ' in the pool — tick to route through them.'
+        : 'no proxy pool configured yet — ticking saves nothing until URLs exist on the Proxies page.';
     (p.accounts || []).forEach(a => accts.appendChild(acctRow(a)));
     dlg.showModal();
   }
@@ -544,6 +565,7 @@ const PRESETS = {{.Presets}}||[];
       accounts: [...accts.children].map(r => ({ name: r.querySelector('.a-name').value.trim(), api_key: r.querySelector('.a-key').value, rpm: parseInt(r.querySelector('.a-rpm').value, 10) || 0, oauth: r.querySelector('.a-oauth').value })),
       quota_limit_tokens: parseInt(document.getElementById('pf-qt').value, 10) || 0,
       quota_limit_requests: parseInt(document.getElementById('pf-qr').value, 10) || 0,
+      proxy: document.getElementById('pf-proxy').checked,
     };
     if (!body.name) { showErr('provider name is required'); return; }
     saveBtn.disabled = true; saveBtn.setAttribute('aria-busy', 'true');

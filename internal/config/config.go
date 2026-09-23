@@ -149,6 +149,11 @@ type ProviderCfg struct {
 	// the entry stays in the file so a toggle back on is instant.
 	Disabled    bool              `toml:"disabled"`
 	ExtraHeader map[string]string `toml:"extra_headers"`
+	// Proxy opts the provider into the shared [proxy] pool: true routes
+	// this provider's upstream calls through the pool (rotating among its
+	// URLs); false (default) makes direct requests. Load fails when true
+	// with no pool configured, so a typo never silently goes direct.
+	Proxy bool `toml:"proxy"`
 	// EvalCfgs is per-combo evaluator legs (T3): combo name -> list of legs,
 	// each leg a list of authored questions forwarded verbatim to
 	// /v1/systemone. nil = no evaluator legs.
@@ -296,6 +301,25 @@ type ProviderCfg struct {
 	Tiers []TierCfg `toml:"tier"`
 }
 
+// ProxyPoolCfg is the shared upstream-proxy pool, written once as the
+// top-level [proxy] table. Empty (no table, or no urls) = no pool;
+// every provider makes direct requests (the default). Providers opt in
+// individually with `proxy = true` on their [[providers]] block, so a
+// typo never silently goes direct: Load fails when a provider opts in
+// with no pool configured.
+//
+// Written as:
+//
+//	[proxy]
+//	urls = ["http://p1:8080", "http://p2:8080"]  # bulk-add as many as needed
+//	no_proxy = "localhost,127.0.0.1"              # hosts that bypass the pool
+//	rotation = "round-robin"                      # round-robin (default) | random | order
+type ProxyPoolCfg struct {
+	URLs     []string `toml:"urls"`
+	NoProxy  string   `toml:"no_proxy"`
+	Rotation string   `toml:"rotation"`
+}
+
 // RotationCfg tunes the rotation mechanics (#84): how long a rate-limited
 // account is benched, how many edge faults park the whole provider and for
 // how long, and how long a model-scoped refusal benches a model. Every field
@@ -401,7 +425,10 @@ type Config struct {
 	// Rotation is the global rotation policy (#84); [providers.rotation]
 	// overrides it field-by-field.
 	Rotation RotationCfg `toml:"rotation"`
-	Update   UpdateCfg   `toml:"update"`
+	// Proxy is the shared upstream-proxy pool (top-level [proxy] table).
+	// Empty = no pool; every provider makes direct requests (default).
+	Proxy  ProxyPoolCfg `toml:"proxy"`
+	Update UpdateCfg    `toml:"update"`
 	// adminPwConfigured: the operator chose the admin password (config key,
 	// env, or a stored <data_dir>/admin_password); adminPwGenerated: this
 	// process minted and persisted it on first boot. Both unexported, so the
@@ -612,6 +639,9 @@ func (c *Config) Validate() error {
 	if err := validateRotation(c.Rotation, "rotation"); err != nil {
 		return err
 	}
+	if err := validateProxyPool(c.Proxy); err != nil {
+		return err
+	}
 	// A typo'd check_interval ("24hr") must fail the load, not silently
 	// check daily — UpdateEvery's fallback is only for untouched configs.
 	if s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval)); s != "" {
@@ -731,6 +761,9 @@ func (c *Config) Validate() error {
 			default:
 				return fmt.Errorf("provider %s unknown passthrough capability %q", p.Name, pc)
 			}
+		}
+		if p.Proxy && len(c.Proxy.URLs) == 0 {
+			return fmt.Errorf("provider %s sets proxy = true with no [proxy] pool configured", p.Name)
 		}
 	}
 	// Task routing: accept "" (default off) plus "off" and "on", case-insensitive.
@@ -924,6 +957,37 @@ func validateRotation(r RotationCfg, where string) error {
 	}
 	if r.FlapThreshold < 0 {
 		return fmt.Errorf("%s flap_threshold must be >= 0 (0 = default), got %d", where, r.FlapThreshold)
+	}
+	return nil
+}
+
+// validateProxyPool checks the shared [proxy] pool. Empty (no table or
+// no urls) = no pool: every provider makes direct requests, and the
+// table is a no-op. Otherwise every URL must parse with scheme + host,
+// and the rotation strategy must be one of the supported values.
+func validateProxyPool(p ProxyPoolCfg) error {
+	if len(p.URLs) == 0 {
+		return nil // no pool configured: direct requests everywhere
+	}
+	for _, u := range p.URLs {
+		if strings.TrimSpace(u) == "" {
+			return fmt.Errorf("proxy: empty url in urls")
+		}
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return fmt.Errorf("proxy: invalid url %q: %w", u, err)
+		}
+		if parsed.Scheme == "" {
+			return fmt.Errorf("proxy: url %q needs a scheme (http|https|socks5)", u)
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("proxy: url %q needs a host", u)
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Rotation)) {
+	case "", "round-robin", "random", "order":
+	default:
+		return fmt.Errorf("proxy: unknown rotation %q (want round-robin, random or order)", p.Rotation)
 	}
 	return nil
 }

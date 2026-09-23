@@ -1,0 +1,116 @@
+{{define "hdr"}}<span>{{len .Pool.URLs}} proxies · {{len .Pool.Providers}} providers</span>{{end}}
+{{define "content"}}
+<div class="tblwrap">
+<table>
+<thead><tr><th>proxy URL</th><th></th></tr></thead>
+<tbody id="px-rows">
+{{range .Pool.URLs}}<tr><td class="mono">{{.}}</td><td></td></tr>
+{{else}}<tr><td colspan="2" class="empty">no proxy pool configured — every provider makes direct requests. Add URLs below to build one.</td></tr>{{end}}
+</tbody>
+</table>
+</div>
+
+<form id="pxform" method="dialog" novalidate>
+  <div class="merr" id="pxerr" role="alert" hidden></div>
+  <div class="field">
+    <label for="px-urls">proxy URLs <b>*</b> <span class="text-mut/60">(one per line — bulk-add as many as you have)</span></label>
+    <textarea id="px-urls" rows="6" spellcheck="false" autocomplete="off"
+              placeholder="http://proxy1:8080&#10;http://user:pass@proxy2:8080"></textarea>
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div class="field">
+      <label for="px-noproxy">no proxy <span class="text-mut/60">(comma-separated hosts that bypass the pool)</span></label>
+      <input id="px-noproxy" type="text" autocomplete="off" spellcheck="false" placeholder="localhost,127.0.0.1">
+    </div>
+    <div class="field">
+      <label for="px-rot">rotation <span class="text-mut/60">(which proxy serves each request)</span></label>
+      <select id="px-rot">
+        <option value="">round-robin — cycle through the list (default)</option>
+        <option value="random">random — uniform pick per request</option>
+        <option value="order">order — always the first URL</option>
+      </select>
+    </div>
+  </div>
+  <div class="field mt-2">
+    <label>providers <span class="text-mut/60">(tick the providers that route through this pool — everything unticked stays direct)</span></label>
+    <div id="px-provs" class="mono mt-2 leading-8"></div>
+  </div>
+  <div class="mfoot">
+    <button type="submit" class="btn primary" id="pxsave">Save &amp; reload</button>
+  </div>
+</form>
+{{end}}
+{{define "scripts"}}
+<script>
+const PEDIT = {{.Edit}};
+(function(){
+  const errBox = document.getElementById('pxerr'),
+        urlsIn = document.getElementById('px-urls'),
+        noProxyIn = document.getElementById('px-noproxy'),
+        rotIn = document.getElementById('px-rot'),
+        provsBox = document.getElementById('px-provs'),
+        saveBtn = document.getElementById('pxsave');
+  const pool = PEDIT || { urls: [], providers: [] };
+
+  function showErr(m){ errBox.textContent = m; errBox.hidden = false; }
+
+  urlsIn.value = (pool.urls || []).join('\n');
+  noProxyIn.value = pool.no_proxy || '';
+  rotIn.value = pool.rotation || '';
+  errBox.hidden = true;
+  (pool.providers || []).forEach(p => {
+    const id = 'px-prov-' + p.name;
+    const label = document.createElement('label');
+    label.className = 'chip';
+    label.style.marginRight = '6px';
+    const box = document.createElement('input');
+    box.type = 'checkbox'; box.id = id; box.value = p.name;
+    box.checked = !!p.proxy;
+    box.style.marginRight = '4px';
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(p.name + (p.proxy ? ' · via proxy' : ' · direct')));
+    provsBox.appendChild(label);
+  });
+
+  document.getElementById('pxform').onsubmit = async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const urls = urlsIn.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const providers = Array.from(provsBox.querySelectorAll('input[type=checkbox]'))
+      .map(b => ({ name: b.value, proxy: b.checked }));
+    const body = { urls, no_proxy: noProxyIn.value.trim(), rotation: rotIn.value, providers };
+    if (!urls.length && providers.some(p => p.proxy)) {
+      showErr('ticked providers need at least one proxy URL — add URLs or untick them');
+      return;
+    }
+    saveBtn.disabled = true; saveBtn.setAttribute('aria-busy', 'true');
+    saveBtn.textContent = 'Saving…';
+    try {
+      const res = await fetch('/admin/config/proxies', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { showErr(j.error || ('save failed (' + res.status + ')')); return; }
+      errBox.hidden = true;
+      ogwToast('proxy pool saved (' + j.urls + ' urls) — config reloaded');
+      setTimeout(() => location.reload(), 400);
+    } catch (err) {
+      showErr('save failed: ' + err.message);
+    } finally {
+      saveBtn.disabled = false; saveBtn.removeAttribute('aria-busy');
+      saveBtn.textContent = 'Save & reload';
+    }
+  };
+
+  // Live config events: a save anywhere refreshes this view.
+  const es = new EventSource('/admin/events?topics=config');
+  let pending = false;
+  es.addEventListener('config', () => {
+    if (pending) return;
+    pending = true;
+    setTimeout(() => location.reload(), 300);
+  });
+})();
+</script>
+{{end}}

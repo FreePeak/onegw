@@ -165,6 +165,21 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 #                        assistant turn (Anthropic-format upstreams)
 # cache_profile = "sticky-key"
 
+# Shared proxy pool: bulk-add proxy URLs ONCE here, then opt providers in
+# with `proxy = true` on their [[providers]] block (or tick them on the
+# dashboard's Proxies page — pool URLs, rotation, and the provider
+# multi-select all live there, no navigation needed). Default: no pool,
+# every provider makes direct requests. Rotation picks which proxy serves
+# each request: "round-robin" (default, cycle the list) | "random"
+# (uniform pick) | "order" (always the first URL).
+# [proxy]
+# urls = ["http://proxy1:8080", "http://user:pass@proxy2:8080"]
+# no_proxy = "localhost,127.0.0.1"  # hosts that bypass the pool
+# rotation = "round-robin"
+#
+# Per-provider opt-in (any [[providers]] block):
+# proxy = true
+
 [[providers]]
 name = "anthropic"
 kind = "anthropic"

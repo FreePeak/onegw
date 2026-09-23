@@ -415,6 +415,13 @@ type Def struct {
 	// need more; set from [server] response_header_timeout.
 	HeaderTimeout time.Duration
 
+	// Proxy is the shared [proxy] pool this provider opted into
+	// (ProviderCfg.Proxy); empty = direct requests. proxySel is the
+	// resolved per-Def selector (own rotation cursor over the pool URLs).
+	// Wired from config in server.apply via SetProxyPool. See proxy.go.
+	Proxy    ProxyPool
+	proxySel *proxySelector
+
 	// Memoized per-Def HTTP client (see httpClient).
 	clientOnce sync.Once
 	http       *http.Client
@@ -2180,6 +2187,19 @@ func (d *Def) httpClient() *http.Client {
 		if d.HeaderTimeout > 0 && d.HeaderTimeout != 60*time.Second {
 			d.http = newHTTPClient(d.HeaderTimeout)
 		}
+		if d.proxySel != nil {
+			// Opted-in provider: its own client with the pool's rotation
+			// on the transport (memoized per Def like HeaderTimeout;
+			// Defs are rebuilt on SIGHUP reload, so state stays in sync
+			// with config). A custom HeaderTimeout still applies — the
+			// proxy only adds the dial path, never the header budget.
+			if d.http == nil {
+				d.http = newHTTPClient(60 * time.Second)
+			}
+			if tr, ok := d.http.Transport.(*http.Transport); ok {
+				tr.Proxy = d.proxySel.proxyFunc
+			}
+		}
 	})
 	if d.http != nil {
 		return d.http
@@ -2877,7 +2897,7 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		return []byte(`{"models":["jev-latest","jev-preview"]}`), 200, nil
 	}
 	applyAuth(req.Header, d.Kind, acct.bearerToken(), "")
-	resp, err := client.Do(req)
+	resp, err := d.httpClient().Do(req)
 	if err != nil {
 		return nil, transportErr(ctx, err).Status, err
 	}

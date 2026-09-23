@@ -141,7 +141,7 @@ func (d *Def) searxSearch(ctx context.Context, acct *Account, query string) ([]s
 	for k, v := range d.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
-	resp, err := client.Do(req)
+	resp, err := d.httpClient().Do(req)
 	if err != nil {
 		return nil, searchUnavailable(err)
 	}
