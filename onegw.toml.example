@@ -206,6 +206,25 @@ models = ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest
 name = "default"
 api_key = ""                                  # fill or use env
 
+# Freebuff (Codebuff free tier) — multi-step OpenAI executor, not a plain
+# proxy. Every chat turn: POST /freebuff/session → agent-runs START →
+# /chat/completions (Buffy system prompt + codebuff_metadata + freebuff
+# headers) → background FINISH. Auth is the Codebuff CLI auth token
+# (~/.config/manicode/credentials.json authToken), not a normal API key.
+# subscription_quota = "freebuff" polls the same session endpoint for the
+# daily freebucks pool + model admission count.
+[[providers]]
+name = "freebuff"
+kind = "freebuff"
+# base_url defaults to https://www.codebuff.com/api/v1
+# api_key = "<codebuff authToken>" or env ONEGW_PROVIDER_FREEBUFF_KEY
+subscription_quota = "freebuff"
+# models = [...]   # optional; omitted = OmniRoute freebuff catalog
+
+[[providers.accounts]]
+name = "default"
+api_key = ""                                  # Codebuff CLI authToken
+
 # TypeSafe Jev model — POST /v1/systemone, same OpenAI wire on both sides.
 # Agentloop selects it via tier combo; onegw routes per step.
 [[providers]]

@@ -44,13 +44,14 @@ const (
 	GrokCli     = "grok-cli"    // SuperGrok shared weekly pool (cli-chat-proxy)
 	Cursor          = "cursor"            // Cursor subscription (cursor.com session API)
 	XiaomiTokenPlan = "xiaomi-tokenplan"  // Xiaomi MiMo token-plan (platform.xiaomimimo.com dashboard cookie)
+	Freebuff        = "freebuff"          // Codebuff/freebuff free tier (codebuff.com session API)
 )
 
 // Dialects lists the accepted providers.subscription_quota values. It is the
 // single source of that list: config.Validate matches against it and quotes
 // it in its error, so a new dialect is registered in exactly one place.
 func Dialects() []string {
-	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor, XiaomiTokenPlan}
+	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor, XiaomiTokenPlan, Freebuff}
 }
 
 // ValidDialect reports whether name is a subscription quota dialect.
@@ -93,6 +94,10 @@ func DefaultURL(dialect string) string {
 		// this endpoint). Token Plan keys are region-specific; the console URL is
 		// global.
 		return "https://platform.xiaomimimo.com/api/v1/tokenPlan/usage"
+	case Freebuff:
+		// OmniRoute's validateFreebuffProvider / freebuff executor: the
+		// free-tier session endpoint both the CLI and the web app hit.
+		return "https://www.codebuff.com/api/v1/freebuff/session"
 	}
 	return ""
 }
@@ -351,6 +356,12 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 
 	if tgt.Dialect == XiaomiTokenPlan {
 		return t.probeXiaomiTokenPlan(ctx, tgt)
+	}
+
+	if tgt.Dialect == Freebuff {
+		// POST + codebuff User-Agent + x-freebuff-model; cannot ride the
+		// shared bearer GET probe.
+		return t.probeFreebuff(ctx, tgt)
 	}
 
 	url := tgt.URL
@@ -1107,6 +1118,157 @@ func parseXiaomiTokenPlan(body []byte, status int) ([]Window, string, string) {
 	}
 	plan := "Xiaomi MiMo Token Plan"
 	return windows, plan, ""
+}
+
+// ---------------------------------------------------------------------------
+// freebuff (Codebuff free tier) — POST session probe
+// ---------------------------------------------------------------------------
+
+// freebuffModel is the model the session endpoint is probed with. Live
+// 2026-09-16: the header is ignored when only one model is admitted (the
+// response echoes deepseek/deepseek-v4-flash whatever is asked for), but
+// OmniRoute's validator sends it and the free tier's admission is per-model,
+// so the probe sends the same one to keep reading the same pool.
+const freebuffModel = "deepseek/deepseek-v4-flash"
+
+// probeFreebuff POSTs the session endpoint OmniRoute's validateFreebuffProvider
+// and its freebuff executor both hit. It is the one dialect that is a POST
+// with a body and a browser-grade User-Agent (the endpoint 401s a bare
+// GET-shaped request), so it cannot ride the shared bearer probe.
+//
+// Valid is 200 OR 409: 409 means the account already holds a live session,
+// which is exactly as usable as a fresh one (OmniRoute's rule).
+func (t *Tracker) probeFreebuff(ctx context.Context, tgt Target) Snapshot {
+	url := tgt.URL
+	if url == "" {
+		url = DefaultURL(Freebuff)
+	}
+	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: Freebuff, URL: url, FetchedAt: t.now()}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	req.Header.Set("Authorization", "Bearer "+tgt.AcctKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "codebuff/0.1.0 (darwin-arm64)")
+	req.Header.Set("x-freebuff-model", freebuffModel)
+	resp, err := t.client.Do(req)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		snap.Err = "read freebuff session response: " + err.Error()
+		return snap
+	}
+	snap.Windows, snap.Plan, snap.Err = parseFreebuff(body, resp.StatusCode)
+	return snap
+}
+
+// parseFreebuff decodes the live-verified free-tier session shape (2026-09-16):
+//
+//	{"status":"active","accessTier":"limited","instanceId":"d997df40-…",
+//	 "freebucks":{"balance":10,"daily":{"limit":25,"spent":15,"remaining":10,
+//	               "resetAt":"2026-09-17T07:00:00.000Z"},"wallet":{"balance":0}},
+//	 "rateLimit":{"model":"deepseek/deepseek-v4-flash","limit":6,
+//	               "recentCount":1,"poolLabel":"Daily",
+//	               "resetAt":"2026-09-17T07:00:00.000Z"}}
+//
+// Two windows, both free-tier meters: the daily freebucks pool
+// (spent/limit — the currency free sessions are actually charged in) and the
+// probed model's own daily admission count (recentCount/limit). recentCount
+// is the session that running the probe just consumed, which is why the
+// dollars window is the meaningful one: it moves only when a real prompt
+// spends. Access tier rides the plan label ("limited" free tier vs a paid
+// "starter"/"plus"/"pro" subscription).
+func parseFreebuff(body []byte, status int) ([]Window, string, string) {
+	switch status {
+	case http.StatusOK, http.StatusConflict:
+		// 409 = the account already has a live session: a usable account.
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, "", "Freebuff auth token invalid or expired — re-sign-in with the codebuff CLI (or paste a fresh token from freebuff.com)."
+	default:
+		return nil, "", "Freebuff session API error (" + strconv.Itoa(status) + ")."
+	}
+	var data struct {
+		Status     string `json:"status"`
+		AccessTier string `json:"accessTier"`
+		Freebucks  *struct {
+			Balance float64 `json:"balance"`
+			Daily   struct {
+				Limit     float64 `json:"limit"`
+				Spent     float64 `json:"spent"`
+				Remaining float64 `json:"remaining"`
+				ResetAt   any     `json:"resetAt"`
+			} `json:"daily"`
+		} `json:"freebucks"`
+		RateLimit *struct {
+			Model       string  `json:"model"`
+			Limit       float64 `json:"limit"`
+			RecentCount float64 `json:"recentCount"`
+			PoolLabel   string  `json:"poolLabel"`
+			ResetAt     any     `json:"resetAt"`
+		} `json:"rateLimit"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, "", "Freebuff session response is not valid JSON."
+	}
+	plan := data.AccessTier
+	if plan != "" {
+		plan = "freebuff " + plan
+	}
+	windows := make([]Window, 0, 2)
+	if d := data.Freebucks; d != nil && d.Daily.Limit > 0 {
+		// Floor, never round (same rule as the other dialects): a pool is
+		// exhausted only when spent >= limit, so 24/25 must stay 96%.
+		pct := d.Daily.Spent / d.Daily.Limit * 100
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 100 {
+			pct = 100
+		}
+		windows = append(windows, Window{Name: "Freebucks (" + fmtFreebucks(d.Daily.Remaining) + " left)", Used: int(pct), Resets: asReset(d.Daily.ResetAt)})
+	}
+	if r := data.RateLimit; r != nil && r.Limit > 0 {
+		pct := r.RecentCount / r.Limit * 100
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 100 {
+			pct = 100
+		}
+		name := "Sessions"
+		if r.Model != "" {
+			name = "Sessions " + r.Model
+		}
+		if r.PoolLabel != "" {
+			name += " (" + r.PoolLabel + ")"
+		}
+		windows = append(windows, Window{Name: name, Used: int(pct), Resets: asReset(r.ResetAt)})
+	}
+	// ponytail: a free account whose daily pool is spent still answers 200
+	// with limit 6 and recentCount 1, so there is no reliable "refused"
+	// signal to read here — the windows carry the numbers and the gateway
+	// parks on 100% like every other dialect. Upgrade path if Codebuff ever
+	// exposes an explicit exhausted flag: parse it into these windows.
+	if len(windows) == 0 {
+		return nil, "", "Freebuff session response carried no quota windows (status " + strconv.Quote(data.Status) + ")."
+	}
+	return windows, plan, ""
+}
+
+// fmtFreebucks renders a freebucks amount without a trailing ".0" for whole
+// units ("10 left", not "10.0 left").
+func fmtFreebucks(v float64) string {
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // parseExpiry tries to interpret an API expiry value as a time.Time.

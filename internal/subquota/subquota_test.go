@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -600,6 +601,9 @@ func TestDefaultURLPerDialect(t *testing.T) {
 	if DefaultURL(CommandCode) != "https://api.commandcode.ai" {
 		t.Fatal("commandcode default URL drifted from the OmniRoute-verified base")
 	}
+	if DefaultURL(Freebuff) != "https://www.codebuff.com/api/v1/freebuff/session" {
+		t.Fatal("freebuff default URL drifted from OmniRoute's validateFreebuffProvider endpoint")
+	}
 	if DefaultURL("nope") != "" || ValidDialect("nope") {
 		t.Fatal("unknown dialect must have no URL and be invalid")
 	}
@@ -1128,5 +1132,137 @@ func TestParseXiaomiTokenPlanNoExpiryFallsBack(t *testing.T) {
 	want := time.Date(y, m+1, 1, 0, 0, 0, 0, time.UTC)
 	if !windows[0].Resets.Equal(want) {
 		t.Fatalf("resets = %v, want %v (fallback to next month)", windows[0].Resets, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// freebuff (codebuff.com free-tier session API)
+//
+// MUTATION CHECK for the parser's floor: make parseFreebuff ROUND the daily
+// pool percent instead of truncating it and TestParseFreebuffWindows reads
+// 100 (24/25 rounds up) — a pool with one freebuck left would then park the
+// account every poll cycle, and that test goes red. Restore the truncation
+// and it is green again.
+// ---------------------------------------------------------------------------
+
+// freebuffSessionBody is the live shape (2026-09-16) with the daily pool
+// spent=24/limit=25 and the probed model's own admission count at 1/6.
+const freebuffSessionBody = `{
+  "status":"active","accessTier":"limited","instanceId":"d997df40-7d44-4aff-960f-867db62bfb24",
+  "model":"deepseek/deepseek-v4-flash","remainingMs":3600000,"countryCode":"VN",
+  "freebucks":{"balance":1,"daily":{"limit":25,"spent":24,"remaining":1,
+    "resetAt":"2026-09-17T07:00:00.000Z","resetTimeZone":"America/Los_Angeles"},"wallet":{"balance":0}},
+  "rateLimit":{"model":"deepseek/deepseek-v4-flash","limit":6,"recentCount":1,
+    "poolLabel":"Daily","resetAt":"2026-09-17T07:00:00.000Z"}}`
+
+func TestParseFreebuffWindows(t *testing.T) {
+	windows, plan, err := parseFreebuff([]byte(freebuffSessionBody), http.StatusOK)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "freebuff limited" {
+		t.Fatalf("plan = %q, want the access tier", plan)
+	}
+	if len(windows) != 2 {
+		t.Fatalf("want 2 windows, got %d: %+v", len(windows), windows)
+	}
+	// 24/25 is 96% — floored, never rounded to 100, or a pool with one
+	// freebuck left would park the account every poll cycle.
+	if windows[0].Name != "Freebucks (1 left)" || windows[0].Used != 96 {
+		t.Fatalf("freebucks window = %+v", windows[0])
+	}
+	if windows[0].Resets == nil || windows[0].Resets.UTC().Format(time.RFC3339) != "2026-09-17T07:00:00Z" {
+		t.Fatalf("freebucks reset = %v", windows[0].Resets)
+	}
+	if windows[1].Name != "Sessions deepseek/deepseek-v4-flash (Daily)" || windows[1].Used != 16 {
+		t.Fatalf("sessions window = %+v", windows[1])
+	}
+	if windows[0].exhausted() || windows[1].exhausted() {
+		t.Fatal("a pool with headroom must not be exhausted")
+	}
+}
+
+func TestParseFreebuffDrainedPoolParks(t *testing.T) {
+	body := strings.Replace(freebuffSessionBody,
+		`"limit":25,"spent":24,"remaining":1`, `"limit":25,"spent":25,"remaining":0`, 1)
+	windows, _, err := parseFreebuff([]byte(body), http.StatusOK)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if windows[0].Name != "Freebucks (0 left)" || windows[0].Used != 100 || !windows[0].exhausted() {
+		t.Fatalf("drained daily pool must read 100%% and park: %+v", windows[0])
+	}
+}
+
+func TestParseFreebuffErrors(t *testing.T) {
+	// 409 = the account already holds a live session: as usable as a fresh
+	// one (OmniRoute's rule), so it must NOT be an error.
+	windows, _, err := parseFreebuff([]byte(`{"status":"active","rateLimit":{"limit":6,"recentCount":2}}`), http.StatusConflict)
+	if err != "" || len(windows) != 1 || windows[0].Used != 33 {
+		t.Fatalf("409 must be a usable account: windows=%+v err=%q", windows, err)
+	}
+	if _, _, err := parseFreebuff([]byte(`{"error":"unauthorized"}`), http.StatusUnauthorized); !strings.Contains(err, "invalid or expired") {
+		t.Fatalf("401 error = %q", err)
+	}
+	if _, _, err := parseFreebuff([]byte(`{}`), http.StatusForbidden); err == "" {
+		t.Fatal("403 must be an error")
+	}
+	if _, _, err := parseFreebuff([]byte(`{}`), http.StatusBadGateway); !strings.Contains(err, "502") {
+		t.Fatalf("unexpected-status error = %q", err)
+	}
+	if _, _, err := parseFreebuff([]byte(`not json`), http.StatusOK); !strings.Contains(err, "not valid JSON") {
+		t.Fatalf("garbage error = %q", err)
+	}
+	if _, _, err := parseFreebuff([]byte(`{"status":"active"}`), http.StatusOK); !strings.Contains(err, "no quota windows") {
+		t.Fatalf("no-windows error = %q", err)
+	}
+}
+
+func TestProbeFreebuffEndToEnd(t *testing.T) {
+	// The probe is a POST carrying the token, the model header and the
+	// codebuff User-Agent; a drained pool parks the account.
+	var method, auth, model, ua, body string
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, auth, model, ua = r.Method, r.Header.Get("Authorization"), r.Header.Get("x-freebuff-model"), r.Header.Get("User-Agent")
+		if raw, err := io.ReadAll(r.Body); err == nil {
+			body = string(raw)
+		}
+		_, _ = w.Write([]byte(freebuffSessionBody))
+	}))
+	defer fs.Close()
+
+	parked := make(chan struct{}, 1)
+	tr := NewAt([]Target{{Provider: "freebuff", AcctName: "me", AcctKey: "tok-123",
+		Dialect: Freebuff, URL: fs.URL}}, func(Target, time.Time) { parked <- struct{}{} },
+		nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	// One poll happens at construction; wait for the snapshot to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if all := tr.All(); len(all) == 1 && all[0].Err != "" {
+			t.Fatalf("probe failed: %+v", all[0])
+		} else if len(all) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("freebuff probe never recorded a snapshot")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if method != http.MethodPost || auth != "Bearer tok-123" {
+		t.Fatalf("probe request = %s %s auth=%q", method, fs.URL, auth)
+	}
+	if model != freebuffModel || !strings.HasPrefix(ua, "codebuff/") {
+		t.Fatalf("model header = %q, UA = %q", model, ua)
+	}
+	if strings.TrimSpace(body) != "{}" {
+		t.Fatalf("probe body = %q, want an empty JSON object", body)
+	}
+	if len(parked) != 0 {
+		t.Fatal("a pool with headroom parked the account")
+	}
+	snaps := tr.All()
+	if snaps[0].Plan != "freebuff limited" || len(snaps[0].Windows) != 2 {
+		t.Fatalf("snapshot = %+v", snaps[0])
 	}
 }
