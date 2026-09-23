@@ -1144,6 +1144,10 @@ func (t *Tracker) probeFreebuff(ctx context.Context, tgt Target) Snapshot {
 		url = DefaultURL(Freebuff)
 	}
 	snap := Snapshot{Provider: tgt.Provider, Account: tgt.AcctName, Dialect: Freebuff, URL: url, FetchedAt: t.now()}
+	if strings.Count(tgt.AcctKey, ".") == 2 {
+		snap.Err = "Freebuff key looks like a codebuff.com browser session JWT (cid=cookie) — upstream answers 401 Invalid API key; use authToken from ~/.config/manicode/credentials.json."
+		return snap
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader("{}"))
 	if err != nil {
 		snap.Err = err.Error()

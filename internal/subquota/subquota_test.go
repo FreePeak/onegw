@@ -1266,3 +1266,34 @@ func TestProbeFreebuffEndToEnd(t *testing.T) {
 		t.Fatalf("snapshot = %+v", snaps[0])
 	}
 }
+
+// Same JWT guard as the chat path (see TestDoFreebuffRejectsBrowserJWT):
+// a browser session key must fail fast locally, never touch upstream.
+func TestProbeFreebuffRejectsBrowserJWT(t *testing.T) {
+	hit := false
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer fs.Close()
+	tr := NewAt([]Target{{Provider: "freebuff", AcctName: "me",
+		AcctKey: "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0Ml94eXgifQ.c2ln",
+		Dialect: Freebuff, URL: fs.URL}}, nil, nil, nil, time.Hour, nil, nil)
+	defer tr.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if all := tr.All(); len(all) == 1 && (all[0].Err != "" || hit) {
+			if hit {
+				t.Fatal("probe with a browser JWT must not touch upstream")
+			}
+			if !strings.Contains(all[0].Err, "authToken") {
+				t.Fatalf("want actionable error naming authToken, got %q", all[0].Err)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("freebuff JWT snapshot never landed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

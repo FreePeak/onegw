@@ -185,6 +185,18 @@ func TestDoFreebuffSessionError(t *testing.T) {
 	}
 }
 
+// A pasted codebuff.com browser session JWT (cid=cookie) 401s upstream with
+// "Invalid API key" — live 2026-09-23. Fail fast before any network call
+// with the actionable fix instead of a bare upstream 401.
+func TestDoFreebuffRejectsBrowserJWT(t *testing.T) {
+	d := &Def{Name: "freebuff", Kind: KindFreebuff, BaseURL: "http://127.0.0.1:1"}
+	_, apiErr := d.doFreebuff(context.Background(), &Account{APIKey: "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0Ml94eXgifQ.c2ln"},
+		"deepseek/deepseek-v4-flash", bytes.NewReader([]byte(`{"messages":[]}`)), false)
+	if apiErr == nil || apiErr.Status != 401 || !strings.Contains(apiErr.Message, "authToken") {
+		t.Fatalf("want actionable 401 naming authToken, got %+v", apiErr)
+	}
+}
+
 func TestKindFreebuff_Defaults(t *testing.T) {
 	if KindFreebuff.DefaultBaseURL() != freebuffDefaultBase {
 		t.Fatalf("base = %q", KindFreebuff.DefaultBaseURL())

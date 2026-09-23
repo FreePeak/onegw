@@ -54,3 +54,60 @@ the version in onegw settings, triggering the rebuild). Agents must
 live onegw process (`~/.local/bin/onegw` or the PID from `ps aux | grep onegw`).
 Config changes in `onegw.toml` are picked up on the operator's next
 reload — do not attempt to force a reload.
+
+## 6. Audit for leaked secrets before every commit or push
+
+Never commit, push, or paste a credential — API keys, OAuth/JWT tokens,
+Codebuff `authToken`, cookies, session ids. The runtime `onegw.toml` is
+gitignored; that is the first line of defense, not the only one.
+
+Before `git commit` and again before `git push`, audit what is actually
+about to leave the machine. Read the real value in-process and print only
+YES/NO, so the audit output cannot leak the secret it is looking for:
+
+```bash
+python3 - <<'PY'
+import json, os, re, subprocess
+cfg = open(os.path.expanduser("~/.onegw/onegw.toml")).read()
+needles = []
+d = json.load(open(os.path.expanduser("~/.config/manicode/credentials.json")))["default"]
+needles += [d["authToken"]]
+needles += [m for m in re.findall(r'api_key = "([^"]+)"', cfg)]
+run = lambda *a: subprocess.run(a, capture_output=True, text=True).stdout
+objs = [l.split()[0] for l in run("git", "rev-list", "--objects", "HEAD").splitlines() if l.strip()]
+hits = sum(1 for o in objs if any(n in run("git", "cat-file", "-p", o) for n in needles if n))
+print("blobs containing a live credential:", hits)   # must be 0
+PY
+```
+
+Also check the commit patches and the PR payload (title, body, comments)
+— a secret pasted into a PR body outlives the commit history. When a real
+credential was ever exposed, say so plainly and recommend rotation at the
+issuer (signing out of the provider web session invalidates browser-session
+JWTs) instead of quietly rewriting history.
+
+## 7. A leak in an open PR: scrub the commits, never close the PR or the branch
+
+If a credential is found in an already-pushed PR, **keep the PR open and keep
+the branch alive**. Closing either does not un-publish anything: the blob stays
+in GitHub's object store, in forks and caches, and a closed PR loses the audit
+trail that shows the leak was found and fixed. Updating the commit and force
+pushing is the only action that actually removes the content from the branch ref.
+
+1. Rewrite the offending commit locally (`git commit --amend` on the tip, or
+   `git rebase -i` to reach an older commit). Do NOT create a "remove the secret"
+   commit — that leaves the secret in history.
+2. Push with `git push --force-with-lease`, never bare `--force`. On a linear
+   branch this is a fast-forward, so it carries no rewrite risk; the lease guard
+   stops the push if someone else moved the ref.
+3. Re-run the §6 audit against the **remote** state and the PR payload, not just
+   the local tree. Confirm `blobs containing a live credential: 0` before
+   reporting done.
+4. Still tell the user plainly what was exposed and **rotate it at the issuer**.
+   Force push removes the copy in the branch; it cannot un-compromise a secret
+   that already left the machine. Rotation is the actual fix.
+
+State the outcome honestly: if the audit finds nothing, say so and do not
+manufacture a rewrite. Perform no history surgery that removes nothing.
+
+
