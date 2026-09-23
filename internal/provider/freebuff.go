@@ -93,6 +93,9 @@ func (d *Def) doFreebuff(ctx context.Context, acct *Account, model string, body 
 	if token == "" {
 		return nil, errAPI(401, "authentication_error", "Freebuff Auth Token required")
 	}
+	if strings.Count(token, ".") == 2 {
+		return nil, errAPI(401, "authentication_error", "Freebuff key looks like a codebuff.com browser session JWT (cid=cookie) — upstream answers 401 Invalid API key; use authToken from ~/.config/manicode/credentials.json")
+	}
 	requestedModel := strings.TrimPrefix(model, "freebuff/")
 	if requestedModel == "" {
 		requestedModel = "deepseek/deepseek-v4-flash"
