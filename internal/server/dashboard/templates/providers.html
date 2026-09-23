@@ -433,10 +433,6 @@ window.PXYURLS = {{.ProxyURLs}}||[];
       quota_window: body.quota_window, quota_limit_tokens: body.quota_limit_tokens,
       quota_limit_requests: body.quota_limit_requests,
     };
-    const doc = {
-      kind: body.kind, base_url: body.base_url, models: body.models,
-      responses_models: body.responses_models, subscription_quota: body.subscription_quota,
-    };
     const oauthRow = (body.accounts || []).find(a => a.oauth);
     if (oauthRow) doc.oauth_service = oauthRow.oauth;
     fetch('/admin/config/presets', {

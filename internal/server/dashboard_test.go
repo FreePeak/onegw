@@ -333,6 +333,23 @@ func TestProvidersPageRendersAccountBulkEditor(t *testing.T) {
 	}
 }
 
+func TestProvidersPagePresetMirrorDeclaresDocOnce(t *testing.T) {
+	_, h := newAdminSrv(t, "")
+	w := do(t, h, adminReq(t, "/admin/ui/providers"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("providers page: %d", w.Code)
+	}
+	page := w.Body.String()
+	start := strings.Index(page, "async function mirrorPreset(body) {")
+	end := strings.Index(page, "const oauthRow")
+	if start < 0 || end < start {
+		t.Fatal("provider preset mirror script not found")
+	}
+	if got := strings.Count(page[start:end], "const doc = {"); got != 1 {
+		t.Fatalf("provider preset mirror has %d doc declarations; a duplicate prevents the entire editor script from running", got)
+	}
+}
+
 // TestGatewayKeys pins the copy-button key surface: GET /admin/config/keys
 // reveals auth.keys to admins only (the settings page's copy buttons fetch
 // it via JS), and no server-rendered HTML carries key material — gateway
