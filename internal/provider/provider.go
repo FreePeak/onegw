@@ -57,6 +57,13 @@ const (
 	// The gateway strips reasoning_content from request bodies before
 	// forwarding (see stripReasoningContent). See OmniRoute #6417.
 	KindMistral Kind = "mistral" // Mistral AI (OpenAI wire + body stripping)
+	// Freebuff (codebuff.com free tier) speaks OpenAI Chat Completions on
+	// the wire, but every turn is a multi-step executor: freebuff/session →
+	// agent-runs START → chat/completions (Buffy prompt + codebuff_metadata
+	// + freebuff headers) → background FINISH. See freebuff.go / OmniRoute
+	// FreebuffExecutor. Auth is the Codebuff CLI auth token, not a normal
+	// vendor API key.
+	KindFreebuff Kind = "freebuff" // Codebuff freebuff multi-step executor
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
@@ -256,6 +263,8 @@ func (k Kind) Format() translat.Format {
 	// sees normal OpenAI shape from both kinds.
 	// KindMistral also falls through: Mistral speaks OpenAI Chat Completions
 	// natively; the only difference is request-body stripping (see Do()).
+	// KindFreebuff also falls through: chat/completions is OpenAI wire; the
+	// multi-step session/agent-run dance lives in doFreebuff (freebuff.go).
 	default:
 		return translat.FmtOpenAI
 	}
@@ -914,6 +923,8 @@ func (k Kind) DefaultBaseURL() string {
 		return "" // no stock endpoint: base_url is required in config
 	case KindMistral:
 		return "https://api.mistral.ai/v1"
+	case KindFreebuff:
+		return freebuffDefaultBase
 	default:
 		return "https://api.openai.com"
 	}
@@ -1018,6 +1029,8 @@ func DefaultModels(k Kind) []string {
 		return []string{"jev-latest", "jev-preview"}
 	case KindCline:
 		return clineModels
+	case KindFreebuff:
+		return freebuffModels
 	}
 	return nil
 }
@@ -2447,6 +2460,10 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 		// on both sides (POST /v1/systemone), so the body is forwarded
 		// verbatim and the response passed through unchanged.
 		return d.doSystemOne(ctx, acct, model, body, stream)
+	case KindFreebuff:
+		// Codebuff freebuff multi-step executor (session → agent-run →
+		// chat/completions). See freebuff.go.
+		return d.doFreebuff(ctx, acct, model, body, stream)
 	case KindGemini:
 		// Non-streaming: :generateContent; streaming: :streamGenerateContent?alt=sse
 		method := "generateContent"

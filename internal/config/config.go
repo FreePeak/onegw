@@ -124,7 +124,7 @@ type UsageCfg struct {
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
 	Name string `toml:"name"`
-	Kind string `toml:"kind"` // openai | anthropic | gemini | opencode | opencode-free | searxng | openai-responses | commandcode | cursor
+	Kind string `toml:"kind"` // openai | anthropic | gemini | opencode | opencode-free | searxng | openai-responses | commandcode | cursor | freebuff
 	// EvalStrategy is the T3 verdict driver for this provider
 	// ("jev-eval" activates it; "" = off). Only systemone Kind uses it.
 	EvalStrategy string   `toml:"eval_strategy"`
@@ -665,6 +665,8 @@ func (c *Config) Validate() error {
 		switch p.Kind {
 		case "openai", "anthropic", "gemini", "opencode", "opencode-free", "cline":
 		case "systemone": // TypeSafe Jev model; same OpenAI wire on both sides
+		case "mistral": // OpenAI wire + reasoning_content strip
+		case "freebuff": // Codebuff freebuff multi-step OpenAI executor
 		case "openai-responses", "commandcode", "cursor":
 			// Custom wire formats (issue #12). cursor is a fail-fast
 			// skeleton: valid here, errors at request time.

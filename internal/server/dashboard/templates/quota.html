@@ -36,7 +36,7 @@
   <td>{{range $row.Windows}}<div class="qwin"><span class="qname text-mut" title="{{.Name}}">{{.Name}}</span><div class="bar"><i class="{{.BarClass}}" style="width:{{.Pct}}%"></i></div><span class="num qval">{{.Pct}}%{{if .Resets}} · in {{.Resets}}{{end}}</span></div>{{else}}<span class="text-mut">—</span>{{end}}</td>
   <td>{{if $row.Exhausted}}<span class="pill err">exhausted</span>{{else}}<span class="pill ok">ok</span>{{end}}</td>
 </tr>{{end}}
-{{else}}<tr><td colspan="5" class="empty">no subscription providers — set <code class="chip">subscription_quota</code> on a provider ("opencode-go", "zai", "zai-cn", "cursor" or "commandcode")</td></tr>{{end}}
+{{else}}<tr><td colspan="5" class="empty">no subscription providers — set <code class="chip">subscription_quota</code> on a provider ("opencode-go", "zai", "zai-cn", "cursor", "commandcode", "xiaomi-tokenplan" or "freebuff")</td></tr>{{end}}
 </tbody>
 </table>
 </div>

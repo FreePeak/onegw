@@ -521,7 +521,7 @@ env overrides:
 | `GOMEMLIMIT`, `GOGC`, `GOMAXPROCS` | Honored if set; otherwise tuned at startup and on every config reload — the soft heap limit follows the buffered budget (90 MiB with the default 48 MiB, budget + 25% headroom above that; GOGC 60, ≤ 4 procs) |
 
 See [`onegw.toml.example`](onegw.toml.example) for the full reference:
-providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-free" | "searxng" | "openai-responses" | "systemone"`, optional
+providers (`kind = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-free" | "searxng" | "openai-responses" | "systemone" | "freebuff" | "mistral" | "cline" | "cursor" | "commandcode"`, optional
 `base_url`, models, multiple `[[providers.accounts]]` or the `keys = [...]`
 multi-key shortcut), combos, server limits, saver and usage settings.
 `data_dir = "memory"` disables persistence.
@@ -620,6 +620,7 @@ windows — used percent and reset time — on the Quota page and
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
 | `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`) | 5-hour + weekly USD windows (used/cap), monthly credits pool (spend vs pool total); plan label from subscriptions |
 | `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim. When the same URL ignores `?format=credits` and answers the **monthly envelope** instead (`monthlyLimit`/`used`, no percent), the used/cap pool shows as "Monthly pool" rather than a probe error |
+| `freebuff` | `https://www.codebuff.com/api/v1/freebuff/session` (POST; Codebuff CLI auth token) | daily freebucks pool (spent/limit, % + reset) plus the probed model's own admission count; plan label from `accessTier` |
 
 An account whose vendor-reported window is **fully consumed** parks until
 the vendor's stated reset (capped at one poll cycle so an early reset or a

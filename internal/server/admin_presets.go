@@ -87,6 +87,12 @@ func builtinPresets() map[string]presetDoc {
 			Models: []string{"big-pickle", "mimo-v2.5-free", "nemotron-3-ultra-free", "nemotron-3.5-lightning-free", "ling-3.0-flash-fin-free"},
 			Note:   "no auth at all",
 		},
+		"Freebuff (Codebuff free tier)": {
+			Kind:              "freebuff",
+			Models:            []string{"deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro", "openai/gpt-5.6-luna", "minimax/minimax-m3", "mimo/mimo-v2.5"},
+			SubscriptionQuota: "freebuff",
+			Note:              "Codebuff CLI auth token (authToken in ~/.config/manicode/credentials.json); multi-step freebuff executor",
+		},
 		"Xiaomi Mimo (token plan)": {
 			Kind:              "openai",
 			BaseURL:           "https://token-plan-sgp.xiaomimimo.com/v1",
@@ -104,6 +110,7 @@ var validPresetKinds = map[string]bool{
 	"openai": true, "anthropic": true, "gemini": true,
 	"opencode": true, "opencode-free": true, "commandcode": true,
 	"openai-responses": true, "cursor": true, "searxng": true,
+	"cline": true, "mistral": true, "systemone": true, "freebuff": true,
 }
 
 func validatePresetDoc(doc presetDoc) string {

@@ -78,7 +78,8 @@ type providerEditReq struct {
 	ResponsesModels []string `json:"responses_models"`
 	// SubscriptionQuota selects the upstream-reported quota profile
 	// ("grok-cli" for a SuperGrok pool, "opencode-go", "zai", "zai-cn",
-	// "commandcode"); "" = local counters only.
+	// "commandcode", "cursor", "xiaomi-tokenplan", "freebuff");
+	// "" = local counters only.
 	SubscriptionQuota string `json:"subscription_quota"`
 	MaxConc           int    `json:"max_concurrency"`
 	Sticky            string `json:"sticky"`
