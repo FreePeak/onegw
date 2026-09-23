@@ -196,3 +196,33 @@ func TestKindFreebuff_Defaults(t *testing.T) {
 		t.Fatalf("format = %q", KindFreebuff.Format())
 	}
 }
+
+// The dashboard's discovery probe hits GET <base>/v1/models, which
+// codebuff.com does not serve (404 Next.js page, live 2026-09-23 — the
+// log line this test guards). FetchModels must short-circuit with the
+// curated catalog and never touch the network.
+func TestFetchModelsFreebuffCurated(t *testing.T) {
+	d := &Def{Name: "freebuff", Kind: KindFreebuff, BaseURL: "http://127.0.0.1:1"}
+	body, status, err := d.FetchModels(context.Background(), &Account{Name: "me", APIKey: "tok"})
+	if err != nil || status != 200 {
+		t.Fatalf("fetch = %d %v", status, err)
+	}
+	var catalog struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) == 0 {
+		t.Fatal("curated catalog must not be empty")
+	}
+	found := false
+	for _, m := range catalog.Models {
+		if m == "deepseek/deepseek-v4-flash" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("catalog missing the probe model: %v", catalog.Models)
+	}
+}

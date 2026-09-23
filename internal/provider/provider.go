@@ -2912,6 +2912,15 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		// TypeSafe Jev: GET /v1/models returns aliases, not the
 		// versioned ids clients send (docs.typesafe.ai/models).
 		return []byte(`{"models":["jev-latest","jev-preview"]}`), 200, nil
+	case KindFreebuff:
+		// codebuff.com is a web app: GET /v1/models 404s with a
+		// Next.js page (live 2026-09-23). The catalog is curated
+		// from OmniRoute's freebuff registry (see freebuffModels).
+		out, err := json.Marshal(map[string][]string{"models": freebuffModels})
+		if err != nil {
+			return nil, 500, err
+		}
+		return out, 200, nil
 	}
 	applyAuth(req.Header, d.Kind, acct.bearerToken(), "")
 	resp, err := d.httpClient().Do(req)
