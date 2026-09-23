@@ -245,6 +245,14 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		// provider override, installed before the pool is built so the new
 		// pool carries it from its first pick.
 		def.SetRotationPolicy(rotationPolicy(cfg.Rotation, p.Rotation))
+		// Shared proxy pool: only opted-in providers (proxy = true) get
+		// the pool; everyone else keeps the direct client. Validation
+		// guarantees the pool is non-empty when any opt-in exists.
+		if p.Proxy {
+			def.SetProxyPool(provider.ProxyPool{
+				URLs: cfg.Proxy.URLs, NoProxy: cfg.Proxy.NoProxy, Rotation: cfg.Proxy.Rotation,
+			})
+		}
 		// Account-selection strategy (#81), with the #79 subscription
 		// headroom probe wired in for p2c. The closure resolves at call
 		// time, so snapshots refreshed by the poller are always current.
@@ -502,6 +510,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /admin/config/password", s.handleAdminPassword)
 	mux.HandleFunc("PUT /admin/config/providers", s.handleAdminProviderEdit)
 	mux.HandleFunc("PATCH /admin/config/providers/{name}/disabled", s.handleAdminProviderDisabled)
+	mux.HandleFunc("GET /admin/config/proxies", s.handleAdminProxiesGet)
+	mux.HandleFunc("PUT /admin/config/proxies", s.handleAdminProxiesPut)
 	mux.HandleFunc("POST /admin/api/v1/providers/{name}/accounts/{acct}/reset", s.handleAdminAccountReset)
 	mux.HandleFunc("GET /admin/config/oauth/accounts", s.handleAdminOAuthAccounts)
 	mux.HandleFunc("POST /admin/config/oauth/login", s.handleAdminOAuthLogin)

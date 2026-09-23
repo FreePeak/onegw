@@ -233,6 +233,11 @@ func applyKeyOps(lines []string, providers []config.ProviderCfg, accounts []conf
 // browser form and therefore reports has_key only). Accounts stays nil exactly
 // when the provider has no per-account credential surface to rewrite, so
 // spliceProvider leaves a keyless provider's legacy lines untouched.
+// boolPtr boxes b for optional JSON bools where nil means "untouched"
+// (the provider edit's proxy opt-in: omitted by forms that don't manage
+// it, explicit true/false from the Proxies page multi-select).
+func boolPtr(b bool) *bool { return &b }
+
 func providerEditReqFromConfig(p config.ProviderCfg, accounts []config.OAuthAccount) providerEditReq {
 	svc := map[string]string{}
 	for _, a := range accounts {
@@ -246,6 +251,7 @@ func providerEditReqFromConfig(p config.ProviderCfg, accounts []config.OAuthAcco
 		SubscriptionQuota: p.SubscriptionQuota, MaxConc: p.MaxConc,
 		Sticky: p.Sticky, QuotaWindow: p.QuotaWindow,
 		QuotaLimitTokens: p.QuotaLimitTokens, QuotaLimitReqs: p.QuotaLimitRequests,
+		Proxy: boolPtr(p.Proxy),
 	}
 	switch {
 	case len(p.Accounts) > 0:

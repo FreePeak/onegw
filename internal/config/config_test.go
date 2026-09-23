@@ -134,3 +134,46 @@ func TestValidateQuotaWindow(t *testing.T) {
 		}
 	}
 }
+
+// The shared [proxy] pool: empty = direct requests everywhere (default),
+// a bulk URL list parses, each URL must carry scheme + host, the
+// rotation strategy is gated, and a provider opting in with no pool
+// configured fails loudly instead of silently going direct.
+func TestValidateProxyPool(t *testing.T) {
+	// Absent pool, no opt-in: untouched configs pass byte-identically.
+	c0 := &Config{Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k"}}}
+	if err := c0.Validate(); err != nil {
+		t.Fatalf("no proxy table must pass, got %v", err)
+	}
+	// Bulk list + each supported strategy passes.
+	for _, rot := range []string{"", "round-robin", "random", "order"} {
+		c := &Config{
+			Proxy:     ProxyPoolCfg{URLs: []string{"http://p1:8080", "http://p2:8080"}, Rotation: rot},
+			Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", Proxy: true}},
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("rotation %q must pass, got %v", rot, err)
+		}
+	}
+	// Opt-in without a pool is a loud failure, not a silent direct.
+	c1 := &Config{Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", Proxy: true}}}
+	if err := c1.Validate(); err == nil || !strings.Contains(err.Error(), "proxy") {
+		t.Fatalf("proxy opt-in with no pool must be rejected naming the knob, got %v", err)
+	}
+	// URL and rotation shapes that must fail.
+	bad := []ProxyPoolCfg{
+		{URLs: []string{"p1:8080"}},                          // no scheme
+		{URLs: []string{"http://"}},                          // no host
+		{URLs: []string{""}},                                 // empty entry
+		{URLs: []string{"http://p1:8080"}, Rotation: "fast"}, // unknown strategy
+	}
+	for _, pool := range bad {
+		c := &Config{
+			Proxy:     pool,
+			Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k"}},
+		}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "proxy") {
+			t.Errorf("pool %+v must be rejected naming the knob, got %v", pool, err)
+		}
+	}
+}

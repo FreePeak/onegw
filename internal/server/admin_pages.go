@@ -364,6 +364,8 @@ var navItems = []dashboard.NavItem{
 		Icon: `<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="m16.5 6.5 2.5 2.5"/><path d="m19 4 2 2"/>`},
 	{ID: "combos", Href: "/admin/ui/combos", Label: "Combos", Group: "Configure",
 		Icon: `<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>`},
+	{ID: "proxies", Href: "/admin/ui/proxies", Label: "Proxies", Group: "Configure",
+		Icon: `<circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M3 12h18"/>`},
 	{ID: "quota", Href: "/admin/ui/quota", Label: "Quota", Group: "Administer",
 		Icon: `<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>`},
 	{ID: "saver", Href: "/admin/ui/saver", Label: "Token Saver", Group: "Administer",
@@ -615,6 +617,8 @@ func (s *Server) handleAdminUI(w http.ResponseWriter, r *http.Request) {
 		s.modelsPage(w, r)
 	case "combos":
 		s.combosPage(w, r)
+	case "proxies":
+		s.proxiesPage(w, r)
 	case "quota":
 		s.quotaPage(w, r)
 	case "saver":
@@ -936,6 +940,9 @@ type providerView struct {
 	Quota       string   `json:"quota,omitempty"`
 	QuotaLimit  string   `json:"quota_limit,omitempty"`
 	Models      []string `json:"models,omitempty"`
+	// Proxy reports whether the provider routes through the shared
+	// [proxy] pool (managed on the Proxies page); false = direct.
+	Proxy bool `json:"proxy,omitempty"`
 	// OAuth service profile of each account row ("xai" for a Grok
 	// subscription) with that account's sign-in state; nil when the
 	// provider has no [[oauth.accounts]] entries. The credential lives in
@@ -965,6 +972,7 @@ func providerViews(st *state) []providerView {
 		v := providerView{
 			Name: p.Name, Kind: p.Kind, BaseURL: p.BaseURL,
 			Accounts: n, Models: p.Models, Sticky: p.Sticky, Disabled: p.Disabled,
+			Proxy: p.Proxy,
 		}
 		if def, ok := st.pool.Get(p.Name); ok {
 			v.TPS = def.ProviderTPS()
@@ -1055,18 +1063,22 @@ func (s *Server) attachOAuth(views []providerView) []providerView {
 // carries NO secret material: accounts expose has_key only, so an edit
 // round-trip can never echo a key back into the file.
 type providerEditView struct {
-	Name              string         `json:"name"`
-	Kind              string         `json:"kind"`
-	BaseURL           string         `json:"base_url,omitempty"`
-	Models            []string       `json:"models,omitempty"`
-	ResponsesModels   []string       `json:"responses_models,omitempty"`
-	SubscriptionQuota string         `json:"subscription_quota,omitempty"`
-	MaxConc           int            `json:"max_concurrency,omitempty"`
-	Sticky            string         `json:"sticky,omitempty"`
-	QuotaWindow       string         `json:"quota_window,omitempty"`
-	QuotaTokens       int64          `json:"quota_limit_tokens,omitempty"`
-	QuotaReqs         int64          `json:"quota_limit_requests,omitempty"`
-	Accounts          []acctEditView `json:"accounts,omitempty"`
+	Name              string   `json:"name"`
+	Kind              string   `json:"kind"`
+	BaseURL           string   `json:"base_url,omitempty"`
+	Models            []string `json:"models,omitempty"`
+	ResponsesModels   []string `json:"responses_models,omitempty"`
+	SubscriptionQuota string   `json:"subscription_quota,omitempty"`
+	MaxConc           int      `json:"max_concurrency,omitempty"`
+	Sticky            string   `json:"sticky,omitempty"`
+	QuotaWindow       string   `json:"quota_window,omitempty"`
+	QuotaTokens       int64    `json:"quota_limit_tokens,omitempty"`
+	QuotaReqs         int64    `json:"quota_limit_requests,omitempty"`
+	// Proxy mirrors the provider's shared-pool opt-in (`proxy = true`);
+	// the editor round-trips it so the Proxies page isn't the only
+	// writer — but the Proxies multi-select stays the primary surface.
+	Proxy    bool           `json:"proxy,omitempty"`
+	Accounts []acctEditView `json:"accounts,omitempty"`
 }
 
 type acctEditView struct {
@@ -1088,6 +1100,7 @@ func providerEditViews(st *state) []providerEditView {
 			ResponsesModels: p.ResponsesModels, SubscriptionQuota: p.SubscriptionQuota,
 			MaxConc: p.MaxConc, Sticky: p.Sticky, QuotaWindow: p.QuotaWindow,
 			QuotaTokens: p.QuotaLimitTokens, QuotaReqs: p.QuotaLimitRequests,
+			Proxy: p.Proxy,
 		}
 		oauth := map[string]config.OAuthAccount{}
 		for _, a := range st.cfg.OAuthAccounts() {
@@ -1135,6 +1148,9 @@ type providersPageView struct {
 	// device-flow profiles for the editor's per-account select.
 	OAuthStates []oauthState
 	Services    []string
+	// ProxyPool carries the shared pool URLs for the editor (the provider
+	// modal shows which pool exists when opting in). Nil when no pool.
+	ProxyURLs []string
 	// Presets is the provider-recipe catalog (built-ins overlaid with the
 	// sqlite store) for the Add provider dialog's pre-fill select.
 	Presets template.JS
@@ -1149,6 +1165,7 @@ func (s *Server) providersPage(w http.ResponseWriter, r *http.Request) {
 		v.Views = s.attachOAuth(providerViews(st))
 		v.OAuthStates = s.oauthStates()
 		v.Services = oauth.Providers()
+		v.ProxyURLs = append([]string{}, st.cfg.Proxy.URLs...)
 		edits := providerEditViews(st)
 		if b, err := json.Marshal(edits); err == nil {
 			v.Edit = template.JS(b)
@@ -1225,6 +1242,30 @@ func (s *Server) combosPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.authedPage(w, r, "combos", "Combos", false, v)
+}
+
+// proxiesPageView is the Proxies page's data: the live pool plus every
+// provider's opt-in, serialized for the page's inline editor JS.
+type proxiesPageView struct {
+	Pool proxyPoolView `json:"pool"`
+	Edit template.JS   `json:"-"`
+}
+
+func (s *Server) proxiesPage(w http.ResponseWriter, r *http.Request) {
+	v := proxiesPageView{}
+	if st := s.cur(); st != nil {
+		v.Pool.URLs = append([]string{}, st.cfg.Proxy.URLs...)
+		v.Pool.NoProxy = st.cfg.Proxy.NoProxy
+		v.Pool.Rotation = st.cfg.Proxy.Rotation
+		for _, p := range st.cfg.Providers {
+			v.Pool.Providers = append(v.Pool.Providers, proxyMemberView{Name: p.Name, Proxy: p.Proxy})
+		}
+		sort.Slice(v.Pool.Providers, func(i, j int) bool { return v.Pool.Providers[i].Name < v.Pool.Providers[j].Name })
+		if b, err := json.Marshal(v.Pool); err == nil {
+			v.Edit = template.JS(b)
+		}
+	}
+	s.authedPage(w, r, "proxies", "Proxies", false, v)
 }
 
 func (s *Server) handleAPICombos(w http.ResponseWriter, r *http.Request) {

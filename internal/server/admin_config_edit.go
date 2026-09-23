@@ -79,13 +79,17 @@ type providerEditReq struct {
 	// SubscriptionQuota selects the upstream-reported quota profile
 	// ("grok-cli" for a SuperGrok pool, "opencode-go", "zai", "zai-cn",
 	// "commandcode"); "" = local counters only.
-	SubscriptionQuota string     `json:"subscription_quota"`
-	MaxConc           int        `json:"max_concurrency"`
-	Sticky            string     `json:"sticky"`
-	QuotaWindow       string     `json:"quota_window"`
-	QuotaLimitTokens  int64      `json:"quota_limit_tokens"`
-	QuotaLimitReqs    int64      `json:"quota_limit_requests"`
-	Accounts          []acctEdit `json:"accounts"`
+	SubscriptionQuota string `json:"subscription_quota"`
+	MaxConc           int    `json:"max_concurrency"`
+	Sticky            string `json:"sticky"`
+	QuotaWindow       string `json:"quota_window"`
+	QuotaLimitTokens  int64  `json:"quota_limit_tokens"`
+	QuotaLimitReqs    int64  `json:"quota_limit_requests"`
+	// Proxy opts the provider into the shared [proxy] pool (bulk URLs +
+	// rotation, managed on the Proxies page). Nil = leave the on-disk
+	// value untouched; non-nil sets or clears the `proxy =` line.
+	Proxy    *bool      `json:"proxy"`
+	Accounts []acctEdit `json:"accounts"`
 }
 
 type comboEditReq struct {
@@ -552,6 +556,16 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 	} else {
 		block = removeScalar(block, "quota_limit_requests")
 	}
+	// proxy opt-in: nil leaves the on-disk line untouched (the Proxies
+	// page's multi-select sends explicit true/false per provider, while
+	// the provider modal omits the field when it doesn't manage it).
+	if req.Proxy != nil {
+		if *req.Proxy {
+			block = upsertScalar(block, "proxy", "proxy = true")
+		} else {
+			block = removeScalar(block, "proxy")
+		}
+	}
 	// accounts: re-render the nested sub-tables when the request carries any.
 	// The roster replaces the block's whole credential surface: track which
 	// legacy credentials the carry-over consumed — a superseded line whose
@@ -834,6 +848,9 @@ func renderProviderBlock(req providerEditReq) []string {
 	}
 	if req.QuotaLimitReqs > 0 {
 		block = append(block, "quota_limit_requests = "+strconv.FormatInt(req.QuotaLimitReqs, 10))
+	}
+	if req.Proxy != nil && *req.Proxy {
+		block = append(block, "proxy = true")
 	}
 	for _, a := range req.Accounts {
 		block = append(block, renderAccountTable(a, a.APIKey)...)
