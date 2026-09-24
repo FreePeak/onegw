@@ -280,15 +280,16 @@ func TestDashboardPagesRender(t *testing.T) {
 	srv, h := newAdminSrv(t, "")
 	_ = srv
 	pages := map[string]string{
-		"/admin":              "Requests · today",
-		"/admin/ui/usage":     "All time",
-		"/admin/ui/providers": `data-copy="p1/m1"`, // copy chip carries the usable id
-		"/admin/ui/combos":    `data-copy="c1"`,
-		"/admin/ui/quota":     "no quota windows",
-		"/admin/ui/saver":     "Input saver",
-		"/admin/ui/logs":      "logstat",
-		"/admin/ui/tools":     "model_providers.onegw",
-		"/admin/ui/settings":  "admin auth",
+		"/admin":               "Requests · today",
+		"/admin/ui/usage":      "All time",
+		"/admin/ui/providers":  `data-copy="p1/m1"`, // copy chip carries the usable id
+		"/admin/ui/combos":     `data-copy="c1"`,
+		"/admin/ui/quota":      "no quota windows",
+		"/admin/ui/saver":      "Input saver",
+		"/admin/ui/logs":       "logstat",
+		"/admin/ui/tools":      "model_providers.onegw",
+		"/admin/ui/playground": `value="p1/m1"`,
+		"/admin/ui/settings":   "admin auth",
 	}
 	for path, want := range pages {
 		w := do(t, h, adminReq(t, path))

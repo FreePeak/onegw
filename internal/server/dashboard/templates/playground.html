@@ -31,8 +31,8 @@
   <div class="pg-bar">
     <label>model
       <select id="pg-model">
-        {{range .Providers}}{{range .Models}}
-        <option value="{{.PName}}/{{.}}">{{.PName}}/{{.}}</option>
+        {{range .Providers}}{{$provider := .}}{{range .Models}}
+        <option value="{{$provider.PName}}/{{.}}">{{$provider.PName}}/{{.}}</option>
         {{end}}{{end}}
       </select>
     </label>
