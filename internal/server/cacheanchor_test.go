@@ -151,6 +151,7 @@ func TestAnchorProfilesDefaultUntouched(t *testing.T) {
 		{"sticky-key on anthropic upstream", "sticky-key", claudeDef("sticky-key"), translat.FmtAnthropic, "sess"},
 		{"dashscope on anthropic upstream", "dashscope-marker", claudeDef("dashscope-marker"), translat.FmtAnthropic, ""},
 		{"sticky-key without session", "sticky-key", claudeDef("sticky-key"), translat.FmtOpenAI, ""},
+		{"strip-markers on anthropic upstream", "strip-markers", claudeDef("strip-markers"), translat.FmtAnthropic, ""},
 	}
 	for _, tc := range cases {
 		out := anchorCacheProfile(fixture, "m", tc.def, tc.upstream, tc.key)
@@ -239,5 +240,31 @@ func TestAnchorStickyKey(t *testing.T) {
 	// Empty sessionKey skips injection entirely.
 	if out := anchorCacheProfile(stale, "m", def, translat.FmtOpenAI, ""); !bytes.Equal(out, stale) {
 		t.Fatal("empty sessionKey must leave the body untouched")
+	}
+}
+
+func TestStripMarkersFlattenSystemPartsBecomeString(t *testing.T) {
+	// GLM-5.3 400s on a system message whose content is a parts array; the
+	// marker is what forced that shape upstream of here.
+	in := `{"model":"m","messages":[{"role":"system","content":[{"type":"text","text":"a","cache_control":{"type":"ephemeral"}},{"type":"text","text":"b"}]},{"role":"user","content":[{"type":"image_url","image_url":{"url":"x"}},{"type":"text","text":"c"}]}],"tools":[{"type":"function","cache_control":{"type":"ephemeral"}}]}`
+	out := string(stripMarkersFlatten([]byte(in)))
+	if strings.Contains(out, "cache_control") {
+		t.Fatalf("marker survived: %s", out)
+	}
+	if !strings.Contains(out, `"content":"a\n\nb"`) {
+		t.Fatalf("system parts not collapsed to a string: %s", out)
+	}
+	if !strings.Contains(out, `"image_url"`) {
+		t.Fatalf("mixed-content message must keep its parts: %s", out)
+	}
+}
+
+// The strip-markers profile must be reachable through the dispatcher, not
+// just as a helper: an OpenAI upstream gets marker-free string content.
+func TestAnchorCacheProfileStripMarkersDispatch(t *testing.T) {
+	in := []byte(`{"messages":[{"role":"system","content":[{"type":"text","text":"a","cache_control":{"type":"ephemeral"}}]}]}`)
+	out := string(anchorCacheProfile(in, "m", claudeDef("strip-markers"), translat.FmtOpenAI, ""))
+	if strings.Contains(out, "cache_control") || !strings.Contains(out, `"content":"a"`) {
+		t.Fatalf("profile not applied on an OpenAI upstream: %s", out)
 	}
 }

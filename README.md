@@ -780,6 +780,11 @@ full prefix rewrite). Profiles:
 - `"dashscope-marker"`: preserves client `cache_control` markers on the
   OpenAI wire (Qwen accepts up to 4 markers, 20-block lookback); bodies
   carrying more than 4 keep the last 4.
+- `"strip-markers"`: OpenAI-format upstreams that reject Anthropic cache
+  fields. Every `cache_control` is dropped and a message whose content is
+  only plain text parts collapses to one string. `kind = "opencode"`
+  needs it for `glm-5.2`, `glm-5.3` and `kimi-k3` when the client marks
+  its system block (Claude Code does).
 - `"claude-anchor"`: for Anthropic-format upstreams. Every client
   `cache_control` marker is stripped (client markers point at
   pre-normalization offsets) and re-anchored at canonical positions —

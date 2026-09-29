@@ -243,7 +243,9 @@ type ProviderCfg struct {
 	// cache_control markers and re-anchors {"type":"ephemeral"} at
 	// canonical positions on Anthropic-format bodies; "dashscope-marker"
 	// keeps Qwen/DashScope cache_control markers but caps them at the
-	// documented 4-marker ceiling on OpenAI-format bodies; "sticky-key"
+	// documented 4-marker ceiling on OpenAI-format bodies; "strip-markers"
+	// drops cache_control and collapses text-only content arrays to strings
+	// for upstreams that reject them (OpenCode Go glm-5.3, kimi-k3); "sticky-key"
 	// injects the gateway session identity as prompt_cache_key for
 	// implicit sticky-routing upstreams (xai, OpenRouter, Kimi).
 	CacheProfile string `toml:"cache_profile"`
@@ -759,9 +761,9 @@ func (c *Config) Validate() error {
 		}
 
 		switch p.CacheProfile {
-		case "", "none", "claude-anchor", "dashscope-marker", "sticky-key":
+		case "", "none", "claude-anchor", "dashscope-marker", "strip-markers", "sticky-key":
 		default:
-			return fmt.Errorf("provider %s unknown cache_profile %q (want none, claude-anchor, dashscope-marker or sticky-key)", p.Name, p.CacheProfile)
+			return fmt.Errorf("provider %s unknown cache_profile %q (want none, claude-anchor, dashscope-marker, strip-markers or sticky-key)", p.Name, p.CacheProfile)
 		}
 		for _, tier := range p.Tiers {
 			if tier.Model == "" {

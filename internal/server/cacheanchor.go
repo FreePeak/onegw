@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"onegw/internal/provider"
 	"onegw/internal/translat"
@@ -31,6 +32,9 @@ import (
 //     cache_control markers are preserved verbatim (Qwen accepts 4
 //     markers, 20-block lookback); only when the body carries more than
 //     4 are the oldest stripped until 4 remain.
+//   - "strip-markers": OpenAI-format upstream bodies. Every cache_control
+//     is dropped and text-only content arrays collapse to one string, for
+//     upstreams that reject either (OpenCode Go glm-5.2/5.3, kimi-k3).
 //   - "sticky-key": OpenAI-format upstream bodies. The session identity
 //     is injected as top-level prompt_cache_key for implicit
 //     sticky-routing upstreams (xai, OpenRouter, Kimi). An empty
@@ -56,6 +60,11 @@ func anchorCacheProfile(body []byte, model string, def *provider.Def, upstream t
 			return body
 		}
 		return capDashScopeMarkers(body)
+	case "strip-markers":
+		if upstream != translat.FmtOpenAI {
+			return body
+		}
+		return stripMarkersFlatten(body)
 	case "sticky-key":
 		if upstream != translat.FmtOpenAI || sessionKey == "" {
 			return body
@@ -276,4 +285,57 @@ func reencodeRoot(root map[string]any, body []byte) []byte {
 		return body
 	}
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+}
+
+// stripMarkersFlatten prepares an OpenAI-format body for upstreams that
+// reject Anthropic cache markers or array-shaped text content (GLM-5.3
+// answers 400 to a system message whose content is a parts array; Kimi K3
+// rejects cache_control outright). Every cache_control is dropped and a
+// message whose content is only plain text parts collapses to one string.
+func stripMarkersFlatten(body []byte) []byte {
+	var root map[string]any
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return body
+	}
+	stripCacheControl(root)
+	if msgs, ok := root["messages"].([]any); ok {
+		for _, mv := range msgs {
+			m, ok := mv.(map[string]any)
+			if !ok {
+				continue
+			}
+			if txt, ok := plainTextParts(m["content"]); ok {
+				m["content"] = txt
+			}
+		}
+	}
+	out, err := json.Marshal(root)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// plainTextParts joins a content array made only of {type:"text",text}
+// parts; anything else (images, tool parts, extra keys) is left alone.
+func plainTextParts(content any) (string, bool) {
+	parts, ok := content.([]any)
+	if !ok || len(parts) == 0 {
+		return "", false
+	}
+	texts := make([]string, 0, len(parts))
+	for _, pv := range parts {
+		p, ok := pv.(map[string]any)
+		if !ok || p["type"] != "text" || len(p) != 2 {
+			return "", false
+		}
+		t, ok := p["text"].(string)
+		if !ok {
+			return "", false
+		}
+		texts = append(texts, t)
+	}
+	return strings.Join(texts, "\n\n"), true
 }
