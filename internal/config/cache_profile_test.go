@@ -8,7 +8,7 @@ import (
 // cache_profile is an opt-in enum: unknown values must fail the load
 // rather than silently forwarding mutated bodies (issue #34).
 func TestValidateCacheProfile(t *testing.T) {
-	for _, ok := range []string{"", "none", "claude-anchor", "dashscope-marker", "sticky-key"} {
+	for _, ok := range []string{"", "none", "claude-anchor", "dashscope-marker", "strip-markers", "sticky-key"} {
 		c := &Config{
 			Auth:      Auth{KeyList: []AuthKey{{Key: "sk-1"}}},
 			Providers: []ProviderCfg{{Name: "p", Kind: "openai", APIKey: "k", Models: []string{"m"}, CacheProfile: ok}},

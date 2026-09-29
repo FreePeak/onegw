@@ -160,6 +160,8 @@ models = ["openai/gpt-5.5", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-v3
 #   "sticky-key"         inject the session identity as prompt_cache_key
 #                        (xAI, OpenRouter, Kimi)
 #   "dashscope-marker"   keep client cache_control markers (Qwen, max 4)
+#   "strip-markers"      drop cache_control and collapse text-only content
+#                        arrays to strings (OpenCode Go glm-5.2/5.3, kimi-k3)
 #   "claude-anchor"      strip + re-anchor ephemeral markers on the last
 #                        system block / cache-eligible tool / last
 #                        assistant turn (Anthropic-format upstreams)

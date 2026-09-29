@@ -377,7 +377,8 @@ type Def struct {
 	// (issue #34, set from ProviderCfg.CacheProfile): "claude-anchor"
 	// re-anchors Anthropic cache_control breakpoints after normalization,
 	// "dashscope-marker" keeps DashScope/Qwen markers within the 4-marker
-	// ceiling, "sticky-key" injects prompt_cache_key for sticky-routing
+	// ceiling, "strip-markers" drops cache_control and flattens text-only
+	// content arrays, "sticky-key" injects prompt_cache_key for sticky-routing
 	// upstreams. ""/"none" forwards bodies untouched.
 	CacheProfile string
 
