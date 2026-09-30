@@ -74,15 +74,27 @@ func setCodexFingerprint(h http.Header, bearer, clientSession string) {
 	}
 }
 
-// codexModels is the served catalog: BARE ids (the server qualifies them with
-// the provider name) and NO reasoning suffix — effort rides the client's
-// reasoning_effort knob, so `gpt-5.6-sol-high` would be sent upstream verbatim
-// and 400. Sourced from OmniRoute's registry
-// (config/providers/registry/codex/index.ts) minus the suffixed aliases.
-// ChatGPT rotates these without notice, so an operator who needs an id this
-// list lacks sets `models` explicitly.
+// codexModels is the served catalog, read off the Codex CLI's own model
+// manifest (openai/codex codex-rs/models-manager/models.json, fetched
+// 2026-09-30): every slug it ships that is not marked `visibility: "hide"`,
+// ordered by its `priority`. The four hidden ones (two daybreak aliases and
+// codex-auto-review) are not in the CLI's picker either. BARE ids, no
+// reasoning suffix: the tier rides the client's reasoning_effort knob, so
+// `gpt-5.6-sol-high` would be sent upstream verbatim and 400. Every listed
+// model needs client >= 0.153.0, which the reported CodexClientVersion
+// clears.
+//
+// ChatGPT rotates this list without notice, so an operator who needs an id
+// it lacks sets `models` explicitly.
+// client's reasoning_effort knob, so `gpt-5.6-sol-high` would be sent
+// upstream verbatim and 400. Every listed model needs client >= 0.153.0,
+// which the reported CodexClientVersion clears.
+//
+// ChatGPT rotates this list without notice, so an operator who needs an id
+// it lacks sets `models` explicitly.
 var codexModels = []string{
-	"gpt-5.5",
-	"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+	"gpt-6.1-sol",
 	"gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
+	"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+	"gpt-5.5",
 }

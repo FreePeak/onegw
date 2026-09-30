@@ -34,7 +34,7 @@ func TestCodexEndToEnd(t *testing.T) {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.1-codex\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"stub-codex-model\"}}\n\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"pong\"}\n\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
@@ -60,7 +60,7 @@ name = "codex"
 kind = "codex"
 base_url = "` + up.URL + `"
 subscription_quota = "codex"
-models = ["gpt-5.1-codex"]
+models = ["stub-codex-model"]
 
 [[providers.accounts]]
 name = "me"
@@ -86,7 +86,7 @@ service = "codex"
 	}
 	defer srv.Close()
 
-	body := `{"model":"codex/gpt-5.1-codex","messages":[{"role":"user","content":"ping"}]}`
+	body := `{"model":"codex/stub-codex-model","messages":[{"role":"user","content":"ping"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer sk-client")
 	w := httptest.NewRecorder()
@@ -153,7 +153,7 @@ keys = ["key-a"]
 name = "codex"
 kind = "codex"
 base_url = "` + upstreamURL + `"
-models = ["gpt-5.1-codex"]
+models = ["stub-codex-model"]
 
 [[providers.accounts]]
 name = "main"
