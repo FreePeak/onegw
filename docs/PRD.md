@@ -3072,8 +3072,22 @@ the issue):
   metadata-only ones); and the plan label comes from `plan_type`, falling back
   to the token claim when the body omits it.
 
+  **UI + backend verified together** (live gateway on a scratch data dir, stubbed
+  chatgpt.com): all twelve `/admin/ui/*` pages render 200 with the codex
+  provider configured; the providers page offers the kind, the
+  `subscription_quota` datalist entry and the account row's `codex` OAuth
+  service; the Quota page renders all four windows (plan Session/Weekly,
+  `code_review · Weekly` at 80 % flagged `warn`, `Monthly credit limit` at
+  31 %) from the real probe; `/v1/models` lists `codex/<id>`; the
+  admin model-fetch returns the 8-model catalog; `/v1/chat/completions`
+  (streaming and not) and `/v1/messages` all relay; the Sign-in button yields
+  a browser prompt on `auth.openai.com` with `redirect_uri` =
+  `http://127.0.0.1:1455/auth/callback`. Two defects found and fixed by that
+  sweep — see the two commits after this one.
+
   Pinned by `TestCodexFingerprintOnChatAndModels`, `TestCodexNoWorkspaceForNonChatGPTBearer`,
-  `TestCodexSessionIsStableAndClientWins`, `TestCodexFetchModelsIsCurated`,
+  `TestCodexSessionIsStableAndClientWins`, `TestCodexOffShapeClientSessionIsNotForwarded`,
+  `TestCodexFetchModelsIsCurated`,
   `TestCodexProfileIsBrowserOnly`, `TestCodexAuthorizeURLMatchesCLI`,
   `TestCodexExchangeCodeStoresToken`, `TestCodexAccountIDAndPlanDecodeOffBearer`,
   `TestCodexAccountIDRejectsNonChatGPTToken`, `TestCodexRefreshOmitsScope`,
@@ -3082,6 +3096,7 @@ the issue):
   `TestProbeCodexCarriesCLIIdentity`, `TestProbeCodexOmitsWorkspaceForForeignBearer`,
   `TestProbeCodexPlanFallsBackToTokenClaim`, `TestBrowserLoginStoresCodexToken`,
   `TestCodexEndToEnd`, `TestCodexBrowserLoginUsesRegisteredCallback`,
+  `TestPresetAcceptsEveryRegisteredOAuthService`,
   plus the codex row in `TestNewKindsFormatAndDefaults`.
 - **Corrupt upstream streams — byte-level detection + pre-commit failover**
   (2026-09-20, branch `fix/corrupt-stream-failover`, issue #125): the `free`

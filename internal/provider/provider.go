@@ -2839,6 +2839,13 @@ func (d *Def) applySessionAffinity(up, client http.Header, apiKey string) {
 	sent := false
 	grokSent := false
 	for _, name := range sessionAffinityHeaders {
+		// codex's session_id is NOT verbatim-forwarded: the ChatGPT backend
+		// 403s a value that is not its accepted shape, so the fingerprint's
+		// own decision (client value when conforming, else a stable derived
+		// id) is the one that must stand. setCodexFingerprint set it already.
+		if d.Kind == KindCodex && name == "session_id" {
+			continue
+		}
 		if v := clientHeader(client, name); v != "" {
 			up.Set(name, v)
 			sent = true

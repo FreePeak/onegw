@@ -25,8 +25,23 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+
+	"onegw/internal/oauth"
 )
+
+// validOAuthService reports whether name is a registered OAuth profile —
+// the same registry the dashboard's service <select> is rendered from, so
+// the two cannot drift.
+func validOAuthService(name string) bool {
+	for _, s := range oauth.Providers() {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
 
 // presetDoc is one catalog entry's payload — a subset of the provider-edit
 // request shape (admin_config_edit.go), keys stripped by construction.
@@ -124,10 +139,14 @@ func validatePresetDoc(doc presetDoc) string {
 			return "base_url must be an absolute http(s) URL"
 		}
 	}
-	switch doc.OAuthService {
-	case "", "xai", "kilocode":
-	default:
-		return "oauth_service must be xai or kilocode"
+	// The preset's service must be a REGISTERED OAuth profile, not a
+	// hand-kept list: the account row's Sign-in button is what this field
+	// exists to enable, and a service the profile registry does not know
+	// would leave the applied provider with no way to sign in. (It was
+	// xai/kilocode only, so saving a codex/cline provider's recipe from the
+	// dashboard was rejected — and the UI swallows that 400.)
+	if doc.OAuthService != "" && !validOAuthService(doc.OAuthService) {
+		return "oauth_service " + strconv.Quote(doc.OAuthService) + " is not a known OAuth service"
 	}
 	return ""
 }

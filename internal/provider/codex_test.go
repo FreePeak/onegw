@@ -121,6 +121,36 @@ func TestCodexSessionIsStableAndClientWins(t *testing.T) {
 	}
 }
 
+// The same rule has to hold on the REAL request path, not just in the
+// helper. Do() runs the codex fingerprint and then applySessionAffinity,
+// which forwards the four session headers verbatim — so a client value the
+// fingerprint rejected must not be reintroduced by the generic pass. It
+// was: an off-shape id went upstream and the backend 403s those.
+func TestCodexOffShapeClientSessionIsNotForwarded(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"id":"r1","output":[]}`))
+	}))
+	defer srv.Close()
+
+	d := &Def{Name: "codex", Kind: KindCodex, BaseURL: srv.URL,
+		Accounts: []Account{{Name: "main", APIKey: codexBearer(t, "ws-1")}}}
+	client := http.Header{}
+	client.Set("session_id", "bad value with spaces/and-slashes")
+	if _, apiErr := d.Do(t.Context(), &d.Accounts[0], "gpt-6.1-sol", client,
+		bytes.NewReader([]byte(`{"model":"gpt-6.1-sol"}`)), false); apiErr != nil {
+		t.Fatalf("Do: %+v", apiErr)
+	}
+	if got == nil {
+		t.Fatal("upstream was never called")
+	}
+	derived := codexSession("", "ws-1")
+	if s := got.Get("session_id"); s != derived {
+		t.Errorf("session_id = %q, want the derived %q (off-shape client value leaked upstream)", s, derived)
+	}
+}
+
 func TestCodexFetchModelsIsCurated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("codex must not hit an upstream catalog, got %s %s", r.Method, r.URL.Path)
