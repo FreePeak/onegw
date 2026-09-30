@@ -3054,13 +3054,23 @@ the issue):
 
   **Quota** (`subquota` dialect `codex`): `GET backend-api/wham/usage` with the
   same codex-cli identity the inference path sends, decoded by `parseCodex` into
-  the plan's windows. The window LABEL follows the duration the vendor reports
-  (`limit_window_seconds`) rather than the primary/secondary POSITION — ChatGPT
-  does not guarantee which slot is the 5h one, and labelling by position
-  inverts the two rows. A never-started window (0 % used, reset spanning the
-  whole window) is dropped: it is a latent ceiling that recomputes its reset on
-  every fetch and would render as a permanent row that parks nothing. Plan label
-  from `plan_type`.
+  EVERY metered bucket the payload carries, not just the plan's own pair
+  (official shape read from `codex-backend-openapi-models`
+  `RateLimitStatusPayload`): the `rate_limit` primary/secondary windows, each
+  `additional_rate_limits` entry (its `limit_name` prefixes the label, so a
+  per-feature ceiling renders as `code_review · Weekly` instead of colliding
+  with the plan row), and `spend_control.individual_limit` as the monthly
+  credit cap — which is the binding limit for many accounts, and reading only
+  the plan pair reports those as healthy. Three parser calls carry that: the
+  window LABEL follows the duration the vendor reports
+  (`limit_window_seconds`) rather than the primary/secondary POSITION, because
+  ChatGPT does not guarantee which slot is the 5h one and labelling by
+  position inverts the two rows; a never-started window (0 % used, reset
+  spanning the whole window) is dropped, being a latent ceiling that recomputes
+  its reset on every fetch and would render as a permanent row that parks
+  nothing (an empty bucket is skipped for the same reason the CLI skips
+  metadata-only ones); and the plan label comes from `plan_type`, falling back
+  to the token claim when the body omits it.
 
   Pinned by `TestCodexFingerprintOnChatAndModels`, `TestCodexNoWorkspaceForNonChatGPTBearer`,
   `TestCodexSessionIsStableAndClientWins`, `TestCodexFetchModelsIsCurated`,
@@ -3068,7 +3078,10 @@ the issue):
   `TestCodexExchangeCodeStoresToken`, `TestCodexAccountIDAndPlanDecodeOffBearer`,
   `TestCodexAccountIDRejectsNonChatGPTToken`, `TestCodexRefreshOmitsScope`,
   `TestParseCodexWindows`, `TestParseCodexDropsLatentWindow`,
+  `TestParseCodexAdditionalLimitsAndCreditCap`, `TestParseCodexCamelCaseWindows`,
   `TestProbeCodexCarriesCLIIdentity`, `TestProbeCodexOmitsWorkspaceForForeignBearer`,
+  `TestProbeCodexPlanFallsBackToTokenClaim`, `TestBrowserLoginStoresCodexToken`,
+  `TestCodexEndToEnd`, `TestCodexBrowserLoginUsesRegisteredCallback`,
   plus the codex row in `TestNewKindsFormatAndDefaults`.
 - **Corrupt upstream streams — byte-level detection + pre-commit failover**
   (2026-09-20, branch `fix/corrupt-stream-failover`, issue #125): the `free`

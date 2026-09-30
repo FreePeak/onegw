@@ -1530,6 +1530,29 @@ func parseCodex(body []byte, status int) ([]Window, string, string) {
 			Secondary    *codexWindow `json:"secondary_window"`
 			SecondaryAlt *codexWindow `json:"secondaryWindow"`
 		} `json:"rate_limit"`
+		// Metered features beyond the plan's own two windows (code review,
+		// Spark, …), each a named bucket carrying its own pair. Official
+		// shape: codex-backend-openapi-models RateLimitStatusPayload.
+		Additional []struct {
+			LimitName string `json:"limit_name"`
+			RateLimit struct {
+				Primary      *codexWindow `json:"primary_window"`
+				PrimaryAlt   *codexWindow `json:"primaryWindow"`
+				Secondary    *codexWindow `json:"secondary_window"`
+				SecondaryAlt *codexWindow `json:"secondaryWindow"`
+			} `json:"rate_limit"`
+		} `json:"additional_rate_limits"`
+		// The account's own monthly credit cap. It carries used_percent, so
+		// it is parkable exactly like a window; the plan windows are not a
+		// substitute for it (a plan with credits left still refuses a turn
+		// that crosses the cap).
+		SpendControl struct {
+			IndividualLimit *struct {
+				UsedPercent *float64 `json:"used_percent"`
+				ResetAt     *float64 `json:"reset_at"`
+				ResetAfter  *float64 `json:"reset_after_seconds"`
+			} `json:"individual_limit"`
+		} `json:"spend_control"`
 	}
 	if err := json.Unmarshal(body, &top); err != nil {
 		return nil, "", "ChatGPT usage response is not valid JSON."
@@ -1538,24 +1561,50 @@ func parseCodex(body []byte, status int) ([]Window, string, string) {
 	if plan == "" {
 		plan = strings.TrimSpace(top.PlanType2)
 	}
-	primary, secondary := top.RateLimit.Primary, top.RateLimit.Secondary
-	if primary == nil {
-		primary = top.RateLimit.PrimaryAlt
+	windows := codexWindows("", top.RateLimit.Primary, top.RateLimit.Secondary)
+	if len(windows) == 0 {
+		// camelCase spelling of the same fields
+		windows = codexWindows("", top.RateLimit.PrimaryAlt, top.RateLimit.SecondaryAlt)
 	}
-	if secondary == nil {
-		secondary = top.RateLimit.SecondaryAlt
+	for _, a := range top.Additional {
+		w := codexWindows(a.LimitName, a.RateLimit.Primary, a.RateLimit.Secondary)
+		if len(w) == 0 {
+			w = codexWindows(a.LimitName, a.RateLimit.PrimaryAlt, a.RateLimit.SecondaryAlt)
+		}
+		windows = append(windows, w...)
 	}
-	var windows []Window
-	if w, ok := codexWindowOf(primary); ok {
-		windows = append(windows, w)
-	}
-	if w, ok := codexWindowOf(secondary); ok {
-		windows = append(windows, w)
+	if l := top.SpendControl.IndividualLimit; l != nil && l.UsedPercent != nil {
+		windows = append(windows, Window{
+			Name: "Monthly credit limit", Used: clampPercent(*l.UsedPercent),
+			Resets: codexReset(l.ResetAt, l.ResetAfter),
+		})
 	}
 	if len(windows) == 0 {
 		return nil, plan, "ChatGPT usage response carried no rate_limit windows."
 	}
 	return windows, plan, ""
+}
+
+// codexWindows renders one bucket's primary + secondary windows. `bucket` is
+// the additional-limit name, empty for the plan's own pair; a non-empty one
+// is prefixed onto each label so the Quota page shows which metered feature a
+// row belongs to (code review and Spark have their own ceilings, and burning
+// one does not burn the other). A bucket whose windows are all absent or
+// latent yields nothing — the CLI skips metadata-only buckets for the same
+// reason.
+func codexWindows(bucket string, primary, secondary *codexWindow) []Window {
+	var out []Window
+	for _, w := range []*codexWindow{primary, secondary} {
+		w, ok := codexWindowOf(w)
+		if !ok {
+			continue
+		}
+		if name := strings.TrimSpace(bucket); name != "" {
+			w.Name = name + " · " + w.Name
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // codexWindow is one ChatGPT rate-limit window as reported.
@@ -1572,21 +1621,32 @@ func codexWindowOf(w *codexWindow) (Window, bool) {
 	if w == nil || w.UsedPercent == nil {
 		return Window{}, false
 	}
-	used, _ := asPercent(*w.UsedPercent)
-	if w.UsedPercent != nil && *w.UsedPercent == 0 &&
-		w.LimitWindowSeconds != nil && w.ResetAfterSeconds != nil &&
+	if *w.UsedPercent == 0 && w.LimitWindowSeconds != nil && w.ResetAfterSeconds != nil &&
 		*w.ResetAfterSeconds >= *w.LimitWindowSeconds {
 		return Window{}, false // latent ceiling: never used, reset always a full window out
 	}
-	var resets *time.Time
-	switch {
-	case w.ResetAt != nil:
-		resets = asReset(*w.ResetAt)
-	case w.ResetAfterSeconds != nil:
-		resets = asReset(float64(time.Now().Add(time.Duration(*w.ResetAfterSeconds) * time.Second).Unix()))
-	}
-	return Window{Name: codexWindowName(w.LimitWindowSeconds), Used: used, Resets: resets}, true
+	return Window{
+		Name:   codexWindowName(w.LimitWindowSeconds),
+		Used:   clampPercent(*w.UsedPercent),
+		Resets: codexReset(w.ResetAt, w.ResetAfterSeconds),
+	}, true
 }
+
+// codexReset prefers the absolute reset instant and falls back to the
+// relative one (the two are both always sent; reset_at is authoritative
+// because a slow poll does not stretch it).
+func codexReset(at, after *float64) *time.Time {
+	switch {
+	case at != nil:
+		return asReset(*at)
+	case after != nil:
+		return asReset(float64(time.Now().Add(time.Duration(*after) * time.Second).Unix()))
+	}
+	return nil
+}
+
+// clampPercent narrows a vendor percentage into 0-100.
+func clampPercent(v float64) int { pct, _ := asPercent(v); return pct }
 
 // codexWindowName labels a window by its reported duration instead of its
 // position, since ChatGPT does not guarantee which slot is the 5h one

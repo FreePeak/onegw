@@ -192,3 +192,81 @@ func TestCodexDialectIsRegistered(t *testing.T) {
 		t.Fatalf("DefaultURL(codex) = %q", DefaultURL(Codex))
 	}
 }
+
+// The payload carries three more metered buckets beyond the plan's own pair
+// (official RateLimitStatusPayload shape): named additional_rate_limits and
+// the account's spend_control individual credit cap. Omitting them means a
+// user whose code-review or monthly-credit limit is the binding one sees a
+// healthy account — so they must surface, labelled, and be parkable.
+func TestParseCodexAdditionalLimitsAndCreditCap(t *testing.T) {
+	body := []byte(`{"plan_type":"pro","rate_limit":{
+		"primary_window":{"used_percent":10,"limit_window_seconds":18000,"reset_after_seconds":900},
+		"secondary_window":{"used_percent":20,"limit_window_seconds":604800,"reset_after_seconds":400000}},
+		"additional_rate_limits":[
+			{"limit_name":"code_review","metered_feature":"code_review","rate_limit":{
+				"primary_window":{"used_percent":80,"limit_window_seconds":604800,"reset_after_seconds":100000}}},
+			{"limit_name":"spark","rate_limit":{}},
+			{"limit_name":"latent","rate_limit":{
+				"primary_window":{"used_percent":0,"limit_window_seconds":604800,"reset_after_seconds":604800}}}],
+		"spend_control":{"reached":true,"individual_limit":{
+			"limit":"120","used":"118","used_percent":98,
+			"reset_after_seconds":86400}}}`)
+
+	windows, plan, err := parseCodex(body, 200)
+	if err != "" {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if plan != "pro" {
+		t.Errorf("plan = %q, want pro", plan)
+	}
+	got := map[string]Window{}
+	for _, w := range windows {
+		got[w.Name] = w
+	}
+	// The plan's own two keep their plain labels.
+	if w := got["Session"]; w.Used != 10 {
+		t.Errorf("plan session = %+v, want 10%%", w)
+	}
+	if w := got["Weekly"]; w.Used != 20 {
+		t.Errorf("plan weekly = %+v, want 20%%", w)
+	}
+	// A named bucket prefixes its label, so two features cannot collide.
+	if w := got["code_review · Weekly"]; w.Used != 80 {
+		t.Errorf("code review = %+v, want 80%%", w)
+	}
+	// An empty bucket (metadata only) and a latent one both yield no row.
+	for _, unwanted := range []string{"spark · Weekly", "spark · Session", "latent · Weekly"} {
+		if _, ok := got[unwanted]; ok {
+			t.Errorf("empty/latent bucket rendered a row: %s", unwanted)
+		}
+	}
+	// The credit cap is the binding limit and must park.
+	w, ok := got["Monthly credit limit"]
+	if !ok {
+		t.Fatalf("spend_control cap missing: %+v", windows)
+	}
+	if w.Used != 98 {
+		t.Errorf("credit cap = %+v, want 98%%", w)
+	}
+	if w.exhausted() {
+		t.Error("98%% must not park the account — only 100%% does")
+	}
+	if w.Resets == nil || w.Resets.Before(time.Now()) {
+		t.Errorf("credit cap reset = %v, want now+reset_after_seconds", w.Resets)
+	}
+}
+
+// The camelCase spelling of the window keys is a real vendor variant (OmniRoute
+// reads both); a plan that answers in it must not render as "no windows".
+func TestParseCodexCamelCaseWindows(t *testing.T) {
+	body := []byte(`{"planType":"plus","rate_limit":{
+		"primaryWindow":{"used_percent":33,"limitWindowSeconds":18000,"resetAfterSeconds":600},
+		"secondaryWindow":{"used_percent":44,"limitWindowSeconds":604800,"resetAfterSeconds":500000}}}`)
+	windows, plan, err := parseCodex(body, 200)
+	if err != "" || plan != "plus" {
+		t.Fatalf("camelCase payload: plan=%q err=%q", plan, err)
+	}
+	if len(windows) != 2 || windows[0].Used != 33 || windows[1].Used != 44 {
+		t.Fatalf("camelCase windows = %+v", windows)
+	}
+}

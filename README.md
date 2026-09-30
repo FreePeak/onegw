@@ -620,7 +620,7 @@ windows — used percent and reset time — on the Quota page and
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
 | `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`) | 5-hour + weekly USD windows (used/cap), monthly credits pool (spend vs pool total); plan label from subscriptions |
 | `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim. When the same URL ignores `?format=credits` and answers the **monthly envelope** instead (`monthlyLimit`/`used`, no percent), the used/cap pool shows as "Monthly pool" rather than a probe error |
-| `codex` | `https://chatgpt.com/backend-api/wham/usage` (ChatGPT OAuth bearer; the probe also sends the `codex-cli` User-Agent / `originator` / `Version` and the workspace id decoded off that token) | the plan's own windows — a 5h session and a weekly one, labelled by the duration the vendor reports rather than by position; plan label from `plan_type` |
+| `codex` | `https://chatgpt.com/backend-api/wham/usage` (ChatGPT OAuth bearer; the probe also sends the `codex-cli` User-Agent / `originator` / `Version` and the workspace id decoded off that token) | every metered bucket the account answers with: the plan's own 5h + weekly pair (labelled by the duration the vendor reports, not by position), each `additional_rate_limits` entry prefixed with its name (`code_review · Weekly`), and the `spend_control` monthly credit cap; never-started buckets are dropped and the plan label falls back to the token claim when the body omits it |
 | `freebuff` | `https://www.codebuff.com/api/v1/freebuff/session` (POST; Codebuff CLI auth token) | daily freebucks pool (spent/limit, % + reset) plus the probed model's own admission count; plan label from `accessTier` |
 
 An account whose vendor-reported window is **fully consumed** parks until
@@ -1119,8 +1119,11 @@ provider = "codex"
 account = "me"
 ```
 
-`subscription_quota = "codex"` polls `backend-api/wham/usage` and shows the
-plan's own windows on the Quota page, parking the account when one is exhausted.
+`subscription_quota = "codex"` polls `backend-api/wham/usage` and shows every
+metered bucket the account answers with on the Quota page, parking the account
+when one is exhausted — including per-feature ceilings (`code_review · Weekly`)
+and the monthly credit cap, so a limit that is not the plan's own pair still
+parks the account instead of reading as healthy.
 ChatGPT rotates the model ids without notice, so `models = [...]` overrides the
 curated catalog; the ids stay BARE because the reasoning tier rides the client's
 `reasoning_effort` knob, not the model name.
