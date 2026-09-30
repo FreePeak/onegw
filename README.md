@@ -620,6 +620,7 @@ windows — used percent and reset time — on the Quota page and
 | `zai-cn` | `https://open.bigmodel.cn/api/monitor/usage/quota/limit` | same shape (China region) |
 | `commandcode` | `https://api.commandcode.ai` (base; the probe appends `/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`) | 5-hour + weekly USD windows (used/cap), monthly credits pool (spend vs pool total); plan label from subscriptions |
 | `grok-cli` | `https://cli-chat-proxy.grok.com/v1/billing?format=credits` | the SuperGrok shared weekly pool (`creditUsagePercent`, one window); plan label from the token's `tier` claim. When the same URL ignores `?format=credits` and answers the **monthly envelope** instead (`monthlyLimit`/`used`, no percent), the used/cap pool shows as "Monthly pool" rather than a probe error |
+| `codex` | `https://chatgpt.com/backend-api/wham/usage` (ChatGPT OAuth bearer; the probe also sends the `codex-cli` User-Agent / `originator` / `Version` and the workspace id decoded off that token) | the plan's own windows — a 5h session and a weekly one, labelled by the duration the vendor reports rather than by position; plan label from `plan_type` |
 | `freebuff` | `https://www.codebuff.com/api/v1/freebuff/session` (POST; Codebuff CLI auth token) | daily freebucks pool (spent/limit, % + reset) plus the probed model's own admission count; plan label from `accessTier` |
 
 An account whose vendor-reported window is **fully consumed** parks until
@@ -1075,8 +1076,60 @@ every rotation). Without that cap the refresher sleeps for hours while every
 **shared weekly pool** on the Quota page — parking the account when that pool
 hits 100 % instead of burning doomed upstream attempts.
 
-**Signing in from the dashboard.** The console does the same login the CLI
-does — no TOML editing, no shell:
+### ChatGPT subscriptions (Plus / Pro, Codex backend-api)
+
+A ChatGPT **Plus/Pro** plan carries Codex models on the ChatGPT web backend,
+which onegw fronts as `kind = "codex"`. There is no API key: the credential is
+a ChatGPT OAuth token from a browser sign-in, stored under the gateway data dir
+and refreshed automatically. ChatGPT has no device grant, so the sign-in is
+always authorization-code + PKCE against `auth.openai.com` using the Codex
+CLI's own public client.
+
+```bash
+onegw oauth login -provider codex -account me
+```
+
+ChatGPT allow-lists the CLI's loopback redirect, so the sign-in's browser must
+reach this host: `http://127.0.0.1:1455/auth/callback`. Run it on the operator's
+machine (or forward that port), not on a remote gateway — a redirect_uri the
+vendor does not recognise is refused before any code is issued.
+
+The wire is the Responses dialect at
+`https://chatgpt.com/backend-api/codex/responses`, and three details are not
+negotiable upstream: it only answers `stream: true` (the gateway aggregates it
+for non-streaming clients), it gates models on the reported Codex **client
+version**, and it binds every request to a workspace id. That id is decoded off
+the access token itself — the same claim the CLI reads out of its `id_token` —
+so a token refresh cannot strand the account, and nothing is invented for a
+bearer that is not a ChatGPT credential. `session_id` is the client's own
+conversation id when it sends one and a stable per-account id otherwise,
+because the backend partitions its prompt cache by session.
+
+```toml
+[[providers]]
+name = "codex"
+kind = "codex"
+subscription_quota = "codex"   # the plan's 5h + weekly windows
+
+[[providers.accounts]]
+name = "me"
+
+[[oauth.accounts]]
+provider = "codex"
+account = "me"
+```
+
+`subscription_quota = "codex"` polls `backend-api/wham/usage` and shows the
+plan's own windows on the Quota page, parking the account when one is exhausted.
+ChatGPT rotates the model ids without notice, so `models = [...]` overrides the
+curated catalog; the ids stay BARE because the reasoning tier rides the client's
+`reasoning_effort` knob, not the model name.
+
+### Signing in from the dashboard
+
+The console does the same login the CLI does — no TOML editing, no shell (the
+walkthrough below is xAI's; for ChatGPT the row is identical with
+`kind = codex` and service `codex`):
 
 1. **Providers → `+ Add provider`**: `kind = openai`, base URL
    `https://api.x.ai`, the model ids you want advertised, and a

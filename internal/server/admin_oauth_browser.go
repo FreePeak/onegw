@@ -60,7 +60,7 @@ var (
 // session under its state. The caller has already installed lg in the
 // registry and holds no lock.
 func (s *Server) startBrowserLogin(key string, spec oauth.AccountSpec, lg *oauthLogin) error {
-	base, err := s.ensureCallbackListener()
+	base, err := s.ensureCallbackListener(spec.Provider.CallbackPort)
 	if err != nil {
 		return err
 	}
@@ -107,14 +107,20 @@ func (s *Server) expireBrowserLogin(ctx context.Context, cancel context.CancelFu
 }
 
 // ensureCallbackListener binds the shared loopback listener, or returns the
-// address of the one already running.
-func (s *Server) ensureCallbackListener() (string, error) {
+// address of the one already running. A profile may pin its own port
+// (codex registers 127.0.0.1:1455/auth/callback, which the vendor's
+// allow-list will not accept on any other port), so the port to try is
+// per-login rather than a process-wide constant.
+func (s *Server) ensureCallbackListener(want int) (string, error) {
+	if want <= 0 {
+		want = browserCallbackPort
+	}
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
 	if s.oa.callbackBase != "" {
 		return s.oa.callbackBase, nil
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", browserCallbackPort))
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", want))
 	if err != nil {
 		// Port taken (another login helper on this box, or an explicit
 		// oauth.callback_port that collides): fall back to an ephemeral
@@ -125,7 +131,7 @@ func (s *Server) ensureCallbackListener() (string, error) {
 			return "", fmt.Errorf("bind loopback callback: %w", err)
 		}
 		log.Printf("admin: oauth callback port %d busy (%v); using %s instead — the vendor may reject an unregistered redirect_uri",
-			browserCallbackPort, err, ln.Addr())
+			want, err, ln.Addr())
 	}
 	srv := &http.Server{
 		Handler:           http.HandlerFunc(s.handleOAuthCallback),

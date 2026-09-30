@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -22,6 +23,7 @@ func TestNewKindsFormatAndDefaults(t *testing.T) {
 		{KindOpenAIResponses, translat.FmtOpenAIResponses, "https://cli-chat-proxy.grok.com", "/v1/responses", true},
 		{KindCursor, translat.FmtOpenAI, "https://api2.cursor.sh", "", true},
 		{KindOpenAI, translat.FmtOpenAI, "https://api.openai.com", "/v1/chat/completions", false},
+		{KindCodex, translat.FmtOpenAIResponses, "https://chatgpt.com", "/backend-api/codex/responses", true},
 	}
 	for _, c := range cases {
 		if got := c.kind.Format(); got != c.format {
@@ -57,6 +59,20 @@ func TestNewKindsFormatAndDefaults(t *testing.T) {
 		got[4] != "gpt-5.2" || got[5] != "gpt-5.5" ||
 		got[6] != "gpt-5.6" || got[7] != "claude-sonnet-4.5" {
 		t.Errorf("DefaultModels(cursor) = %v", got)
+	}
+	// Codex: the served catalog must be BARE ids with no reasoning
+	// suffix. A suffixed id (gpt-5.6-sol-high) is not an upstream model —
+	// the backend takes the tier in reasoning.effort — so advertising one
+	// hands clients an id the gateway would forward verbatim and ChatGPT
+	// would 400.
+	efforts := regexp.MustCompile(`-(none|low|medium|high|xhigh|max|ultra)$`)
+	for _, m := range DefaultModels(KindCodex) {
+		if efforts.MatchString(m) {
+			t.Errorf("DefaultModels(codex) entry %q carries a reasoning suffix", m)
+		}
+	}
+	if len(DefaultModels(KindCodex)) == 0 {
+		t.Error("DefaultModels(codex) is empty")
 	}
 }
 

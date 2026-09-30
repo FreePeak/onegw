@@ -669,7 +669,8 @@ func (c *Config) Validate() error {
 		case "freebuff": // Codebuff freebuff multi-step OpenAI executor
 		case "openai-responses", "commandcode", "cursor":
 			// Custom wire formats (issue #12). cursor is a fail-fast
-			// skeleton: valid here, errors at request time.
+		case "codex": // ChatGPT Plus/Pro subscription: Responses wire on the
+			// ChatGPT backend; credential = OAuth token, never a key.
 		case "searxng":
 			// Virtual search provider: no upstream credential needed
 			// (public instances are open; private ones auth via

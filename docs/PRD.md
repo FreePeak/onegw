@@ -3016,6 +3016,60 @@ the issue):
   grok cli configs (pi `models.json` is the proven pattern).
 
 ## Current status (post-M5)
+- **ChatGPT Plus/Pro subscriptions served as a Codex provider** (#2, 2026-09-30):
+  a ChatGPT plan carries Codex models on the ChatGPT web backend, and onegw now
+  fronts `chatgpt.com/backend-api/codex/responses` as `kind = "codex"` — the
+  feature OmniRoute ships as its codex provider (learned from
+  diegosouzapw/OmniRoute `open-sse/executors/codex.ts` + `config/codexClient.ts`,
+  cross-checked against the official client in `openai/codex`
+  `codex-rs/login/src/{server.rs,auth/manager.rs,token_data.rs}`).
+
+  **Login** (`internal/oauth` profile `codex`, browser authorization-code + PKCE
+  — ChatGPT has no device grant): the Codex CLI's own public client id, issuer,
+  scope, authorize extras, and its REGISTERED loopback redirect
+  `http://127.0.0.1:1455/auth/callback` (the gateway's default 56121 is not in
+  ChatGPT's allow-list, so the profile pins the CLI's port and path). Refresh
+  reuses the shared rotating-refresh path and deliberately carries no `scope`
+  — sending one makes the authorization server treat the refresh as a re-scope
+  and invalidate sibling token families on the same client id. `KnownOAuthService`
+  gained `codex` (without it every reload naming it would be rejected).
+
+  **Inference** (`internal/provider/codex.go` + the existing
+  `FmtOpenAIResponses` dialect): no custom executor. Three upstream facts drove
+  the shape: the endpoint only answers `stream: true` (so `KindCodex` joins
+  `ForcedStream`, and the server aggregates the SSE for non-streaming clients);
+  the backend feature-gates models on the reported Codex **client version**
+  (`Version` + the `codex-cli` User-Agent + `originator: codex_cli_rs`, all
+  overridable through `extra_headers`); and every request binds to a workspace
+  id, which is decoded off the ACCESS token's `https://api.openai.com/auth`
+  claim block — the same claim the CLI reads from its `id_token`, which onegw's
+  store has no field for — so a token rotation cannot strand an account and a
+  non-ChatGPT bearer gets no invented id. `session_id` is the client's own
+  conversation id when it sends one and a stable per-WORKSPACE id otherwise:
+  the backend partitions its prompt cache by session, so a rotating id would
+  silently destroy the hit rate on every turn. The catalog is the curated bare
+  id list (`DefaultModels`); reasoning effort rides the client's existing
+  `reasoning_effort` knob, so no suffixed ids are advertised (a suffixed id
+  would be forwarded verbatim and 400).
+
+  **Quota** (`subquota` dialect `codex`): `GET backend-api/wham/usage` with the
+  same codex-cli identity the inference path sends, decoded by `parseCodex` into
+  the plan's windows. The window LABEL follows the duration the vendor reports
+  (`limit_window_seconds`) rather than the primary/secondary POSITION — ChatGPT
+  does not guarantee which slot is the 5h one, and labelling by position
+  inverts the two rows. A never-started window (0 % used, reset spanning the
+  whole window) is dropped: it is a latent ceiling that recomputes its reset on
+  every fetch and would render as a permanent row that parks nothing. Plan label
+  from `plan_type`.
+
+  Pinned by `TestCodexFingerprintOnChatAndModels`, `TestCodexNoWorkspaceForNonChatGPTBearer`,
+  `TestCodexSessionIsStableAndClientWins`, `TestCodexFetchModelsIsCurated`,
+  `TestCodexProfileIsBrowserOnly`, `TestCodexAuthorizeURLMatchesCLI`,
+  `TestCodexExchangeCodeStoresToken`, `TestCodexAccountIDAndPlanDecodeOffBearer`,
+  `TestCodexAccountIDRejectsNonChatGPTToken`, `TestCodexRefreshOmitsScope`,
+  `TestParseCodexWindows`, `TestParseCodexDropsLatentWindow`,
+  `TestProbeCodexCarriesCLIIdentity`, `TestProbeCodexOmitsWorkspaceForForeignBearer`,
+  plus the codex row in `TestNewKindsFormatAndDefaults`.
 - **Corrupt upstream streams — byte-level detection + pre-commit failover**
   (2026-09-20, branch `fix/corrupt-stream-failover`, issue #125): the `free`
   lane (kilocode -> openrouter -> Novita, `inclusionai/ling-3.0-flash-vl:free`)

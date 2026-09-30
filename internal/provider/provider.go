@@ -64,6 +64,12 @@ const (
 	// FreebuffExecutor. Auth is the Codebuff CLI auth token, not a normal
 	// vendor API key.
 	KindFreebuff Kind = "freebuff" // Codebuff freebuff multi-step executor
+	// Codex (chatgpt.com/backend-api/codex) speaks the OpenAI Responses
+	// protocol, but there is no API key: the credential is a ChatGPT
+	// Plus/Pro OAuth token (internal/oauth "codex") plus the workspace id
+	// decoded off that token, and the CLI identity headers the backend
+	// gates models on. See codex.go / setCodexFingerprint.
+	KindCodex Kind = "codex" // ChatGPT subscription (Codex CLI backend-api)
 )
 
 // OpenCode Zen session header. The gateway always sends one: the client's
@@ -253,6 +259,12 @@ func (k Kind) Format() translat.Format {
 	case KindCommandCode:
 		return translat.FmtCommandCode
 	case KindOpenAIResponses:
+		return translat.FmtOpenAIResponses
+	case KindCodex:
+		// The ChatGPT backend speaks the same Responses dialect as the Grok
+		// Build proxy (and upstream always streams — see ForcedStream), so
+		// the existing encoder, SSE decoder, usage accounting and
+		// non-streaming aggregation all serve it unchanged.
 		return translat.FmtOpenAIResponses
 	case KindSystemOne:
 		return translat.FmtSystemOne
@@ -913,6 +925,10 @@ func (k Kind) DefaultBaseURL() string {
 		return "https://cli-chat-proxy.grok.com"
 	case KindCursor:
 		return "https://api2.cursor.sh"
+	case KindCodex:
+		// The ChatGPT web backend that serves the Codex CLI; every path
+		// hangs off it (/backend-api/codex/responses, see Path).
+		return codexDefaultBase
 	case KindCommandCode:
 		return "https://api.commandcode.ai/alpha/generate"
 	case KindSearXNG:
@@ -1020,6 +1036,13 @@ func DefaultModels(k Kind) []string {
 		// like OpenCode Zen.
 		return []string{"auto", "default", "composer-2.5",
 			"composer-2", "gpt-5.2", "gpt-5.5", "gpt-5.6", "claude-sonnet-4.5"}
+	case KindCodex:
+		// The curated catalog (codexModels). ChatGPT rotates these ids
+		// without notice, so an operator who needs an id this list lacks
+		// sets `models` explicitly. Bare ids on purpose: the server
+		// qualifies them with the provider name, and the reasoning tier
+		// rides the client's reasoning_effort knob, not the model name.
+		return codexModels
 	case KindSystemOne:
 		// TypeSafe Jev has no upstream model-listing RPC:
 		// GET /v1/models returns aliases, not the versioned
@@ -2342,6 +2365,10 @@ func (d *Def) Path(op, model string) string {
 			return "/v1/models"
 		}
 		return "/v1/responses"
+	case KindCodex:
+		// Only the inference endpoint: the catalog is served from the
+		// curated list (FetchModels), not from an upstream listing.
+		return codexResponsesPath
 	case KindCommandCode:
 		if op == "models" {
 			return "/v1/models"
@@ -2502,6 +2529,14 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			case KindOpenAIResponses:
 				// Grok CLI fingerprint (single owner; see setGrokFingerprint).
 				setGrokFingerprint(req.Header, model, true)
+			case KindCodex:
+				// ChatGPT CLI identity + the workspace id decoded off
+				// this account's own bearer (single owner; see
+				// codex.go). The session is the CLIENT's conversation
+				// id when it sent one — per-conversation prompt-cache
+				// affinity — else a stable per-account id.
+				setCodexFingerprint(req.Header, acct.bearerToken(),
+					clientHeader(clientHdr, "session_id"))
 			}
 			// applyAuth is the single credential owner for EVERY kind
 			// (including OpenCode's Anthropic-only catalog).
@@ -2912,6 +2947,17 @@ func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, erro
 		// TypeSafe Jev: GET /v1/models returns aliases, not the
 		// versioned ids clients send (docs.typesafe.ai/models).
 		return []byte(`{"models":["jev-latest","jev-preview"]}`), 200, nil
+	case KindCodex:
+		// The catalog is the curated list, answered locally: the
+		// backend's own manifest is a map of model records rather than
+		// the /v1/models shape, and its ids rotate without notice, so a
+		// stale probe is worse than a list an operator can override with
+		// `models` — the same call the jev and freebuff kinds make.
+		out, err := json.Marshal(map[string][]string{"models": codexModels})
+		if err != nil {
+			return nil, 500, err
+		}
+		return out, 200, nil
 	case KindFreebuff:
 		// codebuff.com is a web app: GET /v1/models 404s with a
 		// Next.js page (live 2026-09-23). The catalog is curated

@@ -110,6 +110,7 @@ var validPresetKinds = map[string]bool{
 	"openai": true, "anthropic": true, "gemini": true,
 	"opencode": true, "opencode-free": true, "commandcode": true,
 	"openai-responses": true, "cursor": true, "searxng": true,
+	"codex": true,
 	"cline": true, "mistral": true, "systemone": true, "freebuff": true,
 }
 
