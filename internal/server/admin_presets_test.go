@@ -7,6 +7,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"onegw/internal/oauth"
 	"strings"
 	"testing"
 )
@@ -82,5 +83,32 @@ func TestPresetsAPIRoundTrip(t *testing.T) {
 		if w := adminCall(t, h, http.MethodPut, "/admin/config/presets", body, true); w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: want 400, got %d %s", body, w.Code, w.Body.String())
 		}
+	}
+}
+
+// The dashboard mirrors a provider's recipe into the preset catalog on every
+// save, including the account row's OAuth service — and it swallows the
+// response (.catch(() => {})). So a service the validator rejects means the
+// codex recipe is silently never saved, and re-applying the preset leaves the
+// provider with no Sign-in button. The allowlist must therefore be the
+// PROFILE REGISTRY, not a hand-kept pair.
+func TestPresetAcceptsEveryRegisteredOAuthService(t *testing.T) {
+	dir := t.TempDir()
+	toml := strings.Replace(editTestToml, `data_dir = "memory"`, `data_dir = "`+dir+`"`, 1)
+	_, h, _ := newTestServerFromFile(t, toml)
+
+	for _, svc := range oauth.Providers() {
+		w := adminCall(t, h, http.MethodPut, "/admin/config/presets",
+			`{"name":"recipe-`+svc+`","doc":{"kind":"codex","models":["gpt-6.1-sol"],"oauth_service":"`+svc+`"}}`, true)
+		if w.Code != http.StatusOK {
+			t.Errorf("preset for service %q rejected: %d %s", svc, w.Code, w.Body.String())
+		}
+	}
+	// Something that is not a profile must still be refused, with the name in
+	// the message so the operator can see which value was wrong.
+	w := adminCall(t, h, http.MethodPut, "/admin/config/presets",
+		`{"name":"bogus","doc":{"kind":"codex","oauth_service":"nope"}}`, true)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "nope") {
+		t.Fatalf("unknown service not refused: %d %s", w.Code, w.Body.String())
 	}
 }

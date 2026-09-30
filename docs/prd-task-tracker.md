@@ -74,8 +74,11 @@ status. Status as of 2026-09-08.
 ## Open — tracked as GitHub issues
 
 - [ ] #1 SIGHUP hot reload of config
-- [ ] #2 OAuth device flows for subscription providers (Claude Code, Codex,
-      Cursor) — biggest gap vs 9router
+- [x] #2 OAuth device flows for subscription providers (Codex ✅ via the
+      ChatGPT browser PKCE login — ChatGPT has no device grant; xai, cline and
+      kilocode unchanged). Cursor remains: its login is a browser-dashboard
+      session, not a device grant either, so the frame is "browser sign-in per
+      vendor" rather than device flow.
 - [ ] #3 Per-key rate limits and model restrictions
 - [ ] #4 Prometheus metrics endpoint
 - [ ] #5 Output-side token savers (prompt injection / compression modes)

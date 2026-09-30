@@ -33,25 +33,28 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"onegw/internal/oauth"
 )
 
 // Dialect names for providers.subscription_quota (config.go).
 const (
-	OpenCodeGo  = "opencode-go" // OpenCode Zen Go subscription
-	Zai         = "zai"         // z.ai GLM Coding Plan (international)
-	ZaiCN       = "zai-cn"      // GLM Coding Plan (China, bigmodel.cn)
-	CommandCode = "commandcode" // CommandCode /alpha billing (GOAT/Go/Pro plans)
-	GrokCli     = "grok-cli"    // SuperGrok shared weekly pool (cli-chat-proxy)
-	Cursor          = "cursor"            // Cursor subscription (cursor.com session API)
-	XiaomiTokenPlan = "xiaomi-tokenplan"  // Xiaomi MiMo token-plan (platform.xiaomimimo.com dashboard cookie)
-	Freebuff        = "freebuff"          // Codebuff/freebuff free tier (codebuff.com session API)
+	OpenCodeGo      = "opencode-go"      // OpenCode Zen Go subscription
+	Zai             = "zai"              // z.ai GLM Coding Plan (international)
+	ZaiCN           = "zai-cn"           // GLM Coding Plan (China, bigmodel.cn)
+	CommandCode     = "commandcode"      // CommandCode /alpha billing (GOAT/Go/Pro plans)
+	GrokCli         = "grok-cli"         // SuperGrok shared weekly pool (cli-chat-proxy)
+	Cursor          = "cursor"           // Cursor subscription (cursor.com session API)
+	XiaomiTokenPlan = "xiaomi-tokenplan" // Xiaomi MiMo token-plan (platform.xiaomimimo.com dashboard cookie)
+	Freebuff        = "freebuff"         // Codebuff/freebuff free tier (codebuff.com session API)
+	Codex           = "codex"            // ChatGPT Plus/Pro plan windows (backend-api/wham/usage)
 )
 
 // Dialects lists the accepted providers.subscription_quota values. It is the
 // single source of that list: config.Validate matches against it and quotes
 // it in its error, so a new dialect is registered in exactly one place.
 func Dialects() []string {
-	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor, XiaomiTokenPlan, Freebuff}
+	return []string{OpenCodeGo, Zai, ZaiCN, CommandCode, GrokCli, Cursor, XiaomiTokenPlan, Freebuff, Codex}
 }
 
 // ValidDialect reports whether name is a subscription quota dialect.
@@ -98,6 +101,13 @@ func DefaultURL(dialect string) string {
 		// OmniRoute's validateFreebuffProvider / freebuff executor: the
 		// free-tier session endpoint both the CLI and the web app hit.
 		return "https://www.codebuff.com/api/v1/freebuff/session"
+	case Codex:
+		// The ChatGPT meter behind the Codex CLI (OmniRoute's
+		// codexQuotaFetcher / usage/codex.ts): one GET with the CLI
+		// bearer and the same codex-cli identity the inference path
+		// uses — the endpoint answers an anonymous half-identity with an
+		// empty payload.
+		return "https://chatgpt.com/backend-api/wham/usage"
 	}
 	return ""
 }
@@ -121,6 +131,10 @@ type Target struct {
 	AcctKey  string
 	Dialect  string
 	URL      string // "" = DefaultURL(dialect)
+	// IDToken is the stored identity token, for the vendors whose identity
+	// claims live ONLY there (ChatGPT's workspace id — codex.go). Empty for
+	// every other dialect; never sent as a bearer.
+	IDToken string
 }
 
 // Snapshot is one account's last observed upstream subscription state.
@@ -168,6 +182,10 @@ type Tracker struct {
 	// probe time — OAuth-managed accounts rotate their token in the
 	// background, so a key captured at build time goes stale.
 	resolveKey func(provider, acct string) string
+	// resolveIDToken does the same for the id_token, which carries the
+	// identity claims for the vendors that keep them there (ChatGPT). Nil is
+	// fine — the id_token is a fallback for the access token's claims.
+	resolveIDToken func(provider, acct string) string
 	// probe overrides the HTTP probe (tests).
 	probe func(ctx context.Context, t *Tracker, tgt Target) Snapshot
 
@@ -178,13 +196,17 @@ type Tracker struct {
 }
 
 // New builds a tracker over targets and starts its poll loop.
-func New(targets []Target, onExhausted func(Target, time.Time), resolveKey func(provider, acct string) string) *Tracker {
-	return NewAt(targets, onExhausted, nil, resolveKey, pollEvery, nil, nil)
+func New(targets []Target, onExhausted func(Target, time.Time), resolveKey, resolveIDToken func(provider, acct string) string) *Tracker {
+	return newAt(targets, onExhausted, nil, resolveKey, pollEvery, nil, nil, resolveIDToken)
 }
 
 // NewAt is New with injectable probe, cadence, client and clock (tests);
 // every <= 0 resets to the 60s default.
 func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(context.Context, *Tracker, Target) Snapshot, resolveKey func(provider, acct string) string, every time.Duration, client *http.Client, now func() time.Time) *Tracker {
+	return newAt(targets, onExhausted, probe, resolveKey, every, client, now, nil)
+}
+
+func newAt(targets []Target, onExhausted func(Target, time.Time), probe func(context.Context, *Tracker, Target) Snapshot, resolveKey func(provider, acct string) string, every time.Duration, client *http.Client, now func() time.Time, resolveIDToken func(provider, acct string) string) *Tracker {
 	if every <= 0 {
 		every = pollEvery
 	}
@@ -195,15 +217,16 @@ func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(con
 		now = time.Now
 	}
 	t := &Tracker{
-		targets:     targets,
-		onExhausted: onExhausted,
-		resolveKey:  resolveKey,
-		client:      client,
-		now:         now,
-		every:       every,
-		probe:       probe,
-		snaps:       make(map[string]Snapshot, len(targets)),
-		stop:        make(chan struct{}),
+		targets:        targets,
+		onExhausted:    onExhausted,
+		resolveKey:     resolveKey,
+		resolveIDToken: resolveIDToken,
+		client:         client,
+		now:            now,
+		every:          every,
+		probe:          probe,
+		snaps:          make(map[string]Snapshot, len(targets)),
+		stop:           make(chan struct{}),
 	}
 	go t.loop()
 	return t
@@ -287,6 +310,11 @@ func (t *Tracker) poll() {
 			if t.resolveKey != nil {
 				if k := t.resolveKey(tgt.Provider, tgt.AcctName); k != "" {
 					tgt.AcctKey = k
+				}
+			}
+			if t.resolveIDToken != nil {
+				if id := t.resolveIDToken(tgt.Provider, tgt.AcctName); id != "" {
+					tgt.IDToken = id
 				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
@@ -381,6 +409,20 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 		// cli is what the endpoint keys its response shape on).
 		req.Header.Set("x-grok-client-mode", "cli")
 	}
+	if tgt.Dialect == Codex {
+		// The ChatGPT meter keys its answer on the codex-cli identity
+		// (User-Agent / originator / Version) and the workspace id, not
+		// the bearer alone — the same headers the inference path sends, so
+		// the probe cannot read upstream as an anonymous half-account.
+		claims := oauth.Token{AccessToken: tgt.AcctKey, IDToken: tgt.IDToken}
+		snap.Plan = oauth.CodexPlan(claims)
+		req.Header.Set("User-Agent", oauth.CodexUserAgent)
+		req.Header.Set("Version", oauth.CodexClientVersion)
+		req.Header.Set("originator", oauth.CodexOriginator)
+		if id := oauth.CodexAccountID(claims); id != "" {
+			req.Header.Set("chatgpt-account-id", id)
+		}
+	}
 	resp, err := t.client.Do(req)
 	if err != nil {
 		snap.Err = err.Error()
@@ -400,6 +442,14 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 		snap.Windows, snap.Plan, snap.Err = parseZai(body, resp.StatusCode)
 	case GrokCli:
 		snap.Windows, snap.Plan, snap.Err = parseGrokCli(tgt.AcctKey, body, resp.StatusCode)
+	case Codex:
+		// The body wins (it is the live plan); the token claim set above
+		// is the fallback for a payload that omits plan_type.
+		windows, plan, err := parseCodex(body, resp.StatusCode)
+		snap.Windows, snap.Err = windows, err
+		if plan != "" {
+			snap.Plan = plan
+		}
 	default:
 		snap.Err = "unknown subscription quota dialect " + strconv.Quote(tgt.Dialect)
 	}
@@ -1468,6 +1518,171 @@ func parseCursor(body []byte, status int) ([]Window, string, string) {
 		plan = "uncapped"
 	}
 	return windows, plan, ""
+}
+
+// parseCodex decodes the ChatGPT plan meter behind the Codex CLI
+// (OmniRoute's codexUsageQuotas / codexQuotaFetcher): a rate_limit block with a
+// primary (short rolling) and secondary (weekly) window, each carrying its own
+// used_percent, window length and reset. The window LABEL follows the reported
+// duration rather than the position, because ChatGPT does not guarantee which
+// of the two is the 5h one.
+//
+// A never-started window (0% used and a reset that still spans the whole
+// window) is dropped: ChatGPT advertises latent per-feature ceilings that
+// recompute their reset on every fetch and would otherwise render as a
+// permanent 100% row that parks nothing.
+func parseCodex(body []byte, status int) ([]Window, string, string) {
+	switch status {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, "", "ChatGPT token rejected by the usage endpoint — re-run the codex OAuth login."
+	default:
+		return nil, "", "ChatGPT usage API error (" + strconv.Itoa(status) + ")."
+	}
+	var top struct {
+		PlanType  string `json:"plan_type"`
+		PlanType2 string `json:"planType"`
+		RateLimit struct {
+			Primary      *codexWindow `json:"primary_window"`
+			PrimaryAlt   *codexWindow `json:"primaryWindow"`
+			Secondary    *codexWindow `json:"secondary_window"`
+			SecondaryAlt *codexWindow `json:"secondaryWindow"`
+		} `json:"rate_limit"`
+		// Metered features beyond the plan's own two windows (code review,
+		// Spark, …), each a named bucket carrying its own pair. Official
+		// shape: codex-backend-openapi-models RateLimitStatusPayload.
+		Additional []struct {
+			LimitName string `json:"limit_name"`
+			RateLimit struct {
+				Primary      *codexWindow `json:"primary_window"`
+				PrimaryAlt   *codexWindow `json:"primaryWindow"`
+				Secondary    *codexWindow `json:"secondary_window"`
+				SecondaryAlt *codexWindow `json:"secondaryWindow"`
+			} `json:"rate_limit"`
+		} `json:"additional_rate_limits"`
+		// The account's own monthly credit cap. It carries used_percent, so
+		// it is parkable exactly like a window; the plan windows are not a
+		// substitute for it (a plan with credits left still refuses a turn
+		// that crosses the cap).
+		SpendControl struct {
+			IndividualLimit *struct {
+				UsedPercent *float64 `json:"used_percent"`
+				ResetAt     *float64 `json:"reset_at"`
+				ResetAfter  *float64 `json:"reset_after_seconds"`
+			} `json:"individual_limit"`
+		} `json:"spend_control"`
+	}
+	if err := json.Unmarshal(body, &top); err != nil {
+		return nil, "", "ChatGPT usage response is not valid JSON."
+	}
+	plan := strings.TrimSpace(top.PlanType)
+	if plan == "" {
+		plan = strings.TrimSpace(top.PlanType2)
+	}
+	windows := codexWindows("", top.RateLimit.Primary, top.RateLimit.Secondary)
+	if len(windows) == 0 {
+		// camelCase spelling of the same fields
+		windows = codexWindows("", top.RateLimit.PrimaryAlt, top.RateLimit.SecondaryAlt)
+	}
+	for _, a := range top.Additional {
+		w := codexWindows(a.LimitName, a.RateLimit.Primary, a.RateLimit.Secondary)
+		if len(w) == 0 {
+			w = codexWindows(a.LimitName, a.RateLimit.PrimaryAlt, a.RateLimit.SecondaryAlt)
+		}
+		windows = append(windows, w...)
+	}
+	if l := top.SpendControl.IndividualLimit; l != nil && l.UsedPercent != nil {
+		windows = append(windows, Window{
+			Name: "Monthly credit limit", Used: clampPercent(*l.UsedPercent),
+			Resets: codexReset(l.ResetAt, l.ResetAfter),
+		})
+	}
+	if len(windows) == 0 {
+		return nil, plan, "ChatGPT usage response carried no rate_limit windows."
+	}
+	return windows, plan, ""
+}
+
+// codexWindows renders one bucket's primary + secondary windows. `bucket` is
+// the additional-limit name, empty for the plan's own pair; a non-empty one
+// is prefixed onto each label so the Quota page shows which metered feature a
+// row belongs to (code review and Spark have their own ceilings, and burning
+// one does not burn the other). A bucket whose windows are all absent or
+// latent yields nothing — the CLI skips metadata-only buckets for the same
+// reason.
+func codexWindows(bucket string, primary, secondary *codexWindow) []Window {
+	var out []Window
+	for _, w := range []*codexWindow{primary, secondary} {
+		w, ok := codexWindowOf(w)
+		if !ok {
+			continue
+		}
+		if name := strings.TrimSpace(bucket); name != "" {
+			w.Name = name + " · " + w.Name
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// codexWindow is one ChatGPT rate-limit window as reported.
+type codexWindow struct {
+	UsedPercent        *float64 `json:"used_percent"`
+	LimitWindowSeconds *float64 `json:"limit_window_seconds"`
+	ResetAt            *float64 `json:"reset_at"`
+	ResetAfterSeconds  *float64 `json:"reset_after_seconds"`
+}
+
+// codexWindowOf renders one window, or ok=false when the vendor omitted it or
+// the window is latent (never used, full-window reset).
+func codexWindowOf(w *codexWindow) (Window, bool) {
+	if w == nil || w.UsedPercent == nil {
+		return Window{}, false
+	}
+	if *w.UsedPercent == 0 && w.LimitWindowSeconds != nil && w.ResetAfterSeconds != nil &&
+		*w.ResetAfterSeconds >= *w.LimitWindowSeconds {
+		return Window{}, false // latent ceiling: never used, reset always a full window out
+	}
+	return Window{
+		Name:   codexWindowName(w.LimitWindowSeconds),
+		Used:   clampPercent(*w.UsedPercent),
+		Resets: codexReset(w.ResetAt, w.ResetAfterSeconds),
+	}, true
+}
+
+// codexReset prefers the absolute reset instant and falls back to the
+// relative one (the two are both always sent; reset_at is authoritative
+// because a slow poll does not stretch it).
+func codexReset(at, after *float64) *time.Time {
+	switch {
+	case at != nil:
+		return asReset(*at)
+	case after != nil:
+		return asReset(float64(time.Now().Add(time.Duration(*after) * time.Second).Unix()))
+	}
+	return nil
+}
+
+// clampPercent narrows a vendor percentage into 0-100.
+func clampPercent(v float64) int { pct, _ := asPercent(v); return pct }
+
+// codexWindowName labels a window by its reported duration instead of its
+// position, since ChatGPT does not guarantee which slot is the 5h one
+// (OmniRoute's windowDurationLabel).
+func codexWindowName(limitWindowSeconds *float64) string {
+	if limitWindowSeconds == nil {
+		return "Session"
+	}
+	switch secs := *limitWindowSeconds; {
+	case secs >= 20*24*3600:
+		return "Monthly"
+	case secs >= 6*24*3600:
+		return "Weekly"
+	case secs <= 6*3600:
+		return "Session"
+	default:
+		return "Rolling"
+	}
 }
 
 // asPercent clamps a vendor percentage (number or numeric string) to 0-100.

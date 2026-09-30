@@ -60,7 +60,7 @@ var (
 // session under its state. The caller has already installed lg in the
 // registry and holds no lock.
 func (s *Server) startBrowserLogin(key string, spec oauth.AccountSpec, lg *oauthLogin) error {
-	base, err := s.ensureCallbackListener()
+	base, err := s.ensureCallbackListener(spec.Provider.CallbackPort)
 	if err != nil {
 		return err
 	}
@@ -107,14 +107,20 @@ func (s *Server) expireBrowserLogin(ctx context.Context, cancel context.CancelFu
 }
 
 // ensureCallbackListener binds the shared loopback listener, or returns the
-// address of the one already running.
-func (s *Server) ensureCallbackListener() (string, error) {
+// address of the one already running. A profile may pin its own port
+// (codex registers 127.0.0.1:1455/auth/callback, which the vendor's
+// allow-list will not accept on any other port), so the port to try is
+// per-login rather than a process-wide constant.
+func (s *Server) ensureCallbackListener(want int) (string, error) {
+	if want <= 0 {
+		want = browserCallbackPort
+	}
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
 	if s.oa.callbackBase != "" {
 		return s.oa.callbackBase, nil
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", browserCallbackPort))
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", want))
 	if err != nil {
 		// Port taken (another login helper on this box, or an explicit
 		// oauth.callback_port that collides): fall back to an ephemeral
@@ -125,7 +131,7 @@ func (s *Server) ensureCallbackListener() (string, error) {
 			return "", fmt.Errorf("bind loopback callback: %w", err)
 		}
 		log.Printf("admin: oauth callback port %d busy (%v); using %s instead — the vendor may reject an unregistered redirect_uri",
-			browserCallbackPort, err, ln.Addr())
+			want, err, ln.Addr())
 	}
 	srv := &http.Server{
 		Handler:           http.HandlerFunc(s.handleOAuthCallback),
@@ -146,20 +152,32 @@ func (s *Server) ensureCallbackListener() (string, error) {
 	return s.oa.callbackBase, nil
 }
 
-// closeCallback shuts the loopback listener when no browser login is pending.
-func (s *Server) closeCallback() {
+// closeCallback shuts the loopback listener when no browser login is pending,
+// and reports whether it actually closed one. It stops the idle countdown
+// first, so a Close() cannot leave a timer that later fires against a listener
+// some other server has since bound.
+func (s *Server) closeCallback() bool {
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
+	if s.oa.idle != nil {
+		s.oa.idle.Stop()
+		s.oa.idle = nil
+	}
 	if len(s.oa.states) > 0 || s.oa.srv == nil {
-		return
+		return false
 	}
 	srv, ln := s.oa.srv, s.oa.ln
 	s.oa.srv, s.oa.ln, s.oa.callbackBase = nil, nil, ""
-	go func() {
-		_ = srv.Close()
-		_ = ln.Close()
-	}()
+	// ln.Close() is what RELEASES THE PORT, and it returns immediately — so it
+	// must not run in a goroutine. Closing it in the background left the
+	// vendor's registered port (codex: 1455) bound until the scheduler got
+	// around to it, and anything binding it in that window silently fell back
+	// to an unregistered redirect_uri the vendor then refuses. srv.Close()
+	// waits for in-flight requests, so that one stays off the caller's path.
+	_ = ln.Close()
+	go func() { _ = srv.Close() }()
 	log.Printf("admin: oauth callback listener closed")
+	return true
 }
 
 // handleOAuthCallback is the loopback redirect target: it exchanges the code
@@ -301,17 +319,25 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	code := oauthExtractCode(req.Code)
-	if code == "" {
-		adminError(w, http.StatusBadRequest, "code is empty — paste the ?code= value or the whole callback URL")
-		return
-	}
+	code, vendorErr := oauthPastedCallback(req.Code)
 	s.oa.mu.Lock()
 	lg := s.oa.active[key]
 	pending := lg != nil && !lg.finished && lg.pkce != nil
 	s.oa.mu.Unlock()
 	if !pending {
 		adminError(w, http.StatusConflict, "no browser sign-in is pending for "+key+" — click Sign in again first")
+		return
+	}
+	if vendorErr != "" {
+		// The operator declined at the vendor (or the vendor refused). Say so
+		// instead of POSTing the URL at the token endpoint, which would spend
+		// the one-shot code and report an opaque invalid_grant.
+		s.failBrowserLogin(key, lg, vendorErr)
+		adminError(w, http.StatusBadRequest, "the vendor reported: "+vendorErr+" — start the sign-in again")
+		return
+	}
+	if code == "" {
+		adminError(w, http.StatusBadRequest, "no code in that — paste the ?code= value from the address bar, or the code itself")
 		return
 	}
 	if _, err := s.exchangeBrowserCode(r.Context(), key, lg, code); err != nil {
@@ -321,25 +347,41 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{"key": key, "state": oauthSignedIn})
 }
 
-// oauthExtractCode accepts a raw code or the full callback URL (what the
-// browser address bar shows when the loopback redirect was unreachable).
-func oauthExtractCode(s string) string {
+// oauthPastedCallback is what the operator pasted into the paste-the-code
+// box: a raw code, or the whole callback URL the address bar shows when the
+// loopback redirect could not land. vendorErr is set when that URL reports
+// the VENDOR declining the login (ChatGPT answers ?error=access_denied when
+// the operator says no — and that is exactly the URL a well-meaning operator
+// pastes, having read "paste the code" as "paste the address bar").
+func oauthPastedCallback(s string) (code, vendorErr string) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return ""
+		return "", ""
 	}
 	if u, err := url.Parse(s); err == nil && (u.Scheme != "" || strings.Contains(s, "?")) {
+		if e := u.Query().Get("error"); e != "" {
+			return "", strings.TrimSpace(e + " " + u.Query().Get("error_description"))
+		}
 		if c := u.Query().Get("code"); c != "" {
-			return c
+			return c, ""
 		}
 	}
+	// A raw `code=…` fragment (the operator copied only the query part).
 	if i := strings.Index(s, "code="); i >= 0 {
 		s = s[i+5:]
 		if j := strings.IndexAny(s, "&#; \t\n"); j >= 0 {
 			s = s[:j]
 		}
+		return strings.TrimSpace(s), ""
 	}
-	return strings.TrimSpace(s)
+	// A bare code. Anything still shaped like a URL is refused rather than
+	// POSTed to the token endpoint as a credential: forwarding it spends the
+	// one-shot code and answers the operator with the vendor's opaque
+	// "invalid_grant" instead of what actually happened.
+	if strings.ContainsAny(s, "://?&#") {
+		return "", ""
+	}
+	return s, ""
 }
 
 // rejectedError wraps an exchange failure the caller should surface verbatim.

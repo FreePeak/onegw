@@ -548,7 +548,7 @@ func TestProvidersPageRendersOAuthSignIn(t *testing.T) {
 		`id="pf-sq"`,             // subscription_quota editor field
 		`borrows xai/main`,       // borrower row: no button, points at the owner
 		`main · xai · signed-out`,
-		`const SERVICES = ["cline","clinepass","kilocode","xai"]`, // cline lands with the provider
+		`const SERVICES = ["cline","clinepass","codex","kilocode","xai"]`, // cline + codex land with the providers
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page missing %q", want)
@@ -914,9 +914,12 @@ func TestOAuthExchangeEndpointPastedCode(t *testing.T) {
 	}
 }
 
-// TestOAuthExtractCode covers the paste parser's dialects: a bare code, a
-// query string, a fragment (some vendors bounce with #code=), and junk.
-func TestOAuthExtractCode(t *testing.T) {
+// TestOAuthPastedCallback covers the paste parser's dialects: a bare code, a
+// full callback URL, a fragment (some vendors bounce with #code=), and junk.
+// The error case matters as much: an operator who declines at the vendor
+// pastes that URL, and forwarding it spends the one-shot code against the
+// token endpoint to be told "invalid_grant".
+func TestOAuthPastedCallback(t *testing.T) {
 	for in, want := range map[string]string{
 		"abc123": "abc123",
 		"http://127.0.0.1:56121/callback?code=xyz&state=s": "xyz",
@@ -924,9 +927,20 @@ func TestOAuthExtractCode(t *testing.T) {
 		"  code=trimmed&scope=openid  ":                    "trimmed",
 		"":                                                 "",
 	} {
-		if got := oauthExtractCode(in); got != want {
-			t.Fatalf("oauthExtractCode(%q) = %q, want %q", in, got, want)
+		got, vendorErr := oauthPastedCallback(in)
+		if got != want || vendorErr != "" {
+			t.Fatalf("oauthPastedCallback(%q) = (%q, %q), want %q", in, got, vendorErr, want)
 		}
+	}
+	// The vendor declined: report it, never exchange it.
+	got, vendorErr := oauthPastedCallback(
+		"http://127.0.0.1:1455/auth/callback?error=access_denied&error_description=user+said+no")
+	if got != "" || !strings.Contains(vendorErr, "access_denied") {
+		t.Fatalf("declined callback = (%q, %q), want no code and the vendor error", got, vendorErr)
+	}
+	// A URL with neither code nor error must not be POSTed as a credential.
+	if got, _ := oauthPastedCallback("http://127.0.0.1:1455/auth/callback?state=s"); got != "" {
+		t.Fatalf("codeless URL extracted %q", got)
 	}
 }
 
@@ -982,4 +996,56 @@ func firstLines(s string, n int) string {
 		parts = parts[:n]
 	}
 	return strings.Join(parts, "\n")
+}
+
+// A browser profile's login can only be redirected halfway without this:
+// device_url/token_url/client_id/scope could all be pointed at a local IdP
+// while the operator was still sent to the REAL vendor's authorize page —
+// which then refuses a redirect_uri it does not recognise, or signs in
+// against the account the operator did not mean to touch. auth_url closes
+// that gap, and the dashboard's service <select> has to offer it too.
+func TestOAuthAuthURLOverrideRedirectsBrowserLogin(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `[server]
+data_dir = "` + dir + `"
+admin_password = "pw-test"
+
+[auth]
+keys = ["key-a"]
+
+[[providers]]
+name = "codex"
+kind = "codex"
+models = ["gpt-6.1-sol"]
+
+[[providers.accounts]]
+name = "main"
+
+[[oauth.accounts]]
+provider = "codex"
+account = "main"
+service = "codex"
+auth_url = "http://127.0.0.1:9/oauth/authorize"
+token_url = "http://127.0.0.1:9/oauth/token"
+`
+	_, h, _ := newTestServerFromFile(t, cfg)
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=codex/main", "", true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", w.Code, w.Body.String())
+	}
+	var prompt struct {
+		Prompt struct {
+			Mode string `json:"mode"`
+			URL  string `json:"verification_uri_complete"`
+		} `json:"prompt"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &prompt); err != nil {
+		t.Fatal(err)
+	}
+	if prompt.Prompt.Mode != "browser" {
+		t.Fatalf("mode = %q", prompt.Prompt.Mode)
+	}
+	if !strings.HasPrefix(prompt.Prompt.URL, "http://127.0.0.1:9/oauth/authorize") {
+		t.Fatalf("authorize url = %q, want the configured auth_url", prompt.Prompt.URL)
+	}
 }

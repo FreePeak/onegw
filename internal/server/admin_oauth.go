@@ -156,6 +156,9 @@ func (s *Server) spec(key string) (oauth.AccountSpec, config.OAuthAccount, bool)
 		if a.TokenURL != "" {
 			p.TokenURL = a.TokenURL
 		}
+		if a.AuthURL != "" {
+			p.AuthURL = a.AuthURL
+		}
 		if a.ClientID != "" {
 			p.ClientID = a.ClientID
 		}

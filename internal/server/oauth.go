@@ -41,7 +41,7 @@ func (s *Server) wireOAuthTokens(cfg *config.Config, def *provider.Def) {
 			if def.Accounts[i].Name != a.Account {
 				continue
 			}
-			def.Accounts[i].SetTokenResolver(s.oauth.Token, a.StoreKey())
+			def.Accounts[i].SetTokenResolver(s.oauth.Token, s.oauth.IDToken, a.StoreKey())
 		}
 	}
 }
@@ -73,6 +73,7 @@ func (s *Server) syncOAuth(cfg *config.Config) {
 		}
 		if a.TokenURL != "" {
 			p.TokenURL = a.TokenURL
+			p.AuthURL = a.AuthURL
 		}
 		if a.ClientID != "" {
 			p.ClientID = a.ClientID

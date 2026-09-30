@@ -3016,6 +3016,122 @@ the issue):
   grok cli configs (pi `models.json` is the proven pattern).
 
 ## Current status (post-M5)
+- **ChatGPT Plus/Pro subscriptions served as a Codex provider** (#2, 2026-09-30):
+  a ChatGPT plan carries Codex models on the ChatGPT web backend, and onegw now
+  fronts `chatgpt.com/backend-api/codex/responses` as `kind = "codex"` — the
+  feature OmniRoute ships as its codex provider (learned from
+  diegosouzapw/OmniRoute `open-sse/executors/codex.ts` + `config/codexClient.ts`,
+  cross-checked against the official client in `openai/codex`
+  `codex-rs/login/src/{server.rs,auth/manager.rs,token_data.rs}`).
+
+  **Login** (`internal/oauth` profile `codex`, browser authorization-code + PKCE
+  — ChatGPT has no device grant): the Codex CLI's own public client id, issuer,
+  scope, authorize extras, and its REGISTERED loopback redirect
+  `http://127.0.0.1:1455/auth/callback` (the gateway's default 56121 is not in
+  ChatGPT's allow-list, so the profile pins the CLI's port and path). Refresh
+  reuses the shared rotating-refresh path and deliberately carries no `scope`
+  — sending one makes the authorization server treat the refresh as a re-scope
+  and invalidate sibling token families on the same client id. `KnownOAuthService`
+  gained `codex` (without it every reload naming it would be rejected).
+
+  **Inference** (`internal/provider/codex.go` + the existing
+  `FmtOpenAIResponses` dialect): no custom executor. Three upstream facts drove
+  the shape: the endpoint only answers `stream: true` (so `KindCodex` joins
+  `ForcedStream`, and the server aggregates the SSE for non-streaming clients);
+  the backend feature-gates models on the reported Codex **client version**
+  (`Version` + the `codex-cli` User-Agent + `originator: codex_cli_rs`, all
+  overridable through `extra_headers`); and every request binds to a workspace
+  id. That id comes from the `id_token`, which is where ChatGPT puts it: the
+  CLI's `TokenData` (`login/src/token_data.rs`) reads `chatgpt_account_id` and
+  `chatgpt_plan_type` from `IdClaims` and never from the access token, and
+  `get_account_id` falls back to its own stored field rather than to the
+  bearer. So `oauth.Token` now keeps the `id_token` (kept fresh across a
+  refresh, kept when a refresh omits one), and `CodexAccountID`/`CodexPlan`
+  read it first with the access token only as a fallback for a store written
+  before the field existed — so a rotation cannot strand an account, an
+  `id_token` wins over a stale bearer after a workspace switch, and a
+  non-ChatGPT key gets no invented id. The id reaches the wire through the
+  account's whole credential (`Account.credential()` / `TokenProvider.
+  Identity()`), so both the inference path and the quota probe send the same
+  workspace. `session_id` is the client's own
+  conversation id when it sends one and a stable per-WORKSPACE id otherwise:
+  the backend partitions its prompt cache by session, so a rotating id would
+  silently destroy the hit rate on every turn. The catalog is the curated bare
+  id list (`DefaultModels`); reasoning effort rides the client's existing
+  `reasoning_effort` knob, so no suffixed ids are advertised (a suffixed id
+  would be forwarded verbatim and 400).
+
+  **Quota** (`subquota` dialect `codex`): `GET backend-api/wham/usage` with the
+  same codex-cli identity the inference path sends, decoded by `parseCodex` into
+  EVERY metered bucket the payload carries, not just the plan's own pair
+  (official shape read from `codex-backend-openapi-models`
+  `RateLimitStatusPayload`): the `rate_limit` primary/secondary windows, each
+  `additional_rate_limits` entry (its `limit_name` prefixes the label, so a
+  per-feature ceiling renders as `code_review · Weekly` instead of colliding
+  with the plan row), and `spend_control.individual_limit` as the monthly
+  credit cap — which is the binding limit for many accounts, and reading only
+  the plan pair reports those as healthy. Three parser calls carry that: the
+  window LABEL follows the duration the vendor reports
+  (`limit_window_seconds`) rather than the primary/secondary POSITION, because
+  ChatGPT does not guarantee which slot is the 5h one and labelling by
+  position inverts the two rows; a never-started window (0 % used, reset
+  spanning the whole window) is dropped, being a latent ceiling that recomputes
+  its reset on every fetch and would render as a permanent row that parks
+  nothing (an empty bucket is skipped for the same reason the CLI skips
+  metadata-only ones); and the plan label comes from `plan_type`, falling back
+  to the token claim when the body omits it.
+
+  **UI + backend verified together** (live gateway on a scratch data dir, stubbed
+  chatgpt.com): all twelve `/admin/ui/*` pages render 200 with the codex
+  provider configured; the providers page offers the kind, the
+  `subscription_quota` datalist entry and the account row's `codex` OAuth
+  service; the Quota page renders all four windows (plan Session/Weekly,
+  `code_review · Weekly` at 80 % flagged `warn`, `Monthly credit limit` at
+  31 %) from the real probe; `/v1/models` lists `codex/<id>`; the
+  admin model-fetch returns the 8-model catalog; `/v1/chat/completions`
+  (streaming and not) and `/v1/messages` all relay.
+
+  **The full browser login, driven through the dashboard's own endpoints**
+  (`POST /admin/config/oauth/login` → the vendor's redirect at onegw's
+  loopback listener → `GET /admin/config/oauth/accounts`): the prompt is
+  `mode: browser` on `auth.openai.com` with `redirect_uri` =
+  `http://127.0.0.1:1455/auth/callback`; playing that redirect stores the token
+  under `codex/me` in `oauth-tokens.json` at mode 0600, having POSTed
+  `grant_type=authorization_code` with the PKCE verifier and NO `scope`; the
+  poll flips to `signed-in`, the page swaps the Sign-in button for Sign-out,
+  and the gateway's next request carries the workspace id decoded off the
+  freshly-minted bearer (`ws-from-callback`) upstream. Sign-out empties the
+  store. The CLI path is verified the same way end to end, including its
+  refusal (with the remedy) when a running gateway already holds port 1455.
+
+  Four defects were found by that validation and fixed: the off-shape
+  `session_id` leak, the dashboard preset recipe rejected for a non-xai
+  service, a paste-the-code decline being POSTed at the token endpoint as if it
+  were a credential (spending the one-shot code and answering "invalid_grant"
+  instead of "the operator declined"), and the loopback listener holding the
+  vendor's REGISTERED port (1455) after `Close()` — so a shut-down gateway, or
+  a second one on the same box, silently fell back to an unregistered
+  `redirect_uri`. That last one was visible only as an order-dependent test
+  failure, and it is a real production hazard: `closeCallback` now releases the
+  listener synchronously (`ln.Close()` in a goroutine leaves the port bound
+  until the scheduler runs it) and `Close` calls it.
+
+  Pinned by `TestCodexFingerprintOnChatAndModels`, `TestCodexNoWorkspaceForNonChatGPTBearer`,
+  `TestCodexSessionIsStableAndClientWins`, `TestCodexOffShapeClientSessionIsNotForwarded`,
+  `TestCodexFetchModelsIsCurated`,
+  `TestCodexProfileIsBrowserOnly`, `TestCodexAuthorizeURLMatchesCLI`,
+  `TestCodexExchangeCodeStoresToken`, `TestCodexAccountIDAndPlanDecodeOffIDToken`,
+  `TestCodexExchangeKeepsIDToken`, `TestCodexRefreshKeepsIDTokenWhenVendorOmitsIt`,
+  `TestCodexIdentityComesFromTheTokenProvider`, `TestProbeCodexUsesResolvedIDToken`,
+  `TestCodexAccountIDRejectsNonChatGPTToken`, `TestCodexRefreshOmitsScope`,
+  `TestParseCodexWindows`, `TestParseCodexDropsLatentWindow`,
+  `TestParseCodexAdditionalLimitsAndCreditCap`, `TestParseCodexCamelCaseWindows`,
+  `TestProbeCodexCarriesCLIIdentity`, `TestProbeCodexOmitsWorkspaceForForeignBearer`,
+  `TestProbeCodexPlanFallsBackToTokenClaim`, `TestBrowserLoginStoresCodexToken`,
+  `TestCodexEndToEnd`, `TestCodexBrowserLoginUsesRegisteredCallback`,
+  `TestOAuthPastedCallback`,
+  `TestPresetAcceptsEveryRegisteredOAuthService`,
+  plus the codex row in `TestNewKindsFormatAndDefaults`.
 - **Corrupt upstream streams — byte-level detection + pre-commit failover**
   (2026-09-20, branch `fix/corrupt-stream-failover`, issue #125): the `free`
   lane (kilocode -> openrouter -> Novita, `inclusionai/ling-3.0-flash-vl:free`)

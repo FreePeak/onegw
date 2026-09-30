@@ -54,12 +54,19 @@ func (p Provider) RedirectPath() string {
 // port 0 for the profile's fixed port.
 func (p Provider) RedirectURI(port int) string {
 	if port <= 0 {
-		port = p.CallbackPort
-	}
-	if port <= 0 {
-		port = DefaultCallbackPort
+		port = p.RedirectURIPort()
 	}
 	return fmt.Sprintf("http://127.0.0.1:%d%s", port, p.RedirectPath())
+}
+
+// RedirectURIPort is the port RedirectURI would use for this profile — the
+// one a browser listener must bind so the vendor's registered redirect is
+// what actually lands on it.
+func (p Provider) RedirectURIPort() int {
+	if p.CallbackPort > 0 {
+		return p.CallbackPort
+	}
+	return DefaultCallbackPort
 }
 
 // PKCESession is one in-flight browser login. The verifier stays here, server
@@ -141,7 +148,10 @@ func (p Provider) ExchangeCode(ctx context.Context, hc *http.Client, code, redir
 		return nil, fmt.Errorf("%s code exchange: %w", p.Name, err)
 	}
 	var raw struct {
-		AccessToken      string `json:"access_token"`
+		AccessToken string `json:"access_token"`
+		// IDToken carries the identity claims some vendors (ChatGPT) only
+		// put there — its workspace id is NOT in the access token.
+		IDToken          string `json:"id_token"`
 		RefreshToken     string `json:"refresh_token"`
 		ExpiresIn        int    `json:"expires_in"`
 		Scope            string `json:"scope"`
@@ -160,6 +170,7 @@ func (p Provider) ExchangeCode(ctx context.Context, hc *http.Client, code, redir
 	}
 	return &Token{
 		AccessToken:  raw.AccessToken,
+		IDToken:      raw.IDToken,
 		RefreshToken: raw.RefreshToken,
 		ExpiresAt:    tokenExpiry(time.Now(), raw.ExpiresIn, p.MaxTokenTTL),
 		Scope:        raw.Scope,

@@ -83,8 +83,20 @@ type Provider struct {
 
 // Providers lists the built-in provider names, sorted.
 func Providers() []string {
-	return []string{"cline", "clinepass", "kilocode", "xai"}
+	return []string{"cline", "clinepass", "codex", "kilocode", "xai"}
 }
+
+// CodexCallbackPort is the loopback port the Codex CLI's public client has
+// registered with auth.openai.com (openai/codex codex-rs/login/src/server.rs:78
+// DEFAULT_PORT). ChatGPT's authorization server allow-lists that exact
+// redirect_uri, so the codex profile must use it — the gateway's own default
+// port is not registered and a vendor rejection there is unrecoverable.
+const CodexCallbackPort = 1455
+
+// CodexRedirectURI is the exact redirect ChatGPT has registered for the
+// Codex CLI's public client. Tests and docs name it so a port change is a
+// compile-time disagreement rather than a silent login failure.
+const CodexRedirectURI = "http://127.0.0.1:1455/auth/callback"
 
 // Lookup returns the built-in provider spec by name.
 func Lookup(name string) (Provider, bool) {
@@ -115,6 +127,35 @@ func Lookup(name string) (Provider, bool) {
 			Name:        "kilocode",
 			TokenURL:    "https://api.kilo.ai/api/device-auth/codes",
 			KiloDialect: true,
+		}, true
+	case "codex":
+		return Provider{
+			Name: "codex",
+			// The Codex CLI's own public PKCE client
+			// (openai/codex codex-rs/login/src/auth/manager.rs:1718
+			// CLIENT_ID). No secret: the code verifier is the secret.
+			ClientID: "app_EMoamEEZ73f0CkXaXp7hrann",
+			// No DeviceCodeURL: ChatGPT has no device grant, so the
+			// browser flow is the only login. Both this URL and the
+			// redirect path come from the CLI (server.rs:194
+			// http://127.0.0.1:<port>/auth/callback).
+			TokenURL:     "https://auth.openai.com/oauth/token",
+			AuthURL:      "https://auth.openai.com/oauth/authorize",
+			Scope:        "openid profile email offline_access api.connectors.read api.connectors.invoke",
+			CallbackPort: CodexCallbackPort,
+			CallbackPath: "/auth/callback",
+			// The CLI's own authorize extras (server.rs:596-600).
+			AuthExtra: map[string]string{
+				"id_token_add_organizations": "true",
+				"codex_cli_simplified_flow":  "true",
+				"originator":                 "codex_cli_rs",
+			},
+			Nonce: true,
+			// ChatGPT access tokens carry a real expires_in, and the
+			// refresher trusts the JWT `exp` when it is EARLIER
+			// (accessExpiry) — this cap only bounds a token that
+			// arrives with neither.
+			MaxTokenTTL: 24 * time.Hour,
 		}, true
 	case "cline", "clinepass":
 		// ClinePass is a plan inside the same account: identical authorize,

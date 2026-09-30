@@ -17,7 +17,7 @@ import (
 // one completion for non-streaming clients.
 func (k Kind) ForcedStream() bool {
 	switch k {
-	case KindCommandCode, KindOpenAIResponses, KindCursor, KindCline:
+	case KindCommandCode, KindOpenAIResponses, KindCursor, KindCline, KindCodex:
 		// cline (api.cline.bot, live-probed 2026-09-15/16) answers stream=false inside
 		// `{"data":{...},"success":true}`, which a flat OpenAI client reads as empty. Its
 		// SSE chunks are plain chat.completion.chunk, so streaming is correct on every
@@ -25,6 +25,9 @@ func (k Kind) ForcedStream() bool {
 		// Cursor (issue #12 follow-up): both services stream Connect-RPC
 		// frames only; the synthetic OpenAI SSE body doCursor returns is
 		// aggregated for non-streaming clients.
+		// Codex (chatgpt.com/backend-api/codex/responses) rejects stream=false
+		// outright; the server passes stream=true upstream and aggregates the
+		// SSE back for non-streaming clients (see codex.go).
 		return true
 	default:
 		return false

@@ -191,9 +191,9 @@ kind = "gemini"
 
 # Mistral AI — OpenAI-compatible Chat Completions API. The gateway
 # automatically strips reasoning_content from assistant history messages
-// before forwarding (Mistral rejects it with 422 extra_forbidden;
-// see OmniRoute #6417). Free Experiment tier: rate-limited access to
-// all models, no credit card required.
+# before forwarding (Mistral rejects it with 422 extra_forbidden;
+# see OmniRoute #6417). Free Experiment tier: rate-limited access to
+# all models, no credit card required.
 [[providers]]
 name = "mistral"
 kind = "mistral"
@@ -236,6 +236,42 @@ base_url = "https://api.typesafe.ai"          # VERIFY from spec
 [[providers.accounts]]
 name = "default"
 api_key = ""                                  # fill or use env
+
+# ChatGPT Plus/Pro (Codex CLI backend-api) — there is NO api_key here: the
+# credential is a ChatGPT OAuth token obtained by a browser sign-in, stored
+# under the gateway data dir and refreshed automatically. The workspace id
+# every request binds to is decoded off that token, so nothing else to fill in.
+#
+#   onegw oauth login -service codex -key codex/me
+#
+# ChatGPT allow-lists the CLI's loopback redirect (127.0.0.1:1455/auth/callback),
+# so the sign-in must run on the machine whose browser completes it.
+# subscription_quota = "codex" polls backend-api/wham/usage for the plan's
+# 5h + weekly windows and parks the account while one is exhausted.
+[[providers]]
+name = "codex"
+kind = "codex"                 # Responses wire at chatgpt.com/backend-api/codex
+# base_url defaults to https://chatgpt.com
+subscription_quota = "codex"
+# models = [...]                # optional; omitted = the curated Codex catalog.
+#                                # Bare ids: reasoning effort rides the client's
+#                                # reasoning_effort knob, not the model name.
+#
+# The backend feature-gates newer models on the reported client version, so a
+# newer Codex CLI needs its version pinned here (extra_headers win over the
+# built-in default):
+#[providers.extra_headers]
+#Version = "0.155.0"
+
+[[providers.accounts]]
+name = "me"
+api_key = ""                     # left empty: the OAuth token resolves at call time
+
+[[oauth.accounts]]
+provider = "codex"
+account = "me"
+# auth_url / token_url override the ChatGPT endpoints for a self-hosted IdP,
+# a staging vendor, or a test harness. Leave both unset for a real sign-in.
 
 [[providers]]
 name = "opencode"
