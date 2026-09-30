@@ -23,6 +23,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -60,7 +63,7 @@ func Run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `onegw oauth — OAuth device-flow login for onegw subscription providers
+	fmt.Fprint(os.Stderr, `onegw oauth — OAuth login for onegw subscription providers: device flow, or browser + PKCE for vendors that have no device grant (codex/ChatGPT)
 
 Usage:
   onegw oauth login   -provider <name> [-service <xai|kilocode>] [-account main]
@@ -74,6 +77,12 @@ The standalone binary speaks the same commands: onegw-oauth login …
 Login opens the sign-in page in your default browser when the host has one
 ($BROWSER, else "open" on macOS / "xdg-open" on Linux). The URL + code are
 always printed too, so headless and container hosts lose nothing.
+
+Browsers-only vendors (codex/ChatGPT) skip the device step: login opens the
+authorize page, binds the vendor's REGISTERED loopback callback port for the
+exchange, and stores the token the same way. That port (1455 for ChatGPT)
+must be reachable by the browser, so run it on the host whose browser signs
+in — not on a remote gateway — or free the port and retry.
 
 -provider is the [[providers]] name from onegw.toml: the token is stored
 under "provider/account", the exact key the running gateway resolves.
@@ -305,6 +314,9 @@ func cmdLogin(args []string) int {
 	mgr := oauth.NewManager(oauth.NewTokenStore(o.dataDir))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if p.BrowserFlow() && p.DeviceCodeURL == "" {
+		return browserLogin(ctx, mgr, o, p, key)
+	}
 
 	// Print the resolved store up front: the gateway reads
 	// <config data_dir>/oauth-tokens.json, so a config that overrides
@@ -340,6 +352,89 @@ func cmdLogin(args []string) int {
 		fmt.Fprintf(os.Stderr, "onegw oauth: login failed: %v\n", err)
 		return 1
 	}
+	printStored(key, o.dataDir, tok)
+	return 0
+}
+
+// browserLogin is the CLI half of a browser (authorization-code + PKCE)
+// profile whose vendor has no device grant (codex/ChatGPT). The exchange is
+// server-side: this process binds the profile's own loopback port, so the
+// redirect the vendor makes is the one it has registered — the same listener
+// the dashboard uses, minus the dashboard. Everything secret (the PKCE
+// verifier, then the code) stays here; the operator only opens a page.
+func browserLogin(ctx context.Context, mgr *oauth.Manager, o *opts, p oauth.Provider, key string) int {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p.RedirectURIPort()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "onegw oauth login: bind %s: %v\n"+
+			"Something else already holds the vendor's registered callback port; free it, or sign in from the dashboard.\n",
+			p.RedirectURI(0), err)
+		return 1
+	}
+	defer ln.Close()
+	base := "http://" + ln.Addr().String()
+	sess, err := oauth.NewPKCE(p, base+p.RedirectPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "onegw oauth login: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Signing in to %s (store: %s/oauth-tokens.json).\n"+
+		"Waiting for the browser to redirect to %s — the sign-in must happen on THIS host.\n\n  %s\n",
+		p.Name, o.dataDir, sess.RedirectURI, sess.AuthURL)
+	if err := openBrowser(sess.AuthURL); err != nil {
+		fmt.Printf("Could not open a browser (%v) — open the URL above yourself.\n", err)
+	}
+	fmt.Println("Waiting for authorization (Ctrl-C to cancel)…")
+
+	type result struct {
+		code string
+		err  error
+	}
+	res := make(chan result, 1)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if e := q.Get("error"); e != "" {
+			http.Error(w, e, http.StatusBadRequest)
+			res <- result{err: fmt.Errorf("vendor returned %s", e)}
+			return
+		}
+		if q.Get("state") != sess.State || q.Get("code") == "" {
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+			res <- result{err: fmt.Errorf("callback state mismatch")}
+			return
+		}
+		_, _ = io.WriteString(w, "<p>Signed in. You can close this tab.</p>")
+		res <- result{code: q.Get("code")}
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	var out result
+	select {
+	case out = <-res:
+	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr, "onegw oauth: login cancelled")
+		return 1
+	}
+	if out.err != nil {
+		fmt.Fprintf(os.Stderr, "onegw oauth login: %v\n", out.err)
+		return 1
+	}
+	tok, err := p.ExchangeCode(ctx, nil, out.code, sess.RedirectURI, sess.Verifier)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "onegw oauth login: %v\n", err)
+		return 1
+	}
+	if err := mgr.Store().Put(key, *tok); err != nil {
+		fmt.Fprintf(os.Stderr, "onegw oauth login: store token: %v\n", err)
+		return 1
+	}
+	printStored(key, o.dataDir, tok)
+	return 0
+}
+
+// printStored is the one place that reports a stored token, so both login
+// dialects describe the outcome identically.
+func printStored(key, dataDir string, tok *oauth.Token) {
 	expiry := "no expiry reported"
 	if !tok.ExpiresAt.IsZero() {
 		expiry = "expires " + tok.ExpiresAt.Local().Format(time.RFC3339)
@@ -349,11 +444,10 @@ func cmdLogin(args []string) int {
 		refresh = "yes (auto-refresh enabled)"
 	}
 	fmt.Printf("Stored token for %s in %s (%s; refresh: %s)\n",
-		key, o.dataDir+"/oauth-tokens.json", expiry, refresh)
+		key, dataDir+"/oauth-tokens.json", expiry, refresh)
 	if tok.RefreshToken == "" {
 		fmt.Println("This service does not issue refresh tokens — re-run login when it expires.")
 	}
-	return 0
 }
 
 func cmdList(args []string) int {
