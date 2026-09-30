@@ -270,6 +270,8 @@ api_key = ""                     # left empty: the OAuth token resolves at call 
 [[oauth.accounts]]
 provider = "codex"
 account = "me"
+# auth_url / token_url override the ChatGPT endpoints for a self-hosted IdP,
+# a staging vendor, or a test harness. Leave both unset for a real sign-in.
 
 [[providers]]
 name = "opencode"

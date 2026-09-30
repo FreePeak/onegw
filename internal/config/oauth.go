@@ -34,8 +34,12 @@ type OAuthAccount struct {
 	// keeps the refresh goroutine; the borrower only resolves the token.
 	Owner string `toml:"owner"`
 	// Optional overrides of the service profile's endpoints (self-hosted
-	// IdPs, tests). Empty = use the built-in service endpoints.
+	// IdPs, staging, tests). Empty = use the built-in service endpoints.
+	// AuthURL is the authorize page of a BROWSER (PKCE) profile — without it
+	// such a profile's login can only be redirected halfway, to the token
+	// endpoint, which leaves the operator signing in at the real vendor.
 	DeviceURL string `toml:"device_url"`
+	AuthURL   string `toml:"auth_url"`
 	TokenURL  string `toml:"token_url"`
 	ClientID  string `toml:"client_id"`
 	Scope     string `toml:"scope"`

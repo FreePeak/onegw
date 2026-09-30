@@ -252,6 +252,9 @@ func (o *opts) profile() (oauth.Provider, error) {
 		if entry.TokenURL != "" {
 			p.TokenURL = entry.TokenURL
 		}
+		if entry.AuthURL != "" {
+			p.AuthURL = entry.AuthURL
+		}
 		if entry.ClientID != "" {
 			p.ClientID = entry.ClientID
 		}

@@ -1119,6 +1119,10 @@ provider = "codex"
 account = "me"
 ```
 
+`auth_url` / `token_url` on the `[[oauth.accounts]]` entry override the ChatGPT
+endpoints (self-hosted IdP, staging vendor, or a test harness that must not
+reach `auth.openai.com`). Leave both unset for a real sign-in.
+
 `subscription_quota = "codex"` polls `backend-api/wham/usage` and shows every
 metered bucket the account answers with on the Quota page, parking the account
 when one is exhausted — including per-feature ceilings (`code_review · Weekly`)

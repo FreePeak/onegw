@@ -73,6 +73,7 @@ func (s *Server) syncOAuth(cfg *config.Config) {
 		}
 		if a.TokenURL != "" {
 			p.TokenURL = a.TokenURL
+			p.AuthURL = a.AuthURL
 		}
 		if a.ClientID != "" {
 			p.ClientID = a.ClientID

@@ -997,3 +997,55 @@ func firstLines(s string, n int) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+// A browser profile's login can only be redirected halfway without this:
+// device_url/token_url/client_id/scope could all be pointed at a local IdP
+// while the operator was still sent to the REAL vendor's authorize page —
+// which then refuses a redirect_uri it does not recognise, or signs in
+// against the account the operator did not mean to touch. auth_url closes
+// that gap, and the dashboard's service <select> has to offer it too.
+func TestOAuthAuthURLOverrideRedirectsBrowserLogin(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `[server]
+data_dir = "` + dir + `"
+admin_password = "pw-test"
+
+[auth]
+keys = ["key-a"]
+
+[[providers]]
+name = "codex"
+kind = "codex"
+models = ["gpt-6.1-sol"]
+
+[[providers.accounts]]
+name = "main"
+
+[[oauth.accounts]]
+provider = "codex"
+account = "main"
+service = "codex"
+auth_url = "http://127.0.0.1:9/oauth/authorize"
+token_url = "http://127.0.0.1:9/oauth/token"
+`
+	_, h, _ := newTestServerFromFile(t, cfg)
+	w := adminCall(t, h, http.MethodPost, "/admin/config/oauth/login?key=codex/main", "", true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", w.Code, w.Body.String())
+	}
+	var prompt struct {
+		Prompt struct {
+			Mode string `json:"mode"`
+			URL  string `json:"verification_uri_complete"`
+		} `json:"prompt"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &prompt); err != nil {
+		t.Fatal(err)
+	}
+	if prompt.Prompt.Mode != "browser" {
+		t.Fatalf("mode = %q", prompt.Prompt.Mode)
+	}
+	if !strings.HasPrefix(prompt.Prompt.URL, "http://127.0.0.1:9/oauth/authorize") {
+		t.Fatalf("authorize url = %q, want the configured auth_url", prompt.Prompt.URL)
+	}
+}
