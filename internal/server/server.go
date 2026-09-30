@@ -390,7 +390,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	// hot reloads like the local quota windows.
 	var subTracker *subquota.Tracker
 	if targets := subTargets(cfg); len(targets) > 0 {
-		subTracker = subquota.New(targets, s.parkExhaustedSubscription, s.liveSubKey)
+		subTracker = subquota.New(targets, s.parkExhaustedSubscription, s.liveSubKey, s.liveSubIDToken)
 		subTracker.Inherit(oldStateSub(s.state.Load()))
 	}
 
@@ -485,6 +485,14 @@ func (s *Server) Close() {
 	if s.oauth != nil {
 		s.oauth.Stop()
 	}
+	// The loopback OAuth listener is the only socket Close owns, and it can be
+	// bound to the vendor's REGISTERED callback port (codex: 1455) — so a
+	// shut-down gateway that keeps it holds that port for the rest of the
+	// process's life, and the next login on this box silently falls back to
+	// an unregistered redirect_uri that ChatGPT refuses. closeCallback clears
+	// the idle timer too, so no stale timer outlives the server.
+	s.closeCallback()
+
 	if st := s.cur(); st != nil {
 		st.usage.Stop()
 		if st.quota != nil {

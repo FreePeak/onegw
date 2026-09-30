@@ -94,6 +94,17 @@ func (m *Manager) Token(key string) string {
 	return tok.AccessToken
 }
 
+// IDToken returns the stored identity token for key, or "" when the vendor
+// issues none (every dialect except ChatGPT). Paired with Token so a provider
+// can read identity claims off the token that actually carries them.
+func (m *Manager) IDToken(key string) string {
+	tok, ok := m.store.Get(key)
+	if !ok {
+		return ""
+	}
+	return tok.IDToken
+}
+
 // Store exposes the token store (CLI listing, tests).
 func (m *Manager) Store() *TokenStore { return m.store }
 
@@ -291,6 +302,7 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 	}
 	var raw struct {
 		AccessToken  string `json:"access_token"`
+		IDToken      string `json:"id_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
@@ -306,6 +318,14 @@ func (m *Manager) refresh(ctx context.Context, spec AccountSpec) (*Token, error)
 		tok.RefreshToken = raw.RefreshToken // rotation: use the new one
 	} else {
 		tok.RefreshToken = old.RefreshToken
+	}
+	// A vendor may re-issue the identity token on refresh (ChatGPT rotates it
+	// with the workspace) — keep the fresh one, and keep the old one when the
+	// response omits it rather than dropping the claims with it.
+	if raw.IDToken != "" {
+		tok.IDToken = raw.IDToken
+	} else {
+		tok.IDToken = old.IDToken
 	}
 	// Same cap as the device-flow path: never believe an overstated
 	// vendor expiry, and never fall back to a stale one either.

@@ -1099,9 +1099,12 @@ The wire is the Responses dialect at
 negotiable upstream: it only answers `stream: true` (the gateway aggregates it
 for non-streaming clients), it gates models on the reported Codex **client
 version**, and it binds every request to a workspace id. That id is decoded off
-the access token itself — the same claim the CLI reads out of its `id_token` —
-so a token refresh cannot strand the account, and nothing is invented for a
-bearer that is not a ChatGPT credential. `session_id` is the client's own
+the token onegw stores, read from the **`id_token`** — that is where ChatGPT
+puts it (the CLI's `TokenData` reads `chatgpt_account_id` from its id_token,
+never from the access token), so the gateway keeps one too and prefers it over
+the bearer. A token refresh cannot strand the account, a workspace switch
+takes effect immediately, and nothing is invented for a bearer that is not a
+ChatGPT credential. `session_id` is the client's own
 conversation id when it sends one and a stable per-account id otherwise,
 because the backend partitions its prompt cache by session.
 

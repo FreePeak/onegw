@@ -3041,10 +3041,19 @@ the issue):
   the backend feature-gates models on the reported Codex **client version**
   (`Version` + the `codex-cli` User-Agent + `originator: codex_cli_rs`, all
   overridable through `extra_headers`); and every request binds to a workspace
-  id, which is decoded off the ACCESS token's `https://api.openai.com/auth`
-  claim block — the same claim the CLI reads from its `id_token`, which onegw's
-  store has no field for — so a token rotation cannot strand an account and a
-  non-ChatGPT bearer gets no invented id. `session_id` is the client's own
+  id. That id comes from the `id_token`, which is where ChatGPT puts it: the
+  CLI's `TokenData` (`login/src/token_data.rs`) reads `chatgpt_account_id` and
+  `chatgpt_plan_type` from `IdClaims` and never from the access token, and
+  `get_account_id` falls back to its own stored field rather than to the
+  bearer. So `oauth.Token` now keeps the `id_token` (kept fresh across a
+  refresh, kept when a refresh omits one), and `CodexAccountID`/`CodexPlan`
+  read it first with the access token only as a fallback for a store written
+  before the field existed — so a rotation cannot strand an account, an
+  `id_token` wins over a stale bearer after a workspace switch, and a
+  non-ChatGPT key gets no invented id. The id reaches the wire through the
+  account's whole credential (`Account.credential()` / `TokenProvider.
+  Identity()`), so both the inference path and the quota probe send the same
+  workspace. `session_id` is the client's own
   conversation id when it sends one and a stable per-WORKSPACE id otherwise:
   the backend partitions its prompt cache by session, so a rotating id would
   silently destroy the hit rate on every turn. The catalog is the curated bare
@@ -3095,17 +3104,25 @@ the issue):
   store. The CLI path is verified the same way end to end, including its
   refusal (with the remedy) when a running gateway already holds port 1455.
 
-  Three defects were found by that validation and fixed: the off-shape
+  Four defects were found by that validation and fixed: the off-shape
   `session_id` leak, the dashboard preset recipe rejected for a non-xai
-  service, and a paste-the-code decline being POSTed at the token endpoint as
-  if it were a credential (spending the one-shot code and answering
-  "invalid_grant" instead of "the operator declined").
+  service, a paste-the-code decline being POSTed at the token endpoint as if it
+  were a credential (spending the one-shot code and answering "invalid_grant"
+  instead of "the operator declined"), and the loopback listener holding the
+  vendor's REGISTERED port (1455) after `Close()` — so a shut-down gateway, or
+  a second one on the same box, silently fell back to an unregistered
+  `redirect_uri`. That last one was visible only as an order-dependent test
+  failure, and it is a real production hazard: `closeCallback` now releases the
+  listener synchronously (`ln.Close()` in a goroutine leaves the port bound
+  until the scheduler runs it) and `Close` calls it.
 
   Pinned by `TestCodexFingerprintOnChatAndModels`, `TestCodexNoWorkspaceForNonChatGPTBearer`,
   `TestCodexSessionIsStableAndClientWins`, `TestCodexOffShapeClientSessionIsNotForwarded`,
   `TestCodexFetchModelsIsCurated`,
   `TestCodexProfileIsBrowserOnly`, `TestCodexAuthorizeURLMatchesCLI`,
-  `TestCodexExchangeCodeStoresToken`, `TestCodexAccountIDAndPlanDecodeOffBearer`,
+  `TestCodexExchangeCodeStoresToken`, `TestCodexAccountIDAndPlanDecodeOffIDToken`,
+  `TestCodexExchangeKeepsIDToken`, `TestCodexRefreshKeepsIDTokenWhenVendorOmitsIt`,
+  `TestCodexIdentityComesFromTheTokenProvider`, `TestProbeCodexUsesResolvedIDToken`,
   `TestCodexAccountIDRejectsNonChatGPTToken`, `TestCodexRefreshOmitsScope`,
   `TestParseCodexWindows`, `TestParseCodexDropsLatentWindow`,
   `TestParseCodexAdditionalLimitsAndCreditCap`, `TestParseCodexCamelCaseWindows`,

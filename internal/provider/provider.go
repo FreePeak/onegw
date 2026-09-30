@@ -2530,12 +2530,12 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 				// Grok CLI fingerprint (single owner; see setGrokFingerprint).
 				setGrokFingerprint(req.Header, model, true)
 			case KindCodex:
-				// ChatGPT CLI identity + the workspace id decoded off
-				// this account's own bearer (single owner; see
+				// ChatGPT CLI identity + the workspace id read off this
+				// account's own stored token (single owner; see
 				// codex.go). The session is the CLIENT's conversation
 				// id when it sent one — per-conversation prompt-cache
 				// affinity — else a stable per-account id.
-				setCodexFingerprint(req.Header, acct.bearerToken(),
+				setCodexFingerprint(req.Header, acct.credential(),
 					clientHeader(clientHdr, "session_id"))
 			}
 			// applyAuth is the single credential owner for EVERY kind

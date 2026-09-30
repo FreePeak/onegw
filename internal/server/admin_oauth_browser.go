@@ -152,20 +152,32 @@ func (s *Server) ensureCallbackListener(want int) (string, error) {
 	return s.oa.callbackBase, nil
 }
 
-// closeCallback shuts the loopback listener when no browser login is pending.
-func (s *Server) closeCallback() {
+// closeCallback shuts the loopback listener when no browser login is pending,
+// and reports whether it actually closed one. It stops the idle countdown
+// first, so a Close() cannot leave a timer that later fires against a listener
+// some other server has since bound.
+func (s *Server) closeCallback() bool {
 	s.oa.mu.Lock()
 	defer s.oa.mu.Unlock()
+	if s.oa.idle != nil {
+		s.oa.idle.Stop()
+		s.oa.idle = nil
+	}
 	if len(s.oa.states) > 0 || s.oa.srv == nil {
-		return
+		return false
 	}
 	srv, ln := s.oa.srv, s.oa.ln
 	s.oa.srv, s.oa.ln, s.oa.callbackBase = nil, nil, ""
-	go func() {
-		_ = srv.Close()
-		_ = ln.Close()
-	}()
+	// ln.Close() is what RELEASES THE PORT, and it returns immediately — so it
+	// must not run in a goroutine. Closing it in the background left the
+	// vendor's registered port (codex: 1455) bound until the scheduler got
+	// around to it, and anything binding it in that window silently fell back
+	// to an unregistered redirect_uri the vendor then refuses. srv.Close()
+	// waits for in-flight requests, so that one stays off the caller's path.
+	_ = ln.Close()
+	go func() { _ = srv.Close() }()
 	log.Printf("admin: oauth callback listener closed")
+	return true
 }
 
 // handleOAuthCallback is the loopback redirect target: it exchanges the code

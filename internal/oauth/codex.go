@@ -36,13 +36,20 @@ const (
 	CodexUserAgent = "codex-cli/" + CodexClientVersion + " (Windows 10.0.26200; x64)"
 )
 
-// codexClaims decodes the bearer once for both claims callers: the JWT
-// payload is the same bytes, and a non-ChatGPT bearer (an api key, a truncated
-// store entry) simply has no block — "" is the honest answer there and
-// callers must not substitute a default, because a wrong workspace id is a
-// 403 on every request.
-func codexClaims(accessToken string) (accountID, planType string) {
-	parts := strings.Split(accessToken, ".")
+// codexClaims decodes the ChatGPT identity claims out of a JWT. The claims
+// live in the ID token, NOT the access token: the CLI's TokenData
+// (login/src/token_data.rs) reads chatgpt_account_id / chatgpt_plan_type from
+// id_token, and its get_account_id falls back to TokenData.account_id (a
+// separate stored field) rather than to the access token. So onegw reads the
+// id_token first, and only then the access token — some deployments and
+// older CLI versions put the block in both.
+//
+// A JWT that is not a ChatGPT credential (an api key, a truncated store
+// entry) simply has no block: "" is the honest answer and callers must not
+// substitute a default, because a wrong workspace id is a 403 on every
+// request.
+func codexClaims(jwt string) (accountID, planType string) {
+	parts := strings.Split(jwt, ".")
 	if len(parts) < 3 {
 		return "", ""
 	}
@@ -62,17 +69,25 @@ func codexClaims(accessToken string) (accountID, planType string) {
 	return strings.TrimSpace(claims.Auth.AccountID), strings.TrimSpace(claims.Auth.PlanType)
 }
 
-// CodexAccountID returns the ChatGPT workspace id bound to this bearer, or ""
-// when the token is not a ChatGPT credential.
-func CodexAccountID(accessToken string) string {
-	id, _ := codexClaims(accessToken)
+// CodexAccountID returns the ChatGPT workspace id bound to this credential.
+// tok is the stored token pair: the id_token is authoritative, the access
+// token is the fallback for a store written before id_token was kept. "" when
+// neither carries one.
+func CodexAccountID(tok Token) string {
+	if id, _ := codexClaims(tok.IDToken); id != "" {
+		return id
+	}
+	id, _ := codexClaims(tok.AccessToken)
 	return id
 }
 
 // CodexPlan returns the subscription plan label ("plus", "pro", "team", ...)
-// carried by the same claim block, or "" when the token is not a ChatGPT
-// credential. Used for the Quota page's plan cell; never guessed.
-func CodexPlan(accessToken string) string {
-	_, plan := codexClaims(accessToken)
+// carried by the same claims, or "" when the credential carries none. Used
+// for the Quota page's plan cell; never guessed.
+func CodexPlan(tok Token) string {
+	if _, plan := codexClaims(tok.IDToken); plan != "" {
+		return plan
+	}
+	_, plan := codexClaims(tok.AccessToken)
 	return plan
 }

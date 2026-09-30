@@ -90,7 +90,7 @@ func TestCodexFingerprintOnChatAndModels(t *testing.T) {
 
 func TestCodexNoWorkspaceForNonChatGPTBearer(t *testing.T) {
 	h := http.Header{}
-	setCodexFingerprint(h, "sk-proj-opaque-key", "")
+	setCodexFingerprint(h, oauth.Token{AccessToken: "sk-proj-opaque-key"}, "")
 	if h.Get("chatgpt-account-id") != "" {
 		t.Errorf("invented a workspace for a non-ChatGPT key: %q", h.Get("chatgpt-account-id"))
 	}
@@ -177,5 +177,42 @@ func TestCodexFetchModelsIsCurated(t *testing.T) {
 		if m == "" {
 			t.Error("catalog carries an empty id")
 		}
+	}
+}
+
+// The workspace id reaches the wire through the ACCOUNT's stored credential,
+// so the resolver must hand over the id_token as well as the access token.
+// A resolver that returned only the bearer would send no chatgpt-account-id
+// and every request would 403 upstream.
+func TestCodexIdentityComesFromTheTokenProvider(t *testing.T) {
+	var gotHdr http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHdr = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"id":"r1","output":[]}`))
+	}))
+	defer srv.Close()
+
+	claims := codexBearer(t, "ws-from-id-token")
+	d := &Def{Name: "codex", Kind: KindCodex, BaseURL: srv.URL,
+		Accounts: []Account{{Name: "main"}}} // no static api_key: OAuth-only
+	d.Accounts[0].SetTokenResolver(
+		func(string) string { return "at-opaque" },
+		func(string) string { return claims },
+		"codex/main")
+	if _, apiErr := d.Do(t.Context(), &d.Accounts[0], "gpt-6.1-sol", nil,
+		bytes.NewReader([]byte(`{"model":"gpt-6.1-sol"}`)), false); apiErr != nil {
+		t.Fatalf("Do: %+v", apiErr)
+	}
+	if gotHdr == nil {
+		t.Fatal("upstream was never called")
+	}
+	if got := gotHdr.Get("Authorization"); got != "Bearer at-opaque" {
+		t.Errorf("Authorization = %q, want the access token", got)
+	}
+	if got := gotHdr.Get("chatgpt-account-id"); got != "ws-from-id-token" {
+		t.Errorf("chatgpt-account-id = %q, want the id_token's workspace", got)
+	}
+	if gotHdr.Get("session_id") == "" {
+		t.Error("no session_id: without a workspace there is no cache affinity")
 	}
 }

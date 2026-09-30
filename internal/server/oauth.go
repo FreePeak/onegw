@@ -41,7 +41,7 @@ func (s *Server) wireOAuthTokens(cfg *config.Config, def *provider.Def) {
 			if def.Accounts[i].Name != a.Account {
 				continue
 			}
-			def.Accounts[i].SetTokenResolver(s.oauth.Token, a.StoreKey())
+			def.Accounts[i].SetTokenResolver(s.oauth.Token, s.oauth.IDToken, a.StoreKey())
 		}
 	}
 }

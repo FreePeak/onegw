@@ -131,6 +131,10 @@ type Target struct {
 	AcctKey  string
 	Dialect  string
 	URL      string // "" = DefaultURL(dialect)
+	// IDToken is the stored identity token, for the vendors whose identity
+	// claims live ONLY there (ChatGPT's workspace id — codex.go). Empty for
+	// every other dialect; never sent as a bearer.
+	IDToken string
 }
 
 // Snapshot is one account's last observed upstream subscription state.
@@ -178,6 +182,10 @@ type Tracker struct {
 	// probe time — OAuth-managed accounts rotate their token in the
 	// background, so a key captured at build time goes stale.
 	resolveKey func(provider, acct string) string
+	// resolveIDToken does the same for the id_token, which carries the
+	// identity claims for the vendors that keep them there (ChatGPT). Nil is
+	// fine — the id_token is a fallback for the access token's claims.
+	resolveIDToken func(provider, acct string) string
 	// probe overrides the HTTP probe (tests).
 	probe func(ctx context.Context, t *Tracker, tgt Target) Snapshot
 
@@ -188,13 +196,17 @@ type Tracker struct {
 }
 
 // New builds a tracker over targets and starts its poll loop.
-func New(targets []Target, onExhausted func(Target, time.Time), resolveKey func(provider, acct string) string) *Tracker {
-	return NewAt(targets, onExhausted, nil, resolveKey, pollEvery, nil, nil)
+func New(targets []Target, onExhausted func(Target, time.Time), resolveKey, resolveIDToken func(provider, acct string) string) *Tracker {
+	return newAt(targets, onExhausted, nil, resolveKey, pollEvery, nil, nil, resolveIDToken)
 }
 
 // NewAt is New with injectable probe, cadence, client and clock (tests);
 // every <= 0 resets to the 60s default.
 func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(context.Context, *Tracker, Target) Snapshot, resolveKey func(provider, acct string) string, every time.Duration, client *http.Client, now func() time.Time) *Tracker {
+	return newAt(targets, onExhausted, probe, resolveKey, every, client, now, nil)
+}
+
+func newAt(targets []Target, onExhausted func(Target, time.Time), probe func(context.Context, *Tracker, Target) Snapshot, resolveKey func(provider, acct string) string, every time.Duration, client *http.Client, now func() time.Time, resolveIDToken func(provider, acct string) string) *Tracker {
 	if every <= 0 {
 		every = pollEvery
 	}
@@ -205,15 +217,16 @@ func NewAt(targets []Target, onExhausted func(Target, time.Time), probe func(con
 		now = time.Now
 	}
 	t := &Tracker{
-		targets:     targets,
-		onExhausted: onExhausted,
-		resolveKey:  resolveKey,
-		client:      client,
-		now:         now,
-		every:       every,
-		probe:       probe,
-		snaps:       make(map[string]Snapshot, len(targets)),
-		stop:        make(chan struct{}),
+		targets:        targets,
+		onExhausted:    onExhausted,
+		resolveKey:     resolveKey,
+		resolveIDToken: resolveIDToken,
+		client:         client,
+		now:            now,
+		every:          every,
+		probe:          probe,
+		snaps:          make(map[string]Snapshot, len(targets)),
+		stop:           make(chan struct{}),
 	}
 	go t.loop()
 	return t
@@ -297,6 +310,11 @@ func (t *Tracker) poll() {
 			if t.resolveKey != nil {
 				if k := t.resolveKey(tgt.Provider, tgt.AcctName); k != "" {
 					tgt.AcctKey = k
+				}
+			}
+			if t.resolveIDToken != nil {
+				if id := t.resolveIDToken(tgt.Provider, tgt.AcctName); id != "" {
+					tgt.IDToken = id
 				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
@@ -396,12 +414,12 @@ func (t *Tracker) probeHTTP(ctx context.Context, tgt Target) Snapshot {
 		// (User-Agent / originator / Version) and the workspace id, not
 		// the bearer alone — the same headers the inference path sends, so
 		// the probe cannot read upstream as an anonymous half-account.
-		// Plan falls back to the token's own claim when the body omits it.
-		snap.Plan = oauth.CodexPlan(tgt.AcctKey)
+		claims := oauth.Token{AccessToken: tgt.AcctKey, IDToken: tgt.IDToken}
+		snap.Plan = oauth.CodexPlan(claims)
 		req.Header.Set("User-Agent", oauth.CodexUserAgent)
 		req.Header.Set("Version", oauth.CodexClientVersion)
 		req.Header.Set("originator", oauth.CodexOriginator)
-		if id := oauth.CodexAccountID(tgt.AcctKey); id != "" {
+		if id := oauth.CodexAccountID(claims); id != "" {
 			req.Header.Set("chatgpt-account-id", id)
 		}
 	}

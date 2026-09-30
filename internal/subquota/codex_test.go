@@ -270,3 +270,41 @@ func TestParseCodexCamelCaseWindows(t *testing.T) {
 		t.Fatalf("camelCase windows = %+v", windows)
 	}
 }
+
+// The quota probe needs the same workspace id the inference path sends, and
+// it lives in the id_token. The tracker resolves both at poll time (tokens
+// rotate in the background), so a resolver wired for the bearer only would
+// probe with no workspace header.
+func TestProbeCodexUsesResolvedIDToken(t *testing.T) {
+	var seen struct {
+		accountID string
+		bearer    string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.accountID = r.Header.Get("chatgpt-account-id")
+		seen.bearer = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"rate_limit":{"primary_window":
+			{"used_percent":7,"limit_window_seconds":18000,"reset_after_seconds":60}}}`))
+	}))
+	defer srv.Close()
+
+	idTok := "h." + base64.RawURLEncoding.EncodeToString(
+		[]byte(`{"https://api.openai.com/auth":{"chatgpt_account_id":"ws-live","chatgpt_plan_type":"team"}}`)) + ".s"
+	resolveKey := func(string, string) string { return "at-rotated" }
+	resolveID := func(string, string) string { return idTok }
+
+	tr := New([]Target{{Provider: "codex", AcctName: "main", AcctKey: "stale-key",
+		Dialect: Codex, URL: srv.URL}}, nil, resolveKey, resolveID)
+	defer tr.Stop()
+	tr.poll()
+	if seen.bearer != "Bearer at-rotated" {
+		t.Errorf("Authorization = %q, want the RESOLVED (rotated) bearer", seen.bearer)
+	}
+	if seen.accountID != "ws-live" {
+		t.Errorf("chatgpt-account-id = %q, want ws-live from the resolved id_token", seen.accountID)
+	}
+	snaps := tr.All()
+	if len(snaps) != 1 || snaps[0].Plan != "team" {
+		t.Fatalf("plan not read from the id_token claim: %+v", snaps)
+	}
+}

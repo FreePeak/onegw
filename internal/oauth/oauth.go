@@ -28,6 +28,13 @@ type Token struct {
 	ExpiresAt    time.Time `json:"expires_at,omitempty"` // zero = no expiry known
 	Scope        string    `json:"scope,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// IDToken is the OIDC identity token, kept ONLY for the claims a vendor
+	// puts there and nowhere else. ChatGPT is the case: its
+	// `chatgpt_account_id` (workspace) and `chatgpt_plan_type` claims live in
+	// the id_token, not the access token — see oauth.CodexClaims. Stored raw
+	// because it is a credential the store must rotate and refresh alongside
+	// the access token; it is never sent as a bearer.
+	IDToken string `json:"id_token,omitempty"`
 }
 
 // DeviceStart is the payload an authorization server returns when a device

@@ -62,13 +62,14 @@ func codexSession(clientVal, accountID string) string {
 
 // setCodexFingerprint applies the CLI identity headers for one outbound call
 // — the single owner for the chat POST. chatgpt-account-id and session_id are
-// added only when the bearer actually carries a ChatGPT workspace: a
-// non-ChatGPT key gets the CLI identity and no invented workspace.
-func setCodexFingerprint(h http.Header, bearer, clientSession string) {
+// added only when the credential actually carries a ChatGPT workspace (read
+// from the id_token first — see oauth.CodexAccountID): a non-ChatGPT key gets
+// the CLI identity and no invented workspace.
+func setCodexFingerprint(h http.Header, tok oauth.Token, clientSession string) {
 	h.Set("User-Agent", oauth.CodexUserAgent)
 	h.Set("Version", oauth.CodexClientVersion)
 	h.Set("originator", oauth.CodexOriginator)
-	if id := oauth.CodexAccountID(bearer); id != "" {
+	if id := oauth.CodexAccountID(tok); id != "" {
 		h.Set("chatgpt-account-id", id)
 		h.Set("session_id", codexSession(clientSession, id))
 	}

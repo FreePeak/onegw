@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -138,7 +139,22 @@ service = "codex"
 // The codex profile pins the loopback redirect ChatGPT has allow-listed for
 // the Codex CLI (127.0.0.1:1455/auth/callback). A dashboard login that binds
 // the shared default port instead gets a redirect_uri the vendor refuses, so
+// prove the login prompt carries the profile's own port and path.
+//
+// 1455 is a REAL, globally-unique port: nothing else may hold it — not a
+// parallel test, not a gateway left running on this box. Skip rather than
+// fail, because a busy port would break this test for a reason that has
+// nothing to do with codex.
 func TestCodexBrowserLoginUsesRegisteredCallback(t *testing.T) {
+	u, err := url.Parse(oauth.CodexRedirectURI)
+	if err != nil {
+		t.Fatalf("CodexRedirectURI %q: %v", oauth.CodexRedirectURI, err)
+	}
+	if ln, err := net.Listen("tcp", u.Host); err != nil {
+		t.Skipf("%s is busy on this box: %v", u.Host, err)
+	} else {
+		_ = ln.Close()
+	}
 	idp := &oauthIdP{}
 	_, upstreamURL := idp.start(t)
 	fixture := `

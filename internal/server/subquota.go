@@ -71,6 +71,16 @@ func subTargets(cfg *config.Config) []subquota.Target {
 // at probe time: OAuth-managed accounts rotate tokens in the background
 // (TokenProvider), so the config-time key may already be stale.
 func (s *Server) liveSubKey(provider, acctName string) string {
+	return s.liveCredential(provider, acctName, false)
+}
+
+// liveSubIDToken is liveSubKey for the id_token, which carries ChatGPT's
+// workspace id (codex.go) — the claim the access token does not have.
+func (s *Server) liveSubIDToken(provider, acctName string) string {
+	return s.liveCredential(provider, acctName, true)
+}
+
+func (s *Server) liveCredential(provider, acctName string, identity bool) string {
 	st := s.cur()
 	if st == nil || st.pool == nil {
 		return ""
@@ -81,10 +91,14 @@ func (s *Server) liveSubKey(provider, acctName string) string {
 	}
 	for i := range def.Accounts {
 		a := &def.Accounts[i]
-		if a.Name == acctName && a.HasOAuthToken() {
-			if tok := a.OAuthToken.Token(); tok != "" {
-				return tok
-			}
+		if a.Name != acctName || !a.HasOAuthToken() {
+			continue
+		}
+		if identity {
+			return a.OAuthToken.Identity()
+		}
+		if tok := a.OAuthToken.Token(); tok != "" {
+			return tok
 		}
 	}
 	return ""

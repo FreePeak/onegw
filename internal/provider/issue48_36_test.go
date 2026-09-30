@@ -181,7 +181,8 @@ func TestGrokKindAlwaysSendsBothSessionIDs(t *testing.T) {
 // staticToken is a fixed-value TokenProvider for OAuth-account tests.
 type staticToken string
 
-func (s staticToken) Token() string { return string(s) }
+func (s staticToken) Token() string    { return string(s) }
+func (s staticToken) Identity() string { return "" }
 
 // DoPassthrough resolves its credential through the OAuth token provider
 // exactly like Do: an OAuth-only xAI account (no static api_key) must not
