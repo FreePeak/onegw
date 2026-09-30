@@ -307,17 +307,25 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 		adminError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	code := oauthExtractCode(req.Code)
-	if code == "" {
-		adminError(w, http.StatusBadRequest, "code is empty — paste the ?code= value or the whole callback URL")
-		return
-	}
+	code, vendorErr := oauthPastedCallback(req.Code)
 	s.oa.mu.Lock()
 	lg := s.oa.active[key]
 	pending := lg != nil && !lg.finished && lg.pkce != nil
 	s.oa.mu.Unlock()
 	if !pending {
 		adminError(w, http.StatusConflict, "no browser sign-in is pending for "+key+" — click Sign in again first")
+		return
+	}
+	if vendorErr != "" {
+		// The operator declined at the vendor (or the vendor refused). Say so
+		// instead of POSTing the URL at the token endpoint, which would spend
+		// the one-shot code and report an opaque invalid_grant.
+		s.failBrowserLogin(key, lg, vendorErr)
+		adminError(w, http.StatusBadRequest, "the vendor reported: "+vendorErr+" — start the sign-in again")
+		return
+	}
+	if code == "" {
+		adminError(w, http.StatusBadRequest, "no code in that — paste the ?code= value from the address bar, or the code itself")
 		return
 	}
 	if _, err := s.exchangeBrowserCode(r.Context(), key, lg, code); err != nil {
@@ -327,25 +335,41 @@ func (s *Server) handleAdminOAuthExchange(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{"key": key, "state": oauthSignedIn})
 }
 
-// oauthExtractCode accepts a raw code or the full callback URL (what the
-// browser address bar shows when the loopback redirect was unreachable).
-func oauthExtractCode(s string) string {
+// oauthPastedCallback is what the operator pasted into the paste-the-code
+// box: a raw code, or the whole callback URL the address bar shows when the
+// loopback redirect could not land. vendorErr is set when that URL reports
+// the VENDOR declining the login (ChatGPT answers ?error=access_denied when
+// the operator says no — and that is exactly the URL a well-meaning operator
+// pastes, having read "paste the code" as "paste the address bar").
+func oauthPastedCallback(s string) (code, vendorErr string) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return ""
+		return "", ""
 	}
 	if u, err := url.Parse(s); err == nil && (u.Scheme != "" || strings.Contains(s, "?")) {
+		if e := u.Query().Get("error"); e != "" {
+			return "", strings.TrimSpace(e + " " + u.Query().Get("error_description"))
+		}
 		if c := u.Query().Get("code"); c != "" {
-			return c
+			return c, ""
 		}
 	}
+	// A raw `code=…` fragment (the operator copied only the query part).
 	if i := strings.Index(s, "code="); i >= 0 {
 		s = s[i+5:]
 		if j := strings.IndexAny(s, "&#; \t\n"); j >= 0 {
 			s = s[:j]
 		}
+		return strings.TrimSpace(s), ""
 	}
-	return strings.TrimSpace(s)
+	// A bare code. Anything still shaped like a URL is refused rather than
+	// POSTed to the token endpoint as a credential: forwarding it spends the
+	// one-shot code and answers the operator with the vendor's opaque
+	// "invalid_grant" instead of what actually happened.
+	if strings.ContainsAny(s, "://?&#") {
+		return "", ""
+	}
+	return s, ""
 }
 
 // rejectedError wraps an exchange failure the caller should surface verbatim.

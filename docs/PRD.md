@@ -3080,10 +3080,26 @@ the issue):
   `code_review · Weekly` at 80 % flagged `warn`, `Monthly credit limit` at
   31 %) from the real probe; `/v1/models` lists `codex/<id>`; the
   admin model-fetch returns the 8-model catalog; `/v1/chat/completions`
-  (streaming and not) and `/v1/messages` all relay; the Sign-in button yields
-  a browser prompt on `auth.openai.com` with `redirect_uri` =
-  `http://127.0.0.1:1455/auth/callback`. Two defects found and fixed by that
-  sweep — see the two commits after this one.
+  (streaming and not) and `/v1/messages` all relay.
+
+  **The full browser login, driven through the dashboard's own endpoints**
+  (`POST /admin/config/oauth/login` → the vendor's redirect at onegw's
+  loopback listener → `GET /admin/config/oauth/accounts`): the prompt is
+  `mode: browser` on `auth.openai.com` with `redirect_uri` =
+  `http://127.0.0.1:1455/auth/callback`; playing that redirect stores the token
+  under `codex/me` in `oauth-tokens.json` at mode 0600, having POSTed
+  `grant_type=authorization_code` with the PKCE verifier and NO `scope`; the
+  poll flips to `signed-in`, the page swaps the Sign-in button for Sign-out,
+  and the gateway's next request carries the workspace id decoded off the
+  freshly-minted bearer (`ws-from-callback`) upstream. Sign-out empties the
+  store. The CLI path is verified the same way end to end, including its
+  refusal (with the remedy) when a running gateway already holds port 1455.
+
+  Three defects were found by that validation and fixed: the off-shape
+  `session_id` leak, the dashboard preset recipe rejected for a non-xai
+  service, and a paste-the-code decline being POSTed at the token endpoint as
+  if it were a credential (spending the one-shot code and answering
+  "invalid_grant" instead of "the operator declined").
 
   Pinned by `TestCodexFingerprintOnChatAndModels`, `TestCodexNoWorkspaceForNonChatGPTBearer`,
   `TestCodexSessionIsStableAndClientWins`, `TestCodexOffShapeClientSessionIsNotForwarded`,
@@ -3096,6 +3112,7 @@ the issue):
   `TestProbeCodexCarriesCLIIdentity`, `TestProbeCodexOmitsWorkspaceForForeignBearer`,
   `TestProbeCodexPlanFallsBackToTokenClaim`, `TestBrowserLoginStoresCodexToken`,
   `TestCodexEndToEnd`, `TestCodexBrowserLoginUsesRegisteredCallback`,
+  `TestOAuthPastedCallback`,
   `TestPresetAcceptsEveryRegisteredOAuthService`,
   plus the codex row in `TestNewKindsFormatAndDefaults`.
 - **Corrupt upstream streams — byte-level detection + pre-commit failover**

@@ -914,9 +914,12 @@ func TestOAuthExchangeEndpointPastedCode(t *testing.T) {
 	}
 }
 
-// TestOAuthExtractCode covers the paste parser's dialects: a bare code, a
-// query string, a fragment (some vendors bounce with #code=), and junk.
-func TestOAuthExtractCode(t *testing.T) {
+// TestOAuthPastedCallback covers the paste parser's dialects: a bare code, a
+// full callback URL, a fragment (some vendors bounce with #code=), and junk.
+// The error case matters as much: an operator who declines at the vendor
+// pastes that URL, and forwarding it spends the one-shot code against the
+// token endpoint to be told "invalid_grant".
+func TestOAuthPastedCallback(t *testing.T) {
 	for in, want := range map[string]string{
 		"abc123": "abc123",
 		"http://127.0.0.1:56121/callback?code=xyz&state=s": "xyz",
@@ -924,9 +927,20 @@ func TestOAuthExtractCode(t *testing.T) {
 		"  code=trimmed&scope=openid  ":                    "trimmed",
 		"":                                                 "",
 	} {
-		if got := oauthExtractCode(in); got != want {
-			t.Fatalf("oauthExtractCode(%q) = %q, want %q", in, got, want)
+		got, vendorErr := oauthPastedCallback(in)
+		if got != want || vendorErr != "" {
+			t.Fatalf("oauthPastedCallback(%q) = (%q, %q), want %q", in, got, vendorErr, want)
 		}
+	}
+	// The vendor declined: report it, never exchange it.
+	got, vendorErr := oauthPastedCallback(
+		"http://127.0.0.1:1455/auth/callback?error=access_denied&error_description=user+said+no")
+	if got != "" || !strings.Contains(vendorErr, "access_denied") {
+		t.Fatalf("declined callback = (%q, %q), want no code and the vendor error", got, vendorErr)
+	}
+	// A URL with neither code nor error must not be POSTed as a credential.
+	if got, _ := oauthPastedCallback("http://127.0.0.1:1455/auth/callback?state=s"); got != "" {
+		t.Fatalf("codeless URL extracted %q", got)
 	}
 }
 
