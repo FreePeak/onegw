@@ -467,11 +467,13 @@ targets = ["anthropic/claude-sonnet-4-5", "gemini/gemini-3-pro", "openrouter/dee
 # context = 200000
 # max_out = 64000
 
-# --- Cursor (no-account; AgentService + ChatService) -------------------------
+# --- Cursor (AgentService + ChatService) ------------------------------------
 # kind = "cursor" translates OpenAI-format requests onto Cursor's Connect-RPC
-# endpoints. It needs NO api_key and NO accounts (onegw model discovery returns
-# a curated catalog — ListModels/GetModels return 404 upstream; model rows with
-# zero accounts short-circuit into the catalog, see AGENTS.md).
+# endpoints. It needs NO api_key but DOES want one [[providers.accounts]] entry:
+# model discovery probes POST /aiserver.v1.AiService/AvailableModels with that
+# account's `type=session` token (a `type=web` dashboard_token answers 401).
+# With zero accounts the probe short-circuits and the curated fallback is served
+# instead (see AGENTS.md §3).
 #
 #   • text lane:  AgentService /agent.v1.AgentService/Run (h2 full-duplex)
 #   • tools lane: ChatService /aiserver.v1.ChatService/StreamUnifiedChatWithTools

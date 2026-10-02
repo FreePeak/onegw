@@ -62,6 +62,19 @@ const CursorChatPath = "/aiserver.v1.ChatService/StreamUnifiedChatWithTools"
 // CursorChatEndpointHost is the ChatService kind-default host.
 const CursorChatEndpointHost = "https://api2.cursor.sh"
 
+// CursorModelsPath is the AiService catalog RPC (api2 host) — the only
+// Cursor RPC that lists models. The 2026-09-15 probe that concluded "no
+// model-listing RPC" hit ListModels/GetModels/GetCatalog, which do not
+// exist; this one does and answers the account's real catalog (re-probed
+// live 2026-10-02, 40 entries).
+const CursorModelsPath = "/aiserver.v1.AiService/AvailableModels"
+
+// CursorModelsContentType is the request content type this RPC demands. NOT
+// the connect+proto of the chat path: that answers 415 here, and a GET
+// answers 405 — POST + application/proto is the only shape that answers 200
+// (live 2026-10-02).
+const CursorModelsContentType = "application/proto"
+
 // ---------------------------------------------------------------------------
 // Protobuf primitives
 // ---------------------------------------------------------------------------
@@ -402,6 +415,38 @@ func CursorHeaders(token, machineID string) []string {
 		"x-request-id: " + cursorUUID(),
 		"x-session-id: " + cursorUUIDv5(token),
 	}
+}
+
+// CursorAvailableModelIDs decodes an AvailableModels reply into the model
+// ids, in wire order. Protobuf, one repeated field-2 record per model:
+// field 1 is the id, 17 the human display name, 15/16 the context limits.
+// 40 entries, ~240 KB on a free tier (live 2026-10-02).
+func CursorAvailableModelIDs(raw []byte) ([]string, error) {
+	fields, err := pbDecode(raw)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, f := range fields {
+		if f.Num != 2 || f.Wire != pbLen {
+			continue
+		}
+		rec, err := pbDecode(f.Value)
+		if err != nil {
+			continue // one malformed record must not lose the other 39
+		}
+		id := strings.TrimSpace(pbFirst(rec, 1))
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("cursor: AvailableModels reply carried no model ids")
+	}
+	return ids, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -1004,6 +1004,22 @@ var clineModels = []string{
 	"kwaipilot/kat-coder-pro",
 }
 
+// cursorCuratedModels is the stock cursor catalog: what a bare `kind =
+// "cursor"` block advertises, and what FetchModels falls back to when the
+// live listing RPC is unreachable. Both lanes are stale against the live
+// account (2026-10-02 probe: 40 models; no `gpt-5.6`, no `composer-2`) and
+// should stay that way — a curated list that claims to be current is how
+// `gpt-5.6` kept being advertised for a month after Cursor rotated it.
+// BARE ids on purpose: the server qualifies every advertised model with the
+// provider name (server.go handleModels + the route table), so a prefixed
+// entry here is what served a client-visible cursor/cursor/auto (2026-09-21)
+// — an id nothing answers, and one an id pinning a configured setup keeps
+// asking for.
+var cursorCuratedModels = []string{
+	"auto", "default", "composer-2.5", "composer-2",
+	"gpt-5.2", "gpt-5.5", "gpt-5.6", "claude-sonnet-4.5",
+}
+
 // DefaultModels returns the stock catalog for kinds with a curated upstream
 // model list; nil = none (the provider advertises only configured models).
 func DefaultModels(k Kind) []string {
@@ -1019,23 +1035,13 @@ func DefaultModels(k Kind) []string {
 		// who want the live list keep setting `models`.
 		return []string{"grok-build", "grok-4.5"}
 	case KindCursor:
-		// Cursor has no upstream model-listing RPC — ListModels,
-		// GetModels, GetCatalog all 404 when hit against both
-		// cursor hosts (probed live 2026-09-15). Advertise the
-		// ids proven to route: auto (the AgentService lane —
-		// ends a turn with zero content if sent verbatim),
-		// default, the composer family (ChatService), and gpt-5.2
-		// (live-proven, PRD 12fd081). BARE ids on purpose: the
-		// server qualifies every advertised model with the provider
-		// name (server.go handleModels + the route table), so a
-		// prefixed entry here is what served a client-visible
-		// cursor/cursor/auto (2026-09-21) — an id nothing answers,
-		// and one an id pinning a configured setup keeps asking for.
-		// Operators wanting the live list set `models` explicitly
-		// — upstream rotates these ids without notice, exactly
-		// like OpenCode Zen.
-		return []string{"auto", "default", "composer-2.5",
-			"composer-2", "gpt-5.2", "gpt-5.5", "gpt-5.6", "claude-sonnet-4.5"}
+		// The curated stock catalog (cursorCuratedModels). The live list
+		// is one admin-page Fetch away (FetchModels → AiService
+		// AvailableModels); this is what a bare `kind = "cursor"` block
+		// with no live account — or a failed probe — advertises.
+		// Operators wanting the live list set `models` explicitly (or hit
+		// Fetch + Pin): upstream rotates these ids without notice.
+		return cursorCuratedModels
 	case KindCodex:
 		// The curated catalog (codexModels). ChatGPT rotates these ids
 		// without notice, so an operator who needs an id this list lacks
@@ -2911,18 +2917,30 @@ func decodeUpstreamError(kind Kind, body []byte, status int) *types.APIError {
 // effort; used by the /v1/models surface for kinds that support it).
 func (d *Def) FetchModels(ctx context.Context, acct *Account) ([]byte, int, error) {
 	if d.Kind == KindCursor {
-		// Cursor's AgentService/ChatService expose no model-listing
-		// RPC — ListModels, GetModels, GetCatalog all 404 when hit
-		// against both agent.api5.cursor.sh and api2.cursor.sh
-		// (probed live 2026-09-15). Returning a 200 with the curated
-		// catalog keeps the dashboard honest: the probe reports the
-		// curated ids as "discovered" rather than an error for a
-		// working account. parseModelIDs reads the plain
-		// `{"models":[...]}` shape, which is the only one this
-		// helper emits.
-		return []byte(`{"models":["auto","default",
-			"composer-2.5","composer-2","gpt-5.2","gpt-5.5",
-			"gpt-5.6","claude-sonnet-4.5"]}`), 200, nil
+		// Cursor's catalog lives in the AiService AvailableModels RPC
+		// (POST, application/proto, protobuf reply — NOT the connect+proto
+		// of the chat path). The 2026-09-15 probe that concluded "no
+		// model-listing RPC" hit ListModels/GetModels/GetCatalog, which do
+		// not exist; the curated list it left behind has since gone stale
+		// (live 2026-10-02: 40 models, none of them gpt-5.6 or composer-2).
+		ids, err := d.fetchCursorModels(ctx, acct)
+		if err == nil {
+			out, merr := json.Marshal(map[string][]string{"models": ids})
+			if merr != nil {
+				return nil, 500, merr
+			}
+			return out, 200, nil
+		}
+		// Fall back rather than error: a working account must not lose its
+		// catalog because the (non-chat) listing RPC is unreachable —
+		// the same reasoning the other curated kinds use. parseModelIDs
+		// reads the plain `{"models":[...]}` shape below.
+		log.Printf("cursor: AvailableModels probe failed (%v) — serving the curated catalog", err)
+		out, merr := json.Marshal(map[string][]string{"models": cursorCuratedModels})
+		if merr != nil {
+			return nil, 500, merr
+		}
+		return out, 200, nil
 	}
 	base := d.Base(acct)
 	url := joinURL(base, d.Path("models", ""))

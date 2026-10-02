@@ -1112,3 +1112,52 @@ func TestCursorToolDirectiveNoNamesForNonComposer(t *testing.T) {
 		t.Error("non-composer model must not get tool name list in directive")
 	}
 }
+
+// TestCursorAvailableModelIDs pins the AvailableModels decode: the reply is
+// protobuf with one repeated field-2 record per model, id in field 1, and
+// the non-model scalars (field 11 = 1, field 12 = 240) interleaved — those
+// must not be mistaken for records, and a duplicate must not be listed twice.
+func TestCursorAvailableModelIDs(t *testing.T) {
+	rec := func(id, display string) []byte {
+		r := pbString(nil, 1, id)       // id
+		r = pbUvarint(r, 15, 1_000_000) // context in
+		return pbString(r, 17, display) // display name
+	}
+	var msg []byte
+	msg = pbUvarint(msg, 11, 1)
+	msg = pbBytes(msg, 2, rec("default", "Auto"))
+	msg = pbBytes(msg, 2, rec("grok-4.7", "Grok 4.7"))
+	msg = pbUvarint(msg, 12, 240)
+	msg = pbBytes(msg, 2, rec("default", "Auto")) // duplicate record
+	msg = pbBytes(msg, 2, pbUvarint(nil, 5, 1))   // record with no id
+
+	ids, err := CursorAvailableModelIDs(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"default", "grok-4.7"}
+	if len(ids) != len(want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("ids = %v, want %v", ids, want)
+		}
+	}
+}
+
+// A reply the gateway cannot read must be an error, not an empty catalog —
+// an empty list would show the operator "no models" and hide the real fault.
+func TestCursorAvailableModelIDsRejectsUnreadable(t *testing.T) {
+	for name, raw := range map[string][]byte{
+		"empty":      {},
+		"no records": pbUvarint(nil, 11, 1),
+		"bad tag":    {0xff, 0xff, 0xff},
+		"bad length": {0x12, 0x7f},
+		"truncated":  append(pbString(nil, 2, "x"), 0x12, 0x40, 0x01),
+	} {
+		if _, err := CursorAvailableModelIDs(raw); err == nil {
+			t.Errorf("%s: want an error, got none", name)
+		}
+	}
+}
