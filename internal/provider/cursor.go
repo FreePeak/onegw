@@ -41,6 +41,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -241,6 +242,58 @@ func (d *Def) cursorUpstream(ctx context.Context, url, token string, reqBody []b
 		outW.CloseWithError(werr)
 	}()
 	return out, resp.Body, nil
+}
+
+// fetchCursorModels asks Cursor's AiService for the account's real catalog
+// (POST AvailableModels + application/proto — the chat path's connect+proto
+// answers 415 here) and decodes the protobuf reply into model ids. This is
+// the only Cursor RPC that lists models: the 2026-09-15 probe that concluded
+// otherwise hit ListModels/GetModels/GetCatalog, which do not exist, and the
+// 8-id curated list it left behind has since gone stale (live 2026-10-02:
+// 40 models, none of them gpt-5.6 or composer-2).
+//
+// Credential: a `type=session` account token answers 200; a `type=web`
+// browser/dashboard token answers 401 ERROR_NOT_LOGGED_IN. Hence
+// acct.bearerToken(), never the dashboard_token.
+func (d *Def) fetchCursorModels(ctx context.Context, acct *Account) ([]string, error) {
+	token := acct.bearerToken()
+	if token == "" {
+		return nil, errors.New("account has no credential")
+	}
+	cl := d.httpClient()
+	if cursorTLSOverride != nil {
+		tr := cl.Transport.(*http.Transport).Clone()
+		tr.TLSClientConfig = cursorTLSOverride
+		cl = &http.Client{Transport: tr, Timeout: cl.Timeout}
+	}
+	// An operator base_url override (tests, mitm proxies) applies here too,
+	// same rule as the chat path.
+	host := d.Base(acct)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host+translat.CursorModelsPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range translat.CursorHeaders(token, d.cursorMachineID()) {
+		k, v, _ := strings.Cut(h, ": ")
+		req.Header.Set(k, v)
+	}
+	// Override, not add: CursorHeaders sets the chat path's content type,
+	// which this RPC rejects with 415 (live 2026-10-02).
+	req.Header.Set("Content-Type", translat.CursorModelsContentType)
+	resp, err := cl.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		limited, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return nil, errors.New(translat.DecodeCursorError(limited, resp.StatusCode).Message)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, err
+	}
+	return translat.CursorAvailableModelIDs(raw)
 }
 
 // cursorMachineID resolves the machine id: the operator pins via

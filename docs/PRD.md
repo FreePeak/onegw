@@ -242,7 +242,8 @@ still failed at push. Note the run that landed between the two merges (354549762
 failed its `release` job on `already exists: v0.44.0` — correct behaviour, since it ran the
 old calc and re-derived a released tag; the numbering fix is what removes that.
 
-*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring):*
+*Last updated: 2026-09-18 (cursor model discovery: advertise a curated catalog instead of erroring — SUPERSEDED
+by the 2026-10-02 entry below, which corrects the "no model-listing RPC" claim):*
 Cursor's AgentService and ChatService are Connect-RPC endpoints with no model-listing RPC — `ListModels`,
 `GetModels`, and `GetCatalog` all return 404 when hit against both `agent.api5.cursor.sh` and `api2.cursor.sh`
 (probed live 2026-09-15). `FetchModels` therefore GETed the bare host with no path, `parseModelIDs` found no
@@ -256,6 +257,39 @@ from 2026-09-13, so it maps to `default`), `cursor/default`, the IDE's `composer
 `{"models":[...]}` shape that `parseModelIDs` reads, so the discovery probe succeeds for a working account.
 Operators who want the live list set `models` explicitly — the upstream rotates these ids without notice,
 exactly like OpenCode Zen. Tests: `TestNewKindsFormatAndDefaults` pins the 8 ids. **Not yet deployed.**
+
+*Last updated: 2026-10-02 (cursor model discovery: the curated 8 was a guessed RPC — Cursor HAS a catalog, 40 ids):*
+The 2026-09-18 entry above is WRONG on its central claim, and this entry supersedes it. `ListModels`,
+`GetModels`, and `GetCatalog` are three names that do not exist on Cursor; the 404s were real but proved nothing
+about the absence of a listing RPC. The RPC that DOES exist is the AiService's
+`POST /aiserver.v1.AiService/AvailableModels` — the path both reference implementations pin as their cursor
+`modelsEndpoint`. Re-probed live today with the account's own bearer and the gateway's existing fingerprint
+(`CursorHeaders`: `x-client-key`, `x-cursor-checksum`, machine id): **200, 243 571 bytes, 40 models.**
+
+Three shape facts made this non-obvious, all now constants in `translat/cursor.go`
+(`CursorModelsPath`, `CursorModelsContentType`):
+1. **POST + `application/proto` only.** The chat path's `application/connect+proto` answers **415**, a GET
+   answers **405**, `application/json` answers 400. `fetchCursorModels` therefore overrides — does not add to —
+   `CursorHeaders`'s content type.
+2. **The reply is protobuf**, one repeated field-2 record per model with the id in field 1 (17 is the display
+   name, 15/16 the context limits). `parseModelIDs` reads none of that, so `translat.CursorAvailableModelIDs`
+   decodes it with the `pbDecode` already in the package.
+3. **Credential type decides.** The `type=session` account token (`api_key`) answers 200; the `type=web`
+   `dashboard_token` answers **401 ERROR_NOT_LOGGED_IN**. Hence `acct.bearerToken()`, never the dashboard token.
+
+`FetchModels` now probes this and falls back to the curated list (extracted to `cursorCuratedModels`, which
+`DefaultModels(KindCursor)` also returns) when the probe fails — a working account must not lose its catalog
+because a non-chat listing RPC is unreachable. Verified end-to-end against the live account through
+`Def.FetchModels`: `status=200 err=<nil> elapsed=1.1s models=40`.
+
+The curated 8 were stale in both directions, which is the concrete cost of the guess: it advertised `gpt-5.6`
+and `composer-2`, neither of which Cursor serves (the live list has `gpt-5.6-luna`/`-sol`/`-terra` and only
+`composer-2.5`), and omitted 30+ serving ids including `grok-4.7`, `claude-opus-5-5`, `gpt-5.4`,
+`gemini-3.1-pro`, `kimi-k3` and `muse-spark-1.3`. It also spells ids with dots where upstream uses dashes
+(`claude-sonnet-4.5` vs `claude-sonnet-4-5`). Tests: `TestFetchModelsCursorUsesLiveCatalog`,
+`TestFetchModelsCursorFallsBackToCurated`, `TestFetchModelsCursorNoCredentialSkipsUpstream`,
+`TestCursorCuratedMatchesDefault` (provider) and `TestCursorAvailableModelIDs` +
+`TestCursorAvailableModelIDsRejectsUnreadable` (translat).
 
 *Last updated: 2026-09-18 (`retry_forever` — a leg that must not be downgraded):*
 The `xdev` combo's single target (`opencode/union-alpha`) alternates long successful calls (~50s ttfb) with

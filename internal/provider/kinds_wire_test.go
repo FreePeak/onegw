@@ -45,14 +45,15 @@ func TestNewKindsFormatAndDefaults(t *testing.T) {
 	if got := DefaultModels(KindOpenAIResponses); len(got) != 2 || got[0] != "grok-build" || got[1] != "grok-4.5" {
 		t.Errorf("DefaultModels(openai-responses) = %v, want [grok-build grok-4.5]", got)
 	}
-	// Cursor has no upstream model-listing RPC (both cursor hosts
-	// return 404 on every listing method, probed live 2026-09-15),
-	// so DefaultModels ships the ids proven to route through the
-	// gateway: the AgentService lane (auto), the IDE's composer
-	// family (ChatService), and gpt-5.2 (the live-proven turn,
-	// PRD 12fd081). BARE ids: the server qualifies them with the
-	// provider name, and a "cursor/auto" entry advertised a
-	// double-prefixed cursor/cursor/auto for a whole day (2026-09-21).
+	// Cursor DOES have a model-listing RPC (AiService AvailableModels, live
+	// 2026-10-02: 40 ids) — the 2026-09-15 "no listing RPC" probe hit three
+	// method names that don't exist. DefaultModels therefore ships only the
+	// curated FALLBACK (cursorCuratedModels), which a live FetchModels probe
+	// supersedes; TestCursorCuratedMatchesDefault pins the two in sync and
+	// internal/provider/cursor_models_test.go covers the live lane. BARE ids
+	// still matter: the server qualifies them with the provider name, and a
+	// "cursor/auto" entry advertised a double-prefixed cursor/cursor/auto
+	// for a whole day (2026-09-21).
 	if got := DefaultModels(KindCursor); len(got) != 8 ||
 		got[0] != "auto" || got[1] != "default" ||
 		got[2] != "composer-2.5" || got[3] != "composer-2" ||

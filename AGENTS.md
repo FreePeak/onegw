@@ -31,13 +31,28 @@ Do NOT start a second instance — onegw refuses to bind if a second
 one is already running (SO_REUSEPORT splits traffic and breaks
 rate windows). Check `ps aux | grep onegw` first.
 
-## 3. Cursor model discovery is a no-account case
+## 3. Cursor model discovery: the catalog RPC exists, and needs an account
 
-`KindCursor` provider defs in onegw.toml have **zero** `[[providers.accounts]]`.
-Cursor's AgentService/ChatService Connect-RPC endpoints (ListModels,
-GetModels, GetCatalog) all return 404, so FetchModels short-circuits
-in `fetchProviderModels` (`internal/server/admin_models.go`) and returns
-a curated catalog. A 200 with a non-empty body from a 0-account def is
+Cursor DOES serve a model catalog — `POST /aiserver.v1.AiService/AvailableModels`
+(the path 9router/OmniRoute pin as their cursor `modelsEndpoint`). `ListModels`,
+`GetModels`, `GetCatalog` are three names that do not exist; their 404s (recorded
+here until 2026-10-02) are what produced the "no model-listing RPC" belief and a
+hardcoded 8-id list.
+
+`FetchModels` (`internal/provider/cursor.go` `fetchCursorModels`) probes it and
+falls back to `cursorCuratedModels` when it cannot. Three things it depends on,
+all verified live 2026-10-02 (40 ids, ~240 KB protobuf):
+
+  • **POST + `Content-Type: application/proto`.** The chat path's
+    `application/connect+proto` answers 415; a GET answers 405.
+  • **An account token (`type=session`), i.e. `acct.bearerToken()`.** A
+    `type=web` `dashboard_token` answers 401 ERROR_NOT_LOGGED_IN.
+  • The reply is protobuf, not `/v1/models` JSON — decoded by
+    `translat.CursorAvailableModelIDs`.
+
+So a cursor def with **zero** `[[providers.accounts]]` short-circuits in
+`fetchProviderModels` (`internal/server/admin_models.go`) before any of that and
+serves the curated fallback. A 200 with a non-empty body from a 0-account def is
 a success — do NOT surface "no models in the response" for Cursor.
 
 ## 4. Validate port/process state before restart
