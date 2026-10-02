@@ -291,6 +291,31 @@ and `composer-2`, neither of which Cursor serves (the live list has `gpt-5.6-lun
 `TestCursorCuratedMatchesDefault` (provider) and `TestCursorAvailableModelIDs` +
 `TestCursorAvailableModelIDsRejectsUnreadable` (translat).
 
+*Last updated: 2026-10-02 (cursor catalog ≠ cursor routability: 40 listed, 19 route on this account):*
+Live-mate every id the RPC returned through `Def.Do` (one real "PONG" turn each, 44 probes incl. the curated-only
+ids). Result: **19 route, 22 answer `400 Max Mode Required`, 2 answer `400 AI Model Not Found`, 1 answers
+`400 Composer 2 is retired`.** `AvailableModels` lists what the *product* offers, not what *this* plan may route,
+and no field in the reply predicts the difference — the flags that looked promising (f26, f45, the presence of
+`-max` suffixed variants in f36) all cross-tab against routability in both directions.
+
+`Max Mode Required` is an entitlement wall, not a request-shape problem: it survives `reasoning_effort="max"`,
+the model's own `-max` and `-max-fast` suffixed ids, and the `-fast` variants. The profile is a free/Pro tier, and
+the gated set is exactly the frontier families (`claude-opus-5-5`, `claude-opus-4-8`, `gpt-5.6-*`, `grok-4.x`,
+`kimi-k3`, `glm-5.2`, `muse-spark-1.3`). The 19 that DO route include most of what the curated 8 was reaching for
+plus 12 it never listed (`gemini-3.1-pro`, `gemini-3.8/3.7/3.6/3.5-flash`, `claude-haiku-4-5`, `claude-sonnet-5-5`,
+`gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.1`, `gpt-5-mini`, `glm-5p3`, `glm-5p3-flash`).
+
+Also live-confirmed the curated list's dead ids: `gpt-5.6` → `AI Model Not Found` (upstream splits it into
+`gpt-5.6-luna`/`-sol`/`-terra`), `composer-2` → `Composer 2 is retired`, and the dot spelling
+`claude-sonnet-4.5` → `AI Model Not Found` (upstream uses dashes, and ships it as a `-thinking` variant).
+`cursor/auto` still answers `PONG` — the AgentService lane rewrite to `default` holds.
+
+**Consequence for the operator:** Pin (Fetch with `apply:true`) writes all 40, of which 21 are guaranteed 400s
+for this account. This PR does NOT auto-pin — discovery is now honest, and what to pin stays a deliberate choice.
+Filtering the gate client-side would need an entitlement signal the catalog does not carry; the ceiling is that
+every plan change silently re-labels which ids are usable, so any filter must stay re-derived from a live
+probe rather than baked into the gateway.
+
 *Last updated: 2026-09-18 (`retry_forever` — a leg that must not be downgraded):*
 The `xdev` combo's single target (`opencode/union-alpha`) alternates long successful calls (~50s ttfb) with
 cheap transient refusals — live `503 "Endpoint is unavailable."` after ~1.4s — and the router treated each one

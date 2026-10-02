@@ -55,6 +55,15 @@ So a cursor def with **zero** `[[providers.accounts]]` short-circuits in
 serves the curated fallback. A 200 with a non-empty body from a 0-account def is
 a success — do NOT surface "no models in the response" for Cursor.
 
+**The catalog is NOT a routability list.** Live 2026-10-02: all 40 ids probed with a
+real turn — 19 answered, 22 answered `400 Max Mode Required`, 2 `AI Model Not Found`,
+1 `Composer 2 is retired`. The gate is a PLAN entitlement (`Max Mode`), not a
+request-shape problem: it survives `reasoning_effort="max"`, the `-max`/`-max-fast`
+suffixed ids, and the `-fast` variants, and no field in the AvailableModels reply
+predicts it. So do NOT filter the RPC result by any protobuf flag, and do NOT tell an
+operator that a listed id works — discovery shows what the product offers; what
+routes depends on the account's plan and must be measured per account.
+
 ## 4. Validate port/process state before restart
 
 Check what is actually listening before restart: `lsof -i :8080 -sTCP:LISTEN`
