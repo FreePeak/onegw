@@ -3512,3 +3512,38 @@ with exit 128 even though the release is fine. Fix in `.github/workflows/release
 (2) make the push tolerant of exit 128 — if `git push` fails because the tag already exists on the remote, the step
 logs "already exists on remote - reusing it", deletes the local tag, and exits 0 instead of failing the run.
 No change to the version calc step.
+
+*Last updated: 2026-10-02 (subscription-quota park answers honestly, 503 not a lie about rate limits):*
+Live on the operator's gateway, `commandcode/linh` carried `subscription_quota = "commandcode"` and the
+subquota poller had the account parked (`/admin/ui/quota`: "Credits (monthly) 100% · parked · exhausted"
+— the vendor's own GOAT credit pool at zero remaining, after the 2026-09-23 and 2026-09-28
+`insufficient credits` billing refusals logged in `<data_dir>/onegw.log`). A direct route to that leg
+answered:
+
+    429 {"code":"rate_limit_exceeded",
+        "message":"provider commandcode: all accounts rate-limited upstream; retry after 23s"}
+
+Two lies in one line. The vendor never rate-limited anything — `parkExhaustedSubscription` cooled the
+account because the vendor's credits endpoint reports the pool drained — and the named remedy (retry
+later) never arrives while spendable credits are zero, so the honest answer is a quota condition with a
+top-up remedy, which is exactly what `poolEmptyError` already returns for a LOCAL `quota_window`
+exhaustion (`503 provider_quota_exhausted`) and for a terminally invalidated pool (`#80`). The #79
+park had no branch of its own, so it fell through to `router.DefaultPoolEmptyError`'s generic 429.
+
+- `subquota.Tracker.Exhausted(provider)` — new: the worst fully-consumed window across that provider's
+  snapshots, plus the instant the verdict can next change (latest fetch + one poll cycle, the same cap
+  `parkIfExhausted` parks to). Fail-open by construction: no snapshot, a failed probe (`snap.Err != ""`
+  — `parkIfExhausted` returns early on those, so the pool was never parked), or headroom in every window
+  all answer `ok=false`.
+- `Server.poolEmptyError` consults it after the local-window branch and before the default 429, returning
+  `503 provider_quota_exhausted` / `quota_exceeded` with the window name and a `Retry-After` of the
+  vendor's reset (`w.Resets`, else the poll re-check).
+
+Pinned by `internal/server/subquota_park_honesty_test.go` (three cases): the parked leg answers 503
+naming the window and never claims a rate limit; the combo still falls through to the healthy sibling;
+a failed vendor probe leaves the account serving. Mutation-checked — reverting only the `poolEmptyError`
+branch turns the first test red with the exact old 429 body. Unchanged: the API/dashboard surfaces, the
+park itself, the local `quota_window` branch, the #80 unfunded branch, and every other provider kind.
+The four failures in `go test ./internal/server` (`TestProviderDisabledTogglePersistsAndReloads`,
+`TestCursorKindEndToEnd`, `TestGrokGeminiClientViaResponses`, `TestGeminiSurfaceEnforcesPolicy`) are
+pre-existing on `origin/master` — reproduced with the change stashed; the rest of the package passes.

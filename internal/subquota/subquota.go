@@ -252,6 +252,40 @@ func (t *Tracker) All() []Snapshot {
 	return out
 }
 
+// Exhausted reports the worst window any account of provider has fully
+// consumed, plus the instant the verdict can next change — the latest
+// fetch plus one poll cycle, since parkIfExhausted caps every park at
+// exactly that. ok is false when the provider has no snapshot, when the
+// last probe failed (fail-open), or when every window still has headroom:
+// the caller's cue to fall back to the generic pool-empty answer rather
+// than indict a provider on no evidence.
+func (t *Tracker) Exhausted(provider string) (Window, time.Time, bool) {
+	if t == nil {
+		return Window{}, time.Time{}, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var (
+		worst  Window // zero Used: no exhausted window yet
+		latest time.Time
+	)
+	for _, snap := range t.snaps {
+		if snap.Provider != provider || snap.Err != "" {
+			continue
+		}
+		if snap.FetchedAt.After(latest) {
+			latest = snap.FetchedAt
+		}
+		if w, ok := snap.exhaustedWindow(); ok && w.Used > worst.Used {
+			worst = w
+		}
+	}
+	if worst.Used < 100 {
+		return Window{}, time.Time{}, false
+	}
+	return worst, latest.Add(t.every), true
+}
+
 // Stop ends the loop; idempotent.
 func (t *Tracker) Stop() {
 	if t == nil {

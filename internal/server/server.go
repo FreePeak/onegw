@@ -841,6 +841,35 @@ func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIEr
 					def.Name, st.Window, st.WindowEnd.UTC().Format(time.RFC3339))}
 		}
 	}
+	// Upstream-reported subscription window consumed (issue #79 dialect):
+	// the subquota poller parks the account on the vendor's own numbers,
+	// and that park IS the cooldown Execute is reporting — so the plain
+	// 429 "all accounts rate-limited upstream" below lies twice: the
+	// vendor never rate-limited anything, and the remedy is a top-up, not
+	// a slower retry. Answer the same 503 provider_quota_exhausted the
+	// local quota_window branch uses, with the window that is full and a
+	// Retry-After the vendor's reset — else the exhausted branch's own
+	// Retry-After (the pool's cooldown expiry). Fail-open: a probe error
+	// never parks (parkIfExhausted returns early), so this branch only
+	// fires on real vendor evidence.
+	if sub := s.cur().subq; sub != nil {
+		if w, recheck, ok := sub.Exhausted(def.Name); ok {
+			until := ready
+			if w.Resets != nil && w.Resets.After(time.Now()) {
+				until = *w.Resets
+			} else if recheck.After(time.Now()) {
+				until = recheck
+			}
+			cool := time.Until(until)
+			if cool < 0 {
+				cool = 0
+			}
+			return &types.APIError{Status: 503, Type: "provider_quota_exhausted", Code: "quota_exceeded",
+				RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+				Message: fmt.Sprintf("provider %s subscription quota exhausted (%s window); the vendor reports it fully consumed, re-check after %s",
+					def.Name, w.Name, until.UTC().Format(time.RFC3339))}
+		}
+	}
 	return router.DefaultPoolEmptyError(def, ready)
 }
 
