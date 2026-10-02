@@ -929,6 +929,14 @@ func parseGrokCli(token string, body []byte, status int) ([]Window, string, stri
 				Type any `json:"type"`
 				End  any `json:"end"`
 			} `json:"currentPeriod"`
+			// Unified-billing fingerprint (live 2026-10-02). On these
+			// accounts xAI reports NO pool at all: no creditUsagePercent,
+			// no monthly envelope — only period metadata plus the
+			// balance/cap it meters on-demand spend against.
+			IsUnifiedBillingUser bool `json:"isUnifiedBillingUser"`
+			OnDemandCap          any  `json:"onDemandCap"`
+			OnDemandUsed         any  `json:"onDemandUsed"`
+			PrepaidBalance       any  `json:"prepaidBalance"`
 		} `json:"config"`
 	}
 	if err := dec.Decode(&data); err != nil {
@@ -948,12 +956,46 @@ func parseGrokCli(token string, body []byte, status int) ([]Window, string, stri
 		// (nothing granted) reads drained instead of "no quota data".
 		used, ok = grokLegacyPercent(body)
 		if !ok {
+			if w, ok := grokUnmetered(data.Config.IsUnifiedBillingUser,
+				grokUnwrapVal(data.Config.OnDemandCap), grokUnwrapVal(data.Config.OnDemandUsed),
+				grokString(data.Config.CurrentPeriod.Type), data.Config.CurrentPeriod.End); ok {
+				return []Window{w}, plan, ""
+			}
 			return nil, plan, "Grok billing response did not contain valid quota data."
 		}
 		return []Window{{Name: "Monthly pool", Used: used}}, plan, ""
 	}
 	windows := []Window{{Name: grokPeriodName(grokString(data.Config.CurrentPeriod.Type)), Resets: grokReset(data.Config.CurrentPeriod.End), Used: used}}
 	return windows, plan, ""
+}
+
+// grokUnmetered is the third shape the SAME url serves, and the one a
+// unified-billing account answers with (live 2026-10-02, verified against
+// onegw's own OAuth bearer AND a token freshly minted by `grok login` —
+// byte-identical, so no credential or header combination brings the pool
+// percent back):
+//
+//	{"config":{"currentPeriod":{...},"onDemandCap":{"val":0},
+//	  "onDemandUsed":{"val":0},"isUnifiedBillingUser":true,
+//	  "prepaidBalance":{"val":0}, ...}}
+//
+// There is no metered pool, so the account must NOT park — reporting it
+// drained (what the 0/0 legacy envelope does) would take a perfectly
+// serving account out of rotation. It reads 0 % under the vendor's own
+// period name and reset. The ONE case that does park is an exhausted
+// on-demand cap: that cap is a hard spend ceiling, and past it upstream
+// answers requests with a billing error.
+func grokUnmetered(unified bool, cap, used any, periodType string, periodEnd any) (Window, bool) {
+	if !unified && cap == nil {
+		return Window{}, false
+	}
+	w := Window{Name: grokPeriodName(periodType), Resets: grokReset(periodEnd)}
+	if c, ok := grokPercent(cap); ok && c > 0 {
+		if u, ok := grokPercent(used); ok && u >= c {
+			w.Used = 100
+		}
+	}
+	return w, true
 }
 
 // grokLegacyPercent reads the monthly envelope the same endpoint falls back

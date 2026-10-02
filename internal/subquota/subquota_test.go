@@ -431,6 +431,52 @@ func TestParseGrokCliLegacyMonthlyEnvelope(t *testing.T) {
 	}
 }
 
+// TestParseGrokCliUnifiedBilling is the regression for the live 2026-10-02
+// report ("Grok billing response did not contain valid quota data." on a
+// SuperGrok account that serves traffic fine): xAI moved the account to
+// unified billing, and ?format=credits then answers period metadata only —
+// no creditUsagePercent, no monthly envelope. Verbatim capture from both
+// onegw's OAuth bearer and a token `grok login` had just minted.
+func TestParseGrokCliUnifiedBilling(t *testing.T) {
+	body := []byte(`{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY",` +
+		`"start":"2026-10-01T03:42:52.784509+00:00","end":"2026-10-08T03:42:52.784509+00:00"},` +
+		`"onDemandCap":{"val":0},"onDemandUsed":{"val":0},"isUnifiedBillingUser":true,` +
+		`"prepaidBalance":{"val":0},"topUpMethod":"TOP_UP_METHOD_SAVED_PAYMENT_METHOD",` +
+		`"billingPeriodStart":"2026-10-01T03:42:52.784509+00:00",` +
+		`"billingPeriodEnd":"2026-10-08T03:42:52.784509+00:00"}}`)
+	windows, plan, err := parseGrokCli(grokTestJWT("1"), body, 200)
+	if err != "" {
+		t.Fatalf("unified-billing body rejected: %s", err)
+	}
+	if plan != "Grok · SuperGrok" || len(windows) != 1 {
+		t.Fatalf("plan = %q windows = %+v, want the tier-1 label and one window", plan, windows)
+	}
+	w := windows[0]
+	if w.Name != "Weekly pool" || w.Used != 0 {
+		t.Fatalf("unmetered account = %+v, want Weekly pool at 0%%", w)
+	}
+	// The whole point: no pool exists, so this account must stay in
+	// rotation. Reading it as drained (the 0/0 legacy envelope's verdict)
+	// would park a perfectly healthy provider.
+	if _, ok := (Snapshot{Windows: windows}).exhaustedWindow(); ok {
+		t.Fatal("an unmetered unified-billing account must never park")
+	}
+	if w.Resets == nil || w.Resets.Unix() != 1791430972 {
+		t.Fatalf("reset = %+v, want the weekly period end from currentPeriod", w.Resets)
+	}
+	// A spent on-demand cap IS a hard ceiling: past it upstream answers
+	// with a billing error, so that is the one unmetered body that parks.
+	capped, _, err := parseGrokCli(grokTestJWT("1"), []byte(
+		`{"config":{"isUnifiedBillingUser":true,"onDemandCap":{"val":50},`+
+			`"onDemandUsed":{"val":50},"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY"}}}`), 200)
+	if err != "" {
+		t.Fatalf("unified-billing body rejected: %s", err)
+	}
+	if _, ok := (Snapshot{Windows: capped}).exhaustedWindow(); !ok {
+		t.Fatalf("an exhausted on-demand cap must park, got %+v", capped)
+	}
+}
+
 func TestProbeGrokCliEndToEnd(t *testing.T) {
 	// The billing probe must carry the client-mode fingerprint the endpoint
 	// keys on, and the snapshot must be parkable from the vendor's percent.
