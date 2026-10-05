@@ -625,6 +625,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 		writeErr(w, translat.FmtGemini, errAPI(413, "body_too_large", err.Error()))
 		return
 	}
+	probe, _ := probeBody(body)
 	if !s.enforceRateLimits(w, translat.FmtGemini, ak) {
 		return
 	}
@@ -650,7 +651,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
-	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak, body)), d)
+	execCtx := withDelivery(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak, probe)), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -705,8 +706,10 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 		writeErr(w, clientFmt, errAPI(413, "body_too_large", err.Error()))
 		return
 	}
-	model := peekModel(body)
-	stream := peekStream(body)
+	// One decode feeds every peek below: peekModel, peekStream and the
+	// conversation fingerprint each used to json.Unmarshal the whole body.
+	probe, _ := probeBody(body)
+	model, stream := peekModelFrom(probe), peekStreamFrom(probe)
 	d.model = s.boundedModel(model)
 	if !s.enforceRateLimits(w, clientFmt, ak) {
 		return
@@ -738,7 +741,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	// Estimated input size for combo steering (router/reorderBySpeed): the
 	// same 4-bytes-per-token estimate the usage path falls back to, good
 	// enough to pick the size bucket. Only steers ordering, never routing.
-	execCtx := withDelivery(router.WithInputSize(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak, body)), int64(len(body))/4), d)
+	execCtx := withDelivery(router.WithInputSize(router.WithIdentity(r.Context(), requestIdentity(r.Header, ak, probe)), int64(len(body))/4), d)
 	if st.cfg.TaskRoutingOn() {
 		execCtx = router.WithTask(execCtx, router.CollectSignals(body))
 	}
@@ -880,7 +883,7 @@ func (s *Server) poolEmptyError(def *provider.Def, ready time.Time) *types.APIEr
 // session onto one account. Empty disables affinity (plain round-robin).
 // headerless callers (attempt tests) can pass a bare http.Header; body
 // may be nil.
-func requestIdentity(h http.Header, ak *config.AuthKey, body []byte) string {
+func requestIdentity(h http.Header, ak *config.AuthKey, probe jsonProbe) string {
 	if sid := h.Get(provider.OpenCodeSessionHeader); sid != "" {
 		return "s:" + sid
 	}
@@ -889,7 +892,7 @@ func requestIdentity(h http.Header, ak *config.AuthKey, body []byte) string {
 			return "s:" + v
 		}
 	}
-	if id := conversationFingerprint(body); id != "" {
+	if id := fingerprintFrom(probe); id != "" {
 		return id
 	}
 	if ak != nil {
@@ -898,35 +901,17 @@ func requestIdentity(h http.Header, ak *config.AuthKey, body []byte) string {
 	return ""
 }
 
-// conversationFingerprint hashes the first user turn so a tool-loop
-// continuation (later messages appended) stays on the same identity even
-// when the client sent no session header. Empty when there is no usable
-// first-user text (passthrough, headerless tests).
-func conversationFingerprint(body []byte) string {
-	if len(body) == 0 {
+// fingerprintFrom hashes the first user turn from an already-decoded probe
+// so a tool-loop continuation (later messages appended) stays on the same
+// identity even when the client sent no session header. Empty when there is
+// no usable first-user text (passthrough, headerless tests).
+func fingerprintFrom(probe jsonProbe) string {
+	text, ok := probe.fingerprintTurns()
+	if !ok {
 		return ""
 	}
-	var probe struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content any    `json:"content"`
-		} `json:"messages"`
-	}
-	if json.Unmarshal(body, &probe) != nil {
-		return ""
-	}
-	for _, m := range probe.Messages {
-		if m.Role != "user" {
-			continue
-		}
-		text := firstUserText(m.Content)
-		if text == "" {
-			continue
-		}
-		sum := sha256.Sum256([]byte(text))
-		return "c:" + hex.EncodeToString(sum[:8])
-	}
-	return ""
+	sum := sha256.Sum256([]byte(text))
+	return "c:" + hex.EncodeToString(sum[:8])
 }
 
 func firstUserText(content any) string {
@@ -1008,7 +993,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	// rewrite). sessionKey is the same identity sticky-account pinning
 	// uses; "" (no session header, no key label) skips sticky-key
 	// injection. clientHdr may be nil (headerless tests).
-	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, requestIdentity(clientHdr, ak, body))
+	upBody = anchorCacheProfile(upBody, model, def, upstreamFmt, identityFromBody(clientHdr, ak, body))
 	// X-OneGW-Decision rides the pre-body write: every pre-flight gate
 	// above answers WITHOUT touching w, so the attempt that finally
 	// commits headers is the one that stamps the header (combo fallback
@@ -2197,25 +2182,6 @@ func encodeFor(f translat.Format, u *types.ChatRequest) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unknown format %s", f)
 	}
-}
-
-// peekModel extracts the model string without full parsing.
-func peekModel(body []byte) string {
-	var probe struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(body, &probe); err == nil {
-		return probe.Model
-	}
-	return ""
-}
-
-func peekStream(body []byte) bool {
-	var probe struct {
-		Stream bool `json:"stream"`
-	}
-	_ = json.Unmarshal(body, &probe)
-	return probe.Stream
 }
 
 func writeErr(w http.ResponseWriter, f translat.Format, e *types.APIError) {

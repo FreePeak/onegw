@@ -45,7 +45,7 @@ func (s *Server) withIdempotency(clientFmt translat.Format, next http.HandlerFun
 			next(w, r) // read failure: the handler answers with its usual 413
 			return
 		}
-		if peekStream(body) {
+		if hasStreamFlag(body) {
 			// Streams can never be replayed (the recorder marks them
 			// stream-shaped and a second sighting can only be answered
 			// 409), and coalescing a post-wake client retry onto the
