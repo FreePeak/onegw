@@ -1,3 +1,33 @@
+*Last updated: 2026-10-05 (perf: the gateway decoded every request body four times — #162 merged):*
+`onegw` burned a constant ~15-24% of one core on a Mac with almost no traffic, and `ps %CPU` made it look
+intermittent (macOS reports a DECAYING average, so the same process read 55%, then 5%, then 24% in three
+samples). It was never a leak — `heap_alloc` sat at 10-25MB and `vmmap` peak physical footprint at 102.5MB
+over 50.6h uptime, bounded by a 2GiB `GOMEMLIMIT`. It was CPU burned re-decoding the same bytes.
+
+Every request ran its ENTIRE body through `encoding/json` four separate times before the first upstream byte:
+`peekModel` for one string field, `peekStream` for one bool, `conversationFingerprint` for the first user turn,
+and `CollectSignals` when `task_routing = on`. `encoding/json` walks every byte even for a single-field
+struct, and this gateway's bodies are large — a 30s capture on the live box showed 1.77M input tokens over
+14 requests (~126K tokens each). A control instance on :8099 with zero providers, zero clients and 200
+rejected requests ran at 0.0% CPU, proving none of it was a background loop; it scales with body size.
+
+- One `jsonProbe` decode now serves all three peeks (`internal/server/peek.go`). `probeTurn.Content` is
+  `json.RawMessage`, not `any` — decoding it allocated one map per turn (~14000 for a 126K-token
+  conversation) while the fingerprint reads exactly one, so the single turn it needs is decoded on demand.
+- The idempotency gate only needs the stream flag, so `hasStreamFlag` answers it with a depth-1 literal scan
+  (81ns) instead of another whole-body Unmarshal; a `"stream": true` nested in a tool definition cannot be
+  mistaken for the top-level flag.
+- Measured on M2 Pro with a 126K-token body: three separate decodes 81.0ms -> one decode 21.3ms (-74%);
+  the idempotency stream peek 28.3ms -> 81ns. `saver.ApplyRaw` (27.5ms) is untouched — re-encoding the body
+  to canonical form for the upstream cache prefix is its actual job.
+- Correctness is pinned by `peek_test.go`, which computes every expectation with the exact whole-body
+  `json.Unmarshal` the removed code performed, including the zero-value answers on malformed input.
+  `fingerprintFrom` keeps the old `"messages"`-only scope deliberately, so sticky-account routing cannot
+  drift with the refactor.
+
+Not a memory problem, and not `onegw`: the 3.2GB hog on that same box was `laya-sidecar.py` on :8092
+(70x the gateway's footprint), holding that with nobody connected.
+
 *Last updated: 2026-09-21 (self-update: the 10s smoke-run deadline killed a GOOD binary):*
 `onegw update` on a live v0.46.5 gateway failed with `downloaded binary failed its smoke run: signal: killed ()`
 and left a partial `<exec dir>/.onegw.new.part` behind. The download was fine — the v0.47.1 `onegw-darwin-arm64`
