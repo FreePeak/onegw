@@ -613,6 +613,35 @@ func (d *Def) RetryForeverModel(model string) bool {
 	return false
 }
 
+// BareRetryForever reports whether this provider claims a BARE (slash-less)
+// client model through the retry_forever precedence in Router.Resolve. The
+// operator's retry_forever globs claim exactly what they match. A systemone
+// provider's implicit retry-forever (every model ROUTED to it, see
+// RetryForeverModel) claims only the models it advertises — the kind's
+// catalog when `models` is unset. Without that bound one Jev block swallowed
+// every bare model name in the gateway: a "gpt-…" chat request resolved to
+// the systemone leg and failed with "unknown format systemone".
+func (d *Def) BareRetryForever(model string) bool {
+	if d.Kind != KindSystemOne {
+		return d.RetryForeverModel(model)
+	}
+	models := d.Models
+	if len(models) == 0 {
+		models = DefaultModels(d.Kind)
+	}
+	for _, m := range models {
+		if strings.EqualFold(m, model) {
+			return true
+		}
+	}
+	for _, pat := range d.RetryForever {
+		if ok, err := path.Match(pat, model); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
 // LearnReasoningEcho records model as runtime-discovered echo_reasoning (its
 // upstream refused the replayed history with the DeepSeek thinking-mode
 // "reasoning_content must be passed back" 400) and reports whether this call

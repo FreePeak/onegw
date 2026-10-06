@@ -249,3 +249,31 @@ func TestExecuteRetryForeverBlocksOnCoolingPool(t *testing.T) {
 		t.Fatalf("fell through to p2 %d times — retry_forever must wait the pool out", p2)
 	}
 }
+
+// A systemone provider is implicitly retry_forever for every model routed to
+// it, but that must not let it claim BARE model names it does not serve:
+// with a Jev block configured, a bare "gpt-…" request has to reach the
+// ordinary provider-order fallback (the first enabled provider), while the
+// Jev catalog names still resolve to the systemone leg.
+func TestResolveBareModelNotClaimedBySystemOne(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{Name: "openai", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "a", APIKey: "k1"}}})
+	p.Set(&provider.Def{Name: "typesafe", Kind: provider.KindSystemOne,
+		Accounts: []provider.Account{{Name: "b", APIKey: "k2"}}})
+	r := New(p)
+
+	res, err := r.Resolve("gpt-5.6-sol")
+	if err != nil || len(res.Targets) != 1 || res.Targets[0].Provider != "openai" {
+		t.Fatalf("bare gpt model must not route to the systemone provider: %+v %v", res, err)
+	}
+	jev := provider.DefaultModels(provider.KindSystemOne)[0]
+	res, err = r.Resolve(jev)
+	if err != nil || len(res.Targets) != 1 || res.Targets[0].Provider != "typesafe" {
+		t.Fatalf("advertised Jev model %q must still resolve to typesafe: %+v %v", jev, res, err)
+	}
+	// Routed through it, every model keeps the implicit retry-forever.
+	if d, _ := p.Get("typesafe"); !d.RetryForeverModel("jev-anything") {
+		t.Fatal("systemone RetryForeverModel must stay true for routed models")
+	}
+}
