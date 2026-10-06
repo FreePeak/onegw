@@ -3636,3 +3636,25 @@ park itself, the local `quota_window` branch, the #80 unfunded branch, and every
 The four failures in `go test ./internal/server` (`TestProviderDisabledTogglePersistsAndReloads`,
 `TestCursorKindEndToEnd`, `TestGrokGeminiClientViaResponses`, `TestGeminiSurfaceEnforcesPolicy`) are
 pre-existing on `origin/master` — reproduced with the change stashed; the rest of the package passes.
+
+*Last updated: 2026-10-06 (Codex/ChatGPT + OpenAI become built-in provider presets):* `kind = "codex"`
+and plain `kind = "openai"` both existed in the gateway with no catalog entry, so the dashboard's
+Add-provider dialog could not preconfigure either — an operator had to hand-write `base_url`, `kind`,
+`models` and the `oauth` service on the account row. `builtinPresets` now ships
+`Codex — ChatGPT Plus/Pro (chatgpt.com)` (kind `codex`, `subscription_quota = "codex"`,
+`oauth_service = "codex"` so applying it gives the account row its Sign-in button; `base_url` left
+empty on purpose — `provider.KindCodex` defaults it to `https://chatgpt.com`) and
+`OpenAI API (api.openai.com)` (19 ids, with `responses_models` for `gpt-5.6*`, `gpt-5.5-pro`,
+`gpt-5.4-pro`, which answer only on `/v1/responses`).
+
+Measured on the live gateway (2026-10-06, config reloaded via `SIGHUP`, no restart): `/v1/models`
+lists all eight `codex/<id>` curated ids and all nineteen `openai/<id>`; a `codex/gpt-5.6-sol` turn
+reaches `POST /backend-api/codex/responses` carrying `Version: 0.155.0`, `originator: codex_cli_rs`,
+the `codex-cli/0.155.0 (Windows 10.0.26200; x64)` User-Agent, `chatgpt-account-id` decoded off the
+`id_token`, the derived `session_id`, and the OAuth bearer — streaming and aggregated non-streaming
+both return the upstream text; `GET backend-api/wham/usage` is polled on the same identity and renders
+the plan windows on the Quota page. Two harness facts worth keeping: the stub upstream must put
+`"type"` INSIDE each SSE `data` payload (an `event:`-line-only payload decodes to a silent empty
+200 — the stub was unfaithful, not the wire), and `subscription_url` is a FULL path (it replaces
+`DefaultURL`, no `/backend-api/wham/usage` is appended). Pinned by
+`TestBuiltinCodexAndOpenAIPresetsAreReadyToUse`.
