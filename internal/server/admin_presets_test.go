@@ -112,3 +112,37 @@ func TestPresetAcceptsEveryRegisteredOAuthService(t *testing.T) {
 		t.Fatalf("unknown service not refused: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// Codex and plain OpenAI ship as BUILT-INS for the same reason GLM and xAI
+// do: both kinds exist in the gateway, and with no catalog entry the
+// Add-provider dialog cannot fill them in at all. The codex entry must also
+// carry oauth_service, or applying it leaves the account row with no Sign-in
+// button — the one thing a ChatGPT recipe exists to enable.
+func TestBuiltinCodexAndOpenAIPresetsAreReadyToUse(t *testing.T) {
+	for name, d := range builtinPresets() {
+		switch d.Kind {
+		case "codex":
+			if d.OAuthService != "codex" || d.SubscriptionQuota != "codex" {
+				t.Errorf("preset %q: kind codex needs oauth_service+subscription_quota codex, got %q/%q",
+					name, d.OAuthService, d.SubscriptionQuota)
+			}
+			// base_url is deliberately empty: provider.KindCodex defaults it
+			// to https://chatgpt.com, and pinning it here would break a
+			// self-hosted override.
+			if d.BaseURL != "" {
+				t.Errorf("preset %q: codex base_url should stay empty (the kind defaults it), got %q", name, d.BaseURL)
+			}
+		case "openai":
+			if d.BaseURL == "" {
+				t.Errorf("preset %q: an openai preset needs an absolute base_url", name)
+			}
+		}
+	}
+	// Both must actually be present, not merely well-formed if they exist.
+	if _, ok := builtinPresets()["Codex — ChatGPT Plus/Pro (chatgpt.com)"]; !ok {
+		t.Fatal("no built-in Codex/ChatGPT preset: the dashboard cannot preconfigure the codex provider")
+	}
+	if _, ok := builtinPresets()["OpenAI API (api.openai.com)"]; !ok {
+		t.Fatal("no built-in OpenAI API preset")
+	}
+}
