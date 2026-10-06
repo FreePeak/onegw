@@ -94,6 +94,9 @@ CREATE INDEX IF NOT EXISTS idx_rollup_day ON usage_rollup(day);
 		if err := s.migrateQuota(); err != nil { // already sharded; still ensure quota state
 			return err
 		}
+		if err := s.migrateResponses(); err != nil {
+			return err
+		}
 		return s.migratePresets()
 	}
 	const rebuild = `
@@ -134,6 +137,9 @@ COMMIT;`
 		return err
 	}
 	if err := s.migrateQuota(); err != nil { // issue #7 quota window state
+		return err
+	}
+	if err := s.migrateResponses(); err != nil {
 		return err
 	}
 	return s.migratePresets()
