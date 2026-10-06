@@ -1,3 +1,60 @@
+*Last updated: 2026-10-06 (five PRs merged: Responses API, quota vendor total, junk-reasoning failover, strip-markers cache profile, systemone bare models):*
+Five PRs landed on master on 2026-10-06.
+
+**OpenAI Responses API (POST /v1/responses, #168).** Clients that speak Responses themselves (OpenAI SDK
+`responses.create`, Codex-style agents) now have a surface: `POST /v1/responses` (stream and non-stream),
+`GET`/`DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items`. The
+body is relayed verbatim to a `kind = "openai"` provider's `/v1/responses` — only `model` is rewritten — through
+the usual routing, key allowlist, quota gate and combo fall-through. A Responses object lives in the upstream
+ACCOUNT that created it, so the gateway records where each id was served (`internal/store/responses.go`,
+`responses` table) and sends `previous_response_id` continuations and the id endpoints back there, only for the
+client key that created it (a digest prefix of the key, never the key itself; another key gets 404). With
+`[responses] history = true` the conversation is rebuilt from stored turns and moved to the combo's next target
+when the pinned provider can no longer serve (quota window exhausted, billing refusal, model no longer routed);
+reasoning items, encrypted items and server-side tool items are dropped and assistant messages are flattened to
+text. Guards: `background: true` is refused on token-limited providers (its usage escapes the window) and
+`conversation` is refused on multi-provider routes. The quota gate, attempt-error classification and success
+bookkeeping moved out of `attempt()`/`relayResponse()` into `quotaGate`, `noteAttemptErr` and `recordSuccess` so
+the new surface reuses them, with no behaviour change.
+
+**Quota charges the vendor total (#167).** The window charged `input + output + reasoning`. On the OpenAI wire
+`reasoning_tokens` is a BREAKDOWN of `completion_tokens`, so every reasoning token was charged twice and windows
+ran out early — a large error on thinking models. A fixed per-format rule would be wrong for xAI/Gemini (which
+report reasoning ON TOP of output), so the decoders and the usage sniffer now keep the vendor-reported
+`total_tokens` (`types.Usage.TotalTokens`, `Sniffer.Total()`) and `Usage.QuotaTokens()` charges it when it covers
+`input + output`, falling back to the historical conservative sum when there is no usable total. The
+rollup-based quota rebuild still sums input + output + reasoning (no per-request total is stored).
+
+**Junk-reasoning failover (#138).** `translat.JunkGuard` is the third guard beside `CorruptGuard` (invalid wire
+bytes) and `LoopBreaker` (repetition): it accumulates DECODED reasoning text out of the wire chunk, reading every
+vendor alias, rejoining a JSON value split across two reads through a bounded carry, and trips on three shapes
+measured against the session corpus (45,017 reasoning blocks from 435 sessions; fires on 5 of 25,000 sampled
+blocks >= 400 bytes, all five genuine junk). It holds the stream head (`junkHoldBytes`, 32 KiB, mirroring
+`corruptHoldBytes`) and releases at the first content or tool-call delta, so a healthy lane pays nothing;
+`types.APIError.JunkReasoning` marks the verdict and `Router.Execute` treats it like `CorruptStream` — the
+attempt committed nothing, the leg is benched, and the request falls through to the next combo target. A direct
+route with no sibling answers 502 `upstream_reasoning_junk` instead of painting the soup. Documented ceiling,
+pinned by `TestJunkReasoningCeiling`: junk whose letters still sit in word-like runs while its tokens mix scripts
+measures like bilingual reasoning.
+
+**strip-markers cache profile (#157).** `cache_profile = "strip-markers"` for OpenAI-wire upstreams that reject
+Anthropic cache fields: every `cache_control` is dropped and a message whose content is only plain-text parts
+collapses to one string (GLM-5.3 400s on an array-shaped system message; Kimi K3 rejects `cache_control`
+outright). Opt-in and default-unchanged; images, tool parts and any extra keys keep the parts array.
+
+**Router: a systemone provider claims only its own bare models (#166).** `Def.RetryForeverModel` is always true
+for `kind = "systemone"`, and `Router.Resolve` let retry-forever providers claim bare (slash-less) model names
+before the ordinary provider split — so one Jev block swallowed every bare `gpt-...` request and failed it with
+`unknown format systemone`. `Resolve` now asks `Def.BareRetryForever`: operator `retry_forever` globs work as
+before, while a systemone provider claims only the models it advertises. Routing to systemone itself
+(`/v1/systemone`, `typesafe/<model>`, aliases) is unchanged.
+
+All five merged as rebases onto master; the only conflict was this file. Verified after each merge: `go build
+./...` plus `internal/config`, `internal/router`, `internal/types`, `internal/provider`, `internal/translat` and
+`internal/usage` green. Three pre-existing `internal/server` failures (`TestProviderDisabledTogglePersistsAndReloads`,
+`TestGrokGeminiClientViaResponses`, `TestGeminiSurfaceEnforcesPolicy` — `handleGemini` is not registered on the
+mux) reproduce on a clean master and are not caused by any of these changes.
+
 *Last updated: 2026-10-05 (perf: the gateway decoded every request body four times — #162 merged):*
 `onegw` burned a constant ~15-24% of one core on a Mac with almost no traffic, and `ps %CPU` made it look
 intermittent (macOS reports a DECAYING average, so the same process read 55%, then 5%, then 24% in three
