@@ -42,7 +42,7 @@ services:
   # volume created by an older compose file). `/data` is unaffected: an empty
   # image directory keeps its baked ownership.
   config-init:
-    image: ${ONEGW_IMAGE:-ghcr.io/freepeak/onegw:latest}
+    image: ${ONEGW_IMAGE:-ghcr.io/freepeak/onegw-gateway:latest}
     entrypoint: ["/bin/sh", "-c", "chown -R onegw:onegw /etc/onegw && chmod 755 /etc/onegw"]
     user: "0:0"
     volumes:
@@ -50,7 +50,7 @@ services:
     restart: "no"
 
   onegw:
-    image: ${ONEGW_IMAGE:-ghcr.io/freepeak/onegw:latest}
+    image: ${ONEGW_IMAGE:-ghcr.io/freepeak/onegw-gateway:latest}
     # `docker compose build` / up --build / --compose --build. Compose only
     # builds when the image tag is absent locally, so a pinned ghcr tag stays put.
     build:

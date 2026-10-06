@@ -49,7 +49,7 @@ MODE=run                      # run | compose
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 COMPOSE_DIR=${ONEGW_COMPOSE_DIR:-$(dirname -- "$SCRIPT_DIR")}
 COMPOSE_FILE=$COMPOSE_DIR/docker-compose.yml
-IMAGE=${ONEGW_IMAGE:-ghcr.io/freepeak/onegw:latest}
+IMAGE=${ONEGW_IMAGE:-ghcr.io/freepeak/onegw-gateway:latest}
 IMAGE_EXPLICIT=${ONEGW_IMAGE:+1}
 NAME=${ONEGW_CONTAINER:-onegw}
 PUBLISH=${ONEGW_PUBLISH:-8080:8080}
@@ -89,7 +89,7 @@ Flags:
   --with-search        compose only: also start the profile-gated local
                        SearXNG (point a searxng provider at http://searxng:8080)
   --project-dir DIR    compose project directory (default: this repo root)
-  --image IMAGE        container image            (default $ONEGW_IMAGE or ghcr.io/freepeak/onegw:latest)
+  --image IMAGE        container image            (default $ONEGW_IMAGE or ghcr.io/freepeak/onegw-gateway:latest)
   --name NAME          container name             (default onegw)
   --publish SPEC       docker -p spec             (default 8080:8080)
   --loopback           publish on 127.0.0.1 only  (compose: ONEGW_HOST_BIND)
@@ -231,7 +231,7 @@ if [ "$MODE" = compose ]; then
     IMAGE=onegw:compose                       # tag the local build and pin it
   elif [ -z "$IMAGE_EXPLICIT" ]; then
     IMAGE=$(env_get ONEGW_IMAGE)
-    IMAGE=${IMAGE:-ghcr.io/freepeak/onegw:latest}
+    IMAGE=${IMAGE:-ghcr.io/freepeak/onegw-gateway:latest}
   fi
   if [ -n "$IMAGE_EXPLICIT" ] || [ "$BUILD" = 1 ]; then
     env_upsert "$ENV_FILE" ONEGW_IMAGE "$IMAGE"

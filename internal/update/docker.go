@@ -23,7 +23,7 @@ func InContainer() bool {
 }
 
 // Image is the published image reference the guidance prints.
-const Image = "ghcr.io/freepeak/onegw"
+const Image = "ghcr.io/freepeak/onegw-gateway"
 
 // ContainerGuidance explains how to move a containerized onegw to rel.
 // The commands run on the HOST. The recreate must mount the SAME /data

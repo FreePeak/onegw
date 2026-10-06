@@ -190,11 +190,11 @@ Prefer the raw commands? The equivalent is:
 ```bash
 docker volume create onegw-config            # editable config lives here
 docker run --rm -u 0 --entrypoint chown -v onegw-config:/etc/onegw \
-  ghcr.io/freepeak/onegw:latest -R onegw:onegw     # the seed lands root-owned
+  ghcr.io/freepeak/onegw-gateway:latest -R onegw:onegw     # the seed lands root-owned
 docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
   -e ONEGW_KEYS="$(openssl rand -hex 24)" \
   -v onegw-data:/data -v onegw-config:/etc/onegw \
-  ghcr.io/freepeak/onegw:latest
+  ghcr.io/freepeak/onegw-gateway:latest
 ```
 
 Runs the non-root image (~45 MB, healthchecked, both entry points: `onegw` and

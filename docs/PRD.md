@@ -233,7 +233,7 @@ three `KindSystemOne` cases (`ReasoningEchoModel`, `DefaultModels`, `FetchModels
 tests assert part SETS, not order.
 
 **3. The `docker` job is red — owner-gated at GHCR, and now loud instead of fatal (mitigated,
-PR #118).** Still `denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw:latest`.
+PR #118).** Still `denied: permission_denied: write_package` on `ghcr.io/freepeak/onegw-gateway:latest`.
 The GHCR package is linked to the OLD repo `FreePeak/onegw-private`, and a `GITHUB_TOKEN` push
 is authorised per package, not per org, so `packages: write` plus the org/repo default of "read
 and write" is not enough. This cannot be fixed from CI or from the API:
@@ -395,11 +395,11 @@ The repo moved to `FreePeak/onegw` (public, created 2026-09-17 05:24Z) but the G
 `GITHUB_TOKEN` push is authorised per package, not per org: `packages: write` on the workflow plus the
 org/repo default of "read and write" is NOT enough, so since 05:53Z every run lands the tag, the four
 binaries and the GitHub release, and the `docker` job alone dies on `failed to push
-ghcr.io/freepeak/onegw:latest: denied: permission_denied: write_package`. Three releases lost that way
+ghcr.io/freepeak/onegw-gateway:latest: denied: permission_denied: write_package`. Three releases lost that way
 (v0.40.3, v0.41.0, v0.41.1) — the job's config is not at fault. Measured: `onegw-private` run 35178048843
 pushed `v0.40.2` at 03:24Z (image `created=2026-09-17T03:25:53Z`) and nothing has been published since;
 `latest` and `v0.40.2` resolve to the SAME digest `sha256:2d2be48…`, so the documented
-`docker pull ghcr.io/freepeak/onegw:latest` serves exactly the v0.40.2 gateway — three releases behind
+`docker pull ghcr.io/freepeak/onegw-gateway:latest` serves exactly the v0.40.2 gateway — three releases behind
 master — while `/releases/latest` (the surface `onegw update` reads) reports v0.41.1. The two channels
 disagree and nothing fails loudly: `scripts/docker_deploy.sh` falls back to the host's existing copy when
 a pull errors, so a stale `latest` still deploys "successfully". Anonymous manifest GETs pin the cause as
@@ -683,7 +683,7 @@ docs/vps-deploy.md § Container installs no longer claim a named volume is seede
 volumes are pinned to `onegw-data` / `onegw-config` so the backup commands in docs/vps-deploy.md match the `docker run` path and
 the two installs share state. (5) Probed against the published tags: images through v0.30.0 ship neither `onegw oauth` nor
 `onegw-oauth` and treat an unknown word as "start the gateway" — `SO_REUSEPORT` let the rogue second listener bind beside the
-live one; v0.31.0 ships both entry points and rejects unknown subcommands. `docker pull ghcr.io/freepeak/onegw:latest` can also
+live one; v0.31.0 ships both entry points and rejects unknown subcommands. `docker pull ghcr.io/freepeak/onegw-gateway:latest` can also
 die mid-blob (`failed to copy: httpReadSeeker`, reproduced twice here), so the script falls back to the local copy and offers
 `--build` — verified building this tree's image in 31 s. Also fixed: from inside the compose network a searxng provider's
 base_url is `http://searxng:8080` (alias `searx` resolves too; the published 127.0.0.1:8888 is host-only) — verified with a live
@@ -733,10 +733,10 @@ independent constraints, both now recorded in the docs: the atomic save needs a 
 file (the pre-fix image failed exactly there), and even with one, `rename()` cannot cross a bind-mount point. A
 host DIRECTORY mount is the middle ground, verified with the literal recipe the docs give a Linux VPS
 (`chown -R 100:101 ./cfg`): save 200 and the edit visible on the host file. For a container
-running the PREVIOUS published image the fix is two commands, both verified against ghcr.io/freepeak/onegw:latest
+running the PREVIOUS published image the fix is two commands, both verified against ghcr.io/freepeak/onegw-gateway:latest
 (78125d2): immediate `docker exec -u 0 onegw chown onegw:onegw /etc/onegw` (500 -> 200, lost on recreate), or durable
 `docker volume create onegw-config` + `docker run --rm --entrypoint chown -u 0 -v onegw-config:/etc/onegw
-ghcr.io/freepeak/onegw:latest -R onegw:onegw /etc/onegw` (200, and the edit survives a recreate). Docs corrected
+ghcr.io/freepeak/onegw-gateway:latest -R onegw:onegw /etc/onegw` (200, and the edit survives a recreate). Docs corrected
 accordingly: README § Docker now mandates a writable /etc/onegw and shows the named-volume run; docker-compose.yml ships
 an `onegw-config` volume and warns that a file mount cannot be edited; docs/vps-deploy.md § Container installs exports the
 config as a first-class artifact, restores it into a volume, carries the measured mount matrix, and states that
@@ -3094,7 +3094,7 @@ the issue):
 - **One-command cloud/VPS deploy — done 2026-09-08.** Multi-stage `Dockerfile`
   (static CGO-free binary in alpine, non-root uid 100, `/data` volume,
   healthcheck on the unauthenticated dashboard root) published as
-  `ghcr.io/freepeak/onegw:{latest,<tag>}` (linux/amd64+arm64) by the release
+  `ghcr.io/freepeak/onegw-gateway:{latest,<tag>}` (linux/amd64+arm64) by the release
   workflow's `docker` job; `docker-compose.yml` VPS example (restart policy,
   resource limits, named volume, optional config mount); README one-command
   sections for both paths. Verified: local build 41.8 MB image, healthcheck

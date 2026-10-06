@@ -313,7 +313,7 @@ docker run --rm -v onegw-config:/etc/onegw -v "$PWD":/backup alpine \
 #    (baked-config installs have no such volume: docker cp it out instead)
 docker cp onegw:/etc/onegw/onegw.toml ./onegw.toml
 # 3. the image, only when you built it yourself (otherwise pull the same tag)
-docker save ghcr.io/freepeak/onegw:latest | gzip > onegw-image.tgz
+docker save ghcr.io/freepeak/onegw-gateway:latest | gzip > onegw-image.tgz
 ```
 
 ```bash
@@ -328,7 +328,7 @@ docker run --rm -v onegw-config:/etc/onegw -v "$PWD":/backup alpine \
   sh -c 'tar xzf /backup/onegw-config-<date>.tgz -C /etc/onegw'
 docker run -d --name onegw --restart unless-stopped -p 8080:8080 \
   -e ONEGW_KEYS=... -v onegw-data:/data -v onegw-config:/etc/onegw \
-  ghcr.io/freepeak/onegw:latest
+  ghcr.io/freepeak/onegw-gateway:latest
 docker exec onegw onegw oauth list          # the session came along
 curl -s -H "X-Admin-Password: $PW" http://127.0.0.1:8080/admin/api/v1/providers | jq .
 ```
