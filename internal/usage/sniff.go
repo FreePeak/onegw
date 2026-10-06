@@ -23,6 +23,7 @@ var (
 	reCacheRead  = regexp.MustCompile(`"(?:cache_read_input_tokens|cached_tokens|cachedContentTokenCount|prompt_cache_hit_tokens)"\s*:\s*(\d+)`)
 	reCacheWrite = regexp.MustCompile(`"cache_creation_input_tokens"\s*:\s*(\d+)`)
 	reReasoning  = regexp.MustCompile(`"(?:reasoning_tokens|thoughtsTokenCount)"\s*:\s*(\d+)`)
+	reTotal      = regexp.MustCompile(`"(?:total_tokens|totalTokenCount)"\s*:\s*(\d+)`)
 	// anthropicCacheField marks a payload as Anthropic-shaped: those field
 	// names exist only where input_tokens EXCLUDES cache read/write.
 	anthropicCacheField = regexp.MustCompile(`"(?:cache_read_input_tokens|cache_creation_input_tokens)"\s*:\s*`)
@@ -46,6 +47,7 @@ type Sniffer struct {
 	cr       int64
 	cw       int64
 	rs       int64
+	total    int64
 	seen     bool
 	allZeros bool
 	// anthropic marks the payload as Anthropic-shaped (it carried
@@ -128,6 +130,9 @@ func (s *Sniffer) extract() {
 	if m := maxMatch(reReasoning, s.tail); m > s.rs {
 		s.rs = m
 	}
+	if m := maxMatch(reTotal, s.tail); m > s.total {
+		s.total = m
+	}
 	if anthropicCacheField.Match(s.tail) {
 		s.anthropic = true
 	}
@@ -167,3 +172,8 @@ func (s *Sniffer) Usage() (in, out, cacheRead, cacheWrite, reasoning int64, seen
 	}
 	return in, s.out, s.cr, s.cw, s.rs, s.seen
 }
+
+// Total reports the largest vendor-reported total token count seen (0 when
+// the payload carried none). Separate from Usage so its callers keep their
+// shape; see types.Usage.TotalTokens for why the total matters.
+func (s *Sniffer) Total() int64 { return s.total }

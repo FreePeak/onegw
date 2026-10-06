@@ -492,5 +492,6 @@ func rsUsageToUnified(u *rsUsage) types.Usage {
 	if u.OutputTokensDetails != nil {
 		unified.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
 	}
+	unified.TotalTokens = u.TotalTokens
 	return unified
 }

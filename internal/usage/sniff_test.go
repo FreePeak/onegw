@@ -143,3 +143,24 @@ func TestSniffNewAPIStreamAliasShadowing(t *testing.T) {
 		t.Fatalf("alias-shadowed stream usage: in=%d out=%d, want 10/79", in, out)
 	}
 }
+
+// The vendor total is sniffed alongside the counters (max match wins, like
+// every other count), for both the OpenAI and the Gemini spelling.
+func TestSniffTotalTokens(t *testing.T) {
+	for _, c := range []struct {
+		body string
+		want int64
+	}{
+		{`{"usage":{"prompt_tokens":50,"completion_tokens":30,"total_tokens":80,"completion_tokens_details":{"reasoning_tokens":20}}}`, 80},
+		{`{"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"thoughtsTokenCount":2,"totalTokenCount":10}}`, 10},
+		{`{"usage":{"prompt_tokens":5,"completion_tokens":3}}`, 0},
+	} {
+		sn := NewSniffer(strings.NewReader(c.body), 0)
+		if _, err := io.Copy(io.Discard, sn); err != nil {
+			t.Fatal(err)
+		}
+		if got := sn.Total(); got != c.want {
+			t.Errorf("Total() = %d, want %d for %s", got, c.want, c.body)
+		}
+	}
+}

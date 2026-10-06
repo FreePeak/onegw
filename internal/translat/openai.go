@@ -856,6 +856,7 @@ func oaUsageToUnified(u *oaUsage) types.Usage {
 	if u.CompletionTokensDetails != nil {
 		out.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
 	}
+	out.TotalTokens = u.TotalTokens
 	return out
 }
 

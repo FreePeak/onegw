@@ -186,13 +186,19 @@ type ChatResponse struct {
 // Counters the upstream did not report stay 0; cost estimation treats
 // 0 input/output with Estimated=true as char-derived approximation.
 type Usage struct {
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty"`
-	ReasoningTokens  int64  `json:"reasoning_tokens,omitempty"`
-	Estimated        bool   `json:"estimated,omitempty"`
-	UpstreamFormat   string `json:"upstream_format,omitempty"` // openai|anthropic|gemini
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int64 `json:"reasoning_tokens,omitempty"`
+	// TotalTokens is the vendor-reported total (total_tokens), 0 when the
+	// upstream did not send one. Kept because vendors disagree on whether
+	// reasoning is inside the output count: OpenAI's reasoning_tokens is a
+	// breakdown OF completion/output tokens (total = input + output), xAI and
+	// Gemini report it on top (total = input + output + reasoning).
+	TotalTokens    int64  `json:"total_tokens,omitempty"`
+	Estimated      bool   `json:"estimated,omitempty"`
+	UpstreamFormat string `json:"upstream_format,omitempty"` // openai|anthropic|gemini
 }
 
 // APIError is the unified error payload. RetryAfter, when set, is written
@@ -252,6 +258,20 @@ type APIError struct {
 	CorruptStream bool `json:"-"`
 }
 
+// QuotaTokens is what a quota window charges for this request. The
+// vendor's own total wins when it covers input+output: it is right for both
+// reasoning conventions (see TotalTokens), where summing input + output +
+// reasoning double-charged every OpenAI thinking model by its reasoning
+// count. Without a usable total the sum keeps the historical, conservative
+// input + output + reasoning.
+func (u Usage) QuotaTokens() int64 {
+	sum := u.InputTokens + u.OutputTokens
+	if u.TotalTokens > 0 && u.TotalTokens >= sum {
+		return u.TotalTokens
+	}
+	return sum + u.ReasoningTokens
+}
+
 // Merge folds o into u keeping maxima (streams may repeat counts).
 func (u *Usage) Merge(o Usage) {
 	if o.InputTokens > u.InputTokens {
@@ -268,6 +288,9 @@ func (u *Usage) Merge(o Usage) {
 	}
 	if o.ReasoningTokens > u.ReasoningTokens {
 		u.ReasoningTokens = o.ReasoningTokens
+	}
+	if o.TotalTokens > u.TotalTokens {
+		u.TotalTokens = o.TotalTokens
 	}
 	if o.UpstreamFormat != "" {
 		u.UpstreamFormat = o.UpstreamFormat
