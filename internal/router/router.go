@@ -332,7 +332,7 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 	// provider for the bare name would silently bypass it.
 	for _, name := range r.pool.Names() {
 		d, ok := r.pool.Get(name)
-		if !ok || d.Disabled || !d.RetryForeverModel(model) {
+		if !ok || d.Disabled || !d.BareRetryForever(model) {
 			continue
 		}
 		return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
