@@ -541,6 +541,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/usage/import", s.handleUsageImport)
 	mux.HandleFunc("POST /anthropic/v1/messages", s.withIdempotency(translat.FmtAnthropic, s.handleAnthropic))
 	mux.HandleFunc("POST /v1/systemone", s.withIdempotency(translat.FmtSystemOne, s.handleSystemOne))
+	// OpenAI Responses API, relayed to kind = "openai" providers (responses.go).
+	mux.HandleFunc("POST /v1/responses", s.handleResponses)
+	mux.HandleFunc("GET /v1/responses/{id}", s.responsesResource(http.MethodGet, ""))
+	mux.HandleFunc("DELETE /v1/responses/{id}", s.responsesResource(http.MethodDelete, ""))
+	mux.HandleFunc("POST /v1/responses/{id}/cancel", s.responsesResource(http.MethodPost, "/cancel"))
+	mux.HandleFunc("GET /v1/responses/{id}/input_items", s.responsesResource(http.MethodGet, "/input_items"))
 	mux.HandleFunc("POST /v1/embeddings", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfEmbeddings) })
 	mux.HandleFunc("POST /v1/audio/transcriptions", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfTranscriptions) })
 	mux.HandleFunc("POST /v1/audio/speech", func(w http.ResponseWriter, r *http.Request) { s.handlePassthrough(w, r, surfSpeech) })

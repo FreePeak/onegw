@@ -2351,6 +2351,8 @@ func (d *Def) Path(op, model string) string {
 		return "/v1/audio/transcriptions"
 	case "speech":
 		return "/v1/audio/speech"
+	case "responses":
+		return "/v1/responses" // the client's own Responses surface (server/responses.go)
 	}
 	switch d.Kind {
 	case KindAnthropic:
@@ -2420,6 +2422,22 @@ func (d *Def) Path(op, model string) string {
 // verbatim (issue #36) and KindOpenCode always sends a session id
 // upstream, the client's own value when present.
 func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr http.Header, body io.Reader, stream bool) (*CallResult, *types.APIError) {
+	return d.do(ctx, acct, "chat", model, clientHdr, body, stream)
+}
+
+// DoResponses is Do against the OpenAI Responses endpoint (POST
+// /v1/responses) for a client that speaks Responses itself: the body is the
+// client's own Responses request and is relayed verbatim, with the same
+// account bookkeeping (429 ladder, billing invalidation, flap breaker) as a
+// chat call. Only meaningful for KindOpenAI; other kinds take their own
+// executors exactly as Do would.
+func (d *Def) DoResponses(ctx context.Context, acct *Account, model string, clientHdr http.Header, body io.Reader, stream bool) (*CallResult, *types.APIError) {
+	return d.do(ctx, acct, "responses", model, clientHdr, body, stream)
+}
+
+// do is Do with the upstream path op ("chat" or "responses") chosen by the
+// caller; the kind-specific executors ignore it.
+func (d *Def) do(ctx context.Context, acct *Account, op, model string, clientHdr http.Header, body io.Reader, stream bool) (*CallResult, *types.APIError) {
 	reqStart := time.Now() // ok()'s recency rule: benches stamped during this request's flight outlive it
 	if d.inflight != nil {
 		select {
@@ -2511,7 +2529,7 @@ func (d *Def) Do(ctx context.Context, acct *Account, model string, clientHdr htt
 			req.Header.Set("x-goog-api-key", acct.APIKey)
 		}
 	default:
-		url = joinURL(base, d.Path("chat", model))
+		url = joinURL(base, d.Path(op, model))
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 		if err == nil {
 			// Kind-specific NON-credential headers (fingerprints, versions).
@@ -2798,6 +2816,30 @@ func (d *Def) DoPassthrough(ctx context.Context, acct *Account, op, model, conte
 		req.Header.Set(k, v)
 	}
 	d.applySessionAffinity(req.Header, clientHdr, acct.bearerToken())
+	resp, err := d.httpClient().Do(req)
+	if err != nil {
+		return nil, transportErr(ctx, err)
+	}
+	return resp, nil
+}
+
+// DoResponsesResource performs one call on a stored Responses object
+// (GET/DELETE /v1/responses/{id}, POST …/cancel, GET …/input_items) with
+// acct's credential. pathAndQuery starts at /v1/responses. The upstream
+// answer is returned undecoded — status, headers and payload are relayed
+// to the client as they are; the caller owns resp.Body.
+func (d *Def) DoResponsesResource(ctx context.Context, acct *Account, method, pathAndQuery string, clientHdr http.Header) (*http.Response, *types.APIError) {
+	req, err := http.NewRequestWithContext(ctx, method, joinURL(d.Base(acct), pathAndQuery), nil)
+	if err != nil {
+		return nil, &types.APIError{Status: 500, Type: "internal", Message: err.Error()}
+	}
+	applyAuth(req.Header, d.Kind, acct.bearerToken(), "")
+	if a := clientHeader(clientHdr, "Accept"); a != "" {
+		req.Header.Set("Accept", a) // GET ?stream=true of a background response
+	}
+	for k, v := range d.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
 	resp, err := d.httpClient().Do(req)
 	if err != nil {
 		return nil, transportErr(ctx, err)
