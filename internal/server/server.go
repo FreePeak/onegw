@@ -1325,7 +1325,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 			}
 			in, out, cr, cw, rs, seen := sn.Usage()
 			if seen {
-				rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs}
+				rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs, TotalTokens: sn.Total()}
 			}
 		} else {
 			u, terr := translat.TranslateStream(src, w, flush, upstreamFmt, clientFmt, model)
@@ -1432,7 +1432,7 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 	s.cur().usage.Observe(usage.Key{Provider: def.Name, Model: model, APIKey: label}, rec, savedTokens)
 	s.observeTPM(ak, rec.InputTokens+rec.OutputTokens)
 	if q := s.cur().quota; q != nil {
-		q.Observe(def.Name, rec.InputTokens+rec.OutputTokens+rec.ReasoningTokens, 1, time.Now())
+		q.Observe(def.Name, rec.QuotaTokens(), 1, time.Now())
 	}
 	// Client-experienced delivery: the winning attempt's output tokens
 	// over the WHOLE request wall (handler entry -> now), failed attempts,

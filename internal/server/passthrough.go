@@ -232,7 +232,7 @@ func (s *Server) passthroughCall(ctx context.Context, w http.ResponseWriter, def
 		_, _ = io.Copy(w, sn)
 		in, out, cr, cw, rs, seen := sn.Usage()
 		if seen {
-			rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs}
+			rec = types.Usage{InputTokens: in, OutputTokens: out, CacheReadTokens: cr, CacheWriteTokens: cw, ReasoningTokens: rs, TotalTokens: sn.Total()}
 		} else {
 			rec = types.Usage{Estimated: true, InputTokens: srcLen / 4}
 		}
