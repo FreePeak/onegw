@@ -42,6 +42,19 @@ retention_days = 90
 # export_url = "http://agg-host:8080/admin/usage/import"
 # export_password = "agg-admin-password"
 
+# OpenAI Responses surface (POST /v1/responses, relayed verbatim to
+# kind = "openai" providers). The gateway always remembers which provider and
+# account served each response id (data_dir store), so previous_response_id
+# continuations and GET/DELETE on the id reach the account that holds the
+# object. history = true also stores every turn's input and output items: when
+# the pinned provider cannot serve any more (quota window exhausted, billing
+# refusal) the conversation is rebuilt and moved to the route's next target
+# (reasoning items are dropped — they are encrypted per account). Without
+# history that case answers 409. history stores conversation content on disk.
+# [responses]
+# history = true
+# retention = "720h"            # affinity + history rows; OpenAI keeps responses 30 days
+
 # Task-aware combo reordering (issue #54): with "on", each request is
 # classified locally (prompt size, message/tool count, max_tokens,
 # reasoning_effort, a few keyword regexes — no LLM call) and multi-target

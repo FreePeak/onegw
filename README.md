@@ -1234,6 +1234,7 @@ xAI's token carries no Cursor entitlement.
 | Anthropic | `POST /v1/messages`, `POST /anthropic/v1/messages` | anthropic (passthrough), openai, gemini |
 | Gemini | `POST /v1beta/models/{model}:generateContent[?alt=sse]` | gemini (passthrough), openai, anthropic |
 | OpenAI | `POST /v1/systemone` | systemone |
+| OpenAI Responses | `POST /v1/responses`, `GET`/`DELETE /v1/responses/{id}`, `POST /v1/responses/{id}/cancel`, `GET /v1/responses/{id}/input_items` | openai (passthrough; see `[responses]` in onegw.toml.example) |
 | — | `GET /v1/models` | Config-defined model + combo list |
 | — | `GET /admin` | Dashboard (multi-page admin console; `/` redirects there) |
 | — | `GET /admin/health`, `GET /admin/usage` | Admin (password-protected) |
