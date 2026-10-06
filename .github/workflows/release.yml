@@ -183,7 +183,7 @@ jobs:
       - name: Probe whether this repo may write the package
         id: writable
         # A GITHUB_TOKEN push is authorised PER PACKAGE, not per repo. The
-        # package ghcr.io/freepeak/onegw was created by the OLD repo
+        # package ghcr.io/freepeak/onegw-gateway is created by THIS repo
         # FreePeak/onegw-private, so this repo's push is rejected with
         # write_package no matter what `permissions:` or the org default say,
         # and no API can re-link it. One upload-session probe (202 = this repo
@@ -226,8 +226,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/freepeak/onegw:latest
-            ghcr.io/freepeak/onegw:${{ needs.version.outputs.tag }}
+            ghcr.io/freepeak/onegw-gateway:latest
+            ghcr.io/freepeak/onegw-gateway:${{ needs.version.outputs.tag }}
           build-args: |
             VERSION=${{ needs.version.outputs.tag }}
           cache-from: type=gha
@@ -266,12 +266,12 @@ jobs:
               if [ "$code" = 200 ]; then break; fi
               sleep 5
             done
-            echo "ghcr.io/freepeak/onegw:$ref -> HTTP $code"
+            echo "ghcr.io/freepeak/onegw-gateway:$ref -> HTTP $code"
             if [ "$code" != 200 ]; then
               if [ "${WRITABLE:-false}" = true ]; then
                 # We CAN write the package, so a tag the registry will not
                 # resolve is a real publishing bug, not the owner-gated block.
-                echo "::error::ghcr.io/freepeak/onegw:$ref is not pullable ($code) although this repo may push to the package — the push reported success but the tag is not readable. See docs/PRD.md."
+                echo "::error::ghcr.io/freepeak/onegw-gateway:$ref is not pullable ($code) although this repo may push to the package — the push reported success but the tag is not readable. See docs/PRD.md."
                 exit 1
               fi
               missing="$missing $ref"
@@ -283,7 +283,7 @@ jobs:
             {
               echo "### docker image NOT published — owner-gated GHCR package"
               echo
-              echo "\`ghcr.io/freepeak/onegw\` was not published (missing:${missing})."
+              echo "\`ghcr.io/freepeak/onegw-gateway\` was not published (missing:${missing})."
               echo "The tag, the four binaries and the GitHub release were published normally."
               echo
               echo "A \`GITHUB_TOKEN\` push is authorised per PACKAGE: \`freepeak/onegw\` was"
@@ -297,5 +297,5 @@ jobs:
               echo "workflow — it re-pushes both tags for the tag this run already created."
               echo "See \`docs/PRD.md\`."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error title=docker image NOT published::ghcr.io/freepeak/onegw was not published (missing:${missing}) — the package is linked to FreePeak/onegw-private. Package onegw → Settings → Manage Actions access → add FreePeak/onegw with Write, then re-run this workflow. See docs/PRD.md."
+            echo "::error title=docker image NOT published::ghcr.io/freepeak/onegw-gateway is not published (missing:${missing}) — the package is linked to FreePeak/onegw. Package onegw-gateway → Settings → Manage Actions access → add FreePeak/onegw with Write, then re-run this workflow. See docs/PRD.md."
           fi

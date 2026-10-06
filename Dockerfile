@@ -77,7 +77,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # In-container `onegw update` is check-only by design (internal/update/docker.go):
 # the filesystem belongs to the image, so it reports the newer release and prints
-# host-side guidance — docker pull ghcr.io/freepeak/onegw:<tag> + recreate. The
+# host-side guidance — docker pull ghcr.io/freepeak/onegw-gateway:<tag> + recreate. The
 # release workflow stamps VERSION so the check compares against the real tag;
 # local builds report "dev".
 
