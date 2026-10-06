@@ -121,6 +121,27 @@ type UsageCfg struct {
 	ExportPassword string `toml:"export_password"`
 }
 
+// ResponsesCfg configures the client-facing OpenAI Responses surface
+// (POST /v1/responses). Response-id affinity (which provider and account
+// served each response, so previous_response_id and GET/DELETE on the id
+// reach the upstream that stores it) is always kept when data_dir persists.
+// History additionally keeps every turn's input and output items, so a
+// conversation whose pinned provider exhausted its quota can be rebuilt and
+// moved to the next combo target; off by default because it stores
+// conversation content on disk.
+type ResponsesCfg struct {
+	History   bool   `toml:"history"`
+	Retention string `toml:"retention"` // Go duration; "" = 720h (OpenAI keeps stored responses 30 days)
+}
+
+// RetentionDur returns how long affinity and history rows are kept.
+func (r ResponsesCfg) RetentionDur() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(r.Retention)); err == nil && d > 0 {
+		return d
+	}
+	return 720 * time.Hour
+}
+
 // ProviderCfg is one upstream provider definition.
 type ProviderCfg struct {
 	Name string `toml:"name"`
@@ -415,6 +436,7 @@ type Config struct {
 	Auth      Auth          `toml:"auth"`
 	Saver     SaverCfg      `toml:"saver"`
 	Usage     UsageCfg      `toml:"usage"`
+	Responses ResponsesCfg  `toml:"responses"`
 	Providers []ProviderCfg `toml:"providers"`
 	Combos    []ComboCfg    `toml:"combo"`
 	// Aliases maps a client-facing name to "provider/model", a combo name,
@@ -635,6 +657,11 @@ func (c *Config) UpdateEvery() time.Duration {
 func (c *Config) Validate() error {
 	if err := validateKeys(c.Auth.KeyList); err != nil {
 		return err
+	}
+	if s := strings.TrimSpace(c.Responses.Retention); s != "" {
+		if d, err := time.ParseDuration(s); err != nil || d <= 0 {
+			return fmt.Errorf("responses.retention %q: want a positive Go duration like 720h", c.Responses.Retention)
+		}
 	}
 	if err := validateRotation(c.Rotation, "rotation"); err != nil {
 		return err

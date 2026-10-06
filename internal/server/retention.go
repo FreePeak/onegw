@@ -23,6 +23,7 @@ func (s *Server) startRetention() {
 				return
 			case <-t.C:
 				s.pruneOnce()
+				s.pruneResponsesOnce()  // [responses] affinity + history rows
 				t.Reset(24 * time.Hour) // steady-state daily cadence
 			}
 		}
