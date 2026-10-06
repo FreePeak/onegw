@@ -954,26 +954,9 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	// create unbounded series (routing already used the original string).
 	mdl := s.boundedModel(model)
 	upstreamFmt := def.UpstreamFormat(model)
-	// Quota enforcement (issue #7): an exhausted provider cools its whole
-	// account pool until the window ends and answers 503 (retryable, so
-	// combos fall through to the next target). Checked before the upstream
-	// call so a direct hit never reaches the provider. Retry-After rides
-	// on the error (written only if this error actually reaches the
-	// client), never on w — a fallen-through attempt must not leak it.
-	if q := s.cur().quota; q != nil {
-		if st, ok := q.Status(def.Name, time.Now()); ok && st.Exhausted {
-			cool := time.Until(st.WindowEnd)
-			if cool < 0 {
-				cool = 0
-			}
-			for i := range def.Accounts {
-				def.Cool(&def.Accounts[i], cool)
-			}
-			return nil, &types.APIError{Status: 503, Type: "provider_quota_exhausted", Code: "quota_exceeded",
-				RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
-				Message: fmt.Sprintf("provider %s quota exhausted (%s window); resets %s",
-					def.Name, st.Window, st.WindowEnd.UTC().Format(time.RFC3339))}
-		}
+	// Quota enforcement (issue #7), before any upstream work.
+	if qerr := s.quotaGate(def); qerr != nil {
+		return nil, qerr
 	}
 	upBody, err := prepareUpstreamBody(upstreamFmt, clientFmt, body, model, def)
 	if err != nil {
@@ -1001,98 +984,135 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	setDecisionHeader(w, def, acct, model, attempts)
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
-		s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
-		if apiErr.PaymentRequired() {
-			if def.Kind == provider.KindOpenAIResponses {
-				// The Grok Build proxy's 402 is its WEEKLY credit pool
-				// running dry — self-recovering, not a billing death — so
-				// cool the account briefly and keep it in rotation (9router's
-				// grok-cli treats 402 the same way). Terminal #80 invalidation
-				// would strand a healthy subscription until manual re-enable.
-				def.Cool(acct, grok402Cooldown)
-			} else if def.Kind == provider.KindCline && apiErr.CreditWall() {
-				// Cline's 402 names a BALANCE, not a dead credential, and the
-				// account keeps serving its free lane right through it: measured
-				// 2026-09-16, `deepseek/deepseek-v4.1-flash` answered
-				// {"code":"insufficient_credits","current_balance":-0.006273}
-				// while `inclusionai/ling-3.0-flash-fin:free` served 200 on the
-				// same bearer minutes apart. Terminal #80 invalidation would
-				// therefore bench the lanes that still work until an operator
-				// notices the dashboard and clicks re-enable — so bench the
-				// model instead (Router.Execute skips the target, siblings and
-				// the account keep serving) and let a top-up recover everything
-				// with no manual step.
-				def.BenchModel(model, 0)
-			} else if def.Invalidate(acct) {
-				// Terminal for this credential (#80): the vendor refused it for
-				// billing reasons, which no amount of waiting fixes. Marking it
-				// out of rotation is the difference between one doomed upstream
-				// attempt per request forever and one per account; the combo
-				// falls through to the next target exactly like the #48 gated
-				// family, but WITHOUT the ladder that would keep re-offering it.
-				log.Printf("server: invalidated %s/%s after upstream billing refusal (%s); the pool re-probes it after the billing_parole window (or re-enable from the dashboard / rotate the key)",
-					def.Name, acctName(acct), apiErr.Message)
-				s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
-			}
-			apiErr.Fallbackable = true
-		} else if apiErr.Status == 401 && apiErr.Type == "authentication_error" {
-			// Stale credential at request time (cursor returns this
-			// when the account row has no key; the runtime can clear
-			// a static key when the stored token expires). Cool the
-			// account a window so the pool stops hammering it and
-			// rotates to the next account — a credential fix is
-			// per-account, not per-model, so benching the model
-			// would strand the still-working lanes.
-			log.Printf("server: account %s/%s has no credential — cooling one window; re-export the session token or reload to recover",
-				def.Name, acctName(acct))
-			def.Cool(acct, grok402Cooldown)
-			apiErr.Fallbackable = true
-		} else if alwaysThinking400(apiErr) {
-			// Runtime self-healing for providers whose config lacks the
-			// always_thinking globs (a combo can mix models with different
-			// thinking modes): remember the model, and let Execute retry
-			// this target once — attempt now coerces upfront because
-			// AlwaysThinkingModel consults learned state — then fall
-			// through to the next combo target if it still refuses.
-			if def.LearnAlwaysThinking(model) {
-				log.Printf("server: learned always-thinking %s/%s from upstream 400; future requests coerce effort upfront", def.Name, model)
-			}
-			apiErr.Fallbackable = true
-		} else if noThinkingConflict400(apiErr) {
-			// Same medicine for the mirror failure (live kilocode 2026-09-11:
-			// "reasoning_effort and reasoning.effort are both provided with
-			// conflicting values" — the upstream duplicates the knob itself,
-			// so ANY effort value is fatal): learn the model as no-thinking,
-			// retry once with the knobs stripped, then fall through. Without
-			// this mark the 400 is terminal and kills the whole combo chain.
-			if def.LearnNoThinking(model) {
-				log.Printf("server: learned no-thinking %s/%s from upstream conflict 400; future requests strip effort upfront", def.Name, model)
-			}
-			apiErr.Fallbackable = true
-		} else if apiErr.ReasoningEchoRequired() {
-			// Fourth member of the learned-contract family (live
-			// opencode/deepseek-v4.1-flash 2026-09-11 seqs 198 and 2666):
-			// the DeepSeek thinking-mode echo refusal names a CONTRACT the
-			// gateway can satisfy — synthesizeReasoningEcho fills the
-			// assistant turns that carry no echo. The bounded retry is
-			// granted only when the fill is NEW information: a first-time
-			// learn (or a model the echo_reasoning globs do not yet cover)
-			// changes the body, while an already-known echo model replays
-			// byte-identically — marking those Fallbackable would burn
-			// MaxAttempts on every request and starve the router's
-			// ReasoningEchoRequired break, so they fall through to the
-			// next combo target immediately.
-			known := def.ReasoningEchoModel(model)
-			if def.LearnReasoningEcho(model) {
-				log.Printf("server: learned reasoning-echo %s/%s from upstream 400; future requests fill missing assistant echoes upfront", def.Name, model)
-			}
-			if !known {
-				apiErr.Fallbackable = true
-			}
-		}
+		s.noteAttemptErr(def, acct, model, mdl, apiErr)
 		return nil, apiErr
 	}
 	return nil, s.relayResponse(w, res, def, model, clientFmt, upstreamFmt, stream, len(body), savedTokens, ak, ctx)
+}
+
+// quotaGate enforces the provider's quota window before an upstream call
+// (issue #7): an exhausted provider cools its whole account pool until the
+// window ends and answers 503 (retryable, so combos fall through to the next
+// target). Checked before the upstream call so a direct hit never reaches
+// the provider. Retry-After rides on the error (written only if this error
+// actually reaches the client), never on w — a fallen-through attempt must
+// not leak it.
+func (s *Server) quotaGate(def *provider.Def) *types.APIError {
+	q := s.cur().quota
+	if q == nil {
+		return nil
+	}
+	st, ok := q.Status(def.Name, time.Now())
+	if !ok || !st.Exhausted {
+		return nil
+	}
+	cool := time.Until(st.WindowEnd)
+	if cool < 0 {
+		cool = 0
+	}
+	for i := range def.Accounts {
+		def.Cool(&def.Accounts[i], cool)
+	}
+	return &types.APIError{Status: 503, Type: "provider_quota_exhausted", Code: "quota_exceeded",
+		RetryAfter: strconv.FormatInt(int64(cool.Seconds())+1, 10),
+		Message: fmt.Sprintf("provider %s quota exhausted (%s window); resets %s",
+			def.Name, st.Window, st.WindowEnd.UTC().Format(time.RFC3339))}
+}
+
+// noteAttemptErr classifies one failed upstream attempt: it records the
+// failure, cools/invalidates/benches what the error indicts, and marks the
+// error Fallbackable where a retry or the next combo leg can still serve.
+// mdl is the bounded metrics label for model.
+func (s *Server) noteAttemptErr(def *provider.Def, acct *provider.Account, model, mdl string, apiErr *types.APIError) {
+	s.m.upstreamErr(def.Name, mdl, acctName(acct), apiErr)
+	if apiErr.PaymentRequired() {
+		if def.Kind == provider.KindOpenAIResponses {
+			// The Grok Build proxy's 402 is its WEEKLY credit pool
+			// running dry — self-recovering, not a billing death — so
+			// cool the account briefly and keep it in rotation (9router's
+			// grok-cli treats 402 the same way). Terminal #80 invalidation
+			// would strand a healthy subscription until manual re-enable.
+			def.Cool(acct, grok402Cooldown)
+		} else if def.Kind == provider.KindCline && apiErr.CreditWall() {
+			// Cline's 402 names a BALANCE, not a dead credential, and the
+			// account keeps serving its free lane right through it: measured
+			// 2026-09-16, `deepseek/deepseek-v4.1-flash` answered
+			// {"code":"insufficient_credits","current_balance":-0.006273}
+			// while `inclusionai/ling-3.0-flash-fin:free` served 200 on the
+			// same bearer minutes apart. Terminal #80 invalidation would
+			// therefore bench the lanes that still work until an operator
+			// notices the dashboard and clicks re-enable — so bench the
+			// model instead (Router.Execute skips the target, siblings and
+			// the account keep serving) and let a top-up recover everything
+			// with no manual step.
+			def.BenchModel(model, 0)
+		} else if def.Invalidate(acct) {
+			// Terminal for this credential (#80): the vendor refused it for
+			// billing reasons, which no amount of waiting fixes. Marking it
+			// out of rotation is the difference between one doomed upstream
+			// attempt per request forever and one per account; the combo
+			// falls through to the next target exactly like the #48 gated
+			// family, but WITHOUT the ladder that would keep re-offering it.
+			log.Printf("server: invalidated %s/%s after upstream billing refusal (%s); the pool re-probes it after the billing_parole window (or re-enable from the dashboard / rotate the key)",
+				def.Name, acctName(acct), apiErr.Message)
+			s.observeLog(def.Name, model, acctName(acct), 0, "key_invalidated", types.Usage{}, 0, apiErr.Message, 0, 0, 0, 0)
+		}
+		apiErr.Fallbackable = true
+	} else if apiErr.Status == 401 && apiErr.Type == "authentication_error" {
+		// Stale credential at request time (cursor returns this
+		// when the account row has no key; the runtime can clear
+		// a static key when the stored token expires). Cool the
+		// account a window so the pool stops hammering it and
+		// rotates to the next account — a credential fix is
+		// per-account, not per-model, so benching the model
+		// would strand the still-working lanes.
+		log.Printf("server: account %s/%s has no credential — cooling one window; re-export the session token or reload to recover",
+			def.Name, acctName(acct))
+		def.Cool(acct, grok402Cooldown)
+		apiErr.Fallbackable = true
+	} else if alwaysThinking400(apiErr) {
+		// Runtime self-healing for providers whose config lacks the
+		// always_thinking globs (a combo can mix models with different
+		// thinking modes): remember the model, and let Execute retry
+		// this target once — attempt now coerces upfront because
+		// AlwaysThinkingModel consults learned state — then fall
+		// through to the next combo target if it still refuses.
+		if def.LearnAlwaysThinking(model) {
+			log.Printf("server: learned always-thinking %s/%s from upstream 400; future requests coerce effort upfront", def.Name, model)
+		}
+		apiErr.Fallbackable = true
+	} else if noThinkingConflict400(apiErr) {
+		// Same medicine for the mirror failure (live kilocode 2026-09-11:
+		// "reasoning_effort and reasoning.effort are both provided with
+		// conflicting values" — the upstream duplicates the knob itself,
+		// so ANY effort value is fatal): learn the model as no-thinking,
+		// retry once with the knobs stripped, then fall through. Without
+		// this mark the 400 is terminal and kills the whole combo chain.
+		if def.LearnNoThinking(model) {
+			log.Printf("server: learned no-thinking %s/%s from upstream conflict 400; future requests strip effort upfront", def.Name, model)
+		}
+		apiErr.Fallbackable = true
+	} else if apiErr.ReasoningEchoRequired() {
+		// Fourth member of the learned-contract family (live
+		// opencode/deepseek-v4.1-flash 2026-09-11 seqs 198 and 2666):
+		// the DeepSeek thinking-mode echo refusal names a CONTRACT the
+		// gateway can satisfy — synthesizeReasoningEcho fills the
+		// assistant turns that carry no echo. The bounded retry is
+		// granted only when the fill is NEW information: a first-time
+		// learn (or a model the echo_reasoning globs do not yet cover)
+		// changes the body, while an already-known echo model replays
+		// byte-identically — marking those Fallbackable would burn
+		// MaxAttempts on every request and starve the router's
+		// ReasoningEchoRequired break, so they fall through to the
+		// next combo target immediately.
+		known := def.ReasoningEchoModel(model)
+		if def.LearnReasoningEcho(model) {
+			log.Printf("server: learned reasoning-echo %s/%s from upstream 400; future requests fill missing assistant echoes upfront", def.Name, model)
+		}
+		if !known {
+			apiErr.Fallbackable = true
+		}
+	}
 }
 
 // speedFloor is the smallest decode window whose tokens/sec quotient is
@@ -1390,6 +1410,16 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 			}
 		}
 	}
+	s.recordSuccess(ctx, res, def, model, upstreamFmt, rec, reqBodyLen, savedTokens, ak)
+	return nil
+}
+
+// recordSuccess folds one served request into every accounting surface:
+// usage rollups, the key's tpm window, the provider's quota window, the
+// decode/prefill speed EWMAs and the dashboard's request ring. rec is the
+// upstream-reported usage (zero counts become a body-size estimate).
+func (s *Server) recordSuccess(ctx context.Context, res *provider.CallResult, def *provider.Def, model string,
+	upstreamFmt translat.Format, rec types.Usage, reqBodyLen int, savedTokens int64, ak *config.AuthKey) {
 	rec.UpstreamFormat = string(upstreamFmt)
 	if rec.InputTokens == 0 && rec.OutputTokens == 0 {
 		rec.Estimated = true
@@ -1453,7 +1483,6 @@ func (s *Server) relayResponse(w http.ResponseWriter, res *provider.CallResult, 
 		}
 	}
 	s.m.success(def.Name, model, acctName(res.Acct), rec, savedTokens, ms, tps, e2eMs, dtps)
-	return nil
 }
 
 // ---------------------------------------------------------------------------
