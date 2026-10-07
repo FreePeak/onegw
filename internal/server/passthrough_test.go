@@ -212,6 +212,89 @@ func TestPassthroughTranscriptionsRelaysMultipartByteForByte(t *testing.T) {
 	}
 }
 
+// multipartBodyFileFirst builds the form the way the OpenAI Java/Kotlin
+// SDKs do: file part first, model and language after it.
+func multipartBodyFileFirst(t *testing.T, model string, audio []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "speech.m4a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(audio); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("model", model); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.WriteField("language", "hr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &buf, mw.FormDataContentType()
+}
+
+func TestPassthroughTranscriptionsModelAfterFile(t *testing.T) {
+	// Far past the 8 KiB peek: the model field is found only by reading on.
+	audio := make([]byte, 1<<20+77)
+	if _, err := rand.Read(audio); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotBody []byte
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"text":"bok"}`))
+	}))
+	defer up.Close()
+
+	srv := ptSrv(t, ptProviders(t, up.URL, ""))
+
+	buf, ct := multipartBodyFileFirst(t, "passem/stt-1", audio)
+	orig := append([]byte(nil), buf.Bytes()...)
+	r := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", buf)
+	r.Header.Set("Authorization", "Bearer test-key")
+	r.Header.Set("Content-Type", ct)
+	w := do(t, srv.Handler(), r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	want := bytes.Replace(orig, []byte("passem/stt-1"), []byte("stt-1"), 1)
+	if !bytes.Equal(gotBody, want) {
+		t.Errorf("multipart relay diverges beyond the model rewrite: got %d bytes, want %d", len(gotBody), len(want))
+	}
+}
+
+func TestPassthroughTranscriptionsModelPastBodyCap(t *testing.T) {
+	audio := make([]byte, 64<<10)
+	if _, err := rand.Read(audio); err != nil {
+		t.Fatal(err)
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream must not be called when the model field is past the cap")
+	}))
+	defer up.Close()
+
+	cfg := ptProviders(t, up.URL, "")
+	cfg.Server.MaxBody = 32 << 10 // the model field sits after 64 KiB of audio
+	srv := ptSrv(t, cfg)
+
+	buf, ct := multipartBodyFileFirst(t, "passem/stt-1", audio)
+	r := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", buf)
+	r.Header.Set("Authorization", "Bearer test-key")
+	r.Header.Set("Content-Type", ct)
+	w := do(t, srv.Handler(), r)
+
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "missing model") {
+		t.Fatalf("status = %d body = %s, want 400 missing model", w.Code, w.Body.String())
+	}
+}
+
 func TestPassthroughCapabilityAndAuthRefused(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("upstream must not be called for refused requests")

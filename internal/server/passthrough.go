@@ -2,8 +2,8 @@
 // without translation (issue #9). Providers opt in per surface via the
 // `passthrough` config list ("embeddings", "stt", "tts"); requests whose
 // routed provider lacks the capability are refused. Bodies are relayed
-// byte-for-byte — multipart STT uploads stream, never fully buffered —
-// and JSON requests share the chat path's byte-budget gating. Only the
+// byte-for-byte — multipart STT uploads stream, buffered only up to the
+// model field — and JSON requests share the chat path's byte-budget gating. Only the
 // model selector is rewritten so "provider/model" strings never leak.
 package server
 
@@ -39,7 +39,10 @@ var (
 
 // multipartPeekLimit bounds the leading bytes of a streamed multipart body
 // inspected for the "model" field. The peek is replayed upstream verbatim,
-// so the audio part never enters gateway memory beyond the copy buffer.
+// so when the client sends the model field first the audio part never
+// enters gateway memory beyond the copy buffer. Clients that send the file
+// part first (the OpenAI Java/Kotlin SDKs, openai-kotlin) get the body
+// buffered up to the model field, bounded by max_body_bytes.
 const multipartPeekLimit = 8 << 10
 
 // handlePassthrough is wired for POST /v1/embeddings, /v1/audio/transcriptions
@@ -79,7 +82,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 			return
 		}
 		contentType = ct // the boundary must reach the upstream intact
-		mp = splitMultipartModel(r.Body)
+		mp = splitMultipartModel(r.Body, st.cfg.Server.MaxBody)
 		if mp == nil {
 			writeErr(w, translat.FmtOpenAI, errAPI(400, "invalid_request", "unreadable multipart body"))
 			return
@@ -256,17 +259,36 @@ type multipartPeek struct {
 }
 
 // splitMultipartModel peeks up to multipartPeekLimit bytes and locates the
-// `model` form field. Returns nil when the body is unreadable.
-func splitMultipartModel(body io.Reader) *multipartPeek {
+// `model` form field. When the field is not in the peek (file part sent
+// first) it keeps reading, doubling the inspected prefix, until the field
+// shows up, the body ends or limit bytes are held. Returns nil when the
+// body is unreadable.
+func splitMultipartModel(body io.Reader, limit int64) *multipartPeek {
 	br := bufio.NewReaderSize(body, multipartPeekLimit)
-	prefix, _ := br.Peek(multipartPeekLimit) // shorter prefix at EOF is fine
-	if len(prefix) == 0 {
+	peek, _ := br.Peek(multipartPeekLimit) // shorter prefix at EOF is fine
+	if len(peek) == 0 {
 		return nil
 	}
+	// Copy: the peeked slice aliases the reader's buffer.
+	prefix := append([]byte(nil), peek...)
 	if _, err := br.Discard(len(prefix)); err != nil {
 		return nil
 	}
 	off, end := findMultipartModel(prefix)
+	// Doubling keeps the total rescanning linear in the bytes held.
+	for eof := len(prefix) < multipartPeekLimit; off < 0 && !eof && int64(len(prefix)) < limit; {
+		more := make([]byte, min(int64(len(prefix)), limit-int64(len(prefix))))
+		n, err := io.ReadFull(br, more)
+		prefix = append(prefix, more[:n]...)
+		switch err {
+		case nil:
+		case io.EOF, io.ErrUnexpectedEOF:
+			eof = true
+		default:
+			return nil
+		}
+		off, end = findMultipartModel(prefix)
+	}
 	if off < 0 {
 		return &multipartPeek{prefix: prefix, origLen: len(prefix), rest: br}
 	}
