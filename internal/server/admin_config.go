@@ -462,34 +462,54 @@ var (
 	bareNameRe    = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
 
-// findSection locates the `[name]` (or `[[name]]`) header and returns the
-// header line index plus the exclusive end index (the next section header
-// or len(lines)). Comment lines never match: headers must start with '['.
+// findSection locates the `[name]` header and returns the header line index
+// plus the exclusive end index (the next single-bracket section header, or
+// len(lines)). Array-of-tables headers (`[[auth.keys]]`, `[[providers.accounts]]`)
+// belong inside the enclosing table and do NOT end the section — ending on
+// them made spliceAuthKeys treat a policy-table [auth] block as empty and
+// insert a legacy `keys = [...]` line that TOML rejects beside [[auth.keys]].
+// Comment lines never match: headers must start with '['.
 func findSection(lines []string, name string) (hdr, end int, ok bool) {
 	for i, ln := range lines {
 		m := sectionRe.FindStringSubmatch(ln)
 		if m == nil || m[1] != name {
 			continue
 		}
+		// Prefer the plain table header `[name]`; skip a stray `[[name]]`.
+		if strings.HasPrefix(strings.TrimSpace(ln), "[[") {
+			continue
+		}
 		hdr = i
 		for j := i + 1; j < len(lines); j++ {
-			if sectionRe.MatchString(lines[j]) {
-				return hdr, j, true
+			sm := sectionRe.FindStringSubmatch(lines[j])
+			if sm == nil {
+				continue
 			}
+			if strings.HasPrefix(strings.TrimSpace(lines[j]), "[[") {
+				continue // still inside this table
+			}
+			return hdr, j, true
 		}
 		return hdr, len(lines), true
 	}
 	return 0, 0, false
 }
 
-// spliceAuthKeys rewrites the keys array of the [auth] table: removes then
-// adds are applied to the current key set (order-preserving, deduped) and
-// the result is written back as a single-line basic-string array in the
-// same position. Every other line — including comments inside [auth] — is
-// returned untouched. Refuses (error) rather than guesses: unterminated
-// arrays, non-string elements, empty or whitespace-padded keys. Removing
-// the last key is refused — that would silently turn the gateway
-// unauthenticated. Key material never appears in error text.
+// authKeyTableHdrRe matches a `[[auth.keys]]` array-of-tables header.
+var authKeyTableHdrRe = regexp.MustCompile(`^\s*\[\[\s*auth\.keys\s*\]\]\s*(?:#.*)?$`)
+
+// spliceAuthKeys applies add/remove to the gateway client keys in [auth].
+// Two on-disk shapes are supported, matching config.Auth.decodeKeys:
+//
+//   - legacy flat:  keys = ["sk-…", …]
+//   - policy tables: [[auth.keys]] / key = "…" / name = "…" / …
+//
+// The shape already on disk is preserved. Flat stays a single `keys = […]`
+// line; tables stay tables (add appends a minimal [[auth.keys]] block with
+// only `key`, remove drops a whole table, other fields on kept rows are
+// untouched). Mixing both shapes in one file is refused — TOML cannot
+// express it. Removing the last key is refused so the gateway cannot go
+// unauthenticated by accident. Key material never appears in error text.
 func spliceAuthKeys(lines []string, add, remove []string) (out, keys []string, added, removed int, err error) {
 	for i, k := range add {
 		if k == "" || k != strings.TrimSpace(k) || strings.ContainsFunc(k, unicode.IsControl) {
@@ -502,42 +522,28 @@ func spliceAuthKeys(lines []string, add, remove []string) (out, keys []string, a
 		removeSet[k] = true
 	}
 
-	var cur []string
-	repStart, repEnd := -1, -1
 	hdr, end, found := findSection(lines, "auth")
-	if found {
-		for i := hdr + 1; i < end; i++ {
-			if !keysAssignRe.MatchString(lines[i]) {
-				continue
-			}
-			// Gather the (possibly multi-line) array text until it closes.
-			// The scan starts at the value (after '='), not at the key.
-			var arr strings.Builder
-			arr.WriteString(lines[i][strings.Index(lines[i], "=")+1:])
-			arr.WriteString("\n")
-			j := i
-			closed := false
-			for {
-				if items, ok := scanStringArray(arr.String()); ok {
-					cur = items
-					closed = true
-					break
-				}
-				j++
-				if j >= end {
-					break
-				}
-				arr.WriteString(lines[j])
-				arr.WriteString("\n")
-			}
-			if !closed {
-				return nil, nil, 0, 0, fmt.Errorf("[auth] keys array is unterminated or has unsupported content; refusing to edit")
-			}
-			repStart, repEnd = i, j
-			break
-		}
+	if !found {
+		next := dedupeAuthKeys(nil, add, nil)
+		out = append(append([]string{}, lines...), "", "[auth]", "keys = "+renderStringArray(next), "")
+		return out, next, len(next), 0, nil
 	}
 
+	flatStart, flatEnd, flatKeys, flatOK, flatErr := scanAuthFlatKeys(lines, hdr, end)
+	if flatErr != nil {
+		return nil, nil, 0, 0, flatErr
+	}
+	tables, hasTables := scanAuthKeyTables(lines, hdr, end)
+	if flatOK && hasTables {
+		return nil, nil, 0, 0, fmt.Errorf("[auth] has both keys = […] and [[auth.keys]] tables; refusing to edit — pick one shape in onegw.toml")
+	}
+
+	if hasTables {
+		return spliceAuthKeyTables(lines, hdr, end, tables, add, removeSet)
+	}
+
+	// Flat array path (or empty [auth] → write flat, the historical default).
+	cur := flatKeys
 	next := make([]string, 0, len(cur)+len(add))
 	seen := make(map[string]bool, len(cur)+len(add))
 	for _, k := range cur {
@@ -562,33 +568,202 @@ func spliceAuthKeys(lines []string, add, remove []string) (out, keys []string, a
 		return nil, nil, 0, 0, fmt.Errorf("refusing to remove the last auth key (gateway would become unauthenticated)")
 	}
 
-	out = make([]string, len(lines), len(lines)+4)
-	copy(out, lines)
+	out = append([]string{}, lines...)
 	newLine := "keys = " + renderStringArray(next)
 	switch {
-	case repStart >= 0:
-		out = append(out[:repStart], append([]string{newLine}, out[repEnd+1:]...)...)
-	case found:
-		// Section exists without a keys line: add the line at the end of
-		// the table (before the next section header / trailing newline).
+	case flatOK:
+		out = append(out[:flatStart], append([]string{newLine}, out[flatEnd+1:]...)...)
+	default:
 		at := end
 		if at == len(out) && len(out) > 0 && out[at-1] == "" {
-			at-- // insert before the trailing-newline element
+			at--
 		}
 		out = append(out[:at], append([]string{newLine}, out[at:]...)...)
 		if out[len(out)-1] != "" {
 			out = append(out, "")
 		}
-	default:
-		if len(out) > 0 && out[len(out)-1] != "" {
-			out = append(out, "")
-		}
-		out = append(out, "[auth]", newLine)
-		if out[len(out)-1] != "" {
-			out = append(out, "")
-		}
 	}
 	return out, next, added, removed, nil
+}
+
+// scanAuthFlatKeys finds a top-level `keys = […]` assignment inside [auth].
+func scanAuthFlatKeys(lines []string, hdr, end int) (start, stop int, keys []string, ok bool, err error) {
+	for i := hdr + 1; i < end; i++ {
+		if !keysAssignRe.MatchString(lines[i]) {
+			continue
+		}
+		var arr strings.Builder
+		arr.WriteString(lines[i][strings.Index(lines[i], "=")+1:])
+		arr.WriteString("\n")
+		j := i
+		for {
+			if items, good := scanStringArray(arr.String()); good {
+				return i, j, items, true, nil
+			}
+			j++
+			if j >= end {
+				return 0, 0, nil, false, fmt.Errorf("[auth] keys array is unterminated or has unsupported content; refusing to edit")
+			}
+			arr.WriteString(lines[j])
+			arr.WriteString("\n")
+		}
+	}
+	return 0, 0, nil, false, nil
+}
+
+// authKeyTable is one [[auth.keys]] block: the raw lines [start, end) and the
+// key string when the block has a parseable `key = "…"`.
+type authKeyTable struct {
+	start, end int // absolute indices into the file lines; end exclusive
+	key        string
+	hasKey     bool
+}
+
+// scanAuthKeyTables collects every [[auth.keys]] block inside [auth].
+func scanAuthKeyTables(lines []string, hdr, end int) (tables []authKeyTable, ok bool) {
+	for i := hdr + 1; i < end; {
+		if !authKeyTableHdrRe.MatchString(lines[i]) {
+			i++
+			continue
+		}
+		start := i
+		i++
+		for i < end && !sectionRe.MatchString(lines[i]) {
+			i++
+		}
+		t := authKeyTable{start: start, end: i}
+		for j := start + 1; j < i; j++ {
+			s := strings.TrimSpace(lines[j])
+			if s == "" || strings.HasPrefix(s, "#") {
+				continue
+			}
+			if !strings.HasPrefix(s, "key") {
+				continue
+			}
+			eq := strings.Index(s, "=")
+			if eq < 0 || strings.TrimSpace(s[:eq]) != "key" {
+				continue
+			}
+			if val, good := parseTOMLString(strings.TrimSpace(s[eq+1:])); good {
+				t.key, t.hasKey = val, true
+			}
+			break
+		}
+		tables = append(tables, t)
+		ok = true
+	}
+	return tables, ok
+}
+
+// spliceAuthKeyTables rewrites [[auth.keys]] blocks in place.
+func spliceAuthKeyTables(lines []string, hdr, end int, tables []authKeyTable, add []string, removeSet map[string]bool) (out, keys []string, added, removed int, err error) {
+	type kept struct {
+		lines []string
+		key   string
+	}
+	var keep []kept
+	seen := map[string]bool{}
+	for _, t := range tables {
+		if t.hasKey && removeSet[t.key] {
+			removed++
+			continue
+		}
+		block := append([]string{}, lines[t.start:t.end]...)
+		// Drop a trailing blank line inside the block so adjacent tables stay tidy.
+		for len(block) > 1 && strings.TrimSpace(block[len(block)-1]) == "" {
+			block = block[:len(block)-1]
+		}
+		k := t.key
+		if t.hasKey {
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+		}
+		keep = append(keep, kept{lines: block, key: k})
+	}
+	for _, k := range add {
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		keep = append(keep, kept{
+			lines: []string{"[[auth.keys]]", "key = " + escapeTOMLBasic(k)},
+			key:   k,
+		})
+		added++
+	}
+	if len(keep) == 0 && len(tables) > 0 {
+		return nil, nil, 0, 0, fmt.Errorf("refusing to remove the last auth key (gateway would become unauthenticated)")
+	}
+
+	// Rebuild [auth]: everything before the first table (or whole section if
+	// none — should not happen), then kept/new tables, then anything after
+	// the last table that is not itself a table we already consumed.
+	first, lastEnd := end, end
+	if len(tables) > 0 {
+		first = tables[0].start
+		lastEnd = tables[len(tables)-1].end
+	}
+	var body []string
+	body = append(body, lines[hdr+1:first]...)
+	// Trim trailing blanks before tables so we control spacing.
+	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+		body = body[:len(body)-1]
+	}
+	if len(body) > 0 {
+		body = append(body, "")
+	}
+	for i, k := range keep {
+		body = append(body, k.lines...)
+		if i < len(keep)-1 {
+			body = append(body, "")
+		}
+		if k.key != "" {
+			keys = append(keys, k.key)
+		}
+	}
+	tail := lines[lastEnd:end]
+	// Skip leading blanks in the tail; keep non-table residue (comments).
+	for len(tail) > 0 && strings.TrimSpace(tail[0]) == "" {
+		tail = tail[1:]
+	}
+	if len(tail) > 0 {
+		body = append(body, "")
+		body = append(body, tail...)
+	}
+	if len(body) == 0 || body[len(body)-1] != "" {
+		// keep section separation before the next header
+	}
+
+	out = append([]string{}, lines[:hdr+1]...)
+	out = append(out, body...)
+	if len(out) > 0 && out[len(out)-1] != "" {
+		out = append(out, "")
+	}
+	out = append(out, lines[end:]...)
+	return out, keys, added, removed, nil
+}
+
+func dedupeAuthKeys(cur, add []string, removeSet map[string]bool) []string {
+	next := make([]string, 0, len(cur)+len(add))
+	seen := map[string]bool{}
+	for _, k := range cur {
+		if removeSet != nil && removeSet[k] {
+			continue
+		}
+		if !seen[k] {
+			seen[k] = true
+			next = append(next, k)
+		}
+	}
+	for _, k := range add {
+		if !seen[k] {
+			seen[k] = true
+			next = append(next, k)
+		}
+	}
+	return next
 }
 
 // spliceAliases sets/deletes entries of the [aliases] table (alias name →

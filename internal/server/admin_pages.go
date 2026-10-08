@@ -1497,7 +1497,11 @@ func (s *Server) playgroundPage(w http.ResponseWriter, r *http.Request) {
 		PName  string
 		Models []string
 	}
+	type keyView struct {
+		Key, Name string
+	}
 	var providers []provView
+	var clientKeys []keyView
 	if st := s.cur(); st != nil {
 		for _, name := range st.pool.Names() {
 			if def, ok := st.pool.Get(name); ok && !def.Disabled {
@@ -1508,9 +1512,16 @@ func (s *Server) playgroundPage(w http.ResponseWriter, r *http.Request) {
 				providers = append(providers, provView{PName: def.Name, Models: models})
 			}
 		}
+		for _, k := range st.cfg.Auth.KeyList {
+			clientKeys = append(clientKeys, keyView{Key: k.Key, Name: k.Name})
+		}
 	}
-	s.authedPage(w, r, "playground", "Playground", false, struct{ Providers []provView }{providers})
+	s.authedPage(w, r, "playground", "Playground", false, struct {
+		Providers  []provView
+		ClientKeys []keyView
+	}{providers, clientKeys})
 }
+
 
 type settingsView struct {
 	PID         int
