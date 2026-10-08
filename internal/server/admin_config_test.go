@@ -422,6 +422,89 @@ func TestSpliceAuthKeysEdgeShapes(t *testing.T) {
 	})
 }
 
+func TestSpliceAuthKeysPolicyTables(t *testing.T) {
+	raw := `# top
+[server]
+listen = "127.0.0.1:1"
+
+[auth]
+[[auth.keys]]
+key = "sk-keep"
+name = "kept"
+rpm = 30
+[[auth.keys]]
+key = "sk-drop"
+name = "gone"
+
+[[providers]]
+name = "p"
+kind = "openai"
+api_key = "sk-x"
+`
+	out, keys, added, removed, err := spliceAuthKeys(strings.Split(raw, "\n"), []string{"sk-new"}, []string{"sk-drop"})
+	if err != nil {
+		t.Fatalf("splice: %v", err)
+	}
+	if added != 1 || removed != 1 {
+		t.Fatalf("added=%d removed=%d, want 1/1", added, removed)
+	}
+	if len(keys) != 2 || keys[0] != "sk-keep" || keys[1] != "sk-new" {
+		t.Fatalf("keys = %q, want [sk-keep sk-new]", keys)
+	}
+	got := strings.Join(out, "\n")
+	if strings.Contains(got, "sk-drop") {
+		t.Fatalf("removed key still present:\n%s", got)
+	}
+	if !strings.Contains(got, "name = \"kept\"") || !strings.Contains(got, "rpm = 30") {
+		t.Fatalf("policy fields on kept row were stripped:\n%s", got)
+	}
+	if !strings.Contains(got, "[[auth.keys]]\nkey = \"sk-new\"") {
+		t.Fatalf("new key not written as a table:\n%s", got)
+	}
+	if strings.Contains(got, "keys = [") {
+		t.Fatalf("must not introduce a flat keys = line beside tables:\n%s", got)
+	}
+	// Surrounding sections byte-stable.
+	if !strings.Contains(got, "# top\n[server]\nlisten = \"127.0.0.1:1\"") {
+		t.Fatalf("header disturbed:\n%s", got)
+	}
+	if !strings.Contains(got, "[[providers]]\nname = \"p\"\nkind = \"openai\"\napi_key = \"sk-x\"") {
+		t.Fatalf("providers disturbed:\n%s", got)
+	}
+}
+
+func TestSpliceAuthKeysPolicyTablesRefuseLast(t *testing.T) {
+	raw := "[auth]\n[[auth.keys]]\nkey = \"only\"\n"
+	if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), nil, []string{"only"}); err == nil {
+		t.Fatal("expected refusal to remove the last table key")
+	}
+}
+
+func TestSpliceAuthKeysMixedShapesRefused(t *testing.T) {
+	// A hand-edited file that somehow has both shapes must not be rewritten.
+	raw := "[auth]\nkeys = [\"flat\"]\n[[auth.keys]]\nkey = \"table\"\n"
+	if _, _, _, _, err := spliceAuthKeys(strings.Split(raw, "\n"), []string{"x"}, nil); err == nil {
+		t.Fatal("expected refusal of mixed flat+table [auth]")
+	}
+}
+
+func TestFindSectionSkipsArrayOfTables(t *testing.T) {
+	raw := strings.Split(`[auth]
+[[auth.keys]]
+key = "a"
+[saver]
+enabled = true
+`, "\n")
+	hdr, end, ok := findSection(raw, "auth")
+	if !ok || hdr != 0 {
+		t.Fatalf("hdr=%d ok=%v", hdr, ok)
+	}
+	if end != 3 { // index of [saver]
+		t.Fatalf("end=%d, want 3 ([saver]); body was %q", end, raw[hdr+1:end])
+	}
+}
+
+
 func TestWriteConfigAtomicallyRefusesInvalid(t *testing.T) {
 	clearConfigEnv(t)
 	dir := t.TempDir()

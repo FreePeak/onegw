@@ -9,8 +9,9 @@
 <div class="card mb-3">
   <h3>Client keys <span class="pill" id="ck-count"></span></h3>
   <p class="sub mb-2">The bearer string a CLI sends as <code class="chip">Authorization: Bearer &lt;key&gt;</code>.
-    Added to <code class="chip">[auth] keys</code>, the flat form onegw.toml already uses — labels, rpm and tpm
-    live in <code class="chip">[[auth.keys]]</code> tables, which are edited in the file.</p>
+    Written as <code class="chip">[[auth.keys]]</code> tables when the file already uses that shape (names and
+    rpm/tpm stay on the row); otherwise as the flat <code class="chip">[auth] keys = […]</code> list.</p>
+
   <div class="tblwrap">
   <table>
     <thead><tr><th>label</th><th>key</th><th>limits</th><th class="act">action</th></tr></thead>

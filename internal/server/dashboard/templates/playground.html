@@ -36,10 +36,20 @@
         {{end}}{{end}}
       </select>
     </label>
+    <label>client key
+      <select id="pg-key">
+        {{range .ClientKeys}}
+        <option value="{{.Key}}">{{if .Name}}{{.Name}}{{else}}{{.Key}}{{end}}</option>
+        {{else}}
+        <option value="">(no client keys configured)</option>
+        {{end}}
+      </select>
+    </label>
     <label style="flex:1">system prompt
       <textarea id="pg-sys" rows="1" placeholder="You are a helpful assistant."></textarea>
     </label>
   </div>
+
   <div class="pg-params">
     <label>temp <input type="range" id="pg-temp" min="0" max="2" step="0.1" value="0.7"><span class="val" id="pg-temp-v">0.7</span></label>
     <label>max tokens <input type="range" id="pg-maxtok" min="64" max="16384" step="64" value="4096"><span class="val" id="pg-maxtok-v">4096</span></label>
@@ -102,8 +112,12 @@ function pgSend(){
   // Abort
   document.getElementById('pg-send').disabled=true;
   pgAbort=new AbortController();
-  fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},
+  var hdrs={'Content-Type':'application/json'};
+  var ck=document.getElementById('pg-key');
+  if(ck&&ck.value) hdrs['Authorization']='Bearer '+ck.value;
+  fetch('/v1/chat/completions',{method:'POST',headers:hdrs,
     body:JSON.stringify(body),signal:pgAbort.signal
+
   }).then(function(res){
     var reader=res.body.getReader(),dec=new TextDecoder(),buf='',content='';
     function pump(){

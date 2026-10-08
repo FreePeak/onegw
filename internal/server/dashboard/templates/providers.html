@@ -259,34 +259,6 @@
   </div>
 </dialog>
 
-<dialog class="modal" id="bulkdlg" aria-labelledby="bulkdlg-title">
-  <h2 id="bulkdlg-title">Add accounts in bulk</h2>
-  <p class="msub">One account per line: <code>name, api key</code>, <code>name api_key</code>, or a bare
-    <code>api key</code> (the row is then named key-1, key-2, &hellip;). Choose a sign-in service instead of
-    keys and each line becomes a subscription account named by that line. Blank lines, repeated names, and
-    rows with nothing to authenticate with are skipped; new rows land at the top of the list, above the
-    accounts already saved.</p>
-  <div class="merr" id="bulk-err" role="alert" hidden></div>
-  <div class="field">
-    <label for="bulk-rows">accounts <span class="text-mut/60">(paste as many lines as you have)</span></label>
-    <textarea id="bulk-rows" rows="10" spellcheck="false" autocomplete="off"
-              placeholder="acct-a, sk-or-v1-&#8230;&#10;acct-b, sk-or-v1-&#8230;"></textarea>
-  </div>
-  <div class="grid grid-cols-2 gap-3">
-    <div class="field">
-      <label for="bulk-rpm">rpm limit <span class="text-mut/60">(0 = uncapped)</span></label>
-      <input id="bulk-rpm" type="number" min="0" inputmode="numeric" placeholder="0">
-    </div>
-    <div class="field">
-      <label for="bulk-oauth">sign-in service <span class="text-mut/60">(subscription: no keys)</span></label>
-      <select id="bulk-oauth"></select>
-    </div>
-  </div>
-  <div class="mfoot">
-    <button type="button" class="btn" id="bulk-cancel">Cancel</button>
-    <button type="button" class="btn primary" id="bulk-add">Add to list</button>
-  </div>
-</dialog>
 {{end}}
 {{define "scripts"}}
 {{template "content-modal" .}}

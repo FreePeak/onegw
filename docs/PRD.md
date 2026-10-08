@@ -1,3 +1,12 @@
+*Last updated: 2026-10-08 (dashboard Keys page writes [[auth.keys]] when that is the on-disk shape; Playground sends a client bearer; Providers bulk dialog de-duplicated):*
+`spliceAuthKeys` preserved the legacy flat `keys = […]` writer while the live config (and `decodeKeys`) already
+used `[[auth.keys]]` policy tables. `findSection("auth")` also stopped at the first `[[auth.keys]]`, so an Add
+from the Keys page inserted a flat line that TOML rejects beside the tables. The writer now keeps whichever
+shape is already on disk (tables stay tables, with name/rpm untouched on kept rows). Playground picks a client
+key and sends `Authorization: Bearer …`. The Providers bulk-account `<dialog>` was rendered twice via a double
+`content-modal` include.
+
+
 *Last updated: 2026-10-06 (five PRs merged: Responses API, quota vendor total, junk-reasoning failover, strip-markers cache profile, systemone bare models):*
 Five PRs landed on master on 2026-10-06.
 
