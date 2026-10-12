@@ -654,6 +654,7 @@ func (s *Server) proxyGemini(w http.ResponseWriter, r *http.Request, model strin
 	// A sibling target exists: a failure found before the first client byte
 	// can still be served (corrupt-stream guard's hold window).
 	d.failover = res.IsCombo && len(res.Targets) > 1
+	d.recordRoute(model, res)
 	if !s.enforceAllowlist(w, translat.FmtGemini, ak, model, res) {
 		return
 	}
@@ -741,6 +742,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, clientFmt transla
 	// A sibling target exists: a failure found before the first client byte
 	// can still be served (corrupt-stream guard's hold window).
 	d.failover = res.IsCombo && len(res.Targets) > 1
+	d.recordRoute(model, res)
 	if !s.enforceAllowlist(w, clientFmt, ak, model, res) {
 		return
 	}
@@ -987,7 +989,7 @@ func (s *Server) attempt(ctx context.Context, def *provider.Def, acct *provider.
 	// above answers WITHOUT touching w, so the attempt that finally
 	// commits headers is the one that stamps the header (combo fallback
 	// therefore names the serving target).
-	setDecisionHeader(w, def, acct, model, attempts)
+	setDecisionHeader(w, deliveryFrom(ctx), def, acct, model, attempts)
 	res, apiErr := def.Do(ctx, acct, model, clientHdr, bytes.NewReader(upBody), stream || def.Kind.ForcedStream())
 	if apiErr != nil {
 		s.noteAttemptErr(def, acct, model, mdl, apiErr)

@@ -21,7 +21,18 @@ const DecisionHeader = "X-OneGW-Decision"
 // attempt that already wrote a body leaves its own header; that is
 // truthful). Never sent upstream: it is set on the client's response
 // writer only.
-func setDecisionHeader(w http.ResponseWriter, def *provider.Def, acct *provider.Account, model string, attempts int) {
+//
+// request=<the client's own model string> and fallback=<true|false> were
+// added for clients that must TELL the user when their request was answered
+// by something other than what they asked for. fallback is true exactly when
+// the serving target is not the one the client's model string resolves to
+// first: a combo whose first leg refused, or a route whose first target was
+// filtered out. attempts= cannot say this on its own — a retry onto the SAME
+// target is attempts=2 with fallback=false, and an account rotation inside
+// one provider is not a different model at all. d may be nil (a caller with
+// no decision record): request= is then omitted and fallback=false, which
+// keeps those responses byte-identical to the pre-existing fields.
+func setDecisionHeader(w http.ResponseWriter, d *delivery, def *provider.Def, acct *provider.Account, model string, attempts int) {
 	var b strings.Builder
 	b.WriteString("provider=")
 	b.WriteString(def.Name)
@@ -33,5 +44,11 @@ func setDecisionHeader(w http.ResponseWriter, def *provider.Def, acct *provider.
 	b.WriteString(model)
 	b.WriteString("; attempts=")
 	b.WriteString(strconv.Itoa(attempts))
+	if req := d.requestedModel(); req != "" {
+		b.WriteString("; request=")
+		b.WriteString(req)
+	}
+	b.WriteString("; fallback=")
+	b.WriteString(strconv.FormatBool(d.servedFallback(def.Name, model)))
 	w.Header().Set(DecisionHeader, b.String())
 }

@@ -97,6 +97,15 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 	}
 
 	res, rerr := st.router.Resolve(model)
+	d := &delivery{start: time.Now()}
+	if rerr == nil {
+		d.recordRoute(model, res)
+	}
+	// The passthrough surface owns no delivery clock; this one exists so the
+	// decision header can report the client's model string and the route's
+	// first target (request=/fallback=). Carried on the request context so
+	// passthroughCall's Execute path reads it.
+	r = r.WithContext(withDelivery(r.Context(), d))
 	if rerr != nil {
 		writeErr(w, translat.FmtOpenAI, rerr)
 		return
@@ -167,7 +176,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, sf su
 	}
 
 	attempts := 0
-	execErr := st.router.Execute(router.WithIdentity(r.Context(), identityFromBody(r.Header, ak, body)), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
+	execErr := st.router.Execute(withDelivery(router.WithIdentity(r.Context(), identityFromBody(r.Header, ak, body)), d), res, func(ctx context.Context, def *provider.Def, acct *provider.Account, m string) (any, *types.APIError) {
 		if !def.AllowsPassthrough(sf.cap) {
 			return nil, errAPI(http.StatusNotFound, "passthrough_not_supported",
 				"provider "+def.Name+" does not declare passthrough \""+sf.cap+"\"")
@@ -196,7 +205,7 @@ func (s *Server) passthroughCall(ctx context.Context, w http.ResponseWriter, def
 	// Stamp the routing decision before the upstream call (pre-body
 	// write); covers both the one-shot transcriptions path and the
 	// Execute Caller (a retried attempt re-stamps, last stamp wins).
-	setDecisionHeader(w, def, acct, m, attempts)
+	setDecisionHeader(w, deliveryFrom(ctx), def, acct, m, attempts)
 	resp, apiErr := def.DoPassthrough(ctx, acct, sf.op, m, contentType, clientHdr, src, srcLen)
 	if apiErr != nil {
 		return apiErr

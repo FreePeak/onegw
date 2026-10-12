@@ -71,6 +71,10 @@ type respCall struct {
 	// committed is set once headers reached the client: no further
 	// attempt may write.
 	committed bool
+	// d is this request's decision record: the client's model string and the
+	// resolution's first target, for the header's request=/fallback= half.
+	// The Responses surface has no delivery clock of its own.
+	d *delivery
 }
 
 // keyOwner identifies the client key that created a response without
@@ -172,6 +176,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res.Targets = kept
+	// The header's request=/fallback= half, recorded against the FILTERED
+	// route: a target dropped for not speaking Responses is not a leg this
+	// request could have been served by, so serving the next one is not a
+	// fallback.
+	rc.d = &delivery{start: time.Now()}
+	rc.d.recordRoute(rc.req.Model, res)
 	if rc.req.Background {
 		// A background response finishes after this request returns: its
 		// usage never passes through the gateway, so a token-limited
@@ -498,7 +508,7 @@ func (s *Server) responsesAttempt(ctx context.Context, rc *respCall, def *provid
 		return qerr
 	}
 	out, _ := rewriteModel(body, model)
-	setDecisionHeader(rc.w, def, acct, model, attempts)
+	setDecisionHeader(rc.w, rc.d, def, acct, model, attempts)
 	res, apiErr := def.DoResponses(ctx, acct, model, rc.r.Header, bytes.NewReader(out), rc.req.Stream)
 	if apiErr != nil {
 		s.noteAttemptErr(def, acct, model, s.boundedModel(model), apiErr)
