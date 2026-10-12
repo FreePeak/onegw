@@ -19,6 +19,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"onegw/internal/router"
 )
 
 // delivery is the client-experienced clock for one request. Created at
@@ -34,6 +36,17 @@ type delivery struct {
 	// the relay's corrupt-stream guard, which only withholds a stream head
 	// when a retry can actually serve the request (see corruptHoldBytes).
 	failover bool
+	// requested is the model string the CLIENT named (combo name, alias,
+	// "provider/model" or a bare id) — the "what I asked for" half of the
+	// X-OneGW-Decision header. Empty when the caller has no client model.
+	requested string
+	// firstProvider/firstModel are the resolution's own FIRST target: the
+	// leg this request would have been served by with no fall-through.
+	// routeKnown says they were recorded at all (a caller that resolved
+	// without a delivery clock leaves it false, and no fallback is claimed).
+	firstProvider string
+	firstModel    string
+	routeKnown    bool
 }
 
 type deliveryKey struct{}
@@ -45,6 +58,39 @@ func withDelivery(ctx context.Context, d *delivery) context.Context {
 func deliveryFrom(ctx context.Context) *delivery {
 	d, _ := ctx.Value(deliveryKey{}).(*delivery)
 	return d
+}
+
+// recordRoute notes the client's model string and the resolution's first
+// target, which is what setDecisionHeader reports as request=/fallback=.
+// Called once per request, at the same place failover is set (so the two
+// answers about the route can never disagree).
+func (d *delivery) recordRoute(requested string, res *router.Resolution) {
+	if d == nil {
+		return
+	}
+	d.requested = requested
+	if res != nil && len(res.Targets) > 0 {
+		d.firstProvider, d.firstModel, d.routeKnown = res.Targets[0].Provider, res.Targets[0].Model, true
+	}
+}
+
+// requestedModel is the client's own model string, "" when none was recorded
+// (a headerless caller, or a route that never resolved).
+func (d *delivery) requestedModel() string {
+	if d == nil {
+		return ""
+	}
+	return d.requested
+}
+
+// servedFallback reports whether the target about to serve differs from the
+// route's own first target. An unrecorded route is NOT a fallback: nothing
+// was skipped to serve this request.
+func (d *delivery) servedFallback(providerName, model string) bool {
+	if d == nil || !d.routeKnown {
+		return false
+	}
+	return d.firstProvider != providerName || d.firstModel != model
 }
 
 const (

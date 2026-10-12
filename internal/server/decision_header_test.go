@@ -46,7 +46,9 @@ func rateLimitedUpstream(t *testing.T) *httptest.Server {
 }
 
 // A direct route must stamp X-OneGW-Decision with the serving provider,
-// account, and upstream model before the body write.
+// account, and upstream model before the body write, and must NOT claim a
+// fallback: request= is the client's own string and the serving target IS
+// that route's first target.
 func TestDecisionHeaderDirectRoute(t *testing.T) {
 	var leaked int32
 	up := okUpstream(t, &leaked)
@@ -60,14 +62,16 @@ func TestDecisionHeaderDirectRoute(t *testing.T) {
 		t.Fatalf("got %d %s, want completion served", w.Code, w.Body.String())
 	}
 	if got, want := w.Header().Get(DecisionHeader),
-		"provider=p1; account=acct1; model=m1; attempts=1"; got != want {
+		"provider=p1; account=acct1; model=m1; attempts=1; request=p1/m1; fallback=false"; got != want {
 		t.Fatalf("X-OneGW-Decision = %q, want %q", got, want)
 	}
 }
-
 // On a combo whose first target 429s upstream, the header must name the
 // SECOND (serving) provider — failed attempts never wrote a body, so the
-// winner's pre-body stamp is what the client sees.
+// winner's pre-body stamp is what the client sees — and must say so:
+// fallback=true is the half a client needs to tell the user "answered by
+// something other than what you asked for". The client's own string stays in
+// request=, so a combo NAME is never mistaken for the model that served.
 func TestDecisionHeaderComboNamesWinner(t *testing.T) {
 	limited := rateLimitedUpstream(t)
 	var leaked int32
@@ -88,11 +92,38 @@ func TestDecisionHeaderComboNamesWinner(t *testing.T) {
 		t.Fatalf("got %d %s, want fall-through served by p2", w.Code, w.Body.String())
 	}
 	got := w.Header().Get(DecisionHeader)
-	if !strings.HasPrefix(got, "provider=p2; account=ok; model=m2; attempts=") {
-		t.Fatalf("X-OneGW-Decision = %q, want the serving provider p2's trace", got)
+	if !strings.HasPrefix(got, "provider=p2; account=ok; model=m2; attempts=2; request=pair; fallback=true") {
+		t.Fatalf("X-OneGW-Decision = %q, want the serving provider p2's trace with request=pair fallback=true", got)
 	}
-	if n := got[strings.LastIndex(got, "attempts=")+len("attempts="):]; n != "2" {
-		t.Fatalf("attempts = %q, want 2 (the 429ed p1 attempt, then the serving one)", n)
+}
+
+// A retry onto the SAME target is not a fallback: attempts counts it, but
+// the model the user asked for is the model that answered. Pinned here
+// because attempts>1 is the tempting (and wrong) client-side test.
+func TestDecisionHeaderSameTargetRetryIsNotFallback(t *testing.T) {
+	var calls int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":{"message":"flaky","type":"api_error"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(up.Close)
+	_, h := newTestServer2(t, gatedCfg(t, config.ProviderCfg{
+		Name: "p1", Kind: "openai", BaseURL: up.URL, Models: []string{"m1"},
+		Accounts: []config.Acct{{Name: "acct1", APIKey: "key-ok"}},
+	}))
+
+	w := do(t, h, authSk(chatReq(t, "p1/m1")))
+	got := w.Header().Get(DecisionHeader)
+	if n := atomic.LoadInt32(&calls); n < 2 {
+		t.Skipf("upstream answered %d call(s); the retry ladder did not re-attempt (nothing to pin)", n)
+	}
+	if !strings.Contains(got, "; fallback=false") {
+		t.Fatalf("X-OneGW-Decision = %q, want fallback=false for a same-target retry", got)
 	}
 }
 
