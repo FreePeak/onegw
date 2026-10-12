@@ -2,8 +2,26 @@
 
 *Last updated: 2026-10-12 (per-account `disabled = true` is honoured): `[[providers.accounts]]` gained a real `disabled` field. Before this, the TOML key was silently ignored (no `Acct.Disabled`), so an exhausted opencode key the operator had "disabled" kept rotating after reload/restart. `config.Defaults` drops half-commented empty shells (`[[providers.accounts]]` header left live, name/key commented — BurntSushi kept a `{Name:"",APIKey:""}` slot that inherited the provider key); `apply` and `subTargets` skip `Disabled` rows so they never enter the pool or get probed; admin edit preserves on-disk `disabled` across a Save that does not model the flag. Provider-level `disabled` is unchanged.
 
-*Last updated: 2026-10-12 (combo_fallback off by default; dashboard Settings toggle):*
-Cross-target combo fall-through (`leg N fails → leg N+1`) is now gated by `[server] combo_fallback` (`off`|`on`, default **off**). Off keeps the first live target only — same-account pool rotation still runs on that leg, but a quota/429/5xx/bench never silently switches the client onto a different provider/model (the operator complaint: auto-switch onto a combo leg without permission). `on` restores the historical multi-leg chain. Toggle from dashboard Settings → Configuration sections → `server.combo_fallback`, or `ONEGW_COMBO_FALLBACK=on|off`. Wired through `config.ComboFallbackOn` → `Router.SetComboFallback` → `Execute` (`triedLive` gate). Unit tests cover off/on/disabled-skip; e2e helpers that assert fall-through opt in explicitly.
+*Last updated: 2026-10-12 (combo_fallback off by default + bare model must be advertised):*
+Two root causes behind silent model switches / bogus upstream 404s:
+
+1. **Combo cross-target fall-through was unconditional.** Multi-leg combos always
+   tried leg N+1 on quota/429/5xx/bench, changing the model under the client's
+   requested name. New `[server] combo_fallback` (`off`|`on`, default **off**;
+   `ONEGW_COMBO_FALLBACK` overrides). Settings → Configuration sections exposes a
+   checkbox next to `task_routing`. Off keeps the first live target only
+   (same-account pool rotation still runs); `on` restores the historical chain.
+   Multi-leg server fixtures opt into `on` so fall-through contracts stay pinned.
+
+2. **Bare model ids were forwarded to the first enabled provider.** With the
+   `execution` combo commented out of the live TOML, client `model=execution`
+   still resolved to `provider=xai` (first in config order) and xAI answered
+   `404 The model execution does not exist` on every retry. Restored
+   advertised-only bare resolve (`SetModels` builds a bare→providers index): only
+   a provider that lists the id may serve it; empty-`models` providers stay
+   pass-through after advertisers; nobody advertising → local `404 model_not_found`
+   with no dial. Live proof in `/admin/api/v1/logs`.
+
 
 *Last updated: 2026-10-12 (X-OneGW-Decision gains request= and fallback=):*
 The decision header named the leg that served a request but not whether that

@@ -697,7 +697,6 @@ func TestExecuteComboFallbackOffSkipsDisabledThenStops(t *testing.T) {
 	}
 }
 
-
 // TestResolveBareModelRequiresAdvertiser: a slash-less model must be served
 // by a provider that ADVERTISES it — not by whichever provider happens to be
 // first in config order. Live 2026-10-12: client model "execution" (a combo

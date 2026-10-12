@@ -102,13 +102,13 @@ type directRoute struct {
 
 func New(pool *provider.Pool) *Router {
 	return &Router{
-		pool:             pool,
-		models:           map[string]directRoute{},
-		bare:             map[string][]string{},
-		combos:           map[string]*Combo{},
-		aliases:          map[string]string{},
-		rr:               map[string]*comboRR{},
-		MaxAttempts:      2,
+		pool:        pool,
+		models:      map[string]directRoute{},
+		bare:        map[string][]string{},
+		combos:      map[string]*Combo{},
+		aliases:     map[string]string{},
+		rr:          map[string]*comboRR{},
+		MaxAttempts: 2,
 		// Unit tests pin the historical multi-leg chain; server.apply
 		// overrides from [server] combo_fallback (default off).
 		comboFallbackOn: true,

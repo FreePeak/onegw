@@ -83,7 +83,6 @@ func TestSectionsPutRoundTrip(t *testing.T) {
 	}
 }
 
-
 func TestSectionsComboFallbackRoundTrip(t *testing.T) {
 	_, h, path := newTestServerFromFile(t, editTestToml)
 	// Default off must surface on GET even when the file omits the key.
