@@ -1,3 +1,24 @@
+*Last updated: 2026-10-12 (X-OneGW-Decision gains request= and fallback=):*
+The decision header named the leg that served a request but not whether that
+leg was the one the client asked for. `attempts=` cannot answer it: a retry
+onto the SAME target is `attempts=2` and no switch at all, while a combo whose
+first target was benched before any upstream call serves a sibling at
+`attempts=1`. `delivery` now carries the client's model string and the
+resolution's own first target (recorded where `failover` is already set, so
+the two answers about a route cannot disagree), and every stamp site passes it
+through — `attempt()`, the streaming fast path, `passthroughCall`,
+`responsesAttempt` (the passthrough and Responses surfaces own no delivery
+clock, so each creates one for the header's sake). `fallback=true` exactly
+when the serving target differs from the route's first target; `request=` is
+omitted when the client's model string is unknown, so a headerless caller's
+fields stay byte-identical. The Responses surface records against the FILTERED
+route — a target dropped for not speaking Responses was never a leg this
+request could have been served by. Pinned by
+`internal/server/decision_header_test.go` (direct route, combo fall-through,
+same-target retry, never-sent-upstream). Client half (xdev switch badge,
+print-mode notice, Telegram bot photo + caption) consumes it.
+PR: https://github.com/FreePeak/onegw/pull/173
+
 *Last updated: 2026-10-08 (dashboard Keys page writes [[auth.keys]] when that is the on-disk shape; Playground sends a client bearer; Providers bulk dialog de-duplicated):*
 `spliceAuthKeys` preserved the legacy flat `keys = […]` writer while the live config (and `decodeKeys`) already
 used `[[auth.keys]]` policy tables. `findSection("auth")` also stopped at the first `[[auth.keys]]`, so an Add
