@@ -63,6 +63,11 @@ type acctEdit struct {
 	Weight         int    `json:"weight"`
 	RPM            int    `json:"rpm"`
 	OAuth          string `json:"oauth"`
+	// Disabled parks the account out of the rotation pool. Nil on update
+	// means "keep the on-disk value" so a dashboard Save that does not
+	// model the flag cannot silently re-enable an exhausted key the
+	// operator parked in TOML.
+	Disabled *bool `json:"disabled,omitempty"`
 }
 
 type providerEditReq struct {
@@ -432,12 +437,18 @@ func parseAccounts(block []string) map[string]config.Acct {
 			cur.Name = val
 		case "api_key":
 			cur.APIKey = val
+		case "dashboard_token":
+			cur.DashboardToken = val
 		case "base_url":
 			cur.BaseURL = val
 		case "weight":
 			// Bare TOML integer — parseTOMLString only understands quoted
 			// strings, so read the raw value (it returns "" here).
 			cur.Weight, _ = strconv.Atoi(strings.TrimSpace(t[eq+1:]))
+		case "rpm":
+			cur.RPM, _ = strconv.Atoi(strings.TrimSpace(t[eq+1:]))
+		case "disabled":
+			cur.Disabled = strings.TrimSpace(t[eq+1:]) == "true"
 		}
 	}
 	flush()
@@ -602,6 +613,12 @@ func editProviderBlock(block []string, req providerEditReq, old map[string]confi
 				}
 				if a.DashboardToken == "" && o.DashboardToken != "" {
 					a.DashboardToken = o.DashboardToken
+				}
+				// Preserve on-disk disabled when the editor omits the flag,
+				// so a Save cannot silently re-enable an exhausted key.
+				if a.Disabled == nil && o.Disabled {
+					t := true
+					a.Disabled = &t
 				}
 			}
 			block = append(block, renderAccountTable(a, key)...)
@@ -787,7 +804,7 @@ func isAcctField(t string) bool {
 		return false
 	}
 	switch strings.TrimSpace(t[:eq]) {
-	case "name", "api_key", "base_url", "weight", "rpm":
+	case "name", "api_key", "base_url", "weight", "rpm", "dashboard_token", "disabled":
 		return true
 	}
 	return false
@@ -809,6 +826,9 @@ func renderAccountTable(a acctEdit, key string) []string {
 	}
 	if a.RPM != 0 {
 		out = append(out, "rpm = "+strconv.Itoa(a.RPM))
+	}
+	if a.Disabled != nil && *a.Disabled {
+		out = append(out, "disabled = true")
 	}
 	return out
 }

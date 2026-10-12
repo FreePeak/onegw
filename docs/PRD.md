@@ -1,3 +1,5 @@
+*Last updated: 2026-10-12 (per-account `disabled = true` is honoured): `[[providers.accounts]]` gained a real `disabled` field. Before this, the TOML key was silently ignored (no `Acct.Disabled`), so an exhausted opencode key the operator had "disabled" kept rotating after reload/restart. `config.Defaults` drops half-commented empty shells (`[[providers.accounts]]` header left live, name/key commented — BurntSushi kept a `{Name:"",APIKey:""}` slot that inherited the provider key); `apply` and `subTargets` skip `Disabled` rows so they never enter the pool or get probed; admin edit preserves on-disk `disabled` across a Save that does not model the flag. Provider-level `disabled` is unchanged.
+
 *Last updated: 2026-10-12 (X-OneGW-Decision gains request= and fallback=):*
 The decision header named the leg that served a request but not whether that
 leg was the one the client asked for. `attempts=` cannot answer it: a retry

@@ -390,6 +390,14 @@ type Acct struct {
 	// (token bucket, 0 = uncapped) so the pool rotates before the
 	// upstream's per-account rate limit benches the key reactively.
 	RPM int `toml:"rpm"`
+	// Disabled drops this account from the live rotation pool without
+	// deleting its row. Exhausted / revoked keys stay in the file so the
+	// operator can flip them back on; the pool, subquota probes and
+	// /v1 routing never see them. A half-commented
+	// `[[providers.accounts]]` header (name/key lines commented, header
+	// left live) is also dropped — BurntSushi keeps an empty shell for
+	// it, and that shell used to rotate as a real slot.
+	Disabled bool `toml:"disabled"`
 }
 
 // TierCfg is one model's task-routing metadata (issue #54), declared as
@@ -540,6 +548,22 @@ func (c *Config) Defaults() {
 				p.Accounts = append(p.Accounts, Acct{Name: fmt.Sprintf("key-%d", i+1), APIKey: k})
 			}
 			p.Keys = nil
+		}
+		// Drop the empty shells BurntSushi leaves behind when only the
+		// `[[providers.accounts]]` header is live (name/key commented out).
+		// A named row with no key is kept: that is the pre-sign-in OAuth
+		// shape. `disabled = true` rows stay in the Config so the file and
+		// admin editor still see them; apply() and subTargets skip them
+		// so they never enter the rotation pool.
+		if len(p.Accounts) > 0 {
+			kept := p.Accounts[:0]
+			for _, a := range p.Accounts {
+				if a.Name == "" && a.APIKey == "" && a.DashboardToken == "" {
+					continue
+				}
+				kept = append(kept, a)
+			}
+			p.Accounts = kept
 		}
 	}
 	if keys := os.Getenv("ONEGW_KEYS"); keys != "" {
