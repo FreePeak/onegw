@@ -339,6 +339,7 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 	}
 	rt.SetCombos(combos)
 	rt.SetTaskRouting(cfg.TaskRoutingOn())
+	rt.SetComboFallback(cfg.ComboFallbackOn())
 	// T3 (verdict-driven reorder): eval config from the
 	// systemone provider block; nil/off leaves routing byte-identical.
 	evalCfgs := make(map[string]*provider.EvalCfg)

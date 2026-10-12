@@ -596,3 +596,162 @@ func TestExecuteStopsAfterStreamCommit(t *testing.T) {
 		t.Fatalf("committed stream must not be retried or fallen through, calls=%d", calls)
 	}
 }
+
+// combo_fallback off (default for a live gateway): a multi-leg combo must
+// NOT hop to a later provider/model after the first live target fails.
+// Same-target retries still run; only cross-target fall-through is gated.
+func TestExecuteComboFallbackOffStopsAfterFirstLive(t *testing.T) {
+	r := New(newTestPool())
+	r.SetComboFallback(false)
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+	calls := map[string]int{}
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls[def.Name]++
+		return nil, &types.APIError{Status: 429, Type: "rate_limit_error", Message: "quota"}
+	}
+	got := r.Execute(context.Background(), res, caller, func(a any) {})
+	if got == nil || got.Status != 429 {
+		t.Fatalf("want the first leg's 429, got %v", got)
+	}
+	if calls["p1"] == 0 {
+		t.Fatalf("first live target must be attempted: %v", calls)
+	}
+	if calls["p2"] != 0 {
+		t.Fatalf("combo_fallback off must not try p2: %v", calls)
+	}
+}
+
+// combo_fallback on restores the historical chain (leg N fails → leg N+1).
+func TestExecuteComboFallbackOnFallsThrough(t *testing.T) {
+	r := New(newTestPool())
+	r.SetComboFallback(true)
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+	calls := map[string]int{}
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls[def.Name]++
+		if def.Name == "p1" {
+			return nil, &types.APIError{Status: 429, Type: "rate_limit_error", Message: "quota"}
+		}
+		return "ok", nil
+	}
+	if got := r.Execute(context.Background(), res, caller, func(a any) {}); got != nil {
+		t.Fatalf("want success via p2, got %v", got)
+	}
+	if calls["p2"] != 1 {
+		t.Fatalf("combo_fallback on must try p2: %v", calls)
+	}
+}
+
+// Disabled first leg still skips to the next when fallback is off — the
+// gate is "after a live attempt", not "after any target row".
+func TestExecuteComboFallbackOffSkipsDisabledThenStops(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{
+		Name: "p1", Kind: provider.KindOpenAI, Disabled: true,
+		Accounts: []provider.Account{{Name: "a", APIKey: "k1"}},
+	})
+	p.Set(&provider.Def{
+		Name: "p2", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "b", APIKey: "k2"}},
+	})
+	p.Set(&provider.Def{
+		Name: "p3", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "c", APIKey: "k3"}},
+	})
+	r := New(p)
+	r.SetComboFallback(false)
+	r.SetCombos([]*Combo{{
+		Name: "stack",
+		Targets: []Target{
+			{Provider: "p1", Model: "m1"},
+			{Provider: "p2", Model: "m2"},
+			{Provider: "p3", Model: "m3"},
+		},
+	}})
+	res, _ := r.Resolve("stack")
+	calls := map[string]int{}
+	caller := func(ctx context.Context, def *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		calls[def.Name]++
+		return nil, &types.APIError{Status: 429, Type: "rate_limit_error", Message: "quota"}
+	}
+	got := r.Execute(context.Background(), res, caller, func(a any) {})
+	if got == nil || got.Status != 429 {
+		t.Fatalf("want p2's 429, got %v", got)
+	}
+	if calls["p2"] == 0 || calls["p3"] != 0 {
+		t.Fatalf("skip disabled p1, try live p2, stop: %v", calls)
+	}
+}
+
+// TestResolveBareModelRequiresAdvertiser: a slash-less model must be served
+// by a provider that ADVERTISES it — not by whichever provider happens to be
+// first in config order. Live 2026-10-12: client model "execution" (a combo
+// name no longer in TOML) resolved to provider=xai and came back 404.
+func TestResolveBareModelRequiresAdvertiser(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{Name: "first", Kind: provider.KindOpenAI,
+		Models: []string{"gpt-x"}, Accounts: []provider.Account{{Name: "a", APIKey: "k"}}})
+	p.Set(&provider.Def{Name: "passthru", Kind: provider.KindOpenAI,
+		Accounts: []provider.Account{{Name: "b", APIKey: "k"}}}) // no models = serves anything
+	p.Set(&provider.Def{Name: "second", Kind: provider.KindOpenAI,
+		Models: []string{"other-y"}, Accounts: []provider.Account{{Name: "c", APIKey: "k"}}})
+	r := New(p)
+	r.SetModels([]string{"first/gpt-x", "second/other-y"})
+
+	if res, err := r.Resolve("gpt-x"); err != nil || res.Targets[0].Provider != "first" {
+		t.Fatalf("advertised bare id: %v %v", res, err)
+	}
+	res, err := r.Resolve("other-y")
+	if err != nil || len(res.Targets) != 1 || res.Targets[0].Provider != "second" {
+		t.Fatalf("bare id must go to its advertiser, not the first provider: %+v %v", res, err)
+	}
+	if res, err := r.Resolve("anything-else"); err != nil || res.Targets[0].Provider != "passthru" {
+		t.Fatalf("pass-through provider should take an unadvertised id: %+v %v", res, err)
+	}
+	if d, _ := p.Get("passthru"); d != nil {
+		d.Disabled = true
+	}
+	if _, err := r.Resolve("anything-else"); err == nil || err.Status != 404 || err.Type != "model_not_found" {
+		t.Fatalf("unadvertised id with no pass-through must 404 locally: %+v", err)
+	}
+	// The live bug in one line: "execution" is nobody's model.
+	if _, err := r.Resolve("execution"); err == nil || err.Status != 404 {
+		t.Fatalf("execution must 404 locally when no advertiser/pass-through: %+v", err)
+	}
+}
+
+// TestResolveBareModelAmbiguousFollowsConfigOrder: two providers advertising
+// the same id resolve to the earlier one.
+func TestResolveBareModelAmbiguousFollowsConfigOrder(t *testing.T) {
+	p := provider.NewPool()
+	p.Set(&provider.Def{Name: "a-first", Kind: provider.KindOpenAI,
+		Models: []string{"shared-m"}, Accounts: []provider.Account{{Name: "k1", APIKey: "x"}}})
+	p.Set(&provider.Def{Name: "b-second", Kind: provider.KindOpenAI,
+		Models: []string{"shared-m"}, Accounts: []provider.Account{{Name: "k2", APIKey: "y"}}})
+	r := New(p)
+	r.SetModels([]string{"a-first/shared-m", "b-second/shared-m"})
+	res, err := r.Resolve("shared-m")
+	if err != nil || res.Targets[0].Provider != "a-first" {
+		t.Fatalf("ambiguous bare id: %+v %v", res, err)
+	}
+	if d, _ := p.Get("a-first"); d != nil {
+		d.Disabled = true
+	}
+	if res, err := r.Resolve("shared-m"); err != nil || res.Targets[0].Provider != "b-second" {
+		t.Fatalf("paused advertiser must fall through to the next: %+v %v", res, err)
+	}
+}

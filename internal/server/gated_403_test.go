@@ -71,6 +71,8 @@ func gatedCfg(t *testing.T, provs ...config.ProviderCfg) *config.Config {
 			Name:    "pair",
 			Targets: []string{provs[0].Name + "/" + provs[0].Models[0], provs[1].Name + "/" + provs[1].Models[0]},
 		}}
+		// Historical multi-leg tests pin fall-through; production default is off.
+		cfg.Server.ComboFallback = "on"
 	}
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {

@@ -43,6 +43,13 @@ type Server struct {
 	// "off" (default) = no-op; "on" = active. Env ONEGW_TASK_ROUTING
 	// overrides. Applied on startup and SIGHUP reload.
 	TaskRouting string `toml:"task_routing"`
+	// ComboFallback gates cross-target fall-through inside a combo
+	// (leg N fails → try leg N+1). "off" (default) keeps the first live
+	// target only — same-account pool rotation still runs on that leg,
+	// but a quota/429/5xx/bench never silently switches the client onto
+	// a different provider/model. "on" restores the historical chain.
+	// Env ONEGW_COMBO_FALLBACK overrides. Dashboard Settings toggle.
+	ComboFallback string `toml:"combo_fallback"`
 	// IdempotencyTTL dedups retried requests carrying an Idempotency-Key
 	// (or X-Request-Id) header: an identical (key, body) retry inside the
 	// window coalesces onto the in-flight original or replays its
@@ -578,6 +585,9 @@ func (c *Config) Defaults() {
 	if v := strings.TrimSpace(os.Getenv("ONEGW_TASK_ROUTING")); v != "" {
 		c.Server.TaskRouting = v
 	}
+	if v := strings.TrimSpace(os.Getenv("ONEGW_COMBO_FALLBACK")); v != "" {
+		c.Server.ComboFallback = v
+	}
 	// ONEGW_LISTEN overrides [server] listen outright, the way ONEGW_KEYS
 	// overrides the auth keys. The README ("Set ONEGW_LISTEN or ONEGW_KEYS
 	// to override") and `onegw help` both promise this, but nothing read it
@@ -613,6 +623,14 @@ func (c *Config) ResponseHeaderTimeoutDur() time.Duration {
 // is enabled. Anything other than "on" (case-insensitive) is off.
 func (c *Config) TaskRoutingOn() bool {
 	return strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) == "on"
+}
+
+// ComboFallbackOn reports whether cross-target combo fall-through is
+// enabled. Anything other than "on" (case-insensitive) is off — the
+// default, so a multi-leg combo never switches models without an
+// explicit operator opt-in (dashboard Settings or TOML).
+func (c *Config) ComboFallbackOn() bool {
+	return strings.ToLower(strings.TrimSpace(c.Server.ComboFallback)) == "on"
 }
 
 // EvalStrategy reports the T3 verdict strategy from the config.
@@ -822,11 +840,17 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("provider %s sets proxy = true with no [proxy] pool configured", p.Name)
 		}
 	}
-	// Task routing: accept "" (default off) plus "off" and "on", case-insensitive.
+	// Task routing / combo fallback: accept "" (default off) plus "off"
+	// and "on", case-insensitive.
 	switch strings.ToLower(strings.TrimSpace(c.Server.TaskRouting)) {
 	case "", "off", "on":
 	default:
 		return fmt.Errorf("server.task_routing %q is not \"off\" or \"on\"", c.Server.TaskRouting)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Server.ComboFallback)) {
+	case "", "off", "on":
+	default:
+		return fmt.Errorf("server.combo_fallback %q is not \"off\" or \"on\"", c.Server.ComboFallback)
 	}
 	// Idempotency dedup knobs: a typo'd ttl must fail the load, not
 	// silently replay for the wrong window.

@@ -209,6 +209,7 @@ added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></
   const TITLES = {server:'Server [server]', rotation:'Rotation [rotation]', usage:'Usage [usage]', saver:'Token saver [saver]', update:'Update [update]'};
   const HINTS = {
     'server.task_routing':'task-aware combo reordering: off|on',
+    'server.combo_fallback':'cross-model combo fall-through: off (default)|on',
     'server.idempotency_ttl':'dedup window (Go duration; 0/off disables)',
     'usage.export_password':'usage-export basic-auth password',
     'rotation.billing_parole':'billing-refusal re-probe window',
@@ -230,24 +231,34 @@ added, replaced, cleared and copied: <a href="/admin/ui/keys">API Keys →</a></
       keys.forEach(k => {
         const v = fields[k];
         const row = document.createElement('div'); row.className = 'field mb-1';
+        // off|on knobs (task_routing, combo_fallback) render as checkboxes so the
+        // Settings page is a real toggle, not a free-text field operators mistype.
+        const isOnOff = v === 'on' || v === 'off';
         const isBool = v === 'true' || v === 'false';
         const isNum = /^\d+$/.test(v);
         const id = 'sec-' + sec + '-' + k.replace(/\W/g,'_');
         let input;
-        if (isBool) { input = document.createElement('input'); input.type='checkbox'; input.checked = v==='true'; }
-        else { input = document.createElement('input'); input.type = isNum ? 'number' : (k.includes('password')?'password':'text'); input.value = v; input.spellcheck=false; }
+        if (isBool || isOnOff) {
+          input = document.createElement('input'); input.type='checkbox';
+          input.checked = isOnOff ? v==='on' : v==='true';
+        } else {
+          input = document.createElement('input'); input.type = isNum ? 'number' : (k.includes('password')?'password':'text');
+          input.value = v; input.spellcheck=false;
+        }
         input.id = id;
         const lab = document.createElement('label'); lab.htmlFor = id;
         lab.innerHTML = pretty(k.split('.').pop()) + ' <span class="mono text-mut/60">'+k+'</span>' + (HINTS[sec+'.'+k] ? ' <span class="text-mut/60">— '+HINTS[sec+'.'+k]+'</span>' : ' <span class="text-mut/40">('+k+')</span>');
         row.appendChild(lab); row.appendChild(input); wrap.appendChild(row);
-        inputs[k] = {input, isBool};
+        inputs[k] = {input, isBool, isOnOff};
       });
       const btn = document.createElement('button'); btn.className='btn primary sm'; btn.type='button'; btn.textContent = 'Save '+sec;
       btn.onclick = async () => {
         const settings = {};
         for (const k in inputs) {
-          const {input, isBool} = inputs[k];
-          settings[k] = isBool ? input.checked : (input.type==='number' ? (input.value===''?0:parseInt(input.value,10)) : input.value);
+          const {input, isBool, isOnOff} = inputs[k];
+          if (isOnOff) settings[k] = input.checked ? 'on' : 'off';
+          else if (isBool) settings[k] = input.checked;
+          else settings[k] = input.type==='number' ? (input.value===''?0:parseInt(input.value,10)) : input.value;
         }
         btn.disabled = true; btn.textContent='Saving…';
         try {

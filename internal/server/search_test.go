@@ -68,6 +68,7 @@ func searchCfg(t *testing.T, searxBase string, opts func(*config.ProviderCfg)) *
 	}
 	cfg.Server.DataDir = "memory"
 	cfg.Server.AdminPassword = "pw"
+	cfg.Server.ComboFallback = "on"
 	cfg.Auth.KeyList = []config.AuthKey{{Key: "sk-test"}}
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {

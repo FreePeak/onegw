@@ -380,6 +380,7 @@ func TestPassthroughComboFallsBackPastCapabilityRefusal(t *testing.T) {
 		Name:    "emb-combo",
 		Targets: []string{"plain/plain-emb", "passem/emb-1"},
 	}}
+	cfg.Server.ComboFallback = "on"
 	srv := ptSrv(t, cfg)
 
 	body, _ := json.Marshal(map[string]any{"model": "emb-combo", "input": "x"})

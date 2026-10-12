@@ -127,6 +127,7 @@ func respCfg(t *testing.T, p1, p2 *respUpstream, p1Limit int64, history bool) *c
 		{Name: "jev", Kind: "systemone", BaseURL: p2.srv.URL, APIKey: "sk-jev"},
 	}
 	cfg.Combos = []config.ComboCfg{{Name: "pair", Targets: []string{"p1/m", "p2/m"}}}
+	cfg.Server.ComboFallback = "on"
 	cfg.Responses.History = history
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {

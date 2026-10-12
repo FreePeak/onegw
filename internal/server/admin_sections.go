@@ -237,6 +237,7 @@ var sectionSpecs = map[string]map[string]sectionSpec{
 		"stream_requests":         {"server", kindBool, "false", btos(func(c *config.Config) bool { return c.Server.StreamRequests })},
 		"response_header_timeout": {"server", kindDur, "60s", func(c *config.Config) string { return c.Server.ResponseHeaderTimeout }},
 		"task_routing":            {"server", kindStr, "off", func(c *config.Config) string { return c.Server.TaskRouting }},
+		"combo_fallback":          {"server", kindStr, "off", func(c *config.Config) string { return c.Server.ComboFallback }},
 		"idempotency_ttl":         {"server", kindDur, "5s", func(c *config.Config) string { return c.Server.IdempotencyTTL }},
 		"idempotency_cache":       {"server", kindInt, "128", func(c *config.Config) string { return itoi(int64(c.Server.IdempotencyCache)) }},
 	},

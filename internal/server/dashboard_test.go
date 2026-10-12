@@ -23,6 +23,7 @@ const adminTOML = `
 listen = "127.0.0.1:0"
 
 [server]
+combo_fallback = "on"
 admin_password = "admin"
 data_dir = "memory"
 

@@ -55,6 +55,7 @@ func parkedSubCfg(t *testing.T, subURL, fbURL string) *config.Config {
 		{Name: "fb", Kind: "openai", BaseURL: fbURL, APIKey: "sk-fb", Models: []string{"fb/m"}},
 	}
 	cfg.Combos = []config.ComboCfg{{Name: "pair", Targets: []string{"z/m", "fb/m"}}}
+	cfg.Server.ComboFallback = "on"
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config invalid: %v", err)

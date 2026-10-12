@@ -63,6 +63,7 @@ func quotaCfgWindow(t *testing.T, primary, fallback *countingUpstream, primaryLi
 			Models: []string{"fallback/m"}},
 	}
 	cfg.Combos = []config.ComboCfg{{Name: "pair", Targets: []string{"primary/m", "fallback/m"}}}
+	cfg.Server.ComboFallback = "on"
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config invalid: %v", err)

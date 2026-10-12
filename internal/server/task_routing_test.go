@@ -16,6 +16,7 @@ import (
 // switchable. Both models have declared tiers; only deep reasons.
 const taskRoutingToml = `# task routing test fixture
 [server]
+combo_fallback = "on"
 data_dir = "memory"
 admin_password = "pw-test"
 %s

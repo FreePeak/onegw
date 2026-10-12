@@ -15,7 +15,7 @@ func TestSectionsGetShowsEffectiveDefaults(t *testing.T) {
 	// The fixture sets no [rotation]; GET must still report the gateway's
 	// effective defaults (cooldown_base 10s, and the int 0-sentinel shown as
 	// its built-in 4, not the raw 0), so the UI shows real state.
-	for _, want := range []string{`"rotation"`, `"cooldown_base":"10s"`, `"flap_threshold":"4"`, `"task_routing"`} {
+	for _, want := range []string{`"rotation"`, `"cooldown_base":"10s"`, `"flap_threshold":"4"`, `"task_routing"`, `"combo_fallback"`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("GET sections missing %s:\n%s", want, w.Body.String())
 		}
@@ -80,5 +80,38 @@ func TestSectionsPutRoundTrip(t *testing.T) {
 		if w := adminCall(t, h, http.MethodPut, "/admin/config/sections", body, true); w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: want 400, got %d %s", body, w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestSectionsComboFallbackRoundTrip(t *testing.T) {
+	_, h, path := newTestServerFromFile(t, editTestToml)
+	// Default off must surface on GET even when the file omits the key.
+	w := adminCall(t, h, http.MethodGet, "/admin/config/sections", "", true)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"combo_fallback":"off"`) {
+		t.Fatalf("GET default combo_fallback: %d %s", w.Code, w.Body.String())
+	}
+	// Opt in via dashboard Settings.
+	w = adminCall(t, h, http.MethodPut, "/admin/config/sections",
+		`{"section":"server","settings":{"combo_fallback":"on"}}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT combo_fallback on: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if !strings.Contains(file, `combo_fallback = "on"`) {
+		t.Fatalf("combo_fallback not written:\n%s", file)
+	}
+	w = adminCall(t, h, http.MethodGet, "/admin/config/sections", "", true)
+	if !strings.Contains(w.Body.String(), `"combo_fallback":"on"`) {
+		t.Fatalf("GET after on: %s", w.Body.String())
+	}
+	// Reset to default removes the key from the file.
+	w = adminCall(t, h, http.MethodPut, "/admin/config/sections",
+		`{"section":"server","settings":{"combo_fallback":"off"}}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT combo_fallback off: %d %s", w.Code, w.Body.String())
+	}
+	file = mustReadFile(t, path)
+	if strings.Contains(file, "combo_fallback") {
+		t.Fatalf("combo_fallback should be removed on default off:\n%s", file)
 	}
 }

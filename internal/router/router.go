@@ -37,9 +37,13 @@ type Combo struct {
 
 // Router resolves model strings and executes calls with fallback.
 type Router struct {
-	mu      sync.RWMutex
-	pool    *provider.Pool
-	models  map[string]directRoute
+	mu     sync.RWMutex
+	pool   *provider.Pool
+	models map[string]directRoute
+	// bare indexes advertised ids by BARE model → provider names in
+	// config order (built with SetModels). Slash-less Resolve only
+	// serves a bare id through a provider that lists it.
+	bare    map[string][]string
 	combos  map[string]*Combo
 	aliases map[string]string
 
@@ -69,7 +73,12 @@ type Router struct {
 	evals         map[string]*provider.EvalCfg
 	evalStrategy  string
 	taskRoutingOn bool
-	TaskLog       func(model, detail string)
+	// comboFallbackOn gates cross-target fall-through inside a combo
+	// ([server] combo_fallback). Off (default): after the first live
+	// target is tried, Execute returns that leg's error instead of
+	// hopping to a different provider/model. On: historical chain.
+	comboFallbackOn bool
+	TaskLog         func(model, detail string)
 
 	// SpeedLog receives one #19-ring decision line whenever the
 	// size-aware (prefill) steering changes a combo's serving order.
@@ -95,10 +104,14 @@ func New(pool *provider.Pool) *Router {
 	return &Router{
 		pool:        pool,
 		models:      map[string]directRoute{},
+		bare:        map[string][]string{},
 		combos:      map[string]*Combo{},
 		aliases:     map[string]string{},
 		rr:          map[string]*comboRR{},
 		MaxAttempts: 2,
+		// Unit tests pin the historical multi-leg chain; server.apply
+		// overrides from [server] combo_fallback (default off).
+		comboFallbackOn: true,
 	}
 }
 
@@ -130,14 +143,21 @@ func (r *Router) SetModels(routes []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m := make(map[string]directRoute, len(routes))
+	bare := make(map[string][]string, len(routes))
 	for _, route := range routes {
 		prov, model, ok := strings.Cut(route, "/")
 		if !ok {
 			continue
 		}
 		m[strings.ToLower(route)] = directRoute{provider: prov, model: model}
+		// Keep provider order, one entry per provider: a provider listing
+		// the same id twice must not appear twice in the bare-candidate chain.
+		key := strings.ToLower(model)
+		if last := bare[key]; len(last) == 0 || last[len(last)-1] != prov {
+			bare[key] = append(bare[key], prov)
+		}
 	}
-	r.models = m
+	r.models, r.bare = m, bare
 }
 
 // SetAliases replaces the alias table (alias → "provider/model", combo
@@ -175,6 +195,16 @@ func (r *Router) SetTaskRouting(on bool) {
 	r.mu.Unlock()
 }
 
+// SetComboFallback enables cross-target fall-through inside a combo
+// ([server] combo_fallback). Off (default) keeps the first live target
+// only; on restores the historical multi-leg chain. The server calls it
+// in apply() so a Settings toggle takes effect on the next reload.
+func (r *Router) SetComboFallback(on bool) {
+	r.mu.Lock()
+	r.comboFallbackOn = on
+	r.mu.Unlock()
+}
+
 func (r *Router) SetEvalConfig(evals map[string]*provider.EvalCfg, strategy string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -184,12 +214,11 @@ func (r *Router) SetEvalConfig(evals map[string]*provider.EvalCfg, strategy stri
 
 // KnownModel reports whether model is a name the current route tables can
 // resolve: a configured "provider/model" route, a combo name, an alias
-// (chains followed like Resolve), or a bare model — either advertised in a
-// models table or servable by the bare-model fallback, which Resolve routes
-// to the first configured provider. Consumers of raw client model strings
-// (metrics labels) use it to keep cardinality bounded: unroutable model
-// strings come from unauthenticated client traffic and must not create a
-// new label series per distinct string.
+// (chains followed like Resolve), or a bare model advertised in a models
+// table (or served by a pass-through provider with an empty models list).
+// Consumers of raw client model strings (metrics labels) use it to keep
+// cardinality bounded: unroutable model strings come from unauthenticated
+// client traffic and must not create a new label series per distinct string.
 func (r *Router) KnownModel(model string) bool {
 	if model == "" {
 		return false
@@ -234,14 +263,17 @@ func (r *Router) KnownModel(model string) bool {
 		}
 		return false
 	}
-	// Bare model: advertised in a models table, or the fallback route to
-	// the first configured provider applies.
-	for _, dr := range r.models {
-		if strings.EqualFold(dr.model, lookup) {
+	// Bare model: advertised in a models table, or a pass-through provider
+	// (empty models list) that will take anything.
+	if _, ok := r.bare[strings.ToLower(lookup)]; ok {
+		return true
+	}
+	for _, name := range r.pool.Names() {
+		if d, ok := r.pool.Get(name); ok && !d.Disabled && len(d.Models) == 0 {
 			return true
 		}
 	}
-	return len(r.pool.Names()) > 0
+	return false
 }
 
 // Resolution is the ordered plan for one model string.
@@ -276,7 +308,7 @@ type Resolution struct {
 // Resolve maps a client model string to an ordered target list.
 //   - "provider/model" → single direct target
 //   - combo name       → ordered combo targets
-//   - bare "model"     → matched against any provider's advertised models
+//   - bare "model"     → provider that advertises it (config order; pass-through last)
 func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 	if model == "" {
 		return nil, &types.APIError{Status: 400, Type: "invalid_request", Message: "missing model"}
@@ -337,16 +369,29 @@ func (r *Router) Resolve(model string) (*Resolution, *types.APIError) {
 		}
 		return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
 	}
-	// Bare model: try providers in order that could serve it. Disabled
-	// providers (paused via the dashboard toggle) never win this
-	// fallback — a paused provider must not silently absorb passthrough
-	// traffic that an enabled provider could serve.
-	for _, name := range r.pool.Names() {
+	// Bare model: only a provider that ADVERTISES the id may serve it, and
+	// among advertisers the config order decides. Providers with an empty
+	// `models` list are pass-through — they serve anything — so they follow
+	// the advertisers rather than preempt them. Disabled providers (the
+	// dashboard pause toggle) never win, advertised or not.
+	//
+	// Live 2026-10-12: client model "execution" (a combo name that was
+	// commented out of onegw.toml) resolved to provider=xai — first in
+	// config order — and xAI answered 404 "The model execution does not
+	// exist". Cost: an account slot, an upstream call, and a log row every
+	// client retry. An id nobody advertises is now onegw's own 404 before
+	// any dial.
+	for _, name := range r.bare[strings.ToLower(model)] {
 		if d, ok := r.pool.Get(name); ok && !d.Disabled {
 			return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
 		}
 	}
-	return nil, &types.APIError{Status: 404, Type: "model_not_found", Message: "no provider for model " + model}
+	for _, name := range r.pool.Names() {
+		if d, ok := r.pool.Get(name); ok && !d.Disabled && len(d.Models) == 0 {
+			return &Resolution{Targets: []Target{{Provider: name, Model: model}}}, nil
+		}
+	}
+	return nil, &types.APIError{Status: 404, Type: "model_not_found", Message: "no provider advertises model " + model}
 }
 
 // Request identity rides the context: handlers tag each request with the
@@ -424,8 +469,17 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		r.rotateRoundRobin(res)
 	}
 	var lastErr *types.APIError
+	// triedLive marks that we entered the attempt loop on a real leg.
+	// With combo_fallback off, once that leg ends without success we stop
+	// — later targets stay untried so the client never gets a silent
+	// model switch. Unknown/disabled providers before the first live leg
+	// still skip so the first reachable target can serve.
+	triedLive := false
 	id := IdentityFrom(ctx)
 	for _, t := range res.Targets {
+		if triedLive && res.IsCombo && !r.comboFallbackOn {
+			break
+		}
 		def, ok := r.pool.Get(t.Provider)
 		if !ok {
 			lastErr = &types.APIError{Status: 404, Type: "unknown_provider", Message: "unknown provider " + t.Provider}
@@ -436,7 +490,8 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 			// `disabled = true` in its [[providers]] block): the target
 			// is skipped so a combo falls through to the next leg; a
 			// direct route surfaces an honest 503, not a 404 that would
-			// claim the route never existed.
+			// claim the route never existed. With combo_fallback off the
+			// skip still runs until the first live leg is tried.
 			lastErr = &types.APIError{Status: 503, Type: "provider_disabled", Message: "provider " + t.Provider + " is disabled"}
 			continue
 		}
@@ -487,6 +542,7 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		// refusal marks the iteration that ended this leg for good (see the
 		// dispatch below); read by the post-loop retry_forever check.
 		var refusal bool
+		triedLive = true
 		for attempt := 0; retryForever || attempt < max(1, r.MaxAttempts) || benched > 0; {
 			acct, poolReady := def.NextAccount(id)
 			if acct == nil && retryForever {
