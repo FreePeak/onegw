@@ -128,6 +128,7 @@ func TestReasoningEchoSynthesizedOnToolLoop(t *testing.T) {
 	})
 	cfg.Combos = []config.ComboCfg{{Name: "free", Targets: []string{
 		"oc/deepseek-v4.1-flash", "fb/mimo-v2.5"}}}
+	cfg.Server.ComboFallback = "on"
 	cfg.Defaults()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config invalid: %v", err)

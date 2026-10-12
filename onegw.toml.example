@@ -64,6 +64,15 @@ retention_days = 90
 # Decision lines appear in /admin logs when the order actually changes.
 # ONEGW_TASK_ROUTING=on|off overrides.
 # task_routing = "on"
+#
+# Cross-target combo fall-through: with "on", a multi-leg combo tries leg
+# N+1 when leg N fails (quota, 429, 5xx, model bench, …) — the historical
+# behaviour. Off (default) keeps the first live target only: same-account
+# pool rotation still runs on that leg, but the gateway never silently
+# switches the client onto a different provider/model. Toggle from the
+# dashboard Settings page (Configuration sections → server.combo_fallback)
+# or set ONEGW_COMBO_FALLBACK=on|off.
+# combo_fallback = "on"
 
 # --- Providers -------------------------------------------------------------
 

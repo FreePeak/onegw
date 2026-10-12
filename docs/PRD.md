@@ -2,6 +2,9 @@
 
 *Last updated: 2026-10-12 (per-account `disabled = true` is honoured): `[[providers.accounts]]` gained a real `disabled` field. Before this, the TOML key was silently ignored (no `Acct.Disabled`), so an exhausted opencode key the operator had "disabled" kept rotating after reload/restart. `config.Defaults` drops half-commented empty shells (`[[providers.accounts]]` header left live, name/key commented — BurntSushi kept a `{Name:"",APIKey:""}` slot that inherited the provider key); `apply` and `subTargets` skip `Disabled` rows so they never enter the pool or get probed; admin edit preserves on-disk `disabled` across a Save that does not model the flag. Provider-level `disabled` is unchanged.
 
+*Last updated: 2026-10-12 (combo_fallback off by default; dashboard Settings toggle):*
+Cross-target combo fall-through (`leg N fails → leg N+1`) is now gated by `[server] combo_fallback` (`off`|`on`, default **off**). Off keeps the first live target only — same-account pool rotation still runs on that leg, but a quota/429/5xx/bench never silently switches the client onto a different provider/model (the operator complaint: auto-switch onto a combo leg without permission). `on` restores the historical multi-leg chain. Toggle from dashboard Settings → Configuration sections → `server.combo_fallback`, or `ONEGW_COMBO_FALLBACK=on|off`. Wired through `config.ComboFallbackOn` → `Router.SetComboFallback` → `Execute` (`triedLive` gate). Unit tests cover off/on/disabled-skip; e2e helpers that assert fall-through opt in explicitly.
+
 *Last updated: 2026-10-12 (X-OneGW-Decision gains request= and fallback=):*
 The decision header named the leg that served a request but not whether that
 leg was the one the client asked for. `attempts=` cannot answer it: a retry
