@@ -866,10 +866,15 @@ func (c *Config) Validate() error {
 			if !strings.Contains(t, "/") {
 				return fmt.Errorf("combo %s target %q must be provider/model", cb.Name, t)
 			}
-			prov := t[:strings.Index(t, "/")]
-			if !names["provider:"+prov] {
-				return fmt.Errorf("combo %s references unknown provider %s", cb.Name, prov)
-			}
+			// A missing provider is allowed: operators park a leg by
+			// commenting/deleting its [[providers]] block (or the dashboard
+			// disable toggle does) while the combo keeps the target as a
+			// documented fallback. Router.Execute already answers
+			// unknown_provider / provider_disabled per leg and falls
+			// through. Refusing the whole load bricked reload the moment
+			// any combo still pointed at the parked provider (live
+			// xiaomi 2026-10-12). Aliases stay strict — they are a single
+			// client-typed hop, not a fallback chain.
 		}
 	}
 	// Aliases: keys must be new names, targets must resolve (transitively,

@@ -898,9 +898,40 @@ func comboScalars(req comboEditReq) []struct{ key, rendered string } {
 	return out
 }
 
+// refuseUnknownComboTargets rejects editor-authored targets whose
+// provider is not a live (uncommented) [[providers]] name in lines.
+// config.Validate deliberately allows dangling legs on load so a
+// commented-out provider does not brick reload; the editor path is
+// stricter so a typo cannot be saved.
+func refuseUnknownComboTargets(lines []string, targets []string) error {
+	live := map[string]bool{}
+	for _, b := range scanBlocks(lines, "[[providers]]") {
+		if n, ok := blockName(lines, b); ok {
+			live[n] = true
+		}
+	}
+	for _, t := range targets {
+		i := strings.Index(t, "/")
+		if i <= 0 {
+			continue // shape checked by Validate
+		}
+		prov := t[:i]
+		if !live[prov] {
+			return badConfigEdit{fmt.Errorf("combo target %q references unknown provider %s", t, prov)}
+		}
+	}
+	return nil
+}
+
 // spliceCombo adds or updates one [[combo]] block. Update rewrites the
 // targets and strategy lines; comments and other lines are preserved.
+// Unknown provider names are refused here even though config.Validate
+// allows dangling combo legs on load: an editor Save is an intentional
+// write, and a typo'd target must not land on disk.
 func spliceCombo(lines []string, req comboEditReq) ([]string, string, error) {
+	if err := refuseUnknownComboTargets(lines, req.Targets); err != nil {
+		return nil, "", err
+	}
 	for _, b := range scanBlocks(lines, "[[combo]]") {
 		name, ok := blockName(lines, b)
 		if !ok || name != req.Name {

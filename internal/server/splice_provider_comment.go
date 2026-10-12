@@ -13,9 +13,10 @@ import (
 // config.Load skips it entirely and the provider drops out of the
 // live pool. Comments and nested tables are carried through (they
 // just also get commented — that's fine, they stay commented).
-// Any [[combo]] block targeting the disabled provider is also
-// commented out (it can't resolve offline); it is uncommented
-// on re-enable.
+// Combo targets that name the disabled provider stay in the file:
+// Validate allows dangling combo legs and Router.Execute skips them
+// at runtime, so parking one provider does not delete a multi-leg
+// fallback chain. Re-enable just restores the provider block.
 //
 // disabled=false: uncomment only lines that were commented
 // (lines starting with "#") in the provider's block range
@@ -43,23 +44,6 @@ func spliceProviderComment(lines []string, name string, disabled bool) ([]string
 		}
 		if !providerFound {
 			return nil, fmt.Errorf("provider %s not found in config", name)
-		}
-		// Also comment out any [[combo]] blocks that reference
-		// the disabled provider — they can't resolve offline.
-		for _, b := range scanBlocks(lines, "[[combo]]") {
-			_, ok := blockName(lines, b)
-			if !ok {
-				continue
-			}
-			for i := b.start; i < b.end; i++ {
-				t := strings.TrimSpace(lines[i])
-				if strings.HasPrefix(t, "targets") && strings.Contains(t, name+"/") {
-					for j := b.start; j < b.end; j++ {
-						candidate[j] = "#" + candidate[j]
-					}
-					break
-				}
-			}
 		}
 		if err := validateLines(candidate); err != nil {
 			return nil, err

@@ -1647,6 +1647,32 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, c := range cfg.Combos {
+		// Skip combos whose every leg names a missing or paused provider:
+		// after an operator parks xiaomi (or the dashboard disable toggle
+		// comments it out) a leftover single-leg combo must not keep
+		// advertising a name that can only 404. Multi-leg combos with at
+		// least one live provider stay listed so clients can still hit the
+		// remaining chain.
+		live := false
+		for _, t := range c.Targets {
+			i := strings.Index(t, "/")
+			if i <= 0 {
+				continue
+			}
+			prov := t[:i]
+			for _, p := range cfg.Providers {
+				if p.Name == prov && !p.Disabled {
+					live = true
+					break
+				}
+			}
+			if live {
+				break
+			}
+		}
+		if !live {
+			continue
+		}
 		add(c.Name)
 	}
 	// Aliases surface as first-class model ids so clients can discover them.

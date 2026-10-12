@@ -804,7 +804,7 @@ round-robin per request by default. Park one key without deleting it with
 pool (and from subscription probes) while the row stays in the file. A
 half-commented account header (`[[providers.accounts]]` left live, name/key
 commented) is treated the same way: the empty shell is dropped so it cannot
-inherit the provider key. `sticky = "5m"` (a duration, per
+inherit the provider key. Parking a whole provider (comment out / delete its `[[providers]]` block, or dashboard disable) is safe even when combos still list it — reload keeps the dangling leg and the router skips it at request time. `sticky = "5m"` (a duration, per
 provider) instead pins one account to a request identity for that window —
 the first call picks the next account in rotation and reuses it, keeping
 upstream prompt caches warm across repeat calls. The identity is the
