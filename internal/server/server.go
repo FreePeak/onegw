@@ -219,6 +219,15 @@ func (s *Server) apply(cfg *config.Config, initial bool) error {
 		}
 		if len(p.Accounts) > 0 {
 			for _, a := range p.Accounts {
+				if a.Disabled {
+					// Defaults() already drops these; keep the gate here so a
+					// hand-built Config (tests, future callers) cannot put a
+					// parked account back into rotation.
+					continue
+				}
+				if a.Name == "" && a.APIKey == "" && a.DashboardToken == "" {
+					continue
+				}
 				key := a.APIKey
 				if key == "" {
 					// Inherit the provider-level credential. `api_key =` and

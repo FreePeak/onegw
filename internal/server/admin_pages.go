@@ -1088,6 +1088,7 @@ type acctEditView struct {
 	RPM         int    `json:"rpm,omitempty"`
 	HasKey      bool   `json:"has_key,omitempty"`
 	Invalidated bool   `json:"invalidated,omitempty"` // terminal billing refusal (#80)
+	Disabled    bool   `json:"disabled,omitempty"`    // operator-parked out of rotation
 	OAuth       string `json:"oauth,omitempty"`       // device-flow service profile ("xai"); "" = static key
 	Owner       string `json:"owner,omitempty"`       // borrowed session: the "provider/account" it belongs to
 }
@@ -1131,7 +1132,7 @@ func providerEditViews(st *state) []providerEditView {
 		for _, a := range src {
 			v.Accounts = append(v.Accounts, acctEditView{
 				Name: a.Name, BaseURL: a.BaseURL, Weight: a.Weight, RPM: a.RPM,
-				HasKey: a.APIKey != "", Invalidated: term[a.Name],
+				HasKey: a.APIKey != "", Invalidated: term[a.Name], Disabled: a.Disabled,
 				OAuth: oauth[a.Name].Service, Owner: oauth[a.Name].Owner,
 			})
 		}
@@ -1521,7 +1522,6 @@ func (s *Server) playgroundPage(w http.ResponseWriter, r *http.Request) {
 		ClientKeys []keyView
 	}{providers, clientKeys})
 }
-
 
 type settingsView struct {
 	PID         int
