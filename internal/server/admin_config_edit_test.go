@@ -401,10 +401,9 @@ func TestProviderDisabledToggleUnauthorized(t *testing.T) {
 }
 
 // A paused provider stops being advertised: its model ids (and any
-// searxng canonical id) vanish from /v1/models. The combo that
-// referenced it is commented out too (a combo cannot reference a
-// provider that is commented out — config.Load rejects that), so
-// neither the provider nor the combo is advertised.
+// searxng canonical id) vanish from /v1/models. A combo whose only leg
+// named that provider is also dropped from /v1/models (no live leg left),
+// even though the combo block stays on disk so re-enable restores it.
 func TestDisabledProviderNotAdvertised(t *testing.T) {
 	srv, h, _ := newTestServerFromFile(t, editTestToml)
 	w := adminCall(t, h, http.MethodPatch, "/admin/config/providers/p1/disabled", `{"disabled":true}`, true)
