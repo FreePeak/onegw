@@ -1,3 +1,30 @@
+*Last updated: 2026-10-13 (a model bench is a live verdict: combo_fallback=off stops on it):*
+`combo_fallback = off` is supposed to keep a client on the leg it asked for — a multi-leg combo
+tries the first LIVE target only, so a failure never becomes a silent model switch. `Router.Execute`
+tested that with `triedLive`, and one `continue` in the loop kept the flag unset: the per-model
+lockout (`BenchModel` → 503 `provider_model_benched`) skipped the target like a pre-live
+disabled/unknown-provider row, so the request walked on to the NEXT leg. Live 2026-10-13: the
+`execution` combo's first leg (`opencode/step-5-preview-free`) was benched by a burst of upstream
+`429 "Endpoint is unavailable."`; the gateway answered with `opencode-free/big-pickle` and
+`X-OneGW-Decision: … fallback=true` — a different model under the client's requested name, and one
+that cannot serve at all (every keyless `opencode-free` call answers
+`403 FreeTierError "…can only be used from within OpenCode"`; re-probed on both tiers with the CLI
+User-Agent and the CLI session shape). The bench now sets `triedLive` and ends the leg (surface the
+bench's own 503 + `Retry-After`); `combo_fallback = on` keeps master's fall-through, and a disabled
+or unknown provider still SKIPS, since that is operator config rather than an upstream verdict.
+Pinned by `internal/router/combo_bench_fallthrough_test.go` (off: 503, zero sibling calls; on:
+fall-through; direct route: unchanged 503; disabled first leg: still skips).
+
+Same change, catalog half: `step-5-preview-free` — served on the Go lane, absent from
+`openCodeGoModels` — plus the other ids from the live `GET /zen/go/v1/models` listing
+(`claude-haiku-5-5`, `deepseek-flash`, `deepseek-v4.1-flash`, `gpt-6-luna`, `grok-4.7`,
+`longcat-2.5-preview-free`, `mimo-v2.6-flash`, `mimo-v2.6-pro`, `space-bunny`, `cat-jam-free`) are
+in the curated catalog, which is a SUPERSET of the live listing on purpose — retired ids stay so a
+config- or client-pinned id keeps resolving. `TestDefaultModelsOpenCode` pins membership, not a
+count. Live config: `retry_forever = ["step-5-preview-free", "longcat-2.5-preview-free"]` so the
+429 burst is waited out on the target instead of ending the leg, and the `execution` combo is
+single-target (the dead `opencode-free` leg removed).
+
 *Last updated: 2026-10-12 (combo legs may dangle after a provider is parked): commenting out or deleting a [[providers]] block (or the dashboard disable toggle) no longer bricks config reload when combos still list that provider as a fallback leg. Validate keeps the `provider/model` shape check but drops the hard "unknown provider" refusal for combo targets; Router.Execute already skips missing/disabled legs. Admin combo Save still rejects typo'd providers. /v1/models hides combos with no live leg. Live trigger: parking xiaomi while dev/planning/execution still targeted xiaomi/mimo-v2.6-flash.
 
 *Last updated: 2026-10-12 (per-account `disabled = true` is honoured): `[[providers.accounts]]` gained a real `disabled` field. Before this, the TOML key was silently ignored (no `Acct.Disabled`), so an exhausted opencode key the operator had "disabled" kept rotating after reload/restart. `config.Defaults` drops half-commented empty shells (`[[providers.accounts]]` header left live, name/key commented — BurntSushi kept a `{Name:"",APIKey:""}` slot that inherited the provider key); `apply` and `subTargets` skip `Disabled` rows so they never enter the pool or get probed; admin edit preserves on-disk `disabled` across a Save that does not model the flag. Provider-level `disabled` is unchanged.

@@ -977,23 +977,35 @@ func (k Kind) DefaultBaseURL() string {
 }
 
 // OpenCode Zen Go catalog: the live subscription model list (verified via
-// GET /zen/go/v1/models, 2026-09-08; union-alpha added 2026-09-17).
-// Chat-capable models route to /v1/chat/completions; the Responses-only
-// families (gpt-*, grok-*, muse-spark-*) route to /v1/responses — see
-// ResponsesOnlyModel; union-alpha routes to /v1/messages — see
-// AnthropicOnlyModel.
+// GET /zen/go/v1/models, re-probed 2026-10-13: 39 ids). Chat-capable models
+// route to /v1/chat/completions; the Responses-only families (gpt-*,
+// grok-*, muse-spark-*) route to /v1/responses — see ResponsesOnlyModel;
+// union-alpha routes to /v1/messages — see AnthropicOnlyModel.
+//
+// Entries the live listing no longer serves are kept on purpose: they are
+// what a config-pinned or client-pinned id resolves against, and a curated
+// list that silently drops an id turns a working pin into a 404. The
+// listing is the source of truth for ADDITIONS (step-5-preview-free was
+// missing while the vendor served it on the Go lane), never for deletions.
 var openCodeGoModels = []string{
+	"cat-jam-free",
+	"claude-haiku-5-5",
+	"deepseek-flash",
 	"deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro",
+	"deepseek-v4.1-flash",
 	"glm-5", "glm-5.1", "glm-5.2", "glm-5.3", "glm-5.3-flash",
-	"gpt-5.6-luna",
-	"grok-4.5", "grok-4.6",
+	"gpt-5.6-luna", "gpt-6-luna",
+	"grok-4.5", "grok-4.6", "grok-4.7",
 	"hy3", "hy3-preview", "hy4-preview",
 	"kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code", "kimi-k3",
-	"longcat-2.0",
+	"longcat-2.0", "longcat-2.5-preview-free",
 	"mimo-v2-omni", "mimo-v2-pro", "mimo-v2.5", "mimo-v2.5-pro",
+	"mimo-v2.6-flash", "mimo-v2.6-pro",
 	"minimax-m2.5", "minimax-m2.7", "minimax-m3",
 	"muse-spark-1.2-contributor", "muse-spark-1.3-contributor",
 	"omen-alpha",
+	"space-bunny",
+	"step-5-preview-free",
 	"union-alpha",
 	"qwen3.5-plus", "qwen3.6-plus", "qwen3.7-max", "qwen3.7-plus",
 	"qwen3.8-flash", "qwen3.8-max",

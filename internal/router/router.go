@@ -504,15 +504,14 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 		retryForever := def.RetryForeverModel(t.Model)
 		if benched, ready := def.ModelBenched(t.Model); benched {
 			// Per-model lockout (BenchModel): Do benched this
-			// (provider, model) pair after a model-scoped upstream
-			// refusal (Zhipu model_access_denied 403, model_not_found
-			// 404). Skip the target with ZERO upstream attempts — the
-			// refusal indicts the model, not the account, so burning
-			// the pool re-discovers the same verdict once per key. A
-			// combo falls through to the next leg; a direct route
-			// surfaces an honest 503 whose Retry-After names the bench
-			// expiry (mirrors the disabled-provider contract above and
-			// DefaultPoolEmptyError's recovery hint).
+			// (provider, model) pair after an upstream refusal (a
+			// model-scoped 403/404, a burst/concurrency wall, a
+			// header-timeout storm). Skip the target with ZERO upstream
+			// attempts — the refusal indicts the model, not the account,
+			// so burning the pool re-discovers the same verdict once per
+			// key. A direct route surfaces an honest 503 whose Retry-After
+			// names the bench expiry (mirrors the disabled-provider
+			// contract above and DefaultPoolEmptyError's recovery hint).
 			if retryForever {
 				// A retry_forever target waits the bench out instead of
 				// skipping the leg: the bench is itself a consequence of
@@ -527,6 +526,22 @@ func (r *Router) Execute(ctx context.Context, res *Resolution, call Caller, onRe
 					RetryAfter: strconv.FormatInt(int64(time.Until(ready).Seconds())+1, 10),
 					Message: fmt.Sprintf("provider %s: model %s benched until %s",
 						t.Provider, t.Model, ready.Format(time.RFC3339))}
+				// combo_fallback off: the bench is a live verdict on the
+				// model the client asked for, so it ENDS the leg like any
+				// other failure. Falling through to a sibling would hand
+				// back a DIFFERENT model under the client's requested name
+				// — the silent switch this gate exists to prevent (live
+				// 2026-10-13: `execution` resolved to
+				// opencode/step-5-preview-free, benched on a 429 burst,
+				// and was answered by opencode-free/big-pickle with
+				// fallback=true). Surface the bench's own 503 + Retry-After
+				// instead; the client's retry lands on the same model once
+				// the bench lifts. A disabled or unknown provider still
+				// SKIPS (operator config, not an upstream verdict — see the
+				// disabled-skip contract above and its test).
+				if res.IsCombo && !r.comboFallbackOn {
+					break
+				}
 				continue
 			}
 		}
