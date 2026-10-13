@@ -88,12 +88,18 @@ func TestDoOpencodeClientSessionForwarded(t *testing.T) {
 
 func TestDefaultModelsOpenCode(t *testing.T) {
 	m := DefaultModels(KindOpenCode)
-	if len(m) != 36 {
-		t.Fatalf("catalog = %d models, want the live 36", len(m))
+	// The catalog is a SUPERSET of the live listing on purpose: every id
+	// the vendor serves must be here (step-5-preview-free regressed that
+	// way — served on the Go lane, absent from the curated list), while
+	// retired ids stay so a config- or client-pinned id keeps resolving.
+	// Pin the membership, not a count that a vendor addition would break.
+	if len(m) < 39 {
+		t.Fatalf("catalog = %d models, want at least the live 39", len(m))
 	}
-	// Responses-only families are advertised and routed to /v1/responses;
-	// union-alpha is advertised and routed to /v1/messages.
-	for _, id := range []string{"grok-4.5", "grok-4.6", "gpt-5.6-luna", "muse-spark-1.3-contributor", "union-alpha"} {
+	for _, id := range []string{
+		"step-5-preview-free", // the Go-lane free preview this test exists for
+		"grok-4.5", "grok-4.6", "gpt-5.6-luna", "muse-spark-1.3-contributor", "union-alpha",
+	} {
 		if !slices.Contains(m, id) {
 			t.Fatalf("catalog missing %s", id)
 		}
