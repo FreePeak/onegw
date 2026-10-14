@@ -131,6 +131,46 @@ func TestExecuteRetryForeverStaysOnTarget(t *testing.T) {
 	}
 }
 
+// Live 2026-10-14 (opencode/step-5-preview-free seq 1408): the Go-lane free
+// preview flaps HTTP 429 + type server_error + "Endpoint is unavailable."
+// That shape must classify as a shared wall (not a per-key OverQuota), so
+// retry_forever rides it out on THIS target instead of cooling healthy
+// keys and surfacing the 429 after MaxAttempts.
+func TestExecuteRetryForeverRidesOpenCodeEndpointUnavailable429(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	p := retryForeverPool()
+	def, _ := p.Get("p1")
+	def.RetryForever = []string{"step-5-preview-free"}
+	r, res := retryForeverCombo(t, p, "step-5-preview-free")
+
+	var p1n, p2n int
+	caller := func(_ context.Context, d *provider.Def, acct *provider.Account, model string) (any, *types.APIError) {
+		if d.Name == "p2" {
+			p2n++
+			return "p2", nil
+		}
+		p1n++
+		if p1n <= 3 {
+			return nil, &types.APIError{
+				Status:  429,
+				Type:    "server_error",
+				Message: "Upstream request failed: Endpoint is unavailable.",
+			}
+		}
+		return "ok", nil
+	}
+	got := r.Execute(ctx, res, caller, func(any any) {})
+	if got != nil {
+		t.Fatalf("retry_forever must ride out endpoint-unavailable 429s, got %v", got)
+	}
+	if p1n != 4 {
+		t.Fatalf("p1 attempts=%d, want 4 (3 walls + answer)", p1n)
+	}
+	if p2n != 0 {
+		t.Fatalf("fell through to p2 %d times — must stay on step-5", p2n)
+	}
+}
 // A 403 is NOT one of retry_forever's retried classes — no variant
 // of retry clears a credential refusal — but it is also not a reason
 // to leave the target: the knob means "this leg or nothing", so the

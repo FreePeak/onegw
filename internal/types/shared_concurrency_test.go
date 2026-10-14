@@ -76,3 +76,27 @@ func TestSharedConcurrencyMatchesOpenRouterSharedPool(t *testing.T) {
 		t.Fatal("per-key daily free-models limit must keep the account ladder")
 	}
 }
+
+// OpenCode Go-lane free/preview models flap with HTTP 429 + type
+// server_error + "Upstream request failed: Endpoint is unavailable."
+// (live 2026-10-14 seq 1408 on opencode/step-5-preview-free, account
+// harvey): both pool accounts 429 in the same second, then the same
+// credentials answer 200 seconds later. The wording is a shared model
+// endpoint outage, not a per-key budget — must classify as shared so
+// Do skips the account ladder and retry_forever can wait the wall out.
+func TestSharedConcurrencyOpenCodeEndpointUnavailable429(t *testing.T) {
+	const msg = "Upstream request failed: Endpoint is unavailable."
+	if !(&APIError{Status: 429, Type: "server_error", Message: msg}).SharedConcurrency() {
+		t.Fatalf("OpenCode endpoint-unavailable 429 must classify as shared: %q", msg)
+	}
+	// Message alone (no type) still matches — some edges drop the type.
+	if !(&APIError{Status: 429, Message: msg}).SharedConcurrency() {
+		t.Fatal("endpoint-unavailable wording alone must classify as shared")
+	}
+	// 503 form already rides Retryable(); keep SharedConcurrency false so
+	// it does not pick up the 2s shared-wall Retry-After stamp intended
+	// for 429 walls (503s already fall through / retry as 5xx).
+	if (&APIError{Status: 503, Type: "server_error", Message: msg}).SharedConcurrency() {
+		t.Fatal("503 endpoint-unavailable must stay on the 5xx path, not SharedConcurrency")
+	}
+}

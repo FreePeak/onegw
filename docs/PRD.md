@@ -1,3 +1,15 @@
+*Last updated: 2026-10-14 (OpenCode Go-lane `Endpoint is unavailable` 429 is a shared wall):*
+`opencode/step-5-preview-free` (and the other Go-lane free/preview ids) flap with
+HTTP **429** + `type=server_error` + `Upstream request failed: Endpoint is unavailable.`
+(live seq 1408 on account harvey, both pool keys 429 in the same second, then 200s
+seconds later). `SharedConcurrency()` only matched real rate/concurrency wording, so
+the shape was treated as a **per-key OverQuota**: `Do` cooled healthy accounts on the
+ladder, and even with `retry_forever = ["step-5-preview-free"]` the leg burned
+`MaxAttempts` and surfaced the 429 to the client. The unavailable wording is now a
+shared-wall match: ladder skipped, model parked briefly, `retry_forever` waits it out
+on the same target. Pinned by `TestSharedConcurrencyOpenCodeEndpointUnavailable429` and
+`TestExecuteRetryForeverRidesOpenCodeEndpointUnavailable429`.
+
 *Last updated: 2026-10-13 (a model bench is a live verdict: combo_fallback=off stops on it):*
 `combo_fallback = off` is supposed to keep a client on the leg it asked for — a multi-leg combo
 tries the first LIVE target only, so a failure never becomes a silent model switch. `Router.Execute`

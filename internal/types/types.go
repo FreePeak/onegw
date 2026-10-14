@@ -653,6 +653,22 @@ func (e *APIError) SharedConcurrency() bool {
 		strings.Contains(probe, "free usage limit") {
 		return true
 	}
+	// OpenCode Go-lane free/preview models (step-5-preview-free,
+	// longcat-2.5-preview-free, …) flap with HTTP 429 + type server_error
+	// and message "Upstream request failed: Endpoint is unavailable."
+	// (live 2026-10-13/14: seqs 1408-1411, 1434-1439). The wording is a
+	// shared model-endpoint outage, not a per-key budget: both accounts
+	// of the pool 429 in the same second, then the same credentials
+	// answer 200 seconds later. Misclassifying it as OverQuota cools
+	// healthy keys on the ladder and surfaces the 429 after MaxAttempts
+	// even when retry_forever is set (the knob only rides shared walls
+	// and 5xx — a bare per-key 429 burns attempts then ends the leg).
+	// Match the unavailable wording on any 429 so Do skips the ladder,
+	// SharedWall parks the model briefly, and retry_forever waits it out.
+	if strings.Contains(probe, "endpoint is unavailable") ||
+		(strings.Contains(probe, "server_error") && strings.Contains(probe, "unavailable")) {
+		return true
+	}
 	return strings.Contains(probe, "concurrency limit") ||
 		modelLimitRe.MatchString(e.Code+" "+e.Message) ||
 		strings.Contains(probe, "backendadmissionrejected") ||
