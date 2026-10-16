@@ -1,3 +1,17 @@
+*Last updated: 2026-10-16 (the request-log row carries its zeros):*
+`logEntry`'s counters were all `json:",omitempty"`, so a genuine zero was
+**absent** from `GET /admin/api/v1/logs` and `dashboard/templates/logs.html`
+rendered the missing key as `undefined` — a 200 with a real 0 output read on
+the dashboard as `in 319.6K · out undefined · cached undefined · saved 3674`,
+which was reported on 2026-10-14 as "grok-4.5 returns no data". No request
+data was ever lost: the row is a real 200 whose output was 0. Every counter
+(`in`, `out`, `cache_read`, `saved`, `ms`, `tps`, `e2e_ms`, `dtps`) now
+serializes its zero; only genuinely-absent text stays omitted. Pinned by
+`TestRequestLogAPIKeepsZeroCounters`. The same zero shape reaches a row when
+the CLIENT disconnects mid-stream (2026-10-16: request → first SSE bytes →
+socket RST records `200` with `out`/`cache_read` zero and no upstream error),
+which the dashboard now shows as `out 0` instead of `undefined`.
+
 *Last updated: 2026-10-14 (OpenCode Go-lane `Endpoint is unavailable` 429 is a shared wall):*
 `opencode/step-5-preview-free` (and the other Go-lane free/preview ids) flap with
 HTTP **429** + `type=server_error` + `Upstream request failed: Endpoint is unavailable.`

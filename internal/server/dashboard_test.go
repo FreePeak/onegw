@@ -257,6 +257,34 @@ func TestRequestLogAgeClear(t *testing.T) {
 	}
 }
 
+// A zero counter must reach the JSON as a zero, not vanish: the dashboard
+// renders e.out row by row, and an omitted key printed as `undefined`. The
+// 2026-10-14 report ("grok 200 with 0 output returned no data") was this
+// rendering, so the wire shape is pinned here rather than in the template.
+func TestRequestLogAPIKeepsZeroCounters(t *testing.T) {
+	srv, h := newAdminSrv(t, "")
+	srv.reqlog.record(logEntry{TS: time.Now().Unix(), Model: "m1", Provider: "p1", Code: 200, In: 319611})
+	w := do(t, h, adminReq(t, "/admin/api/v1/logs?limit=1"))
+	var raw struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Entries) != 1 {
+		t.Fatalf("entries: %+v", raw.Entries)
+	}
+	for _, k := range []string{"in", "out", "cache_read", "saved", "ms", "tps", "e2e_ms", "dtps"} {
+		v, ok := raw.Entries[0][k]
+		if !ok {
+			t.Fatalf("%q missing from the log row — a zero read as `undefined` on the dashboard: %+v", k, raw.Entries[0])
+		}
+		if v == nil {
+			t.Fatalf("%q is null, want 0: %+v", k, raw.Entries[0])
+		}
+	}
+}
+
 func TestObserveLogClassifiesKinds(t *testing.T) {
 	srv, _ := newAdminSrv(t, "")
 	srv.observeLog("p1", "m1", "acct-1", 200, "", typesUsage(3, 9), 7, "", 0, 0, 25, 12.5)
