@@ -225,26 +225,32 @@ func (s *Server) healthFrame() string {
 // the provider account (key name) the attempt ran on — empty when the
 // request never got as far as an account pick (no_route, saturated).
 type logEntry struct {
-	Seq       int64  `json:"seq"`
-	TS        int64  `json:"ts"` // unix seconds
-	Model     string `json:"model,omitempty"`
-	Provider  string `json:"provider,omitempty"`
-	Account   string `json:"account,omitempty"`
-	Code      int    `json:"code"`
-	Kind      string `json:"kind,omitempty"` // "" ok | upstream_error | budget_saturated | no_route
-	In        int64  `json:"in,omitempty"`
-	Out       int64  `json:"out,omitempty"`
-	CacheRead int64  `json:"cache_read,omitempty"`
-	Saved     int64  `json:"saved,omitempty"`
+	Seq      int64  `json:"seq"`
+	TS       int64  `json:"ts"` // unix seconds
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Account  string `json:"account,omitempty"`
+	Code     int    `json:"code"`
+	Kind     string `json:"kind,omitempty"` // "" ok | upstream_error | budget_saturated | no_route
+	// The counters are deliberately NOT omitempty: a zero is a fact the
+	// dashboard renders ("out 0", "cached 0"), and dropping the key made
+	// logs.html print `undefined` for every zero-output row — the report
+	// that opened this (2026-10-14: a 200 with a real 0 output read as
+	// "grok returned no data"). Only genuinely-absent text stays omitted.
+	In        int64  `json:"in"`
+	Out       int64  `json:"out"`
+	CacheRead int64  `json:"cache_read"`
+	Saved     int64  `json:"saved"`
 	Err       string `json:"err,omitempty"`
 	// Decode phase of the serving attempt: duration in ms and output
-	// tokens/sec (0 when unknown — failures, synthetic replies).
-	Ms  int64   `json:"ms,omitempty"`
-	Tps float64 `json:"tps,omitempty"`
+	// tokens/sec (0 when unknown — failures, synthetic replies). Zero is
+	// still a fact the dashboard prints, so no omitempty here either.
+	Ms  int64   `json:"ms"`
+	Tps float64 `json:"tps"`
 	// End-to-end client view of the winning attempt: whole-request wall in
 	// ms and delivered tok/s (0 when the request had no delivery context).
-	E2EMs int64   `json:"e2e_ms,omitempty"`
-	DTps  float64 `json:"dtps,omitempty"`
+	E2EMs int64   `json:"e2e_ms"`
+	DTps  float64 `json:"dtps"`
 }
 
 type requestLog struct {
