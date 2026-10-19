@@ -545,6 +545,15 @@ kind = "opencode"
 keys = ["oc-key-1", "oc-key-2"]   # one account per key
 ```
 
+**Per-model budget walls.** The Go lane meters every *model* against its
+own allowance (the vendor's usage page lists a monthly limit per model),
+so its 429 indicts the `(provider, model)` pair, never the credential. The
+vendor states the window in `Retry-After` (its windows reset at UTC
+midnight, so the header reads ~9.7h); onegw parks **that model** for that
+window and leaves the subscription key in rotation, so a model whose
+budget is spent never takes the other 36 models down with it. A generic
+per-key 429 (no vendor wrapper) keeps the ordinary account ladder.
+
 **Per-model endpoint routing.** The open-weight catalog speaks OpenAI Chat
 Completions (`/v1/chat/completions`); the `gpt-*`, `grok-*` and
 `muse-spark-*` families are served only on the OpenAI **Responses API**

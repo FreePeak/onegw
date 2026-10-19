@@ -2727,8 +2727,32 @@ func (d *Def) do(ctx context.Context, acct *Account, op, model string, clientHdr
 			// into a client-visible 503 (reverted once already — see
 			// 4b46ea6; TestStreamFastPathReplaysWholeBodyOnTransient429
 			// pins the contract).
-			shared := sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message)
-			if !shared {
+			// OpenCode Go meters every MODEL against its own allowance (the
+			// vendor's usage page lists a monthly limit per model), so its
+			// budget wall indicts the (provider, model) pair — never the
+			// credential. The account ladder must not take it: the vendor
+			// states the window in Retry-After (the Go lane's windows reset
+			// at UTC midnight, so the header reads ~9.7h), and benching
+			// the ACCOUNT for that long takes the whole provider down —
+			// every sibling model dies with it even though the same key
+			// serves them (live 2026-10-19 14:09Z: opencode/beam-free
+			// 429'd the pool dark until midnight while 27 of the
+			// provider's 37 models answered 200 on the same credential).
+			// Park the MODEL for the vendor's window instead and leave
+			// the account in rotation.
+			if d.Kind == KindOpenCode && apiErr.GoModelBudget() {
+				ttl := coolDuration(resp.Header.Get("Retry-After"))
+				if ttl <= 0 {
+					ttl = apiErr.RateWindow()
+				}
+				d.BenchModel(model, ttl)
+				// Shared-wall semantics: the model is out for every key of
+				// this provider, so Router.Execute falls through to the
+				// next combo leg instead of re-burning the account pool
+				// on the same verdict. The vendor's Retry-After rides the
+				// error, so the client is told when to come back.
+				apiErr.SharedWall = true
+			} else if shared := sharedLimit429(apiErr.Status, apiErr.Code, apiErr.Message); !shared {
 				// Burst detection applies only to a wall with nothing to
 				// go on: RetryAfter is empty exactly when neither the
 				// header nor the body named a duration (the empty-body
