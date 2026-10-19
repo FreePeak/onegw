@@ -686,6 +686,39 @@ func (e *APIError) SharedConcurrency() bool {
 		strings.Contains(probe, "temporarily rate-limited upstream")
 }
 
+// goModelBudgetRe matches the OpenCode Go lane's per-model budget wall:
+// the vendor wraps its own upstream's refusal in "Upstream request failed:
+// <reason>." — the same wrapper family as the "Endpoint is unavailable."
+// wording above (live 2026-10-13/14), with the rate-limit reason instead
+// (live 2026-10-19 14:22Z, opencode/beam-free).
+var goModelBudgetRe = regexp.MustCompile(`(?i)upstream request failed: rate limit exceeded`)
+
+// GoModelBudget reports whether the refusal is the OpenCode Go lane's
+// per-MODEL budget wall: HTTP 429, the vendor's server_error wrapper, and
+// the rate-limit wording.
+//
+// The Go lane meters every MODEL against its own allowance (the vendor's
+// usage page lists a monthly limit per model), so the wall indicts the
+// (provider, model) pair and never the credential: the same key serves
+// every sibling model (live-probed 2026-10-19 14:22Z — 27 of the
+// provider's 37 models answered 200 with one key while beam-free answered
+// this 429). Benching the account for the window the vendor states took
+// the whole provider down until that window closed.
+//
+// Deliberately narrow: a generic per-key "rate limit exceeded" 429 keeps
+// the account ladder (see provider.Do), and callers gate the whole
+// classification on the provider kind, because only the Go lane is known
+// to meter per model.
+func (e *APIError) GoModelBudget() bool {
+	if e == nil || e.Status != 429 {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(e.Type), "server_error") {
+		return false
+	}
+	return goModelBudgetRe.MatchString(e.Message)
+}
+
 // modelLimitRe matches the Tencent reseller's model-limit wall family —
 // "The request rate exceeds the current model <X> limit <N>" with X ∈
 // {Concurrency, TPM, RPM, …} (b-ai/glm-5.3-flash live 2026-09-10). The
