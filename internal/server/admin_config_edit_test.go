@@ -10,8 +10,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+
+	"onegw/internal/config"
 )
 
 const editTestToml = `# gateway config (edit test fixture)
@@ -767,6 +770,61 @@ func TestProviderEditOpenCodeFreeKind(t *testing.T) {
 // trim the empty tail of strings.Split and append a block with no trailing
 // newline, so this is the check that pins the add-at-EOF paths (new provider,
 // new combo, models pin) to a newline-terminated config.
+// Hand-written or on-disk account scalars may carry a trailing comment; the
+// carry-over map must read the value, not the comment, or a Save loses the
+// weight/rpm or re-enables a parked (disabled = true) key.
+func TestParseAccountsInlineComments(t *testing.T) {
+	const header = "[[providers]]\nname = \"p1\"\n[[providers.accounts]]\nname = \"acct1\"\napi_key = \"sk-1\"\n"
+	base := config.Acct{Name: "acct1", APIKey: "sk-1"}
+	for _, tc := range []struct {
+		name string
+		line string
+		want config.Acct
+	}{
+		{"weight with comment", "weight = 3 # heavy", with(base, func(a *config.Acct) { a.Weight = 3 })},
+		{"rpm with comment", "rpm = 7 # burst", with(base, func(a *config.Acct) { a.RPM = 7 })},
+		{"disabled true with comment", "disabled = true # parked", with(base, func(a *config.Acct) { a.Disabled = true })},
+		{"disabled false with comment", "disabled = false # live", base},
+		{"string then comment", "base_url = \"http://b.local\" # primary", with(base, func(a *config.Acct) { a.BaseURL = "http://b.local" })},
+		{"hash inside quoted api_key", "api_key = \"sk-a#b\"", with(base, func(a *config.Acct) { a.APIKey = "sk-a#b" })},
+		{"hash inside quoted api_key and comment", "api_key = \"sk-a#b\" # main", with(base, func(a *config.Acct) { a.APIKey = "sk-a#b" })},
+		{"hash inside literal string", "dashboard_token = 'tok#1' # cookie", with(base, func(a *config.Acct) { a.DashboardToken = "tok#1" })},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAccounts(strings.Split(header+tc.line, "\n"))["acct1"]
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("line %q: want %+v, got %+v", tc.line, tc.want, got)
+			}
+		})
+	}
+}
+
+func with(a config.Acct, mut func(*config.Acct)) config.Acct {
+	mut(&a)
+	return a
+}
+
+// A Save that omits the account flags must keep the on-disk weight and parked
+// state even when those lines carry a trailing comment.
+func TestProviderEditKeepsInlineCommentAccountFields(t *testing.T) {
+	base := strings.NewReplacer(
+		"weight = 3\n", "weight = 3 # heavy\ndisabled = true # parked\n",
+	).Replace(editTestToml)
+	req := providerEditReq{Name: "p1", Kind: "openai", BaseURL: "http://p1.local", Models: []string{"m1"},
+		Accounts: []acctEdit{{Name: "acct1"}, {Name: "acct2"}}}
+	out, _, err := spliceProvider(strings.Split(base, "\n"), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := strings.Join(out, "\n")
+	if !strings.Contains(file, "weight = 3\n") {
+		t.Fatalf("on-disk weight 3 lost after save:\n%s", file)
+	}
+	if !strings.Contains(file, "disabled = true\n") {
+		t.Fatalf("parked account re-enabled by save:\n%s", file)
+	}
+}
+
 func TestConfigEditKeepsTrailingNewline(t *testing.T) {
 	_, h, path := newTestServerFromFile(t, editTestToml)
 

@@ -405,6 +405,15 @@ func cloneLines(in []string) []string {
 	return out
 }
 
+// bareTOMLValue returns a bare (unquoted) TOML scalar such as an integer or
+// boolean with any trailing comment removed. Bare scalars never contain '#',
+// so the first '#' starts the comment. Quoted strings go through
+// parseTOMLString, which already ignores a comment after the closing quote.
+func bareTOMLValue(raw string) string {
+	v, _, _ := strings.Cut(raw, "#")
+	return strings.TrimSpace(v)
+}
+
 // parseAccounts harvests existing [[providers.accounts]] entries so
 // empty-key updates keep the on-disk secrets.
 func parseAccounts(block []string) map[string]config.Acct {
@@ -444,11 +453,11 @@ func parseAccounts(block []string) map[string]config.Acct {
 		case "weight":
 			// Bare TOML integer — parseTOMLString only understands quoted
 			// strings, so read the raw value (it returns "" here).
-			cur.Weight, _ = strconv.Atoi(strings.TrimSpace(t[eq+1:]))
+			cur.Weight, _ = strconv.Atoi(bareTOMLValue(t[eq+1:]))
 		case "rpm":
-			cur.RPM, _ = strconv.Atoi(strings.TrimSpace(t[eq+1:]))
+			cur.RPM, _ = strconv.Atoi(bareTOMLValue(t[eq+1:]))
 		case "disabled":
-			cur.Disabled = strings.TrimSpace(t[eq+1:]) == "true"
+			cur.Disabled = bareTOMLValue(t[eq+1:]) == "true"
 		}
 	}
 	flush()
