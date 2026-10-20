@@ -3959,3 +3959,19 @@ dashboard free-chip UI, catalog-stripping, free-billing and the quota-window wor
 phases of `docs/FREE-MODELS-PLAN.md`; routing, quota, retry, failover and the dashboard are
 untouched. Pinned by `internal/free/free_test.go`, `internal/free/sync_test.go`,
 `internal/server/models_limits_test.go` and `internal/config/free_catalog_test.go`.
+
+*Last updated: 2026-10-21 (a combo may declare its own window):* a chain is only as good as its
+worst leg, so a combo's advertised window is the MINIMUM across its legs — which understates a
+chain whose legs are all large, and overstates nothing. But an operator sometimes knows the chain
+better than a per-leg minimum does (a leg that is a fallback rarely reached, a chain whose real
+ceiling is set by the first leg). `[[combo]]` therefore accepts two optional scalars, `context` and
+`max_out`: 0 (the default) = derive from the legs, exactly as before; a declared value WINS over
+the derived one, the same precedence a hand-written `[[providers.tier]]` row has over the catalog.
+A declared context ABOVE the smallest leg is a promise the request path can keep only because a
+prompt that overruns a leg comes back as a context-length refusal, `overflow.go` drops the oldest
+conversation units until it fits, and the chain is replayed once (see
+`internal/server/overflow.go:70`) — so the declaration is a routing promise, not a licence to
+overflow. Negative values are rejected by `config.Validate`; a dashboard combo save (which renders
+only targets/strategy/round_robin_limit) leaves a hand-written `context`/`max_out` line untouched.
+Pinned by `TestModelsAdvertiseDeclaredComboLimits`, `TestComboEditPreservesDeclaredLimits`,
+`internal/config/combo_limits_test.go`.

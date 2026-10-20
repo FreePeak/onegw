@@ -293,6 +293,40 @@ func TestComboEditStrategyRoundTrip(t *testing.T) {
 	}
 }
 
+// A dashboard combo save must not drop a hand-written context / max_out
+// declaration: the editor renders only the fields it knows (targets,
+// strategy, round_robin_limit), so the operator's own limits on the
+// chain have to survive an unrelated save byte-for-byte.
+func TestComboEditPreservesDeclaredLimits(t *testing.T) {
+	toml := editTestToml + `context = 500000
+max_out = 128000
+`
+	_, h, path := newTestServerFromFile(t, toml)
+
+	w := adminCall(t, h, http.MethodPut, "/admin/config/combos", `{"name":"c1","targets":["p1/m1"],"strategy":"size-aware"}`, true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("combo edit: %d %s", w.Code, w.Body.String())
+	}
+	file := mustReadFile(t, path)
+	if !strings.Contains(file, "context = 500000") || !strings.Contains(file, "max_out = 128000") {
+		t.Fatalf("combo edit dropped the declared limits:\n%s", file)
+	}
+	// The declaration still loads: the live config carries it.
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	found := false
+	for _, c := range cfg.Combos {
+		if c.Name == "c1" && c.Context == 500000 && c.MaxOut == 128000 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("declared limits did not survive the reload: %+v", cfg.Combos)
+	}
+}
+
 func TestComboEditValidationRejectsAndLeavesFileUntouched(t *testing.T) {
 	_, h, path := newTestServerFromFile(t, editTestToml)
 	before := mustReadFile(t, path)

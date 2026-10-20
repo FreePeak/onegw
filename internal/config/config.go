@@ -499,6 +499,22 @@ type ComboCfg struct {
 	// successes that keep one combo leg at the front before rotation moves
 	// on. 0 = default 3; bounded 1..1000.
 	RoundRobinLimit int `toml:"round_robin_limit"`
+	// Context and MaxOut declare the chain's own limits, for the operator
+	// who knows the chain better than a per-leg minimum does. 0 = derive
+	// (the minimum across the legs). A declared value wins over the
+	// derived one, exactly like a hand-written [[providers.tier]] row
+	// wins over the catalog — the declaration is the operator's word on
+	// what the chain as a whole can carry.
+	//
+	// Declaring a context ABOVE the smallest leg is a promise the chain
+	// can keep only because the request path prunes and replays: a prompt
+	// that overruns a leg's window comes back as a context-length
+	// refusal, overflow.go drops the oldest conversation units until it
+	// fits, and the chain is replayed once. So a declared context is a
+	// routing promise, not a licence to send more than the smallest leg
+	// can take — the chain still answers, with less history.
+	Context int `toml:"context"`
+	MaxOut  int `toml:"max_out"`
 }
 
 // Config is the whole file.
@@ -979,6 +995,12 @@ func (c *Config) Validate() error {
 		}
 		if cb.RoundRobinLimit > 0 && cb.Strategy != "round-robin" {
 			return fmt.Errorf("combo %s sets round_robin_limit without strategy = \"round-robin\"", cb.Name)
+		}
+		if cb.Context < 0 {
+			return fmt.Errorf("combo %s context %d must be positive (0 = derive from the legs)", cb.Name, cb.Context)
+		}
+		if cb.MaxOut < 0 {
+			return fmt.Errorf("combo %s max_out %d must be positive (0 = derive from the legs)", cb.Name, cb.MaxOut)
 		}
 		comboNames[strings.ToLower(cb.Name)] = true
 		for _, t := range cb.Targets {

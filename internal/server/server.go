@@ -1855,7 +1855,9 @@ func (r *limitsResolver) provider(name string) (config.ProviderCfg, bool) {
 }
 
 // combo resolves a combo's limits: the minimum across its legs, and
-// unknown when any leg is unknown.
+// unknown when any leg is unknown — unless the operator declared the
+// chain's own limits, which then win (like a hand-written tier wins
+// over the catalog).
 func (r *limitsResolver) combo(c config.ComboCfg) limits {
 	var out limits
 	ctxMin, maxMin := 0, 0
@@ -1876,6 +1878,14 @@ func (r *limitsResolver) combo(c config.ComboCfg) limits {
 		} else {
 			maxKnown = false
 		}
+	}
+	// A declared chain limit is the operator's word on the whole chain,
+	// so it wins over the derived per-leg minimum.
+	if c.Context > 0 {
+		ctxMin, ctxKnown = c.Context, true
+	}
+	if c.MaxOut > 0 {
+		maxMin, maxKnown = c.MaxOut, true
 	}
 	if ctxKnown && ctxMin > 0 {
 		out.context, out.hasContext = ctxMin, true

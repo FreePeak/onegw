@@ -164,6 +164,51 @@ func TestModelsAdvertiseCatalogLimits(t *testing.T) {
 	}
 }
 
+// TestModelsAdvertiseDeclaredComboLimits: a combo may declare its own
+// window, and the declaration wins over the derived per-leg minimum —
+// that is how an operator states what the chain as a whole can carry
+// (a client must not be told a number the gateway cannot honour).
+func TestModelsAdvertiseDeclaredComboLimits(t *testing.T) {
+	cfg := limitsCfg()
+	// "execution" spans a 4096 leg and a 200000 leg; the operator
+	// declares the chain carries 500000.
+	for i := range cfg.Combos {
+		if cfg.Combos[i].Name == "execution" {
+			cfg.Combos[i].Context = 500000
+			cfg.Combos[i].MaxOut = 128000
+		}
+	}
+	srv, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer srv.Close()
+	srv.freeIdx.Upsert(free.Entry{Provider: "opencode-go", Model: "minimax-m3.1-flash-free", Source: free.SourceCatalog, Context: 1000000, MaxOut: 512000})
+	srv.freeIdx.Upsert(free.Entry{Provider: "opencode", Model: "deepseek-v4.1-flash-free", Source: free.SourceCatalog, Context: 200000, MaxOut: 32000})
+
+	rows := modelsJSON(t, srv)
+	row, ok := rows["execution"]
+	if !ok {
+		t.Fatal("execution not advertised")
+	}
+	if got := row["context_length"]; got != float64(500000) {
+		t.Fatalf("declared combo context_length = %v, want 500000", got)
+	}
+	if got := row["max_output_tokens"]; got != float64(128000) {
+		t.Fatalf("declared combo max_output_tokens = %v, want 128000", got)
+	}
+
+	// A combo WITHOUT a declaration still derives the leg minimum, and
+	// a chain with an unknown leg still carries no limit at all.
+	row, ok = rows["partial"]
+	if !ok {
+		t.Fatal("partial not advertised")
+	}
+	if _, has := row["context_length"]; has {
+		t.Fatalf("underived combo with an unknown leg carries a context_length: %+v", row)
+	}
+}
+
 // TestModelsAdvertisedIDSetUnchanged: the limits must not add, rename or
 // drop a single advertised id.
 func TestModelsAdvertisedIDSetUnchanged(t *testing.T) {
