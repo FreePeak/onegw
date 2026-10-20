@@ -1,3 +1,33 @@
+*Last updated: 2026-10-20 (the OpenAI wire repairs its tool pairing on the same-format path):*
+The strict tool-calling upstreams validate the pairing of a REPLAYED history, not
+just the newest turn — "invalid params, tool call id is invalid (2013)"
+(MiniMax, behind opencode Zen), "`messages[N]` tool message must follow an assistant
+message" (z.ai), "An assistant message with 'tool_calls' must be followed by tool
+messages responding to each 'tool_call_id'" (opencode "Console Go"). The unified
+repair (`translat.NormalizeToolPairs`) closes both gaps — a result that answers no
+live call, a call nothing answers — but it is wired into the CROSS-FORMAT encoder
+(`server.encodeFor`) only. A client that speaks the upstream's own wire took the
+same-format path, where the body was forwarded byte-verbatim and NO repair ran:
+live 2026-10-20, a coding agent's per-run dedup cache returned a cached result
+verbatim (id included), so its second identical tool call was answered with the
+FIRST call's id, and every request — and every retry, because the poisoned turn is
+history — came back 400 "tool call id is invalid (2013)".
+
+The repair is now on the OpenAI-dialect path (`normalizeToolPairsOpenAI`, wired in
+`prepareUpstreamBody`): every result answers a call of the assistant turn it
+follows, every call that turn made is answered exactly once, a result stranded
+behind another turn moves up into the run, and a call nothing answers gets the
+same "[no tool result recorded]" placeholder the unified repair writes. It is
+byte-level and a no-op on a healthy body, so the client's exact bytes — and the
+provider's prompt cache, which rides that prefix — survive every well-formed
+request; a body that IS rewritten is re-marshalled whole, and the rewrite is
+deterministic, so the cache break happens once per session rather than per turn
+(the argument `normalizeToolBlocks` already makes for the Anthropic wire). The
+probe is a substring test for tool traffic, so a body with none never pays the
+decode. Pinned by `internal/server/toolpair_openai_test.go`: the stale-id history
+is healed, an unanswered call is answered, a stranded result moves up, a healthy
+body comes back byte-identical, and the client's own fields survive the rewrite.
+
 *Last updated: 2026-10-16 (the request-log row carries its zeros):*
 `logEntry`'s counters were all `json:",omitempty"`, so a genuine zero was
 **absent** from `GET /admin/api/v1/logs` and `dashboard/templates/logs.html`

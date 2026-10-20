@@ -1833,6 +1833,16 @@ func forceStreamFlag(body []byte) []byte {
 // root is an anyOf/oneOf with an untyped branch. Anthropic-dialect outputs get
 // the tool-block repair (normalizeToolBlocks): that wire rejects a replayed
 // tool_use with an empty id or name.
+//
+// The OpenAI-dialect tool-PAIRING repair (normalizeToolPairsOpenAI) runs
+// here because the same-format path is the one that needs it: the unified
+// repair (translat.NormalizeToolPairs) is wired into the cross-format
+// encoder, and a client that speaks the upstream's own wire never reaches
+// it. Strict upstreams pair a result with its call by id and validate the
+// pairing on the replayed history, so a result that answers no live call
+// (a stale id — live 2026-10-20) is a rejected request, and every retry
+// replays it. The repair is byte-level and a no-op on a healthy body, so
+// the prompt cache rides the client's own bytes.
 func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstreamModel string, def *provider.Def) ([]byte, error) {
 	out, err := buildUpstreamBody(upstream, client, body, upstreamModel, def)
 	if err != nil {
@@ -1840,6 +1850,7 @@ func prepareUpstreamBody(upstream, client translat.Format, body []byte, upstream
 	}
 	switch upstream {
 	case translat.FmtOpenAI:
+		out = normalizeToolPairsOpenAI(out)
 		out = normalizeToolRoots(out)
 		out = synthesizeReasoningEcho(out, upstreamModel, def)
 	case translat.FmtAnthropic:
