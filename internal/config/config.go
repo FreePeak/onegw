@@ -17,6 +17,14 @@ import (
 	"onegw/internal/subquota"
 )
 
+// Defaults for the live model catalog ([free]).
+const (
+	// DefaultFreeCatalogSync is the catalog refresh cadence.
+	DefaultFreeCatalogSync = "24h"
+	// DefaultFreeCatalogURL is the catalog endpoint.
+	DefaultFreeCatalogURL = "https://models.dev/api.json"
+)
+
 // Server holds process-level settings.
 type Server struct {
 	Listen    string `toml:"listen"`
@@ -147,6 +155,52 @@ func (r ResponsesCfg) RetentionDur() time.Duration {
 		return d
 	}
 	return 720 * time.Hour
+}
+
+// FreeCfg configures the free-model catalog: where the gateway learns
+// each model's context window and output cap from.
+//
+// The catalog is a LIVE source (the models.dev document, refreshed
+// periodically), not a hand-written table: the limits on /v1/models come
+// from it, so a client learns the real window instead of a guessed one.
+//
+//	[free]
+//	catalog_sync = "24h"   # "" / "off" = no refresh; Go duration otherwise
+//	catalog_url  = "https://models.dev/api.json"
+//
+// Env overrides: ONEGW_FREE_CATALOG_SYNC, ONEGW_FREE_CATALOG_URL.
+type FreeCfg struct {
+	// CatalogSync is the refresh cadence of the catalog fetch. It is a
+	// pointer so an ABSENT table (the shipped default) can be told apart
+	// from an explicit "" (sync off): absent means the default 24h,
+	// "" means never refresh.
+	CatalogSync *string `toml:"catalog_sync"`
+	// CatalogURL is the catalog endpoint.
+	CatalogURL string `toml:"catalog_url"`
+}
+
+// SyncValue returns the raw catalog_sync value ("" when the table did not
+// set it).
+func (f FreeCfg) SyncValue() string {
+	if f.CatalogSync == nil {
+		return ""
+	}
+	return strings.TrimSpace(*f.CatalogSync)
+}
+
+// SyncInterval parses the catalog refresh cadence. 0 means the sync is
+// off ("" / "off" / "0" / "none" / "disabled").
+func (f FreeCfg) SyncInterval() time.Duration {
+	s := strings.ToLower(f.SyncValue())
+	switch s {
+	case "", "0", "off", "none", "false", "disabled":
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // ProviderCfg is one upstream provider definition.
@@ -445,6 +499,22 @@ type ComboCfg struct {
 	// successes that keep one combo leg at the front before rotation moves
 	// on. 0 = default 3; bounded 1..1000.
 	RoundRobinLimit int `toml:"round_robin_limit"`
+	// Context and MaxOut declare the chain's own limits, for the operator
+	// who knows the chain better than a per-leg minimum does. 0 = derive
+	// (the minimum across the legs). A declared value wins over the
+	// derived one, exactly like a hand-written [[providers.tier]] row
+	// wins over the catalog — the declaration is the operator's word on
+	// what the chain as a whole can carry.
+	//
+	// Declaring a context ABOVE the smallest leg is a promise the chain
+	// can keep only because the request path prunes and replays: a prompt
+	// that overruns a leg's window comes back as a context-length
+	// refusal, overflow.go drops the oldest conversation units until it
+	// fits, and the chain is replayed once. So a declared context is a
+	// routing promise, not a licence to send more than the smallest leg
+	// can take — the chain still answers, with less history.
+	Context int `toml:"context"`
+	MaxOut  int `toml:"max_out"`
 }
 
 // Config is the whole file.
@@ -468,6 +538,9 @@ type Config struct {
 	// Empty = no pool; every provider makes direct requests (default).
 	Proxy  ProxyPoolCfg `toml:"proxy"`
 	Update UpdateCfg    `toml:"update"`
+	// Free configures the live model catalog (models.dev) the gateway
+	// learns each model's context window and output cap from.
+	Free FreeCfg `toml:"free"`
 	// adminPwConfigured: the operator chose the admin password (config key,
 	// env, or a stored <data_dir>/admin_password); adminPwGenerated: this
 	// process minted and persisted it on first boot. Both unexported, so the
@@ -518,6 +591,22 @@ func (c *Config) Defaults() {
 	}
 	if c.Usage.RetentionDays == 0 {
 		c.Usage.RetentionDays = 90
+	}
+	// The catalog refresh is on by default (24h) unless the operator
+	// turned it off with catalog_sync = "" (or an off-ish value). An
+	// absent table keeps the default; the pointer tells the two apart.
+	if c.Free.CatalogSync == nil {
+		d := DefaultFreeCatalogSync
+		c.Free.CatalogSync = &d
+	}
+	if c.Free.CatalogURL == "" {
+		c.Free.CatalogURL = DefaultFreeCatalogURL
+	}
+	if v := strings.TrimSpace(os.Getenv("ONEGW_FREE_CATALOG_SYNC")); v != "" {
+		c.Free.CatalogSync = &v
+	}
+	if v := strings.TrimSpace(os.Getenv("ONEGW_FREE_CATALOG_URL")); v != "" {
+		c.Free.CatalogURL = v
 	}
 	if c.Server.IdempotencyTTL == "" {
 		c.Server.IdempotencyTTL = "5s"
@@ -713,6 +802,28 @@ func (c *Config) Validate() error {
 	if err := validateProxyPool(c.Proxy); err != nil {
 		return err
 	}
+	// A typo'd catalog_sync ("24hr") must fail the load, not silently
+	// disable (or worse, hammer) the catalog refresh. An explicit "" (or
+	// an off-ish value) turns the sync off.
+	if v := c.Free.SyncValue(); v != "" {
+		switch strings.ToLower(v) {
+		case "0", "off", "none", "false", "disabled":
+		default:
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 {
+				return fmt.Errorf("free.catalog_sync %q is not a Go duration (e.g. \"24h\", \"30m\") or off", v)
+			}
+		}
+	}
+	if u := strings.TrimSpace(c.Free.CatalogURL); u != "" {
+		parsed, err := url.Parse(u)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("free.catalog_url %q needs a scheme and a host (e.g. %q)", u, DefaultFreeCatalogURL)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("free.catalog_url %q needs an http(s) scheme", u)
+		}
+	}
 	// A typo'd check_interval ("24hr") must fail the load, not silently
 	// check daily — UpdateEvery's fallback is only for untouched configs.
 	if s := strings.ToLower(strings.TrimSpace(c.Update.CheckInterval)); s != "" {
@@ -884,6 +995,12 @@ func (c *Config) Validate() error {
 		}
 		if cb.RoundRobinLimit > 0 && cb.Strategy != "round-robin" {
 			return fmt.Errorf("combo %s sets round_robin_limit without strategy = \"round-robin\"", cb.Name)
+		}
+		if cb.Context < 0 {
+			return fmt.Errorf("combo %s context %d must be positive (0 = derive from the legs)", cb.Name, cb.Context)
+		}
+		if cb.MaxOut < 0 {
+			return fmt.Errorf("combo %s max_out %d must be positive (0 = derive from the legs)", cb.Name, cb.MaxOut)
 		}
 		comboNames[strings.ToLower(cb.Name)] = true
 		for _, t := range cb.Targets {

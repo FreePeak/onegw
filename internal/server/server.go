@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"onegw/internal/config"
+	"onegw/internal/free"
 	"onegw/internal/idempotency"
 	"onegw/internal/oauth"
 	"onegw/internal/owner"
@@ -30,6 +31,7 @@ import (
 	"onegw/internal/types"
 	"onegw/internal/update"
 	"onegw/internal/usage"
+	"path"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -104,6 +106,15 @@ type Server struct {
 	// models page and the providers grid can show what a key actually serves
 	// without re-probing the vendor on every poll.
 	models *modelCache
+	// freeIdx is the live model catalog (models.dev): what each model's
+	// context window and output cap are. It feeds the limits advertised
+	// on /v1/models, so a client learns the real numbers instead of a
+	// guessed default.
+	freeIdx *free.Index
+	// freeSync refreshes freeIdx from the catalog endpoint. It lives on
+	// the Server (not the reloadable state) so a config swap mid-fetch
+	// cannot orphan the goroutine holding the HTTP client.
+	freeSync *free.Syncer
 	// cfgMu serializes admin config mutations so concurrent PATCH/reload
 	// read-modify-write cycles on the TOML file stay atomic.
 	cfgMu sync.Mutex
@@ -127,7 +138,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	s := &Server{st: st, nodeID: nodeID(dataDir), start: time.Now(), rl: ratelimit.New(), dataDir: dataDir,
 		sessions: newAdminSessions(), logins: newLoginGuard(), events: newSSEHub(), reqlog: newRequestLog(),
-		oa: newOauthAdmin(), models: newModelCache()}
+		oa: newOauthAdmin(), models: newModelCache(), freeIdx: free.NewIndex()}
 	s.m = newGatewayMetrics()
 	s.m.srv = s
 	s.reqlog.next = s.events
@@ -139,7 +150,33 @@ func New(cfg *config.Config) (*Server, error) {
 	if err := s.apply(cfg, true); err != nil {
 		return nil, err
 	}
+	s.startFreeSync()
 	return s, nil
+}
+
+// startFreeSync launches the live model-catalog refresh.
+//
+// The loop never blocks the boot: the first fetch waits out the startup
+// delay, and a stored artifact (if any) is loaded synchronously, so a
+// restart publishes the same limits right away. The catalog is off when
+// the gateway runs without a data dir (memory mode) or when the operator
+// set catalog_sync = "".
+func (s *Server) startFreeSync() {
+	if s.dataDir == "" || s.dataDir == "memory" {
+		return
+	}
+	s.freeSync = free.NewSyncer(s.freeIdx, func() free.Options {
+		cfg := s.cur().cfg
+		return free.Options{
+			URL:          cfg.Free.CatalogURL,
+			Interval:     cfg.Free.SyncInterval(),
+			DataDir:      s.dataDir,
+			Timeout:      free.DefaultTimeout,
+			StartupDelay: free.DefaultStartupDelay,
+			RetryDelay:   free.DefaultRetryDelay,
+		}
+	})
+	s.freeSync.Start()
 }
 
 // apply (re)builds the mutable parts of the server from cfg and swaps them
@@ -488,6 +525,9 @@ func (s *Server) StampOwner() {
 func (s *Server) Close() {
 	if s.retainStop != nil {
 		close(s.retainStop)
+	}
+	if s.freeSync != nil {
+		s.freeSync.Stop()
 	}
 	if s.events != nil {
 		s.events.shutdown()
@@ -1622,17 +1662,36 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		ID      string `json:"id"`
 		Object  string `json:"object"`
 		OwnedBy string `json:"owned_by"`
+		// Free marks a free-lane id. Extra keys: OpenAI clients ignore
+		// them, and they carry the limits a client needs to size a
+		// prompt.
+		Free bool `json:"free,omitempty"`
+		// ContextLength and MaxOutputTokens are the model's real
+		// limits, learned from the live catalog. A nil field means
+		// "unknown" — the key is omitted entirely rather than guessed.
+		ContextLength   *int `json:"context_length,omitempty"`
+		MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
 	}
 	var models []model
 	seen := map[string]bool{}
-	add := func(id string) {
+	cfg := s.cur().cfg
+	res := newLimitsResolver(cfg, s.freeIdx)
+	add := func(id string, l limits, isFree bool) {
 		if id == "" || seen[id] {
 			return
 		}
 		seen[id] = true
-		models = append(models, model{ID: id, Object: "model", OwnedBy: "onegw"})
+		m := model{ID: id, Object: "model", OwnedBy: "onegw", Free: isFree}
+		if l.hasContext {
+			v := l.context
+			m.ContextLength = &v
+		}
+		if l.hasMaxOut {
+			v := l.maxOut
+			m.MaxOutputTokens = &v
+		}
+		models = append(models, m)
 	}
-	cfg := s.cur().cfg
 	for _, p := range cfg.Providers {
 		if p.Disabled {
 			continue // paused: not advertised, direct hits answer 503
@@ -1641,10 +1700,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 			// Virtual search surface: any "<name>/<x>" model string
 			// routes to it; advertise the canonical id so agent CLIs
 			// can discover it via /v1/models.
-			add(p.Name + "/query")
+			add(p.Name+"/query", limits{}, false)
 		}
 		for _, m := range p.Models {
-			add(p.Name + "/" + m)
+			add(p.Name+"/"+m, res.providerModel(p.Name, m), free.IsFreeID(m))
 		}
 	}
 	for _, c := range cfg.Combos {
@@ -1674,14 +1733,218 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		if !live {
 			continue
 		}
-		add(c.Name)
+		add(c.Name, res.combo(c), false)
 	}
 	// Aliases surface as first-class model ids so clients can discover them.
 	for a := range cfg.Aliases {
-		add(a)
+		add(a, res.alias(a), free.IsFreeID(a))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": models})
+}
+
+// limits carries one advertised model's known limits. A false flag means
+// "unknown": the key is then omitted from the response entirely, because a
+// wrong number is worse than no number.
+type limits struct {
+	context    int
+	maxOut     int
+	hasContext bool
+	hasMaxOut  bool
+}
+
+// limitsResolver resolves the advertised limits of a client-facing id
+// from the config snapshot plus the live catalog.
+//
+// The rules:
+//
+//   - a provider model takes its numbers from the catalog, looked up
+//     through the provider-kind mapping (the onegw provider named
+//     "opencode" is the subscription lane and reads the models.dev
+//     "opencode-go" entry; "opencode-free" reads "opencode");
+//   - a hand-written [[providers.tier]] row wins over the catalog;
+//   - a combo takes the MINIMUM across its legs, and any unknown leg
+//     leaves the field unknown (a chain is only as good as its worst
+//     leg);
+//   - an alias inherits what it points at.
+type limitsResolver struct {
+	cfg *config.Config
+	idx *free.Index
+}
+
+func newLimitsResolver(cfg *config.Config, idx *free.Index) *limitsResolver {
+	return &limitsResolver{cfg: cfg, idx: idx}
+}
+
+// providerModel resolves one provider model's limits.
+func (r *limitsResolver) providerModel(provName, model string) limits {
+	var out limits
+	p, ok := r.provider(provName)
+	if !ok {
+		return out
+	}
+	ctx, maxOut := 0, 0
+	// A hand-written tier declaration wins over the catalog.
+	for _, t := range p.Tiers {
+		if t.Model != model {
+			if ok, err := path.Match(t.Model, model); err != nil || !ok {
+				continue
+			}
+		}
+		if t.Context > 0 {
+			ctx = t.Context
+		}
+		if t.MaxOut > 0 {
+			maxOut = t.MaxOut
+		}
+		break
+	}
+	// The catalog fills in what the config did not declare.
+	if ctx == 0 || maxOut == 0 {
+		if e, ok := r.lookup(p, model); ok {
+			if ctx == 0 {
+				ctx = e.Context
+			}
+			if maxOut == 0 {
+				maxOut = e.MaxOut
+			}
+		}
+	}
+	if ctx > 0 {
+		out.context, out.hasContext = ctx, true
+	}
+	if maxOut > 0 {
+		out.maxOut, out.hasMaxOut = maxOut, true
+	}
+	return out
+}
+
+// lookup finds a model in the live catalog through the provider-kind
+// mapping.
+func (r *limitsResolver) lookup(p config.ProviderCfg, model string) (free.Entry, bool) {
+	if r.idx == nil {
+		return free.Entry{}, false
+	}
+	return r.idx.Lookup(modelsDevProvider(p.Kind, p.Name), model)
+}
+
+// modelsDevProvider maps an onegw provider to its models.dev catalog
+// provider. The KIND mapping wins over the name match: the onegw provider
+// named "opencode" is the subscription lane, whose catalog twin is
+// "opencode-go", while the free lane ("opencode-free") reads the
+// "opencode" catalog entry. Every other kind reads the catalog provider
+// with the same name, when one exists.
+func modelsDevProvider(kind, name string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "opencode":
+		return "opencode-go"
+	case "opencode-free":
+		return "opencode"
+	}
+	return name
+}
+
+// provider finds a provider by name in the config snapshot.
+func (r *limitsResolver) provider(name string) (config.ProviderCfg, bool) {
+	for _, p := range r.cfg.Providers {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return config.ProviderCfg{}, false
+}
+
+// combo resolves a combo's limits: the minimum across its legs, and
+// unknown when any leg is unknown — unless the operator declared the
+// chain's own limits, which then win (like a hand-written tier wins
+// over the catalog).
+func (r *limitsResolver) combo(c config.ComboCfg) limits {
+	var out limits
+	ctxMin, maxMin := 0, 0
+	ctxKnown, maxKnown := true, true
+	for _, t := range c.Targets {
+		l := r.target(t)
+		if l.hasContext {
+			if ctxMin == 0 || l.context < ctxMin {
+				ctxMin = l.context
+			}
+		} else {
+			ctxKnown = false
+		}
+		if l.hasMaxOut {
+			if maxMin == 0 || l.maxOut < maxMin {
+				maxMin = l.maxOut
+			}
+		} else {
+			maxKnown = false
+		}
+	}
+	// A declared chain limit is the operator's word on the whole chain,
+	// so it wins over the derived per-leg minimum.
+	if c.Context > 0 {
+		ctxMin, ctxKnown = c.Context, true
+	}
+	if c.MaxOut > 0 {
+		maxMin, maxKnown = c.MaxOut, true
+	}
+	if ctxKnown && ctxMin > 0 {
+		out.context, out.hasContext = ctxMin, true
+	}
+	if maxKnown && maxMin > 0 {
+		out.maxOut, out.hasMaxOut = maxMin, true
+	}
+	return out
+}
+
+// target resolves one combo leg or alias target: "provider/model", a
+// combo name, or an alias name.
+func (r *limitsResolver) target(id string) limits {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return limits{}
+	}
+	if i := strings.Index(id, "/"); i > 0 && i < len(id)-1 {
+		return r.providerModel(id[:i], id[i+1:])
+	}
+	if c, ok := r.comboByName(id); ok {
+		return r.combo(c)
+	}
+	return r.alias(id)
+}
+
+// comboByName finds a combo by name.
+func (r *limitsResolver) comboByName(name string) (config.ComboCfg, bool) {
+	for _, c := range r.cfg.Combos {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return config.ComboCfg{}, false
+}
+
+// alias resolves an alias to what it points at (a provider model, a combo
+// or another alias). The chain is depth-capped and cycle-safe.
+func (r *limitsResolver) alias(name string) limits {
+	seen := map[string]bool{}
+	for range 8 {
+		if seen[name] {
+			return limits{}
+		}
+		seen[name] = true
+		target, ok := r.cfg.Aliases[name]
+		if !ok {
+			return limits{}
+		}
+		target = strings.TrimSpace(target)
+		if i := strings.Index(target, "/"); i > 0 && i < len(target)-1 {
+			return r.providerModel(target[:i], target[i+1:])
+		}
+		if c, ok := r.comboByName(target); ok {
+			return r.combo(c)
+		}
+		name = target
+	}
+	return limits{}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

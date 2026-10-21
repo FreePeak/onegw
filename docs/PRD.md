@@ -3658,6 +3658,56 @@ the issue):
   is a "deliberate stop" the supervisor intentionally does not autoresume
   (2026-09-07 outage root cause).
 
+- **Live model limits on `/v1/models` (2026-10-21):** the gateway now
+  publishes each model's real **context window** and **max output tokens**,
+  learned from a live catalog instead of a client-side guess. The upstream
+  `/v1/models` of the opencode lanes carries no limits at all (rows are
+  `{"id","object","created","owned_by"}` only), so the numbers can only come
+  from a catalog: the **models.dev** document (`https://models.dev/api.json`),
+  fetched periodically into `internal/free` (`Index` + `Syncer`).
+  - **What a client sees:** every row of `GET /v1/models` may now carry
+    `context_length` and `max_output_tokens` (both integers, both top level —
+    the shape an OpenAI-compatible client reads). A row whose limits are
+    unknown carries **neither key**: a wrong number is worse than no number.
+    The advertised **id set is unchanged** — the router routes exactly what
+    the config snapshot holds, so no new id may appear here.
+  - **Where the numbers come from:** the catalog's provider→model map, keyed
+    by the onegw provider **kind** (the kind mapping wins over the name
+    match): the onegw provider named `opencode` (the subscription lane,
+    base `https://opencode.ai/zen/go`) reads the models.dev `opencode-go`
+    entry, the free lane (`opencode-free`) reads the models.dev `opencode`
+    entry, and every other kind reads the catalog provider with the same
+    name. A hand-written `[[providers.tier]]` `context` / `max_out` always
+    **wins** over the catalog (static config is the operator's explicit
+    statement). A **combo** takes the **minimum** across its legs and drops
+    the field when any leg is unknown (a chain is only as good as its worst
+    leg); an **alias** inherits what it points at.
+  - **The sync (`internal/free/sync.go`):** 60 s startup delay, 24 h
+    interval, 30 min retry after a failure, 60 s timeout, ETag-conditional
+    GET, and two atomic artifacts under `data_dir` (`free-catalog.json` +
+    `free-catalog-raw.json`, tmp-file + rename). The boot is never blocked
+    by the sync; a failed or unparsable fetch never truncates good data; a
+    restart re-publishes the stored catalog immediately.
+  - **Config (`[free]`, `internal/config/config.go`):**
+    ```toml
+    [free]
+    catalog_sync = "24h"   # "" / "off" = no refresh; a Go duration otherwise
+    catalog_url  = "https://models.dev/api.json"
+    ```
+    Env overrides: `ONEGW_FREE_CATALOG_SYNC`, `ONEGW_FREE_CATALOG_URL`. A
+    typo'd value fails the load loudly instead of silently disabling the
+    refresh. The table is absent by default → the daily refresh is on.
+  - **Scope:** the limits index and the `/v1/models` annotation only. The
+    dashboard's free-chip/filter UI, catalog-stripping of paid models,
+    free-billing and the quota-window work are separate phases of
+    `docs/FREE-MODELS-PLAN.md` and are NOT part of this change. Routing,
+    quota, retry, failover and the dashboard are untouched.
+  - Pinned by `internal/free/free_test.go` (parser shapes, additive index),
+    `internal/free/sync_test.go` (fetch, 304, failure, restart, atomic
+    write), `internal/server/models_limits_test.go` (the annotation matrix
+    + the unchanged id set) and `internal/config/free_catalog_test.go`
+    (defaults, off, env override, validation, TOML round-trip).
+
 ## Docs
 
 - `docs/ARCHITECTURE.md` — package detail, memory contract, config reference.
@@ -3889,3 +3939,39 @@ the plan windows on the Quota page. Two harness facts worth keeping: the stub up
 200 — the stub was unfaithful, not the wire), and `subscription_url` is a FULL path (it replaces
 `DefaultURL`, no `/backend-api/wham/usage` is appended). Pinned by
 `TestBuiltinCodexAndOpenAIPresetsAreReadyToUse`.
+
+*Last updated: 2026-10-21 (live model limits on /v1/models):* the gateway now publishes each
+model's real context window and max output tokens, learned from a live catalog (models.dev) instead
+of a client-side guess — the opencode lanes' own `/v1/models` carries no limits at all, so a client
+(omp) used to fall back to a 128 000-token default. New package `internal/free` (parser + index +
+periodic sync: 60 s startup delay, 24 h interval, 30 min retry, 60 s timeout, ETag-conditional GET,
+two atomic artifacts under `data_dir`, never blocking the boot, never truncating good data on a
+failed fetch). `/v1/models` rows may now carry top-level `context_length` and `max_output_tokens`;
+a row whose limits are unknown carries NEITHER key. The kind→catalog mapping wins over the name
+match (onegw `opencode` reads models.dev `opencode-go`, `opencode-free` reads models.dev
+`opencode`); a hand-written `[[providers.tier]]` `context`/`max_out` wins over the catalog; a combo
+takes the MINIMUM across its legs and drops the field when any leg is unknown; an alias inherits
+what it points at. The advertised id set is UNCHANGED — the router routes exactly what the config
+snapshot holds. New `[free]` config table (`catalog_sync`, default "24h", "" = off; `catalog_url`,
+default "https://models.dev/api.json") with `ONEGW_FREE_CATALOG_SYNC` / `ONEGW_FREE_CATALOG_URL`
+overrides and loud validation. Scope: the limits index + the `/v1/models` annotation only — the
+dashboard free-chip UI, catalog-stripping, free-billing and the quota-window work stay separate
+phases of `docs/FREE-MODELS-PLAN.md`; routing, quota, retry, failover and the dashboard are
+untouched. Pinned by `internal/free/free_test.go`, `internal/free/sync_test.go`,
+`internal/server/models_limits_test.go` and `internal/config/free_catalog_test.go`.
+
+*Last updated: 2026-10-21 (a combo may declare its own window):* a chain is only as good as its
+worst leg, so a combo's advertised window is the MINIMUM across its legs — which understates a
+chain whose legs are all large, and overstates nothing. But an operator sometimes knows the chain
+better than a per-leg minimum does (a leg that is a fallback rarely reached, a chain whose real
+ceiling is set by the first leg). `[[combo]]` therefore accepts two optional scalars, `context` and
+`max_out`: 0 (the default) = derive from the legs, exactly as before; a declared value WINS over
+the derived one, the same precedence a hand-written `[[providers.tier]]` row has over the catalog.
+A declared context ABOVE the smallest leg is a promise the request path can keep only because a
+prompt that overruns a leg comes back as a context-length refusal, `overflow.go` drops the oldest
+conversation units until it fits, and the chain is replayed once (see
+`internal/server/overflow.go:70`) — so the declaration is a routing promise, not a licence to
+overflow. Negative values are rejected by `config.Validate`; a dashboard combo save (which renders
+only targets/strategy/round_robin_limit) leaves a hand-written `context`/`max_out` line untouched.
+Pinned by `TestModelsAdvertiseDeclaredComboLimits`, `TestComboEditPreservesDeclaredLimits`,
+`internal/config/combo_limits_test.go`.
